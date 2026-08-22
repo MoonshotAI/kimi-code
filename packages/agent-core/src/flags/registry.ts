@@ -41,6 +41,14 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'terminal_mouse_input',
+    title: 'Terminal mouse input',
+    description: 'Allow mouse clicks and drags to position and select text in the main prompt editor.',
+    env: 'KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT',
+    default: false,
+    surface: 'tui',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

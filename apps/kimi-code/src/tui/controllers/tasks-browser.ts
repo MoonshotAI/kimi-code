@@ -27,6 +27,8 @@ export interface TasksBrowserHost {
   readonly session: Session | undefined;
   showError(msg: string): void;
   setTasksBrowser(value: TasksBrowserState | undefined): void;
+  suspendTerminalMouseTracking(): void;
+  refreshTerminalMouseTracking(): void;
 }
 
 export type TasksBrowserState = {
@@ -91,6 +93,7 @@ export class TasksBrowserController {
       state.terminal,
     );
 
+    this.host.suspendTerminalMouseTracking();
     const takeover = beginScreenTakeover(state.ui, component);
     state.ui.setFocus(component);
     state.ui.requestRender(true);
@@ -129,6 +132,7 @@ export class TasksBrowserController {
     endScreenTakeover(state.ui, browser.takeover);
     this.host.setTasksBrowser(undefined);
     state.ui.setFocus(state.editor);
+    this.host.refreshTerminalMouseTracking();
     state.ui.requestRender(true);
   }
 

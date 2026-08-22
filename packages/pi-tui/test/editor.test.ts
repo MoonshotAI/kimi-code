@@ -1508,6 +1508,43 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "hello world");
 		});
 
+		it("selected kills are available to yank for every kill command", () => {
+			for (const command of ["\x15", "\x0b", "\x17", "\x1bd"]) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.setText("alpha beta\ngamma delta");
+				editor.beginSelection({ line: 0, col: 6 });
+				editor.updateSelection({ line: 1, col: 5 });
+				editor.finishSelection();
+
+				editor.handleInput(command);
+				assert.strictEqual(editor.getText(), "alpha  delta");
+				editor.handleInput("\x19"); // Ctrl+Y
+				assert.strictEqual(editor.getText(), "alpha beta\ngamma delta");
+			}
+		});
+
+		it("selected kills preserve backward and forward accumulation order", () => {
+			const backward = new Editor(createTestTUI(), defaultEditorTheme);
+			backward.setText("one two three");
+			backward.beginSelection({ line: 0, col: 8 });
+			backward.updateSelection({ line: 0, col: 13 });
+			backward.finishSelection();
+			backward.handleInput("\x17"); // Ctrl+W kills selected "three"
+			backward.handleInput("\x17"); // Ctrl+W prepends "two "
+			backward.handleInput("\x19"); // Ctrl+Y
+			assert.strictEqual(backward.getText(), "one two three");
+
+			const forward = new Editor(createTestTUI(), defaultEditorTheme);
+			forward.setText("one two three");
+			forward.beginSelection({ line: 0, col: 0 });
+			forward.updateSelection({ line: 0, col: 3 });
+			forward.finishSelection();
+			forward.handleInput("\x1bd"); // Alt+D kills selected "one"
+			forward.handleInput("\x1bd"); // Alt+D appends " two"
+			forward.handleInput("\x19"); // Ctrl+Y
+			assert.strictEqual(forward.getText(), "one two three");
+		});
+
 		it("Ctrl+Y does nothing when kill ring is empty", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
@@ -4685,6 +4722,194 @@ describe("wordWrapLine narrow width", () => {
 			chunks.map((c) => c.text),
 			["👨‍👩‍👧‍👦"],
 		);
+	});
+});
+
+describe("Editor mouse selection", () => {
+	it("normalizes reverse selections as half-open ranges", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("hello");
+		editor.beginSelection({ line: 0, col: 4 });
+		editor.updateSelection({ line: 0, col: 1 });
+		editor.finishSelection();
+
+		assert.deepStrictEqual(editor.getSelectionRange(), {
+			start: { line: 0, col: 1 },
+			end: { line: 0, col: 4 },
+		});
+	});
+
+	it("returns selected text in document order for reverse multiline drags", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("abcDEF\nGHI\nJKLmno");
+		editor.beginSelection({ line: 2, col: 3 });
+		editor.updateSelection({ line: 0, col: 3 });
+		editor.finishSelection();
+
+		assert.strictEqual(editor.getSelectedText(), "DEF\nGHI\nJKL");
+		assert.strictEqual(editor.getText(), "abcDEF\nGHI\nJKLmno");
+	});
+
+	it("deletes a multiline selection and restores it with one undo", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("abcDEF\nGHI\nJKLmno");
+		editor.beginSelection({ line: 0, col: 3 });
+		editor.updateSelection({ line: 2, col: 3 });
+		editor.finishSelection();
+
+		editor.handleInput("\x7f");
+		assert.strictEqual(editor.getText(), "abcmno");
+		assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
+
+		editor.handleInput("\x1b[45;5u");
+		assert.strictEqual(editor.getText(), "abcDEF\nGHI\nJKLmno");
+	});
+
+	it("replaces a selection with multi-character typing as one undo unit", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("hello world");
+		editor.beginSelection({ line: 0, col: 6 });
+		editor.updateSelection({ line: 0, col: 11 });
+		editor.finishSelection();
+
+		editor.handleInput("X");
+		editor.handleInput("Y");
+		editor.handleInput("Z");
+		assert.strictEqual(editor.getText(), "hello XYZ");
+		editor.handleInput("\x1b[45;5u");
+		assert.strictEqual(editor.getText(), "hello world");
+	});
+
+	it("replaces a selection with a newline", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("hello world");
+		editor.beginSelection({ line: 0, col: 5 });
+		editor.updateSelection({ line: 0, col: 6 });
+		editor.finishSelection();
+
+		editor.handleInput("\n");
+		assert.strictEqual(editor.getText(), "hello\nworld");
+	});
+
+	it("maps rendered wrapped rows and wide graphemes to logical positions", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("A你B");
+		editor.render(8);
+		assert.deepStrictEqual(editor.positionAtRenderedCell(1, 1), { line: 0, col: 1 });
+		assert.deepStrictEqual(editor.positionAtRenderedCell(1, 2), { line: 0, col: 2 });
+		assert.deepStrictEqual(editor.positionAtRenderedCell(1, 3), { line: 0, col: 2 });
+
+		editor.setText("abcdef");
+		editor.render(4);
+		assert.deepStrictEqual(editor.positionAtRenderedCell(1, 3), { line: 0, col: 3 });
+		assert.deepStrictEqual(editor.positionAtRenderedCell(2, 1), { line: 0, col: 4 });
+	});
+
+	it("maps clicks through the editor scroll window", () => {
+		const editor = new Editor(createTestTUI(80, 10), defaultEditorTheme);
+		editor.setText(Array.from({ length: 10 }, (_, index) => `line-${index}`).join("\n"));
+		editor.render(80);
+
+		assert.deepStrictEqual(editor.positionAtRenderedCell(1, 0), { line: 5, col: 0 });
+	});
+
+	it("maps clamped edge drags to adjacent hidden visual rows", () => {
+		const editor = new Editor(createTestTUI(80, 10), defaultEditorTheme);
+		editor.setText(Array.from({ length: 10 }, (_, index) => `line-${index}`).join("\n"));
+		editor.render(80);
+
+		const firstHidden = editor.positionAtRenderedCell(0, 0, true);
+		assert.deepStrictEqual(firstHidden, { line: 4, col: 0 });
+		editor.beginSelection({ line: 9, col: 6 });
+		editor.updateSelection(firstHidden!);
+		editor.render(80);
+
+		assert.deepStrictEqual(editor.positionAtRenderedCell(0, 0, true), { line: 3, col: 0 });
+	});
+
+	it("replaces a selection with a yank as one undo unit", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("replace me");
+		editor.handleInput("\x17");
+		editor.handleInput("\x1b[45;5u");
+		editor.beginSelection({ line: 0, col: 0 });
+		editor.updateSelection({ line: 0, col: 7 });
+		editor.finishSelection();
+
+		editor.handleInput("\x19");
+		assert.strictEqual(editor.getText(), "me me");
+		editor.handleInput("\x1b[45;5u");
+		assert.strictEqual(editor.getText(), "replace me");
+	});
+
+	it("keeps a ZWJ emoji atomic when selecting and deleting", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		const emoji = "👨‍👩‍👧‍👦";
+		editor.setText(`A${emoji}B`);
+		editor.beginSelection({ line: 0, col: 2 });
+		editor.updateSelection({ line: 0, col: 1 + emoji.length });
+		editor.finishSelection();
+
+		editor.handleInput("\x7f");
+		assert.strictEqual(editor.getText(), "AB");
+	});
+
+	it("keeps paste markers atomic when selecting and deleting", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		const paste = Array.from({ length: 11 }, (_, index) => `line-${index}`).join("\n");
+		editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+		const marker = editor.getText();
+		assert.match(marker, /^\[paste #1 /);
+
+		editor.beginSelection({ line: 0, col: 2 });
+		editor.updateSelection({ line: 0, col: marker.length });
+		editor.finishSelection();
+		editor.handleInput("\x7f");
+
+		assert.strictEqual(editor.getText(), "");
+	});
+
+	it("renders each selected line as a contiguous inverse span", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("hello");
+		editor.beginSelection({ line: 0, col: 1 });
+		editor.updateSelection({ line: 0, col: 4 });
+		editor.finishSelection();
+
+		const rendered = editor.render(20).join("\n");
+		assert.match(rendered, /\x1b\[7mell\x1b\[27m/);
+		assert.doesNotMatch(rendered, /\x1b\[7me\x1b\[27m\x1b\[7ml/);
+	});
+
+	it("renders selected line breaks and empty lines as inverse cells", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("a\n\nb");
+		editor.beginSelection({ line: 0, col: 1 });
+		editor.updateSelection({ line: 2, col: 0 });
+		editor.finishSelection();
+
+		const rendered = editor.render(20).join("\n");
+		const selectedBreaks = rendered.match(/\x1b\[7m \x1b\[27m/g)?.length ?? 0;
+		assert.strictEqual(selectedBreaks, 2);
+	});
+
+	it("keeps inverse control sequences proportional to visual lines", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		const text = [
+			"hello world",
+			"中文拖动测试",
+			"A👨‍👩‍👧‍👦B",
+			"This is a deliberately long line that should wrap across multiple terminal rows.",
+			"last line",
+		].join("\n");
+		editor.setText(text);
+		editor.beginSelection({ line: 0, col: 0 });
+		editor.updateSelection({ line: 4, col: "last line".length });
+		editor.finishSelection();
+
+		const rendered = editor.render(80).join("\n");
+		const inverseStarts = rendered.match(/\x1b\[7m/g)?.length ?? 0;
+		assert.ok(inverseStarts <= 8, `expected at most one selected span per visual line, got ${inverseStarts}`);
 	});
 });
 

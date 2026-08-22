@@ -103,6 +103,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousViewportTop = state.previousViewportTop;
 	}
 
+	override getRenderedViewportTop(): number {
+		return this.previousViewportTop;
+	}
+
 	protected override resetRenderState(): void {
 		this.previousLines = [];
 		this.previousRawLines = [];

@@ -1,5 +1,10 @@
-import type { Terminal } from '@moonshot-ai/pi-tui';
-import type { BackgroundTaskInfo, BackgroundTaskStatus, Event } from '@moonshot-ai/kimi-code-sdk';
+import type { Component, ProcessTerminal, Terminal, TUI } from '@moonshot-ai/pi-tui';
+import type {
+  BackgroundTaskInfo,
+  BackgroundTaskStatus,
+  Event,
+  Session,
+} from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,8 +14,12 @@ import {
 } from '@/tui/components/dialogs/tasks-browser';
 import { AgentActivityViewer } from '@/tui/components/dialogs/agent-activity-viewer';
 import { TaskOutputViewer } from '@/tui/components/dialogs/task-output-viewer';
+import {
+  TasksBrowserController,
+  type TasksBrowserHost,
+  type TasksBrowserState,
+} from '@/tui/controllers/tasks-browser';
 import { SubagentActivityStore } from '@/tui/controllers/subagent-activity-store';
-import { TasksBrowserController } from '@/tui/controllers/tasks-browser';
 import { darkColors } from '@/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
@@ -557,6 +566,73 @@ describe('TasksBrowserApp — setProps', () => {
   });
 });
 
+describe('TasksBrowserController — terminal mouse lifecycle', () => {
+  it('suspends tracking during the full-screen takeover and restores it on close', async () => {
+    const originalChildren = [
+      { render: () => ['transcript'], invalidate: () => {} },
+      { render: () => ['editor'], invalidate: () => {} },
+    ] as unknown as Component[];
+    const children = [...originalChildren];
+    const events: string[] = [];
+    const ui = {
+      children,
+      clear: vi.fn(() => {
+        events.push('clear');
+        children.splice(0);
+      }),
+      addChild: vi.fn((component: Component) => {
+        events.push('add');
+        children.push(component);
+      }),
+      setFocus: vi.fn(),
+      requestRender: vi.fn(),
+    } as unknown as TUI;
+    const state = {
+      tasksBrowser: undefined as TasksBrowserState | undefined,
+      theme: darkColors as unknown as TasksBrowserHost['state']['theme'],
+      terminal: fakeTerminal(30) as unknown as ProcessTerminal,
+      ui,
+      editor: {} as TasksBrowserHost['state']['editor'],
+    };
+    const suspendTerminalMouseTracking = vi.fn(() => {
+      events.push('suspend');
+    });
+    const refreshTerminalMouseTracking = vi.fn(() => {
+      events.push('refresh');
+    });
+    const host: TasksBrowserHost = {
+      state,
+      backgroundTasks: new Map(),
+      sessionEventHandler: {
+        subAgentEventHandler: { activityStore: new SubagentActivityStore() },
+      } as TasksBrowserHost['sessionEventHandler'],
+      session: {
+        listBackgroundTasks: vi.fn(async () => []),
+      } as unknown as Session,
+      showError: vi.fn(),
+      setTasksBrowser(value) {
+        state.tasksBrowser = value;
+      },
+      suspendTerminalMouseTracking,
+      refreshTerminalMouseTracking,
+    };
+    const controller = new TasksBrowserController(host);
+
+    await controller.show();
+
+    expect(suspendTerminalMouseTracking).toHaveBeenCalledOnce();
+    expect(events.indexOf('suspend')).toBeLessThan(events.indexOf('clear'));
+    expect(children).toHaveLength(1);
+    expect(state.tasksBrowser).toBeDefined();
+
+    controller.close();
+
+    expect(refreshTerminalMouseTracking).toHaveBeenCalledOnce();
+    expect(children).toEqual(originalChildren);
+    expect(events.lastIndexOf('refresh')).toBeGreaterThan(events.lastIndexOf('add'));
+  });
+});
+
 describe('TasksBrowserController — opening an agent task', () => {
   function makeControllerHost(tasks: BackgroundTaskInfo[], store: SubagentActivityStore) {
     const ui = {
@@ -588,6 +664,8 @@ describe('TasksBrowserController — opening an agent task', () => {
       setTasksBrowser(value: unknown) {
         state.tasksBrowser = value;
       },
+      suspendTerminalMouseTracking: vi.fn(),
+      refreshTerminalMouseTracking: vi.fn(),
     };
     return { host, state };
   }
