@@ -19,6 +19,7 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import { ApiError as GoogleApiError, GoogleGenAI as GenAIClient } from '@google/genai';
 import { mergeConsecutiveUserMessages } from './merge-user-messages';
+import { expandHomePath, tryReadProjectIdFromServiceAccount } from './vertex-utils';
 
 import { requireProviderApiKey, resolveAuthBackedClient } from './request-auth';
 
@@ -88,6 +89,8 @@ export interface GoogleGenAIOptions {
   vertexai?: boolean | undefined;
   project?: string | undefined;
   location?: string | undefined;
+  serviceAccountFile?: string | undefined;
+  googleAuthOptions?: Record<string, unknown> | undefined;
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string>;
   clientFactory?: (auth: ProviderRequestAuth) => GenAIClient;
@@ -117,16 +120,17 @@ interface GoogleTool {
   functionDeclarations: GoogleFunctionDeclaration[];
 }
 
-function toolToGoogleGenAI(tool: Tool): GoogleTool {
-  return {
-    functionDeclarations: [
-      {
+function toolsToGoogleGenAI(tools: Tool[]): GoogleTool[] {
+  if (tools.length === 0) return [];
+  return [
+    {
+      functionDeclarations: tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         parametersJsonSchema: tool.parameters,
-      },
-    ],
-  };
+      })),
+    },
+  ];
 }
 
 function applyResponseFormat(
@@ -754,6 +758,8 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   private _baseUrl: string | undefined;
   private _project: string | undefined;
   private _location: string | undefined;
+  private _serviceAccountFile: string | undefined;
+  private _googleAuthOptions: Record<string, unknown> | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => GenAIClient) | undefined;
 
@@ -767,12 +773,34 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl =
       options.baseUrl === undefined || options.baseUrl.length === 0 ? undefined : options.baseUrl;
-    this._project = options.project;
-    this._location = options.location;
+
+    const rawSaFile =
+      options.serviceAccountFile ??
+      process.env['GOOGLE_APPLICATION_CREDENTIALS'] ??
+      process.env['SERVICE_ACCOUNT_FILE'];
+    this._serviceAccountFile = expandHomePath(rawSaFile);
+    this._googleAuthOptions =
+      options.googleAuthOptions ??
+      (this._serviceAccountFile !== undefined
+        ? {
+            keyFilename: this._serviceAccountFile,
+            scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+          }
+        : undefined);
+
+    this._project =
+      options.project ??
+      (this._serviceAccountFile !== undefined
+        ? tryReadProjectIdFromServiceAccount(this._serviceAccountFile)
+        : undefined) ??
+      process.env['GOOGLE_CLOUD_PROJECT'];
+    this._location = options.location ?? process.env['GOOGLE_CLOUD_LOCATION'];
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
     this._client =
-      this._vertexai || this._apiKey !== undefined ? this._buildClient(this._apiKey) : undefined;
+      this._vertexai || this._apiKey !== undefined || this._googleAuthOptions !== undefined
+        ? this._buildClient(this._apiKey)
+        : undefined;
   }
 
   private _buildClient(apiKey: string | undefined): GenAIClient {
@@ -796,6 +824,9 @@ export class GoogleGenAIChatProvider implements ChatProvider {
             vertexai: true,
             project: this._project,
             location: this._location,
+            ...(this._googleAuthOptions !== undefined
+              ? { googleAuthOptions: this._googleAuthOptions }
+              : {}),
           }
         : {}),
       ...(Object.keys(httpOptions).length > 0 ? { httpOptions } : {}),
@@ -863,7 +894,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const config: Record<string, unknown> = {
       ...this._generationKwargs,
       systemInstruction: systemPrompt,
-      ...(tools.length > 0 ? { tools: tools.map((t) => toolToGoogleGenAI(t)) } : {}),
+      ...(tools.length > 0 ? { tools: toolsToGoogleGenAI(tools) } : {}),
     };
     applyResponseFormat(config, options?.responseFormat);
 

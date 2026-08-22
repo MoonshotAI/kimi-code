@@ -51,7 +51,7 @@ describe('resolveCatalogImport — wire resolution', () => {
     });
     expect(resolveCatalogImport({ id: 'google-vertex' })).toMatchObject({
       kind: 'ok',
-      wire: 'vertexai',
+      wire: 'google-vertex',
     });
   });
 
@@ -125,15 +125,15 @@ describe('resolveCatalogImport — endpoint resolution', () => {
     });
     expect(
       resolveCatalogImport({ id: 'google-vertex', npm: '@ai-sdk/google-vertex' }),
-    ).toMatchObject({ kind: 'ok', wire: 'vertexai' });
+    ).toMatchObject({ kind: 'ok', wire: 'google-vertex' });
   });
 
-  it('needs a URL for non-official vendors without one', () => {
+  it('resolves google-vertex-anthropic without requiring a base URL prompt', () => {
     // google-vertex-anthropic shape: Anthropic wire, vendor npm, no api —
-    // without a prompt the key would be sent to api.anthropic.com.
+    // self-contained via Google Vertex ADC auth.
     expect(
       resolveCatalogImport({ id: 'google-vertex-anthropic', npm: '@ai-sdk/google-vertex/anthropic' }),
-    ).toEqual({ kind: 'needs-base-url', wire: 'anthropic', guessed: false });
+    ).toEqual({ kind: 'ok', wire: 'google-vertex-anthropic', guessed: false });
     // kimi-for-coding declares a concrete api — no prompt needed.
     expect(
       resolveCatalogImport({
@@ -186,9 +186,9 @@ describe('resolveCatalogImport — endpoint resolution', () => {
       ),
     ).toEqual({
       kind: 'ok',
-      wire: 'anthropic',
+      wire: 'google-vertex-anthropic',
       guessed: false,
-      baseUrl: 'https://gateway.example.test',
+      baseUrl: 'https://gateway.example.test/v1',
     });
   });
 

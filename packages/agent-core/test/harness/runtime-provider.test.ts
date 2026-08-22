@@ -1236,6 +1236,58 @@ describe('google base URL forwarding', () => {
       location: 'us-central1',
     });
   });
+
+  it('resolves google-vertex provider with serviceAccountFile and tilde expansion', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vtx: {
+            type: 'google-vertex',
+            serviceAccountFile: '~/.secrets/my-sa.json',
+            location: 'us-central1',
+          },
+        },
+        models: {
+          gemini: { provider: 'vtx', model: 'gemini-2.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'google-vertex',
+      vertexai: true,
+      serviceAccountFile: expect.stringContaining('.secrets/my-sa.json'),
+      location: 'us-central1',
+    });
+  });
+
+  it('resolves google-vertex-anthropic provider with serviceAccountFile', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'claude',
+        providers: {
+          vtx_claude: {
+            type: 'google-vertex-anthropic',
+            serviceAccountFile: '~/.secrets/my-sa.json',
+            project: 'proj-123',
+            location: 'us-east5',
+          },
+        },
+        models: {
+          claude: { provider: 'vtx_claude', model: 'claude-sonnet-4-6', maxContextSize: 200_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'google-vertex-anthropic',
+      vertexai: true,
+      serviceAccountFile: expect.stringContaining('.secrets/my-sa.json'),
+      project: 'proj-123',
+      location: 'us-east5',
+    });
+  });
 });
 
 describe('per-model protocol routing', () => {

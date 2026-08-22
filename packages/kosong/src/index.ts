@@ -27,6 +27,9 @@ export type {
 export * from './provider';
 export { createProvider, getModelCapability } from './providers';
 export type { ProviderConfig, ProviderType } from './providers';
+export { expandHomePath, tryReadProjectIdFromServiceAccount } from './providers/vertex-utils';
+export { GoogleGenAIChatProvider } from './providers/google-genai';
+export { AnthropicChatProvider } from './providers/anthropic';
 // Kimi provider: exported so callers can narrow a `ChatProvider` to the Kimi
 // backend (instanceof) and apply Kimi-specific request params (generation
 // kwargs, `thinking.keep` extra body).

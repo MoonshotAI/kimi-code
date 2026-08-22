@@ -3,7 +3,9 @@ import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderR
 import {
   APIStatusError,
   classifyKimiQuotaError,
+  expandHomePath,
   getModelCapability,
+  tryReadProjectIdFromServiceAccount,
   UNKNOWN_CAPABILITY,
 } from '@moonshot-ai/kosong';
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -379,7 +381,8 @@ function toKosongProviderConfig(
           ...provider.customHeaders,
         }),
       };
-    case 'vertexai': {
+    case 'vertexai':
+    case 'google-vertex': {
       // Resolve the effective endpoint once (config `base_url` or the
       // GOOGLE_VERTEX_BASE_URL env fallback) and use it for BOTH forwarding and
       // location detection, so the env fallback behaves exactly like
@@ -387,14 +390,36 @@ function toKosongProviderConfig(
       // `*-aiplatform.googleapis.com` host for the service-account path.
       const baseUrl =
         modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
+      const saFile = vertexAIServiceAccountFile(provider);
       const useServiceAccount = hasVertexAIServiceEnv(provider, baseUrl);
       return {
-        type: 'vertexai',
+        type: provider.type,
         model,
         vertexai: useServiceAccount,
         baseUrl,
         apiKey: useServiceAccount ? undefined : providerApiKey(provider),
-        project: vertexAIProject(provider),
+        serviceAccountFile: saFile,
+        project: vertexAIProject(provider, saFile),
+        location: vertexAILocation(provider, baseUrl),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
+      };
+    }
+    case 'google-vertex-anthropic': {
+      const baseUrl =
+        modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
+      const saFile = vertexAIServiceAccountFile(provider);
+      return {
+        type: 'google-vertex-anthropic',
+        model,
+        vertexai: true,
+        baseUrl,
+        apiKey: providerApiKey(provider),
+        serviceAccountFile: saFile,
+        project: vertexAIProject(provider, saFile),
         location: vertexAILocation(provider, baseUrl),
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -448,10 +473,13 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
     case 'google-genai':
       return providerValue(provider.apiKey, provider.env, 'GOOGLE_API_KEY');
     case 'vertexai':
+    case 'google-vertex':
+    case 'google-vertex-anthropic':
       return (
         nonEmptyString(provider.apiKey) ??
         envValue(provider.env, 'VERTEXAI_API_KEY') ??
-        envValue(provider.env, 'GOOGLE_API_KEY')
+        envValue(provider.env, 'GOOGLE_API_KEY') ??
+        envValue(provider.env, 'ANTHROPIC_API_KEY')
       );
     default: {
       const exhaustive: never = provider.type;
@@ -463,19 +491,46 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
   }
 }
 
-function hasVertexAIServiceEnv(provider: ProviderConfig, baseUrl: string | undefined): boolean {
-  return vertexAIProject(provider) !== undefined && vertexAILocation(provider, baseUrl) !== undefined;
+function vertexAIServiceAccountFile(provider: ProviderConfig): string | undefined {
+  const configured =
+    nonEmptyString(provider.serviceAccountFile) ??
+    (typeof provider.source?.['service_account_file'] === 'string'
+      ? nonEmptyString(provider.source['service_account_file'] as string)
+      : undefined);
+  const rawPath =
+    configured ??
+    envValue(provider.env, 'GOOGLE_APPLICATION_CREDENTIALS') ??
+    envValue(provider.env, 'SERVICE_ACCOUNT_FILE');
+  return expandHomePath(rawPath);
 }
 
-function vertexAIProject(provider: ProviderConfig): string | undefined {
-  return envValue(provider.env, 'GOOGLE_CLOUD_PROJECT');
+function hasVertexAIServiceEnv(provider: ProviderConfig, baseUrl: string | undefined): boolean {
+  const saFile = vertexAIServiceAccountFile(provider);
+  return (
+    saFile !== undefined ||
+    (vertexAIProject(provider, saFile) !== undefined &&
+      vertexAILocation(provider, baseUrl) !== undefined)
+  );
+}
+
+function vertexAIProject(provider: ProviderConfig, saFile?: string): string | undefined {
+  const saPath = saFile ?? vertexAIServiceAccountFile(provider);
+  return (
+    nonEmptyString(provider.project) ??
+    envValue(provider.env, 'GOOGLE_CLOUD_PROJECT') ??
+    tryReadProjectIdFromServiceAccount(saPath)
+  );
 }
 
 function vertexAILocation(
   provider: ProviderConfig,
   baseUrl: string | undefined,
 ): string | undefined {
-  return envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ?? locationFromVertexAIBaseUrl(baseUrl);
+  return (
+    nonEmptyString(provider.location) ??
+    envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ??
+    locationFromVertexAIBaseUrl(baseUrl)
+  );
 }
 
 function providerValue(

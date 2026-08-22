@@ -29,3 +29,30 @@ registerProviderDefinition({
     { endpoint: () => ({ apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' }) },
   ],
 });
+
+registerProviderDefinition({
+  id: 'vertexai',
+  baseProtocol: 'google-genai',
+  traits: [
+    { endpoint: () => ({ apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }) },
+    { endpoint: () => ({ apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' }) },
+  ],
+});
+
+registerProviderDefinition({
+  id: 'google-vertex',
+  baseProtocol: 'google-genai',
+  traits: [
+    { endpoint: () => ({ apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }) },
+    { endpoint: () => ({ apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' }) },
+  ],
+});
+
+registerProviderDefinition({
+  id: 'google-vertex-anthropic',
+  baseProtocol: 'anthropic',
+  traits: [
+    { endpoint: () => ({ apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }) },
+    { endpoint: () => ({ apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' }) },
+  ],
+});

@@ -20,6 +20,7 @@ import {
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
+import { expandHomePath, tryReadProjectIdFromServiceAccount } from '../provider/bases/vertex-utils';
 import {
   IProviderService,
   type ProviderConfig,
@@ -558,12 +559,23 @@ function buildProtocolProviderOptions(
   const options: MutableProtocolProviderOptions = {};
 
   switch (protocol) {
-    case 'anthropic':
+    case 'anthropic': {
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
       if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
+      const saFile = vertexAIServiceAccountFile(provider);
+      const project = vertexAIProject(provider, saFile);
+      const location = vertexAILocation(provider, baseUrl);
+      const isVertex = provider?.type === 'google-vertex-anthropic' || saFile !== undefined;
+      if (isVertex) {
+        options.vertexai = true;
+        if (saFile !== undefined) options.serviceAccountFile = saFile;
+        if (project !== undefined) options.project = project;
+        if (location !== undefined) options.location = location;
+      }
       break;
+    }
     case 'openai': {
       const reasoningKey = nonEmpty(model.reasoningKey);
       if (reasoningKey !== undefined) options.reasoningKey = reasoningKey;
@@ -571,12 +583,19 @@ function buildProtocolProviderOptions(
       break;
     }
     case 'google-genai': {
-      const project = vertexAIProject(provider);
+      const saFile = vertexAIServiceAccountFile(provider);
+      const project = vertexAIProject(provider, saFile);
       const location = vertexAILocation(provider, baseUrl);
-      if (project !== undefined && location !== undefined) {
+      const isVertex =
+        provider?.type === 'vertexai' ||
+        provider?.type === 'google-vertex' ||
+        saFile !== undefined ||
+        (project !== undefined && location !== undefined);
+      if (isVertex) {
         options.vertexai = true;
-        options.project = project;
-        options.location = location;
+        if (saFile !== undefined) options.serviceAccountFile = saFile;
+        if (project !== undefined) options.project = project;
+        if (location !== undefined) options.location = location;
       }
       break;
     }
@@ -614,15 +633,37 @@ function profileForAttribution(
   return { profile: known, inferred: false };
 }
 
-function vertexAIProject(provider: ProviderConfig | undefined): string | undefined {
-  return envValue(provider?.env, 'GOOGLE_CLOUD_PROJECT');
+function vertexAIServiceAccountFile(provider: ProviderConfig | undefined): string | undefined {
+  const configured =
+    nonEmpty(provider?.serviceAccountFile) ??
+    (typeof provider?.source?.['service_account_file'] === 'string'
+      ? nonEmpty(provider.source['service_account_file'] as string)
+      : undefined);
+  const rawPath =
+    configured ??
+    envValue(provider?.env, 'GOOGLE_APPLICATION_CREDENTIALS') ??
+    envValue(provider?.env, 'SERVICE_ACCOUNT_FILE');
+  return expandHomePath(rawPath);
+}
+
+function vertexAIProject(provider: ProviderConfig | undefined, saFile?: string): string | undefined {
+  const saPath = saFile ?? vertexAIServiceAccountFile(provider);
+  return (
+    nonEmpty(provider?.project) ??
+    envValue(provider?.env, 'GOOGLE_CLOUD_PROJECT') ??
+    tryReadProjectIdFromServiceAccount(saPath)
+  );
 }
 
 function vertexAILocation(
   provider: ProviderConfig | undefined,
   baseUrl: string | undefined,
 ): string | undefined {
-  return envValue(provider?.env, 'GOOGLE_CLOUD_LOCATION') ?? locationFromVertexAIBaseUrl(baseUrl);
+  return (
+    nonEmpty(provider?.location) ??
+    envValue(provider?.env, 'GOOGLE_CLOUD_LOCATION') ??
+    locationFromVertexAIBaseUrl(baseUrl)
+  );
 }
 
 function envValue(env: Record<string, string> | undefined, key: string): string | undefined {

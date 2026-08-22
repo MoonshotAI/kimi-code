@@ -10,6 +10,8 @@ export const ProviderTypeSchema = z.enum([
   'google-genai',
   'openai_responses',
   'vertexai',
+  'google-vertex',
+  'google-vertex-anthropic',
 ]);
 
 export type ProviderType = z.infer<typeof ProviderTypeSchema>;
@@ -29,6 +31,9 @@ export const ProviderConfigSchema = z.object({
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   defaultModel: z.string().optional(),
+  serviceAccountFile: z.string().optional(),
+  project: z.string().optional(),
+  location: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
   customHeaders: StringRecordSchema.optional(),

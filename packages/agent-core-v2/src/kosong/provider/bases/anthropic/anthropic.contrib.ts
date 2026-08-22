@@ -22,6 +22,10 @@ registerProtocolBase({
         adaptiveThinking: config.providerOptions?.adaptiveThinking,
         supportEfforts: config.providerOptions?.supportEfforts,
         betaApi: config.providerOptions?.betaApi,
+        vertexai: config.providerOptions?.vertexai,
+        project: config.providerOptions?.project,
+        location: config.providerOptions?.location,
+        serviceAccountFile: config.providerOptions?.serviceAccountFile,
         metadata:
           config.providerOptions?.metadata === undefined
             ? undefined
