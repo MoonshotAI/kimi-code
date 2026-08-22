@@ -29,6 +29,7 @@ import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/ba
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
+import { canonicalizePath } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import {
@@ -272,13 +273,9 @@ export class BashTool implements BuiltinTool<BashInput> {
 
   private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
     const shellCwd = getShellPathBridge(this.kaos.osEnv).toShellPath(effectiveCwd);
-    const shellArgs = [
-      this.kaos.osEnv.shellPath,
-      '-c',
-      `cd ${shellQuote(shellCwd)} && ${command}`,
-    ];
+    const shellArgs = [this.kaos.osEnv.shellPath, '-c', command];
 
-    const noninteractiveEnv: Record<string, string> = {
+    const shellEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
       // Default to '0' so git fails fast on private remotes if a TTY happens
@@ -288,13 +285,16 @@ export class BashTool implements BuiltinTool<BashInput> {
       SHELL: this.kaos.osEnv.shellPath,
     };
 
-    // Merge ambient env + noninteractive knobs so tools like git / node
+    // Merge ambient env + shell-specific overrides so tools like git / node
     // don't open a pager and paints don't colour the stream.
     const mergedEnv: Record<string, string> = {
       ...(process.env as Record<string, string>),
-      ...noninteractiveEnv,
+      ...shellEnv,
     };
-    return this.kaos.execWithEnv(shellArgs, mergedEnv);
+    return this.kaos
+      .withCwd(effectiveCwd)
+      .withEnv({ PWD: shellCwd })
+      .execWithEnv(shellArgs, mergedEnv);
   }
 
   /**
@@ -319,7 +319,6 @@ export class BashTool implements BuiltinTool<BashInput> {
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeForegroundTimeoutMs(args.timeout);
     const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
-    const effectiveCwd = args.cwd ?? this.cwd;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
       ? args.disable_timeout
@@ -330,6 +329,10 @@ export class BashTool implements BuiltinTool<BashInput> {
     const builder = new ToolResultBuilder();
     let proc: KaosProcess;
     try {
+      const effectiveCwd =
+        args.cwd === undefined
+          ? this.cwd
+          : canonicalizePath(args.cwd, this.cwd, this.kaos.pathClass());
       proc = await this.spawn(effectiveCwd, command);
     } catch (error) {
       return {
@@ -601,10 +604,6 @@ async function killSpawnedProcess(proc: KaosProcess): Promise<void> {
   } finally {
     await disposeProcess(proc);
   }
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replaceAll("'", "'\\''")}'`;
 }
 
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
