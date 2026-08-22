@@ -30,10 +30,11 @@ import { AssistantMessageComponent } from '#/tui/components/messages/assistant-m
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import {
-  groupTurns,
+  TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
+  groupTurns,
 } from '#/tui/utils/transcript-window';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
@@ -141,6 +142,7 @@ interface MessageDriver {
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
   getCurrentSessionId(): string;
+  toggleToolOutputExpansion(): void;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -8412,15 +8414,20 @@ describe('/effort support_efforts override', () => {
 });
 
 describe('transcript step and assistant folding', () => {
-  function driveSteps(driver: MessageDriver, cycles: number): void {
+  function driveSteps(
+    driver: MessageDriver,
+    cycles: number,
+    turnId = 1,
+    messagePrefix = 'msg',
+  ): void {
     for (let i = 0; i < cycles; i++) {
       driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          delta: `msg-${i} `,
+          turnId,
+          delta: `${messagePrefix}-${i} `,
         } as Event,
         vi.fn(),
       );
@@ -8429,8 +8436,8 @@ describe('transcript step and assistant folding', () => {
           type: 'tool.call.started',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          toolCallId: `call_${i}`,
+          turnId,
+          toolCallId: `call_${turnId}_${i}`,
           name: 'Bash',
           args: { command: 'ls' },
         } as Event,
@@ -8441,8 +8448,8 @@ describe('transcript step and assistant folding', () => {
           type: 'tool.result',
           agentId: 'main',
           sessionId: 'ses-1',
-          turnId: 1,
-          toolCallId: `call_${i}`,
+          turnId,
+          toolCallId: `call_${turnId}_${i}`,
           output: 'ok',
           isError: undefined,
         } as Event,
@@ -8477,6 +8484,14 @@ describe('transcript step and assistant folding', () => {
       (entry) => entry.kind === 'assistant',
     );
     expect(assistantEntries).toHaveLength(cycles);
+
+    const collapsed = stripSgr(renderTranscript(driver));
+    expect(collapsed).not.toContain('msg-0');
+
+    driver.toggleToolOutputExpansion();
+    const expanded = stripSgr(renderTranscript(driver));
+    expect(expanded).toContain('msg-0');
+    expect(expanded.indexOf('msg-0')).toBeLessThan(expanded.indexOf('msg-1'));
   });
 
   it('does not fold a turn within the caps', async () => {
@@ -8528,5 +8543,35 @@ describe('transcript step and assistant folding', () => {
     // The conclusion stays mounted.
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('msg-0');
+    driver.toggleToolOutputExpansion();
+    expect(stripSgr(renderTranscript(driver))).toContain('msg-0');
+  });
+
+  it('collapses expanded summaries after they leave the recent-turn window', async () => {
+    const { driver } = await makeDriver();
+    const cycles = TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED + 1;
+
+    for (let turnId = 1; turnId <= TRANSCRIPT_EXPAND_TURNS + 1; turnId++) {
+      driver.handleUserInput(`round ${turnId}`);
+      driveSteps(driver, cycles, turnId, `turn-${turnId}-msg`);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId,
+          reason: 'completed',
+        } as Event,
+        vi.fn(),
+      );
+      if (turnId === 1) driver.toggleToolOutputExpansion();
+    }
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('turn-1-msg-0');
+    expect(transcript).toContain('turn-2-msg-0');
+    expect(driver.state.toolOutputExpanded).toBe(true);
   });
 });

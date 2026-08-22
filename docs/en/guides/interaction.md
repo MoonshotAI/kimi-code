@@ -83,7 +83,7 @@ The input box remains usable while the agent is thinking or calling tools, and s
 
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
-- **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
+- **`Ctrl-O`**: globally toggle tool output, assistant messages folded into transcript summaries, and compaction summaries
 
 ## External editor
 

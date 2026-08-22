@@ -20,6 +20,7 @@ import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
 import {
+  TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
 } from '#/tui/utils/transcript-window';
@@ -44,6 +45,7 @@ interface ReplayDriver {
   readonly sessionEventHandler: SessionEventHandler;
   init(): Promise<boolean>;
   switchToSession(session: Session, statusMessage: string): Promise<void>;
+  toggleToolOutputExpansion(): void;
 }
 
 function makeStartupInput(): KimiTUIStartupInput {
@@ -1464,10 +1466,41 @@ describe('KimiTUI resume message replay', () => {
     expect(summaryText).toContain(`call ${40 - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
     expect(summaryText).toContain(`${5 - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
 
-    // The folded content is gone from view; the latest work stays.
+    // The folded content stays hidden until the global expansion toggle is used.
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('final text 0');
     expect(transcript).toContain('final text 4');
+
+    driver.toggleToolOutputExpansion();
+    const expanded = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(expanded).toContain('final text 0');
+    expect(expanded.indexOf('final text 0')).toBeLessThan(expanded.indexOf('final text 1'));
+  });
+
+  it('keeps replayed summaries outside the expansion turn window collapsed', async () => {
+    const replay: AgentReplayRecord[] = [];
+    const turnCount = TRANSCRIPT_EXPAND_TURNS + 1;
+    const messageCount = TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED + 1;
+    for (let turn = 0; turn < turnCount; turn++) {
+      replay.push(message('user', [{ type: 'text', text: `prompt ${turn}` }]));
+      for (let reply = 0; reply < messageCount; reply++) {
+        replay.push(
+          message('assistant', [{ type: 'text', text: `turn ${turn} hidden reply ${reply}` }]),
+        );
+      }
+    }
+
+    const initial = makeSession([]);
+    const resumed = makeSession(replay);
+    const driver = await makeDriver(initial);
+    driver.state.toolOutputExpanded = true;
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('turn 0 hidden reply 0');
+    expect(transcript).toContain(
+      `turn ${turnCount - TRANSCRIPT_EXPAND_TURNS} hidden reply 0`,
+    );
   });
 });
 
