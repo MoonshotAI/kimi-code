@@ -25,14 +25,18 @@ import DESCRIPTION from './fetch-url.md?raw';
  *   returned verbatim, in full.
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
+ * - `image` — the body was an image file; returned as a base64 data URL
+ *   for direct model consumption.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
+  /** The text handed to the LLM (for passthrough / extracted). */
   content: string;
   /** Whether `content` is a verbatim passthrough or extracted main text. */
   kind: UrlFetchKind;
+  /** Present when `kind === 'image'` — the image as a base64 data URL. */
+  imageData?: { mimeType: string; base64: string };
 }
 
 export interface UrlFetcher {
@@ -89,7 +93,22 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind, imageData } = await this.fetcher.fetch(args.url, { toolCallId });
+
+      // Image response: return as multimodal ContentPart[] so the model
+      // can see the image directly.
+      if (kind === 'image' && imageData !== undefined) {
+        return {
+          output: [
+            { type: 'text', text: `Fetched image from ${args.url}` },
+            {
+              type: 'image_url',
+              imageUrl: { url: `data:${imageData.mimeType};base64,${imageData.base64}` },
+            },
+          ],
+          isError: false,
+        };
+      }
 
       if (!content) {
         return {
