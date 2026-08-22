@@ -38,6 +38,10 @@ export default {
   loadingOlder: 'Loading earlier messages…',
   widenTable: 'Widen table',
   restoreTableWidth: 'Restore default width',
+  wrapCode: 'Enable word wrap',
+  unwrapCode: 'Disable word wrap',
+  showLineNumbers: 'Show line numbers',
+  hideLineNumbers: 'Hide line numbers',
   cron: {
     fired: 'Scheduled reminder fired',
     missed: 'Missed scheduled reminders',

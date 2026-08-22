@@ -116,6 +116,9 @@ import TablerDeviceDesktop from '~icons/tabler/device-desktop';
 import TablerFlask from '~icons/tabler/flask';
 import TablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse';
 import TablerPaperclip from '~icons/tabler/paperclip';
+import TablerTextWrap from '~icons/tabler/text-wrap';
+import TablerTextWrapDisabled from '~icons/tabler/text-wrap-disabled';
+import TablerListNumbers from '~icons/tabler/list-numbers';
 
 // Components (Remix) ---------------------------------------------------------
 import RiBracesLine from '~icons/ri/braces-line';
@@ -225,6 +228,9 @@ import RawTablerDeviceDesktop from '~icons/tabler/device-desktop?raw';
 import RawTablerFlask from '~icons/tabler/flask?raw';
 import RawTablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse?raw';
 import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
+import RawTablerTextWrap from '~icons/tabler/text-wrap?raw';
+import RawTablerTextWrapDisabled from '~icons/tabler/text-wrap-disabled?raw';
+import RawTablerListNumbers from '~icons/tabler/list-numbers?raw';
 
 // Raw SVG strings (Remix) ----------------------------------------------------
 import RawBracesLine from '~icons/ri/braces-line?raw';
@@ -266,6 +272,9 @@ export type IconName =
   | 'archive'
   | 'search'
   | 'copy'
+  | 'text-wrap'
+  | 'text-wrap-disabled'
+  | 'list-numbers'
   | 'link'
   | 'external-link'
   | 'download'
@@ -391,6 +400,13 @@ export const ICONS: Record<IconName, IconEntry> = {
   archive: entry(KimiArchive, RawKimiArchive),
   search: entry(KimiSearch, RawKimiSearch),
   copy: entry(KimiCopy, RawKimiCopy),
+  // Code-block word-wrap toggle (chat markdown code / diff bars). The Kimi
+  // set has no wrap glyph; tabler's text-wrap pair gives the two states.
+  'text-wrap': entry(TablerTextWrap, RawTablerTextWrap),
+  'text-wrap-disabled': entry(TablerTextWrapDisabled, RawTablerTextWrapDisabled),
+  // Code-block line-numbers toggle (chat markdown code / diff bars) — same
+  // tabler family as the wrap pair, single glyph + pressed state.
+  'list-numbers': entry(TablerListNumbers, RawTablerListNumbers),
   link: entry(KimiLink, RawKimiLink),
   'external-link': entry(RiExternalLinkLine, RawExternalLinkLine),
   download: entry(KimiDownload, RawKimiDownload),
@@ -526,6 +542,9 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'check',
       'search',
       'copy',
+      'text-wrap',
+      'text-wrap-disabled',
+      'list-numbers',
       'link',
       'external-link',
       'download',

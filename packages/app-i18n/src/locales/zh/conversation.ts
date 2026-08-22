@@ -38,6 +38,10 @@ export default {
   loadingOlder: '正在加载更早的消息…',
   widenTable: '加宽表格',
   restoreTableWidth: '恢复默认宽度',
+  wrapCode: '开启自动换行',
+  unwrapCode: '关闭自动换行',
+  showLineNumbers: '显示行号',
+  hideLineNumbers: '隐藏行号',
   cron: {
     fired: '定时任务已触发',
     missed: '错过的定时提醒',

@@ -1,6 +1,6 @@
 <!-- @moonshot-ai/app-markdown — Markdown.vue -->
 <script setup lang="ts">
-import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useKimiI18n } from '@moonshot-ai/app-i18n';
 import { MarkdownRender, enableKatex, enableMermaid } from 'markstream-vue';
 import { ensureMarkdownWorkers } from './lib/markdownWorkers';
@@ -12,6 +12,8 @@ import { splitFrontmatter } from './lib/frontmatter';
 import { configureMarkdownIt } from './lib/inlineMath';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyCodeBlockFallback, copyTextToClipboard } from './lib/clipboard';
+import { CODE_BLOCK_UNSAFE_CSS, diffWrapKeys, ensureCodeBlockToggles, ensureCodeCopyTooltip, pruneWrapKeys, toggleWrapIndex, type CodeBlockToggleLabels } from './lib/codeWrap';
+import { ensureCodeTooltip, hideCodeTooltipIfAnchorGone, hideCodeTooltipIfAnchorWithin } from './lib/codeTooltip';
 import {
   ensureTableWideToggle,
   updateTableWideToggle,
@@ -25,7 +27,7 @@ interface FilePreviewRequest {
   path: string;
   line?: number;
 }
-import { Icon, Tooltip } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -405,6 +407,44 @@ function processTableWideToggles(): void {
   }
 }
 
+// Header toggles (line numbers + word wrap) — injected into each
+// `.code-block-container`'s header action row (see codeWrap.ts). Same
+// lifecycle as the table-wide toggles above: skip while streaming (markstream
+// keeps rebuilding block DOM mid-stream, and an injected control must never
+// disturb the streaming highlight path), then settle once the turn ends.
+function codeBlockToggleLabels(): CodeBlockToggleLabels {
+  return {
+    wrap: t('conversation.wrapCode'),
+    unwrap: t('conversation.unwrapCode'),
+    showNums: t('conversation.showLineNumbers'),
+    hideNums: t('conversation.hideLineNumbers'),
+    copy: t('filePreview.copyCode'),
+  };
+}
+
+function processCodeBlockToggles(): void {
+  if (!mdRef.value || props.streaming) return;
+  const labels = codeBlockToggleLabels();
+  for (const container of mdRef.value.querySelectorAll<HTMLElement>('.code-block-container')) {
+    ensureCodeBlockToggles(container, labels);
+  }
+}
+
+// Copy-button tooltips — markstream's own bubble is English-only and disabled
+// (showTooltips: false), so the header copy button gets a localized
+// data-md-tip attribute here (served by the codeTooltip singleton). Unlike
+// the wrap toggle this ALSO runs while streaming: the copy button is live
+// mid-stream, and the stamp is idempotent + attribute-only (it cannot loop
+// the observer), so markstream rebuilding block DOM mid-stream is harmless —
+// the next pass re-stamps whatever was recreated.
+function processCodeCopyTooltips(): void {
+  if (!mdRef.value) return;
+  const copy = t('filePreview.copyCode');
+  for (const container of mdRef.value.querySelectorAll<HTMLElement>('.code-block-container')) {
+    ensureCodeCopyTooltip(container, copy);
+  }
+}
+
 function updateTableWideToggles(): void {
   // Skip while streaming: the .md root resizes constantly mid-stream and each
   // update measures header rects (forced reflow) — pointless, because toggle
@@ -417,20 +457,45 @@ function updateTableWideToggles(): void {
 
 function scheduleFileLinkProcessing(): void {
   void nextTick().then(() => {
+    // A streaming re-render may have removed the tooltip's anchor without a
+    // mouseout — close the stale bubble on the same pass.
+    hideCodeTooltipIfAnchorGone();
     processFileLinks();
     processMarkdownLinks();
     processTableWideToggles();
+    processCodeCopyTooltips();
+    processCodeBlockToggles();
   });
 }
 
 watch(() => props.text, scheduleFileLinkProcessing);
 watch(() => props.streaming, scheduleFileLinkProcessing);
+// Locale switch: t() tracks the active locale inside a watcher getter, so
+// this fires on language change and re-labels every injected toggle
+// (ensureCodeBlockToggles refreshes existing buttons; the local diff toggle
+// labels are template bindings and re-render on their own).
+watch(
+  () => [
+    t('conversation.wrapCode'),
+    t('conversation.unwrapCode'),
+    t('conversation.showLineNumbers'),
+    t('conversation.hideLineNumbers'),
+    t('filePreview.copyCode'),
+  ],
+  () => {
+    processCodeCopyTooltips();
+    processCodeBlockToggles();
+  },
+);
 
 let observer: MutationObserver | null = null;
 // Column-width changes alter whether each table overflows its wrapper, so the
 // toggle's visibility is re-evaluated whenever the markdown root resizes.
 let tableWideResizeObserver: ResizeObserver | null = null;
 onMounted(() => {
+  // The document-level tooltip singleton serving the injected header buttons
+  // (data-md-tip) — idempotent, one bubble + one listener set for the app.
+  ensureCodeTooltip();
   scheduleFileLinkProcessing();
   if (mdRef.value) {
     observer = new MutationObserver(scheduleFileLinkProcessing);
@@ -439,9 +504,14 @@ onMounted(() => {
     tableWideResizeObserver.observe(mdRef.value);
   }
 });
-onUnmounted(() => {
+onBeforeUnmount(() => {
   observer?.disconnect();
   tableWideResizeObserver?.disconnect();
+  // Close the shared tooltip if its anchor lived in THIS instance. Must run
+  // BEFORE unmount: onUnmounted would already find mdRef nulled (the subtree
+  // is gone first), while a page switch removes the root without a mouseout.
+  // Anchors in other live Markdown instances survive.
+  hideCodeTooltipIfAnchorWithin(mdRef.value);
 });
 
 // Shiki themes for code blocks: github-light on the light surface,
@@ -475,10 +545,19 @@ const CODE_DARK_THEME = 'github-dark';
 // fontSize / fontFamily matter as much as the gutter: since 1.0.9 the shiki
 // renderer (stream-diffs) applies these options as inline styles on the code
 // container (`applyEditorStyles`), so CSS overrides cannot beat them — the
-// values must be passed here. fontSize mirrors --text-sm (13px). `padding`
-// is ignored by the settled renderer (it draws inside a shadow root; its
-// vertical padding comes from `--diffs-gap-block` below) but sets the loading
-// fallback's inline padding, keeping the fallback → settled swap stable.
+// values must be passed here. fontSize mirrors --text-sm (13px). The loading
+// fallback's padding is NOT set here: a numeric option would duplicate the
+// spacing tokens and drift from them — the fallback's padding comes from the
+// same token-driven CSS rules as the settled renderer (see the
+// `.code-pre-fallback` rule below), so the fallback → settled swap stays
+// stable even when the tokens change.
+//
+// `unsafeCSS` is pierre's sanctioned channel for host styles inside its
+// shadow root (injected as the last cascade layer, so it beats pierre's base
+// layer without !important; markstream forwards it from here and prepends
+// its own rule). The rules themselves — code-column inset alignment and the
+// line-number counter — live in codeWrap.ts
+// (CODE_BLOCK_UNSAFE_CSS) next to the rest of the toggle machinery.
 const codeBlockProps = {
   showHeader: true,
   showCopyButton: true,
@@ -486,12 +565,23 @@ const codeBlockProps = {
   showPreviewButton: false,
   showCollapseButton: false,
   showFontSizeButtons: false,
+  // markstream's built-in tooltip bubble is English-only; we disable it and
+  // stamp localized native titles on the copy button instead (codeWrap.ts),
+  // which also avoids a double tooltip (bubble + native title) on hover.
+  showTooltips: false,
   loading: false,
   monacoOptions: {
     lineNumbers: false,
     fontSize: 13,
     fontFamily: 'var(--font-mono)',
-    padding: { top: 12, bottom: 12 },
+    unsafeCSS: CODE_BLOCK_UNSAFE_CSS,
+    // Pin the default to no-wrap (horizontal scroll) instead of inheriting
+    // markstream's wrap-by-default: the per-block wrap toggle (codeWrap.ts)
+    // starts from the unwrapped state, so the rendered default must match.
+    // The toggle itself never touches this option — it flips the block's
+    // `md-code-wrap` class + the pierre shadow pre's data-overflow — so
+    // turning wrap on for one block never remounts it or its siblings.
+    wordWrap: 'off',
   },
 };
 
@@ -574,6 +664,41 @@ function copyDiff(code: string, idx: number) {
     }, 1400);
   });
 }
+
+// Word-wrap and line-numbers state for local diff blocks — the diff-bar
+// twins of the markstream header toggles (codeWrap.ts). Keyed per block
+// (code text + same-content occurrence index — a best-effort identity, see
+// the trade-off note on codeWrap.ts diffWrapKeys): keys follow each block
+// when new message content inserts/removes/reorders segments, and identical
+// blocks stay independent. Non-diff slots get a placeholder key so the
+// array stays index-aligned with `segments`.
+const wrappedDiffs = reactive(new Set<string>());
+const numberedDiffs = reactive(new Set<string>());
+const diffKeys = computed(() =>
+  diffWrapKeys(segments.value.map((seg) => (seg.kind === 'diff' ? seg.code : ''))),
+);
+// Prune keys whose block no longer exists (deleted, or its code edited), so
+// the Sets can't accumulate stale entries over a long session.
+watch(diffKeys, (keys) => {
+  pruneWrapKeys(wrappedDiffs, keys);
+  pruneWrapKeys(numberedDiffs, keys);
+});
+function isDiffWrapped(i: number): boolean {
+  const key = diffKeys.value[i];
+  return key !== undefined && wrappedDiffs.has(key);
+}
+function toggleDiffWrap(i: number): void {
+  const key = diffKeys.value[i];
+  if (key !== undefined) toggleWrapIndex(wrappedDiffs, key);
+}
+function isDiffNumbered(i: number): boolean {
+  const key = diffKeys.value[i];
+  return key !== undefined && numberedDiffs.has(key);
+}
+function toggleDiffNums(i: number): void {
+  const key = diffKeys.value[i];
+  if (key !== undefined) toggleWrapIndex(numberedDiffs, key);
+}
 </script>
 
 <template>
@@ -601,9 +726,31 @@ function copyDiff(code: string, idx: number) {
       />
 
       <!-- ```diff fence → local renderer (preserves +/- markers + colours) -->
-      <div v-else class="diff-wrap">
+      <div
+        v-else
+        class="diff-wrap"
+        :class="{ 'md-code-wrap': isDiffWrapped(i), 'md-code-nums': isDiffNumbered(i) }"
+      >
         <div class="diff-bar">
           <span class="diff-lang">diff</span>
+          <IconButton
+            size="sm"
+            :label="isDiffNumbered(i) ? t('conversation.hideLineNumbers') : t('conversation.showLineNumbers')"
+            :tooltip="isDiffNumbered(i) ? t('conversation.hideLineNumbers') : t('conversation.showLineNumbers')"
+            :aria-pressed="isDiffNumbered(i)"
+            @click="toggleDiffNums(i)"
+          >
+            <Icon name="list-numbers" size="sm" />
+          </IconButton>
+          <IconButton
+            size="sm"
+            :label="isDiffWrapped(i) ? t('conversation.unwrapCode') : t('conversation.wrapCode')"
+            :tooltip="isDiffWrapped(i) ? t('conversation.unwrapCode') : t('conversation.wrapCode')"
+            :aria-pressed="isDiffWrapped(i)"
+            @click="toggleDiffWrap(i)"
+          >
+            <Icon :name="isDiffWrapped(i) ? 'text-wrap-disabled' : 'text-wrap'" size="sm" />
+          </IconButton>
           <Tooltip :text="t('filePreview.copyCode')">
             <button class="diff-copy" :aria-label="t('filePreview.copyCode')" @click="copyDiff(seg.code, i)">
               <Icon :name="copiedDiff === i ? 'check' : 'copy'" size="sm" />
@@ -874,7 +1021,7 @@ function copyDiff(code: string, idx: number) {
   box-shadow: var(--shadow-xs);
   overflow: hidden;
   --vscode-editor-font-size: var(--text-sm);
-  --vscode-editor-line-height: calc(var(--text-sm) * 1.65);
+  --vscode-editor-line-height: calc(var(--text-sm) * var(--leading-normal));
 }
 .md :deep(.code-block-header) {
   background: var(--color-surface);
@@ -882,6 +1029,9 @@ function copyDiff(code: string, idx: number) {
   padding: 4px 6px 4px 12px;
   color: var(--color-text-muted);
   font: var(--text-xs) var(--font-ui);
+  /* Tighter language icon ↔ name gap than upstream's 10px (--ms-space-2_5);
+     --space-1-5 is the design system's icon↔label gap step. */
+  --ms-gap-header-main: var(--space-1-5);
 }
 .md :deep(.code-block-header *) {
   color: var(--color-text-muted);
@@ -889,6 +1039,12 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.code-block-header .code-header-main) {
   font-family: var(--font-ui);
+}
+/* Language name — the block's title, not chrome: one type step up from the
+   header text (--text-xs → --text-sm) at medium weight. */
+.md :deep(.code-block-header .code-header-title) {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
 }
 /* Copy button — mirrors the §03 IconButton: muted glyph, sunken hover, soft
    radius, and the shared focus ring. markstream renders its own button (the
@@ -904,7 +1060,17 @@ function copyDiff(code: string, idx: number) {
     color var(--duration-base) var(--ease-out);
 }
 .md :deep(.code-block-header .code-action-btn:hover) {
-  background: var(--color-surface-sunken);
+  /* The §03 IconButton hover wash: the translucent f1 fill stays visible on
+     ANY backdrop — the sunken token it replaced reads nearly identical to
+     the header's --color-surface in both themes, so hover looked dead. */
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+.md :deep(.code-block-header .code-action-btn:hover *) {
+  /* Ink only — the background wash stays on the button (painting a
+     translucent fill on descendants would stack it, the pressed-state bug).
+     Required because the blanket `.code-block-header *` rule pins the icon
+     to --color-text-muted, and the glyph draws with currentColor. */
   color: var(--color-text);
 }
 .md :deep(.code-block-header .code-action-btn:focus-visible) {
@@ -914,6 +1080,57 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-block-header .code-action-btn *) {
   pointer-events: none;
 }
+/* Pressed state of the injected toggles (codeWrap.ts): the design system's
+   NEUTRAL on-state — the --color-selected fill (never accent: accent is the
+   primary-action/link hue, not a state color; see the fills ladder in
+   style.css). The fill goes on the BUTTON ONLY: it is translucent, so
+   painting it on nested elements too stacked a second, darker layer inside
+   the icon (the double-background bug). */
+.md :deep(.code-block-header .md-code-wrap-toggle[aria-pressed='true']),
+.md :deep(.code-block-header .md-code-nums-toggle[aria-pressed='true']) {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+/* …while DESCENDANTS get only the ink (and a hard-transparent background, so
+   nothing upstream can leak a second fill in). The ` *` variant is required
+   for the color: the blanket `.code-block-header *` rule above pins every
+   descendant to --color-text-muted, and the registry glyph draws with
+   currentColor. */
+.md :deep(.code-block-header .md-code-wrap-toggle[aria-pressed='true'] *),
+.md :deep(.code-block-header .md-code-nums-toggle[aria-pressed='true'] *) {
+  background: transparent;
+  color: var(--color-text);
+}
+/* Resting-at-selected hover steps one rung deeper (--color-selected-hover),
+   again on the button alone. */
+.md :deep(.code-block-header .md-code-wrap-toggle[aria-pressed='true']:hover),
+.md :deep(.code-block-header .md-code-nums-toggle[aria-pressed='true']:hover) {
+  background: var(--color-selected-hover);
+}
+/* Word-wrap on (the toggle sets .md-code-wrap on the block container): force
+   every light-DOM code path to pre-wrap — the plain-pre renderer is
+   CSS-only, while the streaming plain-text pre and the loading fallback
+   carry inline white-space, hence !important. The settled shiki block lives
+   in pierre's shadow root, which this rule cannot reach; codeWrap.ts flips
+   its internal pre's data-overflow attribute instead. */
+.md :deep(.code-block-container.md-code-wrap pre) {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere;
+}
+/* Text selection on code surfaces — the global --p-selection wash reads only
+   ~1.3:1 against the code well (too subtle in review). The per-theme
+   --color-code-selection tokens (style.css) keep the major shiki token
+   colors at WCAG 1.4.3 (≥4.5:1 — the ink is NOT flattened) while the fill
+   sits at ≈1.5:1 vs the well (a product visibility floor, not WCAG — see
+   the style.css rationale for the 1.4.11 mis-anchoring retrospective and
+   the documented residual colors). Scoped to code blocks + the local diff
+   renderer so the rest of the page keeps --p-selection. The pierre shadow
+   root is covered separately (CODE_BLOCK_UNSAFE_CSS). */
+.md :deep(.code-block-container ::selection),
+.md :deep(.diff-wrap ::selection) {
+  background: var(--color-code-selection);
+  color: var(--color-code-selection-text);
+}
 /* The code body wrapper was renamed in 1.0.9: `.code-block-content` is gone,
    the shiki (stream-diffs) block now mounts under `.code-block-shell-content`. */
 .md :deep(.code-block-shell-content),
@@ -921,37 +1138,39 @@ function copyDiff(code: string, idx: number) {
   background: var(--color-well);
 }
 /* Pierre renders the highlighted code inside a shadow root. Its native gap
-   variable inherits through that boundary; the Monaco `padding` option above
-   does not, but it sets the loading fallback's inline padding — both layers
-   end up at 12px. Line height stays relative (1.65) so every rendering path
-   shares the token ratio without pinning a px value into inline styles. */
+   variable inherits through that boundary; the loading fallback (light DOM)
+   gets the same --space-2 block padding from its own rule below, so both
+   layers track the token. Line height uses the shared --leading-normal
+   token (1.5, same as HighlightedCode in the file preview / diff detail) so
+   every rendering path tracks it without pinning a px value anywhere. */
 .md :deep(.code-editor-container) {
-  line-height: 1.65;
-  --diffs-gap-block: var(--space-3);
+  line-height: var(--leading-normal);
+  --diffs-gap-block: var(--space-2);
 }
 .md :deep(.code-editor-container diffs-container) {
-  --diffs-line-height: 1.65em;
+  --diffs-line-height: var(--leading-normal);
 }
 /* Loading/streaming fallback <pre>: upstream hardcodes show-line-numbers on
    it while the settled stream-diffs block honors lineNumbers:false — the
    gutter (and its reserved padding) popping in and out on every load is a
-   visible flash. Hide the fallback gutter, pin its left inset to the settled
-   per-line padding (1ch), and force the shared 1.65 line height over the
-   inline 1.5×-font-size default upstream stamps on the pre, so the
-   fallback → highlighted swap is layout-stable. */
+   visible flash. Hide the fallback gutter, and give the fallback the exact
+   settled padding (block --space-2, inline --space-3 aligned with the header
+   icon) plus the shared --leading-normal line height over the inline
+   1.5×-font-size default upstream stamps on the pre, so the fallback →
+   highlighted swap is layout-stable. */
 .md :deep(.code-pre-fallback > .markstream-pre__line-numbers) {
   display: none;
 }
 .md :deep(.code-block-container .code-pre-fallback) {
-  padding-left: 1ch;
-  line-height: 1.65 !important;
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--leading-normal) !important;
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(.markstream-pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
   margin: 0;
-  padding: 12px 14px;
+  padding: var(--space-2) var(--space-3);
   overflow-x: auto;
-  font: var(--text-sm)/1.65 var(--font-mono);
+  font: var(--text-sm)/var(--leading-normal) var(--font-mono);
 }
 .md :deep(.code-block-container pre code) {
   font: inherit;
@@ -1260,6 +1479,10 @@ function copyDiff(code: string, idx: number) {
    render diffs ourselves.
 --------------------------------------------------------------------------- */
 .diff-wrap {
+  /* The sign-column width comes from the shared --diff-sign-col design
+     token (style.css): the sign cell, the wrap hanging indent, and the
+     line-number counter gutter all derive from it, so a rescale can never
+     strand a hardcoded value. */
   margin: 0.6em 0;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
@@ -1303,27 +1526,91 @@ function copyDiff(code: string, idx: number) {
   outline: none;
   box-shadow: var(--p-focus-ring);
 }
+/* Pressed toggles (IconButtons; aria-pressed falls through to the root
+   button) — same NEUTRAL on-state as the markstream-header toggles above:
+   the --color-selected fill, full-colour ink, one-rung-deeper hover. */
+.diff-bar :deep(.ui-icon-button[aria-pressed='true']) {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.diff-bar :deep(.ui-icon-button[aria-pressed='true']:hover) {
+  background: var(--color-selected-hover);
+}
+/* Diff wrap on (.md-code-wrap on .diff-wrap): the pre wraps; the code
+   column's max-content width — what keeps long lines on one line in scroll
+   mode — relaxes to the container so lines actually fold. */
+.diff-wrap.md-code-wrap .diff-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-wrap.md-code-wrap .diff-pre code {
+  width: auto;
+}
+/* Wrapped diff WITHOUT line numbers: hang the sign column inside the
+   row's left padding, so a folded continuation starts at the code column
+   (aligned with the first line's text) instead of dropping under the +/-
+   sign and reading like a new diff row. With numbers on, the counter rules
+   below already reserve sign+gutter and need no help. */
+.diff-wrap.md-code-wrap:not(.md-code-nums) .diff-line {
+  padding-left: calc(var(--space-3) + var(--diff-sign-col));
+}
+.diff-wrap.md-code-wrap:not(.md-code-nums) .diff-sign {
+  margin-left: calc(-1 * var(--diff-sign-col));
+}
+/* Line numbers for diff rows, gated on the per-block numbers toggle
+   (.md-code-nums) — same contract as the markstream code blocks
+   (codeWrap.ts CODE_BLOCK_UNSAFE_CSS): the toggle is independent of wrap and
+   shows numbers in BOTH modes; a wrapped continuation gets none and aligns
+   with the code column. Real diff rows are numbered with a pure-CSS counter
+   (hunk headers are not file lines and are skipped). The 4ch number gutter
+   (3ch digits + 1ch gap) plus the sign column (--diff-sign-col) are carved out of the
+   row's left padding, so the gutter's left edge stays at --space-3 and
+   continuations land exactly under the text. Generated content never enters
+   copy. */
+.diff-wrap.md-code-nums .diff-pre {
+  counter-reset: md-diff-line;
+}
+.diff-wrap.md-code-nums .diff-line:not(.diff-hunk) {
+  counter-increment: md-diff-line;
+  padding-left: calc(var(--space-3) + 4ch + var(--diff-sign-col));
+}
+.diff-wrap.md-code-nums .diff-line:not(.diff-hunk)::before {
+  content: counter(md-diff-line);
+  display: inline-block;
+  /* Fixed 3ch box, digits right-aligned: 4+-digit numbers overflow left
+     (into the --space-3 inset) rather than widening the gutter mid-block. */
+  width: 3ch;
+  overflow: visible;
+  margin-left: calc(-1 * (4ch + var(--diff-sign-col)));
+  margin-right: 1ch;
+  text-align: right;
+  color: var(--color-text-faint);
+  user-select: none;
+}
 .diff-pre {
   margin: 0;
-  padding: 12px 0;
+  padding: var(--space-2) 0;
   overflow-x: auto;
   background: var(--color-surface-sunken);
 }
+/* Same code geometry as the markstream code blocks above: --leading-normal
+   line height, and rows inset --space-3 so the diff column aligns with the
+   code column (and the header icon). */
 .diff-pre code {
   display: block;
   width: max-content;
   min-width: 100%;
-  font: var(--text-sm)/1.65 var(--font-mono);
+  font: var(--text-sm)/var(--leading-normal) var(--font-mono);
   color: var(--color-text);
 }
 .diff-line {
   display: block;
   width: 100%;
-  padding: 0 14px;
+  padding: 0 var(--space-3);
 }
 .diff-sign {
   display: inline-block;
-  width: 14px;
+  width: var(--diff-sign-col);
   text-align: center;
   color: var(--color-text-muted);
   user-select: none;

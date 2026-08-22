@@ -555,6 +555,30 @@ html[data-color-scheme="dark"] {
   /* -- selection (design-system §02; others.textSelected) ------------------ */
   --p-selection: rgba(23, 131, 255, 0.2);
 
+  /* Code-surface text selection (code blocks, diff rows). REVISED criteria
+     (the earlier "WCAG 1.4.11 ≥3:1 vs the well" pass was a mis-anchoring:
+     1.4.11 covers non-text UI state, not text-selection highlight — macOS /
+     VS Code selection fills sit at 1.1–1.3:1). The real floors are:
+       1. WCAG 1.4.3 — every major shiki token fg vs the fill ≥ 4.5:1
+          (syntax colors stay readable, ink is NOT flattened);
+       2. fill vs the code well ≥ ~1.5:1 — a PRODUCT floor, not WCAG: the
+          1.1–1.3:1 editor norm was judged too subtle in review, so we sit
+          slightly above it.
+     Both themes land on the visibility-maximizing edge of the 1.4.3-feasible
+     set (hue is irrelevant to the ratios; only luminance matters). Light:
+     rgb(168,206,248) — base/string/number/variable pass (9.6/7.8/4.6/4.5),
+     well 1.50; comment 3.73 / keyword 3.27 / function 3.08 cannot pass at
+     any fill with well-ratio ≥1.5 (they would need fill L ≥ 0.72/0.83/0.89)
+     — documented residuals. Consumed by app-markdown's code/diff surfaces
+     (including inside the pierre shadow root via unsafeCSS); the rest of
+     the page keeps --p-selection. */
+  --color-code-selection: rgba(23, 131, 255, 0.346);
+  --color-code-selection-text: currentColor;
+  /* Diff sign-column width (rendered ```diff blocks): the sign cell, the
+     wrap hanging indent, and the line-number counter gutter all derive from
+     here, so a rescale can never strand a hardcoded value. */
+  --diff-sign-col: 14px;
+
   /* -- icon sizes (design-system §02) -------------------------------------- */
   --p-ic-sm: 14px;
   --p-ic-md: 16px;
@@ -613,6 +637,9 @@ html[data-color-scheme="dark"] {
   --p-mention-menu-h: 296px;
   /* Mention tooltip (hover card) width cap. */
   --p-mention-tip-w: 320px;
+  /* Plain tooltip bubble width cap (code-block action hints; mirrors
+     TooltipBubble's default maxWidth). */
+  --p-tip-max-w: 280px;
   /* The fixed-position mention tooltip's minimum distance from the viewport
      edge — single-sourced: position() reads it via tokenPx, and the width
      cap below folds it in. */
@@ -691,6 +718,16 @@ html[data-color-scheme="dark"] {
   --color-accent-soft: rgba(26, 136, 255, 0.1);   /* others.kimiBlue10 */
   --color-accent-bd: rgba(26, 136, 255, 0.28);
   --p-selection: rgba(26, 136, 255, 0.2);    /* others.textSelected */
+  /* Code-surface selection — dark values (full rationale + 1.4.11-misuse
+     retrospective on the light block): a quiet navy, rgb(30,59,91). The
+     light-on-dark shiki tokens need a DARK fill for 1.4.3 — base/string/
+     number/variable/keyword/function pass (9.7/7.4/5.9/5.9/4.5/5.9); comment
+     (#8b949e) caps at 3.71 on any fill that also passes the others and is
+     documented. Fill vs well is 1.44 — a hair under the ≈1.5 product floor
+     ("1.5 左右"): the next 0.03 alpha buys visibility but drops keyword
+     below 4.5 (4.53→4.42), and 1.4.3 coverage wins. */
+  --color-code-selection: rgba(26, 136, 255, 0.27);
+  --color-code-selection-text: currentColor;
   --color-success: #3fb950;
   --color-success-soft: rgba(63, 185, 80, 0.14);
   --color-success-bd: rgba(63, 185, 80, 0.28);
@@ -772,6 +809,9 @@ html[data-color-scheme="dark"] {
     --color-accent-soft: rgba(26, 136, 255, 0.1);
     --color-accent-bd: rgba(26, 136, 255, 0.28);
     --p-selection: rgba(26, 136, 255, 0.2);
+    /* Code-surface selection — dark values (rationale on the light block). */
+    --color-code-selection: rgba(26, 136, 255, 0.27);
+    --color-code-selection-text: currentColor;
     --color-success: #3fb950;
     --color-success-soft: rgba(63, 185, 80, 0.14);
     --color-success-bd: rgba(63, 185, 80, 0.28);

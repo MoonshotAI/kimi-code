@@ -14,12 +14,14 @@ export default defineConfig({
       // same reason (icon imports pull `~icons/*` virtuals).
       'packages/app-client',
       'packages/app-composer',
+      // app-markdown too: codeWrap.ts renders registry icons via iconSvg().
+      'packages/app-markdown',
       // The remaining packages/* have no build-time plugin needs; run their
       // tests with the default pipeline from their own roots.
       {
         test: {
           name: 'packages',
-          include: ['packages/{app-core,app-i18n,app-markdown,app-ui,vite-preset}/{src,test}/**/*.test.ts'],
+          include: ['packages/{app-core,app-i18n,app-ui,vite-preset}/{src,test}/**/*.test.ts'],
         },
       },
     ],
