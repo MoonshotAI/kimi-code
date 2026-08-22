@@ -285,6 +285,28 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
+  it('preserves a successful print result when telemetry shutdown rejects', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, appServices } = makeFakeHarness();
+    const telemetry = appServices.get(ITelemetryService) as {
+      shutdown: ReturnType<typeof vi.fn>;
+    };
+    telemetry.shutdown.mockRejectedValue(new Error('telemetry unavailable'));
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await expect(
+      runV2Print(opts() as never, '1.2.3-test', { stdout, stderr }),
+    ).resolves.toBeUndefined();
+
+    expect(telemetry.shutdown).toHaveBeenCalledOnce();
+    expect(app.dispose).toHaveBeenCalledOnce();
+    expect(stderr.text()).toContain(
+      'Warning: telemetry shutdown failed: telemetry unavailable',
+    );
+  });
+
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
     const stdout = writer();
     const stderr = writer();

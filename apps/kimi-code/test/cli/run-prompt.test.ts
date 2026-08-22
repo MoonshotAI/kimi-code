@@ -361,6 +361,23 @@ describe('runPrompt', () => {
     ).rejects.toThrow('close failed');
   });
 
+  it('reports telemetry shutdown failure without changing a successful result', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    mocks.shutdownTelemetry.mockRejectedValueOnce(
+      new Error('telemetry unavailable'),
+    );
+
+    await expect(
+      runPrompt(opts(), '1.2.3-test', { stdout, stderr, process: fakeProcess() }),
+    ).resolves.toBeUndefined();
+
+    expect(stderr.text()).toContain(
+      'Warning: telemetry shutdown failed: telemetry unavailable',
+    );
+    expect(mocks.harnessClose).toHaveBeenCalledOnce();
+  });
+
   it('ignores a cleanup rejection that lands after the timeout', async () => {
     vi.useFakeTimers();
     try {

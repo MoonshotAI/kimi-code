@@ -32,6 +32,10 @@ import {
 import type { PromptHarness, PromptSession } from './prompt-session';
 import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
+import {
+  createTelemetryShutdownDeadline,
+  formatTelemetryShutdownWarning,
+} from './telemetry-shutdown';
 import { createKimiCodeHostIdentity } from './version';
 
 /**
@@ -153,7 +157,15 @@ export async function runPrompt(
       try {
         await restorePromptSessionPermission();
       } finally {
-        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+        const telemetryDeadline = createTelemetryShutdownDeadline(
+          CLI_SHUTDOWN_TIMEOUT_MS,
+          (error) => {
+            stderr.write(formatTelemetryShutdownWarning(error));
+          },
+        );
+        await telemetryDeadline.run((remainingMs) =>
+          shutdownTelemetry({ timeoutMs: remainingMs }),
+        );
         await harness.close();
       }
     })());

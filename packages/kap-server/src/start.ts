@@ -196,7 +196,12 @@ export interface RunningServer {
   readonly authTokenService: IAuthTokenService;
   readonly host: string;
   readonly port: number;
-  close(): Promise<void>;
+  close(options?: ServerCloseOptions): Promise<void>;
+}
+
+export interface ServerCloseOptions {
+  /** Absolute Unix timestamp shared with other host-owned telemetry pipelines. */
+  readonly telemetryDeadlineMs?: number;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -342,7 +347,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
 
-  const close = async (): Promise<void> => {
+  const close = async (options: ServerCloseOptions = {}): Promise<void> => {
     await app.close();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
@@ -350,7 +355,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     try {
-      await shutdownServerTelemetry(telemetry);
+      await shutdownServerTelemetry(telemetry, options.telemetryDeadlineMs);
     } catch (error) {
       logger.warn(
         { err: error instanceof Error ? error.message : String(error) },
