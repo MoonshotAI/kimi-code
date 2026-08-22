@@ -74,6 +74,7 @@ import { log } from './log';
 import { isAcpModeId } from './modes';
 import { AcpSession } from './session';
 import { negotiateVersion } from './version';
+import { IOAuthToolkit } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 
 /**
  * Klient's stable wire code for "session not found" (`RPCError.code`) — the
@@ -139,6 +140,12 @@ export interface AcpServerOptions {
   readonly unbindSessionRuntime?: (sessionId: string) => Promise<void>;
   /** Static or per-session host command palette, compatible with acp-adapter. */
   readonly slashCommands?: SlashCommandsResolver;
+  /**
+   * App-scoped OAuth toolkit used to fetch Coding Plan rate limits for
+   * managed providers. Optional — when absent, usage updates still report
+   * the billing mode but omit rate limits.
+   */
+  readonly oauthToolkit?: IOAuthToolkit;
 }
 
 export class AcpServer {
@@ -150,6 +157,7 @@ export class AcpServer {
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
   private readonly bindSessionRuntime: ((sessionId: string) => Promise<void>) | undefined;
   private readonly unbindSessionRuntime: ((sessionId: string) => Promise<void>) | undefined;
+  private readonly oauthToolkit: IOAuthToolkit | undefined;
   private readonly resolveSlashCommands: (
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
@@ -173,6 +181,7 @@ export class AcpServer {
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
     this.bindSessionRuntime = opts.bindSessionRuntime;
     this.unbindSessionRuntime = opts.unbindSessionRuntime;
+    this.oauthToolkit = opts.oauthToolkit;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
       typeof slashCommands === 'function'
@@ -299,6 +308,7 @@ export class AcpServer {
     // `resumeSession`, which deliberately skips replay per the ACP spec.
     await acpSession.replayHistory();
     this.scheduleAvailableCommandsUpdate(acpSession);
+    this.scheduleUsageUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
   }
 
@@ -310,6 +320,7 @@ export class AcpServer {
       acpMcpServersToConfigRecord(params.mcpServers),
     );
     this.scheduleAvailableCommandsUpdate(acpSession);
+    this.scheduleUsageUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
   }
 
@@ -565,6 +576,7 @@ export class AcpServer {
       Boolean(this.clientCapabilities?.elicitation?.form),
       this.resolveOriginalsDir,
       hostCommands,
+      this.oauthToolkit,
     );
     await acpSession.init();
     return acpSession;
@@ -582,6 +594,7 @@ export class AcpServer {
     const acpSession = await this.wireSession(sessionId);
     this.sessions.set(sessionId, acpSession);
     this.scheduleAvailableCommandsUpdate(acpSession);
+    this.scheduleUsageUpdate(acpSession);
     return { configOptions: await acpSession.configOptions(), modes: acpSession.modeState() };
   }
 
@@ -596,6 +609,17 @@ export class AcpServer {
   private scheduleAvailableCommandsUpdate(acpSession: AcpSession): void {
     setTimeout(() => {
       void acpSession.emitAvailableCommandsUpdate();
+    }, 0);
+  }
+
+  /**
+   * Push an opening `usage_update` AFTER the lifecycle response has settled so
+   * the client has registered the session and can attribute the notification.
+   * Mirrors the legacy adapter's opening usage report.
+   */
+  private scheduleUsageUpdate(acpSession: AcpSession): void {
+    setTimeout(() => {
+      void acpSession.emitUsageUpdate();
     }, 0);
   }
 

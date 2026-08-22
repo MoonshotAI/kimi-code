@@ -54,6 +54,8 @@ import {
   toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
+  type KimiCodeUsageMeta,
+  usageReportToSessionUpdate,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
@@ -148,6 +150,17 @@ export class AcpSession {
    * `setSkillCommandMap`) behave as a no-op passthrough.
    */
   private skillCommandMap: ReadonlyMap<string, string> = new Map();
+
+  /** Cached managed-account usage so opening/finishing turns cannot poll the
+   * account endpoint more than once per minute. The cache key follows the
+   * selected model/provider, so switching models invalidates it immediately. */
+  private accountUsageCache:
+    | {
+        readonly key: string;
+        readonly expiresAt: number;
+        readonly value: KimiCodeUsageMeta | undefined;
+      }
+    | undefined;
 
   // One token per in-flight `prompt()` that is still awaiting image compression
   // (before any turn exists). A `session/cancel` in that window has no turn to
@@ -267,6 +280,110 @@ export class AcpSession {
    */
   get currentModeId(): AcpModeId {
     return this.currentModeIdInternal;
+  }
+
+  /**
+   * Emit ACP context usage plus Kimi Code account metadata. Account lookup is
+   * best-effort: API-key mode never reads or serializes the key, and a failed
+   * Coding Plan usage request still reports the billing mode so clients can
+   * render an honest account state.
+   */
+  async emitUsageReport(): Promise<void> {
+    if (typeof this.session.getStatus !== 'function') return;
+    try {
+      const [status, kimiCode] = await Promise.all([
+        this.session.getStatus(),
+        this.loadKimiCodeUsageMeta(),
+      ]);
+      if (
+        !Number.isFinite(status.contextTokens) ||
+        status.contextTokens < 0 ||
+        !Number.isFinite(status.maxContextTokens) ||
+        status.maxContextTokens <= 0
+      ) {
+        return;
+      }
+      await this.conn.sessionUpdate(
+        usageReportToSessionUpdate(
+          this.session.id,
+          status.contextTokens,
+          status.maxContextTokens,
+          kimiCode,
+        ),
+      );
+    } catch (error) {
+      log.warn('acp: failed to push usage_update', {
+        sessionId: this.session.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async loadKimiCodeUsageMeta(): Promise<KimiCodeUsageMeta | undefined> {
+    if (this.harness === undefined || typeof this.harness.getConfig !== 'function') {
+      return undefined;
+    }
+
+    const config = await this.harness.getConfig();
+    const selectedModelId = this.currentModelIdInternal || config.defaultModel;
+    const selectedModel =
+      selectedModelId === undefined ? undefined : config.models?.[selectedModelId];
+    const providerId = selectedModel?.provider ?? config.defaultProvider;
+    const provider = providerId === undefined ? undefined : config.providers[providerId];
+    const resolvedApiKey = providerValue(provider?.apiKey, provider?.env, 'KIMI_API_KEY');
+    const billingMode =
+      providerId === 'managed:kimi-code' && provider?.oauth !== undefined
+        ? 'coding_plan'
+        : resolvedApiKey !== undefined
+          ? 'api_key'
+          : undefined;
+    const cacheKey = `${selectedModelId ?? ''}:${providerId ?? ''}:${billingMode ?? ''}`;
+    const now = Date.now();
+    if (
+      this.accountUsageCache?.key === cacheKey &&
+      this.accountUsageCache.expiresAt > now
+    ) {
+      return this.accountUsageCache.value;
+    }
+
+    let value: KimiCodeUsageMeta | undefined;
+    if (billingMode === 'api_key') {
+      value = { billingMode };
+    } else if (billingMode === 'coding_plan') {
+      value = { billingMode };
+      try {
+        const result = await this.harness.auth.getManagedUsage(providerId);
+        if (result.kind === 'ok') {
+          value = {
+            billingMode,
+            rateLimits: {
+              summary: result.summary,
+              limits: result.limits,
+              booster:
+                result.extraUsage === null
+                  ? null
+                  : {
+                      balanceCents: result.extraUsage.balanceCents,
+                      totalCents: result.extraUsage.totalCents,
+                      currency: result.extraUsage.currency,
+                    },
+            },
+          };
+        }
+      } catch (error) {
+        log.warn('acp: failed to load Kimi Code managed usage', {
+          sessionId: this.session.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    this.accountUsageCache = {
+      key: cacheKey,
+      expiresAt: now + 60_000,
+      value,
+    };
+    return value;
   }
 
   /**
@@ -1229,6 +1346,7 @@ export class AcpSession {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
           settled = true;
+          void this.emitUsageReport();
           if (event.reason === 'failed') {
             // Failures bubble up via the SDK `error` payload. Phase 11.1
             // upgrades the prior "log + resolve end_turn" behaviour to
@@ -1712,4 +1830,26 @@ function toolMessageContentToAcpToolCallContent(
     });
   }
   return result;
+}
+
+/**
+ * Resolve a provider credential that may be declared either as the configured
+ * field or indirectly through the provider's env table (`provider.env`).
+ *
+ * Mirrors the precedence used by `provider-manager.ts` so ACP usage reports
+ * classify API-key billing consistently with the actual request auth path.
+ * The resolved value is used only for presence checks — it is never serialized
+ * into notifications.
+ */
+function providerValue(
+  configured: string | undefined,
+  env: Record<string, string> | undefined,
+  envKey: string,
+): string | undefined {
+  return nonEmptyString(configured) ?? nonEmptyString(env?.[envKey]);
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }

@@ -31,6 +31,9 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { IOAuthToolkit } from '@moonshot-ai/agent-core-v2/app/auth/auth';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type {
   AgentEventPayloads,
   AgentHandle,
@@ -78,6 +81,8 @@ import {
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
   usageUpdateNotification,
+  usageReportToSessionUpdate,
+  type KimiCodeUsageMeta,
   isAuthError,
   stringifyArgs,
 } from './events-map';
@@ -238,6 +243,18 @@ export class AcpSession {
   private readonly terminalBackedCalls = new Map<string, string>();
   /** Bridges engine approval / ask-user requests to the ACP client. */
   private readonly interactionBridge: AcpInteractionBridge;
+  /**
+   * Cached managed-account usage so opening/finishing turns cannot poll the
+   * account endpoint more than once per minute. The cache key follows the
+   * selected model/provider, so switching models invalidates it immediately.
+   */
+  private accountUsageCache:
+    | {
+        readonly key: string;
+        readonly expiresAt: number;
+        readonly value: KimiCodeUsageMeta | undefined;
+      }
+    | undefined;
 
   constructor(
     private readonly conn: AcpClient,
@@ -259,6 +276,12 @@ export class AcpSession {
     private readonly hostCommands:
       | ReadonlyArray<AvailableCommand>
       | HostSlashCommandsSnapshot = [],
+    /**
+     * App-scoped OAuth toolkit used to fetch Coding Plan rate limits for
+     * managed providers. Optional — when absent, usage updates still report
+     * the billing mode but omit rate limits.
+     */
+    private readonly oauthToolkit?: IOAuthToolkit,
   ) {
     this.klient = klient;
     this.session = klient.session(sessionId);
@@ -921,25 +944,140 @@ export class AcpSession {
   }
 
   /**
-   * Push a one-shot `usage_update` after a turn settles: `used` = the agent's
+   * Push a one-shot `usage_update` after a turn settles or when a session
    * current context token count, `size` = the bound model's max context size
    * from the catalog. Skipped while no catalog model matches the bound id —
-   * there is nothing honest to report. `cost` stays omitted (the engine has
-   * no cost data).
+   * there is nothing honest to report. `cost` stays omitted (the engine has no
+   * cost data). Best-effort Kimi Code billing metadata is attached when the
+   * provider can be classified.
    */
-  private async emitUsageUpdate(): Promise<void> {
+  async emitUsageUpdate(): Promise<void> {
     try {
-      const size = (await this.klient.global.kosong.listModels()).find(
-        (item) => item.model === this.currentModelId,
-      )?.max_context_size;
+      const [size, kimiCode] = await Promise.all([
+        (async () => {
+          return (await this.klient.global.kosong.listModels()).find(
+            (item) => item.model === this.currentModelId,
+          )?.max_context_size;
+        })(),
+        this.loadKimiCodeUsageMeta(),
+      ]);
       if (size === undefined) return;
       const context = await this.agent.getContext();
-      this.emit(usageUpdateNotification(this.sessionId, context.tokenCount, size));
+      this.emit(usageReportToSessionUpdate(this.sessionId, context.tokenCount, size, kimiCode));
     } catch (error) {
       log.warn('acp: failed to push usage_update', {
         sessionId: this.sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  /**
+   * Resolve Kimi Code billing metadata for the current model/provider.
+   * Account lookup is best-effort: API-key mode never reads or serializes the
+   * key, and a failed Coding Plan usage request still reports the billing mode
+   * so clients can render an honest account state.
+   */
+  private async loadKimiCodeUsageMeta(): Promise<KimiCodeUsageMeta | undefined> {
+    const config = await this.loadRuntimeConfig();
+    if (config === undefined) return undefined;
+
+    const selectedModelId = this.currentModelId || config.defaultModel;
+    const selectedModel =
+      selectedModelId === undefined ? undefined : config.models?.[selectedModelId];
+    const providerId = selectedModel?.providerId ?? selectedModel?.provider ?? config.defaultProvider;
+    const provider = providerId === undefined ? undefined : config.providers?.[providerId];
+    const resolvedApiKey = providerValue(provider?.apiKey, provider?.env, 'KIMI_API_KEY');
+    const billingMode =
+      providerId === 'managed:kimi-code' && provider?.oauth !== undefined
+        ? 'coding_plan'
+        : resolvedApiKey !== undefined
+          ? 'api_key'
+          : undefined;
+
+    const cacheKey = `${selectedModelId ?? ''}:${providerId ?? ''}:${billingMode ?? ''}`;
+    const now = Date.now();
+    if (this.accountUsageCache?.key === cacheKey && this.accountUsageCache.expiresAt > now) {
+      return this.accountUsageCache.value;
+    }
+
+    let value: KimiCodeUsageMeta | undefined;
+    if (billingMode === 'api_key') {
+      value = { billingMode };
+    } else if (billingMode === 'coding_plan') {
+      value = { billingMode };
+      if (this.oauthToolkit !== undefined && provider !== undefined) {
+        try {
+          const result: Awaited<ReturnType<IOAuthToolkit['getManagedUsage']>> =
+            await this.oauthToolkit.getManagedUsage(providerId, {
+              oauthRef: provider.oauth,
+              baseUrl: provider.baseUrl,
+            });
+          if (result.kind === 'ok') {
+            value = {
+              billingMode,
+              rateLimits: {
+                summary: result.summary,
+                limits: result.limits,
+                booster:
+                  result.extraUsage === null
+                    ? null
+                    : {
+                        balanceCents: result.extraUsage.balanceCents,
+                        totalCents: result.extraUsage.totalCents,
+                        currency: result.extraUsage.currency,
+                      },
+              },
+            };
+          }
+        } catch (error) {
+          log.warn('acp: failed to load Kimi Code managed usage', {
+            sessionId: this.sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    this.accountUsageCache = {
+      key: cacheKey,
+      expiresAt: now + 60_000,
+      value,
+    };
+    return value;
+  }
+
+  /**
+   * Read the resolved provider/model/default configuration that the engine is
+   * using. Returns `undefined` when the config service is unavailable or the
+   * required sections are missing.
+   */
+  private async loadRuntimeConfig(): Promise<
+    | {
+        readonly providers: Record<string, ProviderConfig>;
+        readonly models: Record<string, ModelRecord>;
+        readonly defaultProvider: string | undefined;
+        readonly defaultModel: string | undefined;
+      }
+    | undefined
+  > {
+    try {
+      const all = await this.klient.global.config.getAll();
+      const providers = asProviderMap(all['providers']);
+      const models = asModelMap(all['models']);
+      if (providers === undefined || models === undefined) return undefined;
+      return {
+        providers,
+        models,
+        defaultProvider: asString(all['defaultProvider']),
+        defaultModel: asString(all['defaultModel']),
+      };
+    } catch (error) {
+      log.warn('acp: failed to load runtime config for usage metadata', {
+        sessionId: this.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
     }
   }
 
@@ -1151,4 +1289,31 @@ function formatCompactionCompleted(result: {
     `- Tokens before: ${result.tokensBefore.toLocaleString('en-US')}`,
     `- Tokens after: ${result.tokensAfter.toLocaleString('en-US')}`,
   ].join('\n');
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+function providerValue(
+  configured: string | undefined,
+  env: Record<string, string> | undefined,
+  envKey: string,
+): string | undefined {
+  return nonEmptyString(configured) ?? nonEmptyString(env?.[envKey]);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? nonEmptyString(value) : undefined;
+}
+
+function asProviderMap(value: unknown): Record<string, ProviderConfig> | undefined {
+  if (value === undefined || value === null || typeof value !== 'object') return undefined;
+  return value as Record<string, ProviderConfig>;
+}
+
+function asModelMap(value: unknown): Record<string, ModelRecord> | undefined {
+  if (value === undefined || value === null || typeof value !== 'object') return undefined;
+  return value as Record<string, ModelRecord>;
 }

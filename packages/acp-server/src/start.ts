@@ -25,6 +25,7 @@ import {
   IAgentRuntimeBindingService,
   IAppendLogStore,
   IHostEnvironment,
+  IOAuthToolkit,
   ISessionContext,
   ISessionIndexMirror,
   IWorkspaceInstanceManager,
@@ -150,6 +151,7 @@ export async function runAcpServerWithStream(
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
     slashCommands: opts.slashCommands,
+    oauthToolkit: core.accessor.get(IOAuthToolkit),
     bindSessionRuntime: async (sessionId) => {
       const handle = getLiveSessionById(core.accessor, sessionId);
       if (handle === undefined) throw new Error(`session ${sessionId} is not live`);

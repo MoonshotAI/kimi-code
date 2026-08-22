@@ -96,9 +96,31 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     // LLM-measured context token count (the scripted provider reports
     // output usage only, so > 0), `size` the fake model's max context
     // size (8192, see fakeModelConfig); `cost` stays omitted.
-    const usage = await c.waitForSessionUpdate('usage_update', 10_000);
+    // The session now emits an opening usage_update after `session/new` and a
+    // second one after the turn settles. Wait for the post-turn update.
+    const deadline = Date.now() + 10_000;
+    while (
+      c
+        .sessionUpdates()
+        .filter(
+          (m) =>
+            (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate ===
+            'usage_update',
+        ).length < 2 &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const usageUpdates = c
+      .sessionUpdates()
+      .filter(
+        (m) =>
+          (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate ===
+          'usage_update',
+      );
+    expect(usageUpdates).toHaveLength(2);
     const usageUpdate = (
-      usage.params as { update?: { used?: number; size?: number; cost?: unknown } }
+      usageUpdates[1]!.params as { update?: { used?: number; size?: number; cost?: unknown } }
     ).update;
     expect(usageUpdate?.size).toBe(8192);
     expect(usageUpdate?.used).toBeGreaterThan(0);
