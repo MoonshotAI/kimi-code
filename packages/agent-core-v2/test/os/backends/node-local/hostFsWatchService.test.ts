@@ -289,6 +289,26 @@ describe('host filesystem change notifications', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('normalizes Windows drive-root watch paths before calling watchNative', () => {
+    const watched: string[] = [];
+    const runtime: HostFsWatchRuntime = {
+      platform: 'win32',
+      watchNative: (root, _listener) => {
+        watched.push(root);
+        return new TestNativeWatcher();
+      },
+      scheduleRetry: () => ({ dispose: () => undefined }),
+    };
+    const service = new HostFsWatchService(runtime);
+    handle = service.watch('/D:', { signal: true });
+    expect(watched).toEqual(['D:\\']);
+    handle.dispose();
+    handle = undefined;
+
+    handle = service.watch('E:', { signal: true });
+    expect(watched).toEqual(['D:\\', 'E:\\']);
+  });
+
   it.skipIf(process.platform !== 'darwin')(
     'signal mode keeps the fd footprint bounded on a fat subtree',
     async () => {
