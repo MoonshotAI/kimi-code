@@ -1209,7 +1209,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     const first = runtime.prompt("first message");
     await blocked.started;
 
-    await expect(runtime.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
+    await expect(runtime.prompt("concurrent message")).resolves.toEqual({ status: "failed", reason: "busy" });
 
     // The rejection surfaces as a mid-turn warning; the active turn is untouched.
     expect(runtime.isBusy).toBe(true);

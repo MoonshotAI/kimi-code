@@ -405,6 +405,72 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(deleteBaseline).toHaveBeenCalledWith("session-2");
   });
 
+  it("appends a turn_active marker when the resumed session has a live turn", async () => {
+    const session = createResumedSession("session-1", root);
+    host.harness.resumeSession.mockResolvedValue(session as never);
+
+    const first = await bridge.handle(
+      {
+        id: "rpc-1",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1" },
+      },
+      "view-1",
+    );
+    expect(first).toEqual({
+      id: "rpc-1",
+      result: expect.not.arrayContaining([
+        expect.objectContaining({ type: "turn_active" }),
+      ]),
+    });
+
+    // A second attach while the runtime reports a live turn must say so.
+    const runtime = bridge.runtime.getSession("session-1")!;
+    vi.spyOn(runtime, "isBusy", "get").mockReturnValue(true);
+
+    const second = await bridge.handle(
+      {
+        id: "rpc-2",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1" },
+      },
+      "view-1",
+    );
+    expect(second).toEqual({
+      id: "rpc-2",
+      result: expect.arrayContaining([
+        expect.objectContaining({ type: "turn_active", _sessionId: "session-1" }),
+      ]),
+    });
+  });
+
+  it("reports whether a session has live work", async () => {
+    const session = createResumedSession("session-1", root);
+    host.harness.resumeSession.mockResolvedValue(session as never);
+    await bridge.handle(
+      {
+        id: "rpc-1",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1" },
+      },
+      "view-1",
+    );
+
+    const idle = await bridge.handle(
+      { id: "rpc-2", method: Methods.IsSessionBusy, params: { sessionId: "session-1" } },
+      "view-1",
+    );
+    expect(idle).toEqual({ id: "rpc-2", result: { busy: false } });
+
+    const runtime = bridge.runtime.getSession("session-1")!;
+    vi.spyOn(runtime, "isBusy", "get").mockReturnValue(true);
+    const busy = await bridge.handle(
+      { id: "rpc-3", method: Methods.IsSessionBusy, params: { sessionId: "session-1" } },
+      "view-1",
+    );
+    expect(busy).toEqual({ id: "rpc-3", result: { busy: true } });
+  });
+
   it("keeps conversation history available when its baseline snapshot disappears", async () => {
     const session = createResumedSession("session-1", root);
     host.harness.resumeSession.mockResolvedValueOnce(session as never);
