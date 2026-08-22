@@ -88,6 +88,11 @@ export interface MCPClient {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<MCPToolResult>;
+  /**
+   * Liveness probe used after a failed tool call to distinguish a transient
+   * blip from a dead transport before attempting a reconnect.
+   */
+  ping(signal?: AbortSignal): Promise<void>;
 }
 
 /**

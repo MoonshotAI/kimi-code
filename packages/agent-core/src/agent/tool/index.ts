@@ -7,16 +7,24 @@ import {
   collectLoadedDynamicToolNames,
 } from '../context/dynamic-tools';
 import type { ContextMessage } from '../context/types';
-import { makeErrorPayload } from '../../errors';
-import type { ExecutableTool, ToolUpdate } from '../../loop';
+import { ErrorCodes, KimiError, makeErrorPayload } from '../../errors';
+import type { ExecutableTool, ExecutableToolContext, ToolUpdate } from '../../loop';
+import { errorMessage, isAbortError } from '../../loop/errors';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
+import {
+  isMcpConnectionClosedError,
+  isMcpMalformedResultError,
+  isMcpTransportFailure,
+  probeMcpLiveness,
+} from '../../mcp/client-shared';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
-import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
+import type { MCPClient, MCPToolDefinition, MCPToolResult } from '../../mcp/types';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { buildSubagentModelDescriptions } from '../../session/subagent-binding';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
+import { abortable } from '../../utils/abort';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
@@ -327,11 +335,19 @@ export class ToolManager {
               // `args` has already been JSON-parsed and schema-validated by
               // the loop's preflight (`loop/tool-call.ts`), so the MCP
               // client gets a plain object directly.
-              const result = await client.callTool(
-                tool.name,
-                (args ?? {}) as Record<string, unknown>,
-                context.signal,
-              );
+              const mcpArgs = (args ?? {}) as Record<string, unknown>;
+              let result: MCPToolResult;
+              try {
+                result = await client.callTool(tool.name, mcpArgs, context.signal);
+              } catch (error) {
+                result = await retryMcpCallAfterReconnect(
+                  error,
+                  client,
+                  (activeClient) => activeClient.callTool(tool.name, mcpArgs, context.signal),
+                  context,
+                  this.mcpToolCallReconnect(serverName, client, context.signal),
+                );
+              }
               return mcpResultToExecutableOutput(result, qualified, {
                 originalsDir: this.agent.mediaOriginalsDir,
                 telemetry: this.agent.telemetry,
@@ -359,6 +375,22 @@ export class ToolManager {
     return true;
   }
 
+  /**
+   * Builds the `reconnect` callback for the wrapped-tool recovery path (see
+   * {@link retryMcpCallAfterReconnect}), or returns `undefined` when this
+   * manager has no connection manager behind it (tests wiring a bare fake
+   * client) — in that case calls keep their old fail-fast behavior.
+   */
+  private mcpToolCallReconnect(
+    serverName: string,
+    staleClient: MCPClient,
+    signal: AbortSignal,
+  ): (() => Promise<MCPClient | undefined>) | undefined {
+    const mcp = this.agent.mcp;
+    if (mcp === undefined) return undefined;
+    return () => abortable(joinHealedMcpClientOrReconnect(mcp, serverName, staleClient), signal);
+  }
+
   private handleMcpServerStatusChange(mcp: McpConnectionManager, entry: McpServerEntry): void {
     if (entry.status === 'connected') {
       this.registerConnectedMcpServer(mcp, entry);
@@ -369,15 +401,15 @@ export class ToolManager {
       return;
     }
     if (entry.status === 'failed') {
-      this.unregisterMcpServer(entry.name);
-      this.agent.emitEvent({
-        type: 'tool.list.updated',
-        reason: 'mcp.failed',
-        serverName: entry.name,
-      });
+      // Keep the tools registered: a dropped connection is recovered through
+      // the wrapped call's reconnect-and-retry path, and until then calls
+      // fail loudly with the server's error instead of vanishing from the
+      // tool list (which made the model retry through *other* servers'
+      // tools — see #2742). The tool list itself did not change, so no
+      // `tool.list.updated` event is emitted.
       return;
     }
-    if (entry.status === 'disabled' || entry.status === 'pending') {
+    if (entry.status === 'disabled') {
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
         this.agent.emitEvent({
@@ -387,6 +419,14 @@ export class ToolManager {
         });
       }
     }
+    // `pending` is deliberately NOT handled: it precedes every (re)connect
+    // attempt, so unregistering here would drop the tools mid-reconnect —
+    // and after a failed recovery they would stay gone for the rest of the
+    // session, leaving later calls unable to drive another reconnect (#2742).
+    // Keeping them is safe because both re-registration paths above start by
+    // unregistering the server's tools (`registerMcpServer` and
+    // `registerNeedsAuthMcpServer`), so a `connected` or `needs-auth`
+    // transition fully replaces the tool set rather than merging into it.
   }
 
   private registerNeedsAuthMcpServer(mcp: McpConnectionManager, entry: McpServerEntry): void {
@@ -1024,4 +1064,96 @@ export class ToolManager {
       })
       .filter((tool) => !!tool);
   }
+}
+
+/**
+ * Recovery for a failed MCP tool call, mirroring agent-core-v2's
+ * `retryAfterReconnect` (`agent-core-v2/src/agent/mcp/tools/mcp.ts`):
+ *
+ * - The server answered (a JSON-RPC error, or a response that failed
+ *   client-side schema validation) → the error is rethrown; reconnecting
+ *   would not change the answer.
+ * - The failure is ambiguous (a raw fetch/socket error) → the client is
+ *   probed with a ping: alive means a transient blip and the call is
+ *   retried once in place; dead means the transport is gone.
+ * - The transport is provably dead (the SDK reported the connection closed,
+ *   or the probe failed) → the server is reconnected once through
+ *   `reconnect` and the call retried on the fresh client, so a dropped
+ *   streamable-HTTP session (e.g. an MCP server restart) surfaces as a slow
+ *   call instead of failing every call for the rest of the session (#2742).
+ *
+ * Retries are at-least-once: if the transport died after the server
+ * processed the call but before the response arrived, the retry may
+ * duplicate side effects. There is no protocol-level dedup across
+ * reconnects, so this trade-off is accepted deliberately.
+ */
+async function retryMcpCallAfterReconnect(
+  error: unknown,
+  client: MCPClient,
+  callTool: (activeClient: MCPClient) => Promise<MCPToolResult>,
+  context: ExecutableToolContext,
+  reconnect: (() => Promise<MCPClient | undefined>) | undefined,
+): Promise<MCPToolResult> {
+  const isUnrecoverable = (e: unknown): boolean =>
+    context.signal.aborted ||
+    isAbortError(e) ||
+    !isMcpTransportFailure(e) ||
+    isMcpMalformedResultError(e);
+  if (reconnect === undefined || isUnrecoverable(error)) {
+    throw error;
+  }
+
+  let failure = error;
+  if (!isMcpConnectionClosedError(failure)) {
+    const alive = await probeMcpLiveness(client, context.signal);
+    context.signal.throwIfAborted();
+    if (alive) {
+      try {
+        return await callTool(client);
+      } catch (retryError) {
+        if (isUnrecoverable(retryError)) {
+          throw retryError;
+        }
+        failure = retryError;
+      }
+    }
+  }
+
+  context.onUpdate?.({ kind: 'status', text: 'MCP connection lost — reconnecting…' });
+  let freshClient: MCPClient | undefined;
+  try {
+    freshClient = await reconnect();
+  } catch (reconnectError) {
+    if (context.signal.aborted || isAbortError(reconnectError)) {
+      throw reconnectError;
+    }
+    throw new KimiError(
+      ErrorCodes.MCP_STARTUP_FAILED,
+      `${errorMessage(failure)} (reconnecting the MCP server also failed: ${errorMessage(reconnectError)})`,
+      { cause: reconnectError },
+    );
+  }
+  if (freshClient === undefined) {
+    throw failure;
+  }
+  return callTool(freshClient);
+}
+
+/**
+ * Return the current client when the server already healed (a concurrent
+ * call finished the reconnect first), otherwise drive one shared reconnect
+ * through the manager — `reconnectAndJoin` dedupes parallel attempts — and
+ * return the client it produced. `undefined` means there is no fresh client
+ * to retry on, so the original failure should surface.
+ */
+async function joinHealedMcpClientOrReconnect(
+  mcp: McpConnectionManager,
+  serverName: string,
+  staleClient: MCPClient,
+): Promise<MCPClient | undefined> {
+  const healed = mcp.resolved(serverName)?.client;
+  if (healed !== undefined && healed !== staleClient) return healed;
+  await mcp.reconnectAndJoin(serverName);
+  const current = mcp.resolved(serverName)?.client;
+  return current !== undefined && current !== staleClient ? current : undefined;
 }
