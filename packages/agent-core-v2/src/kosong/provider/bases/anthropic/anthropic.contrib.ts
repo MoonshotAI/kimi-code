@@ -27,6 +27,7 @@ registerProtocolBase({
             ? undefined
             : { ...config.providerOptions.metadata },
         hooks: composeAnthropicHooks(traits),
+        filterUnsupportedRootSchemas: config.providerType === undefined ? undefined : false,
       }),
     });
   },
