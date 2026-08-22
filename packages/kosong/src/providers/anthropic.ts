@@ -1320,7 +1320,52 @@ export class AnthropicChatProvider implements ChatProvider {
         body: JSON.stringify(bodyObj),
       };
 
-      return fetch(targetUrl, newInit);
+      const res = await fetch(targetUrl, newInit);
+      if (isStream && res.status === 200) {
+        const contentType = res.headers.get('content-type') ?? '';
+        if (!contentType.includes('text/event-stream')) {
+          const json = (await res.json()) as Record<string, unknown>;
+          const content =
+            (json['content'] as Array<{ type: string; text?: string; thinking?: string }>) || [];
+          const sseParts: string[] = [
+            `event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: json })}\n\n`,
+          ];
+          for (let idx = 0; idx < content.length; idx++) {
+            const c = content[idx]!;
+            if (c.type === 'thinking') {
+              sseParts.push(
+                `event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: idx, content_block: { type: 'thinking', thinking: '' } })}\n\n`,
+              );
+              sseParts.push(
+                `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: idx, delta: { type: 'thinking_delta', thinking: c.thinking || '' } })}\n\n`,
+              );
+              sseParts.push(
+                `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: idx })}\n\n`,
+              );
+            } else {
+              sseParts.push(
+                `event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: idx, content_block: { type: 'text', text: '' } })}\n\n`,
+              );
+              sseParts.push(
+                `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: c.text || '' } })}\n\n`,
+              );
+              sseParts.push(
+                `event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: idx })}\n\n`,
+              );
+            }
+          }
+          sseParts.push(
+            `event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: json['stop_reason'] || 'end_turn', stop_sequence: json['stop_sequence'] }, usage: json['usage'] })}\n\n`,
+          );
+          sseParts.push(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+
+          return new Response(sseParts.join(''), {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        }
+      }
+      return res;
     };
 
     return new Anthropic({

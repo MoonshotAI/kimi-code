@@ -103,16 +103,17 @@ interface GoogleTool {
   functionDeclarations: GoogleFunctionDeclaration[];
 }
 
-function toolToGoogleGenAI(tool: Tool): GoogleTool {
-  return {
-    functionDeclarations: [
-      {
+function toolsToGoogleGenAI(tools: Tool[]): GoogleTool[] {
+  if (tools.length === 0) return [];
+  return [
+    {
+      functionDeclarations: tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         parametersJsonSchema: tool.parameters,
-      },
-    ],
-  };
+      })),
+    },
+  ];
 }
 
 function applyResponseFormat(
@@ -810,7 +811,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const config: Record<string, unknown> = {
       ...kwargs,
       systemInstruction: systemPrompt,
-      ...(tools.length > 0 ? { tools: tools.map((t) => toolToGoogleGenAI(t)) } : {}),
+      ...(tools.length > 0 ? { tools: toolsToGoogleGenAI(tools) } : {}),
     };
     applyResponseFormat(config, options?.responseFormat);
 
