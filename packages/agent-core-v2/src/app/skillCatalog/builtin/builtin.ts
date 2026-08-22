@@ -13,6 +13,7 @@ import {
 } from './sub-skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
 import { WRITE_GOAL_SKILL } from './write-goal';
+import { LEGAL_RISK_ASSESSMENT_SKILL } from './legal-risk-assessment';
 
 export const BUILTIN_SKILLS: readonly SkillDefinition[] = [
   MCP_CONFIG_SKILL,
@@ -20,6 +21,7 @@ export const BUILTIN_SKILLS: readonly SkillDefinition[] = [
   UPDATE_CONFIG_SKILL,
   CUSTOM_THEME_SKILL,
   WRITE_GOAL_SKILL,
+  LEGAL_RISK_ASSESSMENT_SKILL,
   CHECK_KIMI_CODE_DOCS_SKILL,
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
@@ -44,6 +46,7 @@ export {
   CHECK_KIMI_CODE_DOCS_SKILL,
   CUSTOM_THEME_SKILL,
   IMPORT_FROM_CC_CODEX_SKILL,
+  LEGAL_RISK_ASSESSMENT_SKILL,
   MCP_CONFIG_SKILL,
   SUB_SKILL_CONSOLIDATE,
   SUB_SKILL_PARENT,
