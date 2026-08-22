@@ -9,11 +9,13 @@
 //   - tool-result truncation / size / error flags
 //   - tool usage stats (count, error rate, latency)
 //   - idle gaps (large wall-clock gaps between records → waiting)
+//   - prompt-phase repetition and steer-response evaluation metrics
 //
 // Pure: consumes the same `WireEntry[]` the Wire tab already fetches, so the
 // Timeline view needs no extra server round-trip.
 
 import type { TokenUsage, WireEntry } from '../types';
+import { evaluateLoopTrace, type LoopEvaluation } from './loop-eval';
 
 export interface ContentSummary {
   textChars: number;
@@ -157,6 +159,7 @@ export interface Analysis {
   toolStats: ToolStat[];
   idleGaps: IdleGap[];
   configChanges: ConfigChange[];
+  loopEvaluation: LoopEvaluation;
 }
 
 const ZERO_USAGE: TokenUsage = {
@@ -432,6 +435,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
     toolStats,
     idleGaps: sortedGaps,
     configChanges,
+    loopEvaluation: evaluateLoopTrace(entries),
   };
 }
 

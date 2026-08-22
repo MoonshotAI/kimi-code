@@ -4,9 +4,10 @@ interface CopyButtonProps {
   value: string;
   label?: string;
   className?: string;
+  title?: string;
 }
 
-export function CopyButton({ value, label = 'copy', className = '' }: CopyButtonProps) {
+export function CopyButton({ value, label = 'copy', className = '', title }: CopyButtonProps) {
   const [state, setState] = useState<'idle' | 'ok' | 'err'>('idle');
 
   return (
@@ -20,7 +21,7 @@ export function CopyButton({ value, label = 'copy', className = '' }: CopyButton
           .finally(() => setTimeout(() =>{  setState('idle'); }, 1200));
       }}
       className={`font-mono text-[10px] text-fg-3 transition-colors hover:text-fg-1 ${className}`}
-      title={`Copy ${value}`}
+      title={title ?? `Copy ${value}`}
     >
       {state === 'idle' ? label : state === 'ok' ? '✓ copied' : '✗ err'}
     </button>

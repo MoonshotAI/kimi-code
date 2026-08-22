@@ -72,6 +72,11 @@ describe('analyzeWire', () => {
     expect(a.summary.toolErrorCount).toBe(1);
     expect(a.summary.truncatedToolCount).toBe(1);
 
+    // Offline loop-eval report is derived from the same wire without raw args.
+    expect(a.loopEvaluation.summary.toolCallCount).toBe(2);
+    expect(a.loopEvaluation.summary.repeatedCallCount).toBe(0);
+    expect(a.loopEvaluation.phases).toHaveLength(3);
+
     // Tool stats
     const read = a.toolStats.find((s) => s.name === 'Read')!;
     expect(read.count).toBe(2);
