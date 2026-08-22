@@ -92,3 +92,44 @@ describe('MoonshotFetchURLProvider content kind', () => {
     expect(result).toEqual({ content: 'verbatim body', kind: 'passthrough' });
   });
 });
+
+describe('MoonshotFetchURLProvider abort signal', () => {
+  it("forwards the caller's abort signal to the service request", async () => {
+    const getAccessToken = vi.fn<() => Promise<string>>().mockResolvedValue('token');
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('ok', { status: 200 }));
+    const provider = new MoonshotFetchURLProvider({
+      tokenProvider: { getAccessToken },
+      baseUrl: 'https://fetch.example/v1',
+      localFallback: fakeFetcher('fallback content'),
+      fetchImpl,
+    });
+    const controller = new AbortController();
+
+    await provider.fetch('https://example.com/page', { signal: controller.signal });
+
+    const init = fetchImpl.mock.calls[0]?.[1];
+    expect(init?.signal).toBe(controller.signal);
+  });
+
+  it('propagates an abort instead of falling back to the local fetcher', async () => {
+    const getAccessToken = vi.fn<() => Promise<string>>().mockResolvedValue('token');
+    const controller = new AbortController();
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(abortError);
+    });
+    const localFallback = fakeFetcher('fallback content');
+    const provider = new MoonshotFetchURLProvider({
+      tokenProvider: { getAccessToken },
+      baseUrl: 'https://fetch.example/v1',
+      localFallback,
+      fetchImpl,
+    });
+
+    await expect(
+      provider.fetch('https://example.com/page', { signal: controller.signal }),
+    ).rejects.toBe(abortError);
+    expect(localFallback.fetch).not.toHaveBeenCalled();
+  });
+});

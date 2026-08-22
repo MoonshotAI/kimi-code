@@ -67,6 +67,7 @@ describe('WebSearchTool', () => {
     expect(content).toContain('2024-01-01');
   });
 
+
   it('renders the snippet under a "Snippet:" label consistent with the schema term', async () => {
     const provider = fakeProvider([
       { title: 'Result 1', url: 'https://example.com/1', snippet: 'Snippet 1' },
@@ -266,7 +267,7 @@ describe('WebSearchTool', () => {
     expect(content).toContain('The operation was aborted');
   });
 
-  it('passes only the query and toolCallId to the provider', async () => {
+  it('passes the query, toolCallId, and abort signal to the provider', async () => {
     const provider = fakeProvider([]);
     const tool = new WebSearchTool(provider);
     await executeTool(tool, {
@@ -277,6 +278,7 @@ describe('WebSearchTool', () => {
     });
     expect(provider.search).toHaveBeenCalledWith('test', {
       toolCallId: 'c4',
+      signal,
     });
   });
 

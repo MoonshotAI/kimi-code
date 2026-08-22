@@ -36,7 +36,10 @@ export interface UrlFetchResult {
 }
 
 export interface UrlFetcher {
-  fetch(url: string, options?: { toolCallId?: string }): Promise<UrlFetchResult>;
+  fetch(
+    url: string,
+    options?: { toolCallId?: string; signal?: AbortSignal },
+  ): Promise<UrlFetchResult>;
 }
 
 /**
@@ -86,10 +89,11 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     args: FetchURLInput,
     {
     toolCallId,
+    signal,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId, signal });
 
       if (!content) {
         return {
