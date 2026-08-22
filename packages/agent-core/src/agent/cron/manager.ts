@@ -85,6 +85,7 @@ const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 export interface CronTaskSnapshot {
   readonly id: string;
   readonly cron: string;
+  readonly prompt: string;
   readonly recurring: boolean;
   readonly createdAt: number;
   readonly lastFiredAt: number | undefined;
@@ -387,6 +388,7 @@ export class CronManager {
     return this.store.list().map((task) => ({
       id: task.id,
       cron: task.cron,
+      prompt: task.prompt,
       recurring: task.recurring !== false,
       createdAt: task.createdAt,
       lastFiredAt: task.lastFiredAt,

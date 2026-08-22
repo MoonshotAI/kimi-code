@@ -36,6 +36,7 @@ export type {
   ConfigDiagnostics,
   ContextMessage,
   CronTaskSnapshot,
+  DeleteCronTaskResult,
   ExperimentalFeatureState,
   ExperimentalFlagMap,
   ExperimentalFlagSource,

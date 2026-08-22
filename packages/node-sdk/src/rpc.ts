@@ -9,6 +9,7 @@ import {
   type ApprovalResponse,
   type BeginGlobalMcpServerAuthResult,
   type CoreAPI,
+  type DeleteCronTaskResult,
   type Event,
   type ExperimentalFeatureState,
   type GetCronTasksResult,
@@ -951,6 +952,15 @@ export abstract class SDKRpcClientBase {
   async getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult> {
     const rpc = await this.getRpc();
     return rpc.getCronTasks({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
+  }
+
+  async deleteCronTask(input: SessionIdRpcInput & { taskId: string }): Promise<DeleteCronTaskResult> {
+    const rpc = await this.getRpc();
+    return rpc.deleteCronTask({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      taskId: input.taskId,
+    });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {

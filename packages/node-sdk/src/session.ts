@@ -17,6 +17,7 @@ import type {
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
+  DeleteCronTaskResult,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
@@ -578,6 +579,15 @@ export class Session {
   async getCronTasks(): Promise<GetCronTasksResult> {
     this.ensureOpen();
     return this.rpc.getCronTasks({ sessionId: this.id });
+  }
+
+  /**
+   * Delete a cron task scheduled in this session. Returns whether the task
+   * existed and was removed.
+   */
+  async deleteCronTask(taskId: string): Promise<DeleteCronTaskResult> {
+    this.ensureOpen();
+    return this.rpc.deleteCronTask({ sessionId: this.id, taskId });
   }
 
   async listMcpServers(): Promise<readonly McpServerInfo[]> {
