@@ -465,7 +465,9 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order — the first matching rule takes effect.
+`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables.
+
+Matching happens by `decision` first, then by order: all `deny` rules are consulted, then all `ask` rules, then all `allow` rules. Within one of those groups the first matching rule takes effect. This means a matching `deny` beats a matching `ask` or `allow`, and a matching `ask` beats a matching `allow`, no matter where each rule sits in the file.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -493,6 +495,30 @@ pattern = "Bash(rm -rf*)"
 decision = "ask"
 pattern = "Bash"
 ```
+
+::: warning
+A catch-all rule cannot be combined with narrower `allow` rules for the same tool. Because the broader rule is consulted by class rather than by position, it also swallows the calls you allowed:
+
+```toml
+# Does NOT work: the catch-all below also applies to `Bash(git status)`.
+[[permission.rules]]
+decision = "allow"
+pattern = "Bash(git status*)"
+
+[[permission.rules]]
+decision = "deny" # "ask" has the same effect — both outrank `allow`
+pattern = "Bash"
+```
+
+Under the default `default_permission_mode = "manual"`, a catch-all is also rarely necessary: a tool call that matches no rule already falls through to a confirmation prompt unless the tool is approved by default (read-only tools such as `Read` and `Grep` are). Write only the narrow rules — `allow` for the calls you want approved silently, `deny` for the ones you never want to run — and let the rest reach the prompt.
+
+That fallback prompt does not exist in the autonomous modes, so relying on it there is unsafe:
+
+- `yolo` auto-approves anything that reaches the end of the chain, but your `deny` and `ask` rules still apply.
+- `auto` auto-approves *before* `ask` and `allow` are consulted, so only `deny` rules have any effect.
+
+In both modes, every call you want stopped needs an explicit `deny` rule.
+:::
 
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
