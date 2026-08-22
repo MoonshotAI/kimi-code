@@ -303,6 +303,12 @@ interface SendMessageOptions {
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
+/** Engine flag id — see `packages/agent-core-v2/src/session/sessionTitle/flag.ts`. */
+const AUTO_SESSION_TITLE_FLAG = 'auto_session_title';
+
+/** Generation attempts per session before the TUI stops asking, as in the web client. */
+const MAX_SESSION_TITLE_ATTEMPTS = 3;
+
 export class KimiTUI {
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
@@ -316,6 +322,8 @@ export class KimiTUI {
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
+  /** AI session title bookkeeping, keyed by session id — see maybeGenerateSessionTitle. */
+  private readonly sessionTitleGeneration = new Map<string, { attempts: number; done: boolean }>();
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
@@ -1731,6 +1739,41 @@ export class KimiTUI {
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
+    this.maybeGenerateSessionTitle(event);
+  }
+
+  /**
+   * The engine generates an AI session title only when a client asks for one.
+   * `kimi web` asks every time a turn settles; the TUI never asked, so turning
+   * "AI session titles" on in /experiments changed nothing here and the title
+   * stayed the truncated first prompt. Ask on the same trigger and with the
+   * same policy as the web client: the `first_turn` excerpt, at most
+   * MAX_SESSION_TITLE_ATTEMPTS tries per session, and no further tries once one
+   * lands. The rest is already wired — the engine leaves a renamed or already
+   * generated title alone, and the `session.meta.updated` it publishes reaches
+   * the status panel and the terminal title through handleSessionMetaChanged.
+   */
+  private maybeGenerateSessionTitle(event: TurnEndedEvent): void {
+    if (event.reason !== 'completed') return;
+    if (!this.engineV2) return;
+    if (!isExperimentalFlagEnabled(AUTO_SESSION_TITLE_FLAG)) return;
+    const sessionId = this.session?.id;
+    if (sessionId === undefined) return;
+    const state = this.sessionTitleGeneration.get(sessionId);
+    if (state?.done === true) return;
+    const attempts = state?.attempts ?? 0;
+    if (attempts >= MAX_SESSION_TITLE_ATTEMPTS) return;
+    this.sessionTitleGeneration.set(sessionId, { attempts: attempts + 1, done: false });
+    void this.harness
+      .generateSessionTitle({ id: sessionId, source: 'first_turn' })
+      .then((title) => {
+        if (title === undefined) return;
+        this.sessionTitleGeneration.set(sessionId, { attempts: 0, done: true });
+      })
+      .catch(() => {
+        // A title is cosmetic: keep the prompt-derived one and let a later
+        // turn retry while the attempt budget lasts.
+      });
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
