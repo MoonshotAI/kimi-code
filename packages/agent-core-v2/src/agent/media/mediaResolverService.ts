@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -70,18 +73,24 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     requester: ModelRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
-    if (!messages.some(hasDaemonFileMediaPart)) return messages;
+    if (!messages.some(hasResolvableMediaPart)) return messages;
 
     let changed = false;
     const out: Message[] = [];
     for (const message of messages) {
-      if (!hasDaemonFileMediaPart(message)) {
+      if (!hasResolvableMediaPart(message)) {
         out.push(message);
         continue;
       }
       const content: ContentPart[] = [];
       let sawVideoRef = false;
       for (const part of message.content) {
+        const fileUrl = localFileVideoUrl(part);
+        if (fileUrl !== undefined) {
+          sawVideoRef = true;
+          content.push(await this.resolveLocalVideoPart(fileUrl, requester, signal));
+          continue;
+        }
         const daemonPart = daemonFileRefFromPart(part);
         if (daemonPart === undefined) {
           content.push(part);
@@ -222,8 +231,87 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const { bytes, filename } = source;
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
     if (fileType.kind !== 'video') return { part: videoTag(tagPath), memoize: true };
-    const mimeType = fileType.mimeType;
+    return this.deliverRecognizedVideo(bytes, filename, fileType.mimeType, tagPath, requester, cacheKey, signal);
+  }
 
+  private async resolveLocalVideoPart(
+    fileUrl: string,
+    requester: ModelRequester,
+    signal: AbortSignal | undefined,
+  ): Promise<ContentPart> {
+    let path: string;
+    try {
+      path = fileURLToPath(fileUrl);
+    } catch {
+      return unavailableMediaText('video');
+    }
+    if (path.trim().length === 0) return videoTag(path);
+    if (!requester.model.capabilities.video_in) return videoTag(path);
+
+    let identity: string;
+    try {
+      const info = await stat(path);
+      identity = `${info.size}\0${info.mtimeMs}`;
+    } catch {
+      signal?.throwIfAborted();
+      return videoTag(path);
+    }
+
+    const providerKey = requester.model.providerType ?? requester.model.protocol;
+    const cacheKey = `file\0${path}\0${identity}\0${providerKey}`;
+    const memoed = this.resolved.get(cacheKey);
+    if (memoed !== undefined) return memoed;
+
+    const cachedLlmFileId = await this.readCachedUpload(cacheKey);
+    if (cachedLlmFileId !== undefined) {
+      const part = { type: 'video_url' as const, videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId } };
+      this.resolved.set(cacheKey, part);
+      return part;
+    }
+
+    try {
+      signal?.throwIfAborted();
+      const bytes = await readFile(path, signal === undefined ? undefined : { signal });
+      if (bytes.length === 0) {
+        const part = videoTag(path);
+        this.resolved.set(cacheKey, part);
+        return part;
+      }
+      const fileType = detectFileType(path, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
+      if (fileType.kind !== 'video') {
+        const part = videoTag(path);
+        this.resolved.set(cacheKey, part);
+        return part;
+      }
+      const { part, memoize } = await this.deliverRecognizedVideo(
+        bytes,
+        basename(path),
+        fileType.mimeType,
+        path,
+        requester,
+        cacheKey,
+        signal,
+      );
+      if (memoize) this.resolved.set(cacheKey, part);
+      return part;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (isVideoUploadAuthError(error)) throw error;
+      const part = videoTag(path);
+      this.resolved.set(cacheKey, part);
+      return part;
+    }
+  }
+
+  private async deliverRecognizedVideo(
+    bytes: Buffer,
+    filename: string,
+    mimeType: string,
+    tagPath: string | undefined,
+    requester: ModelRequester,
+    cacheKey: string,
+    signal: AbortSignal | undefined,
+  ): Promise<{ part: ContentPart; memoize: boolean }> {
     const model = requester.model;
     const inlineSupported = inlineVideoSupportedForProtocol(model.protocol);
 
@@ -292,8 +380,16 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   }
 }
 
-function hasDaemonFileMediaPart(message: Message): boolean {
-  return message.content.some((part) => daemonFileRefFromPart(part) !== undefined);
+function localFileVideoUrl(part: ContentPart): string | undefined {
+  return part.type === 'video_url' && part.videoUrl.url.startsWith('file:')
+    ? part.videoUrl.url
+    : undefined;
+}
+
+function hasResolvableMediaPart(message: Message): boolean {
+  return message.content.some(
+    (part) => daemonFileRefFromPart(part) !== undefined || localFileVideoUrl(part) !== undefined,
+  );
 }
 
 function degradedImage(path: string | undefined): ContentPart {
