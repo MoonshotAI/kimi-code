@@ -281,6 +281,65 @@ describe('acpBlocksToPromptParts', () => {
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  // Regression for #1777. Zed sends multi-attachment prompts as
+  // `[resource, text(" "), resource, text(" "), text("todo:...")]`, and the
+  // whitespace-only text parts used to become standalone PromptParts. The
+  // SDK rejected any part whose trimmed text is empty
+  // (packages/node-sdk/src/session.ts:635 — "Prompt input cannot contain
+  // empty text parts"), so the entire prompt failed with a generic ACP
+  // "Internal error: session prompt failed". Now those separator blocks are
+  // attached to the preceding text-producing part instead.
+  it('attaches whitespace-only text blocks between resources to the previous part (#1777)', () => {
+    const out = acpBlocksToPromptParts([
+      textResourceBlock('file:///a.tsx', 'A'),
+      textBlock(' '),
+      textResourceBlock('file:///b.tsx', 'B'),
+      textBlock(' '),
+      textBlock('todo: refactor'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: '<resource uri="file:///a.tsx">A</resource> ' },
+      { type: 'text', text: '<resource uri="file:///b.tsx">B</resource> ' },
+      { type: 'text', text: 'todo: refactor' },
+    ]);
+    // Sanity: none of the emitted parts is whitespace-only. Matches the
+    // SDK's `text.trim().length === 0` rejection, which is the failure we
+    // are avoiding.
+    for (const part of out) {
+      if (part.type === 'text') {
+        expect(part.text.trim().length).toBeGreaterThan(0);
+      }
+    }
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('drops leading whitespace-only text blocks with no preceding part (#1777)', () => {
+    // A prompt that opens with `text(" ")` has nothing to attach to, so the
+    // whitespace is dropped rather than kept as an empty part.
+    const out = acpBlocksToPromptParts([
+      textBlock(' '),
+      textResourceBlock('file:///a.tsx', 'A'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: '<resource uri="file:///a.tsx">A</resource>' },
+    ]);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not merge non-whitespace text blocks (#1777)', () => {
+    // Preserves the historical part boundaries for text blocks with real
+    // content — only whitespace-only text is treated as a separator.
+    const out = acpBlocksToPromptParts([
+      textBlock('hello'),
+      textBlock('world'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: 'hello' },
+      { type: 'text', text: 'world' },
+    ]);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('displayBlockToAcpContent — plan_review branch (Phase 13.2)', () => {
