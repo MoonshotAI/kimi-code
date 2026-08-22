@@ -2,7 +2,7 @@ export default {
   placeholder: '输入消息…',
   send: '发送 ↵',
   queueLabel: '队列',
-  placeholderRunning: '输入会加入队列 · Ctrl+S 立即插入运行中的回合',
+  placeholderRunning: '输入会加入队列 · <kbd>Ctrl</kbd>+<kbd>S</kbd> 立即插入运行中的回合',
   placeholderRunningMobile: '输入会加入队列',
   starting: '正在发送…',
   queuePending: '{n} 个任务等待发送',

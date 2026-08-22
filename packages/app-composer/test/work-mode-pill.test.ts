@@ -125,7 +125,27 @@ describe('DOM builders', () => {
     expect(el.tagName).toBe('SPAN');
     expect(el.className).toBe('wm-placeholder');
     expect(el.getAttribute('aria-hidden')).toBe('true');
-    expect(el.textContent).toBe('Ask Kimi');
+    expect(el.innerHTML).toBe('Ask Kimi');
+  });
+
+  it('renders the placeholder copy’s whitelisted <kbd> pairs as keycap markup', () => {
+    // The running-state copy carries shortcuts: exact <kbd>…</kbd> pairs
+    // survive as keycaps while everything else stays escaped text (app-core
+    // placeholderHtml — a malformed translation degrades to literal text,
+    // never to injected markup).
+    const el = buildComposerPlaceholder(
+      'Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject',
+    ) as unknown as FakeEl;
+    expect(el.innerHTML).toBe(
+      'Press <kbd>Enter</kbd> to queue · <kbd>Ctrl</kbd>+<kbd>S</kbd> to inject',
+    );
+  });
+
+  it('escapes anything beyond exact <kbd> pairs — no markup injection', () => {
+    const el = buildComposerPlaceholder(
+      '<script>alert(1)</script><kbd>Esc</kbd>',
+    ) as unknown as FakeEl;
+    expect(el.innerHTML).toBe('&lt;script&gt;alert(1)&lt;/script&gt;<kbd>Esc</kbd>');
   });
 
   it('builds the pill with mode glyph, label, and a working dismiss button', () => {

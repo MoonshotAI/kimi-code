@@ -474,6 +474,13 @@ html[data-color-scheme="dark"] {
     "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --font-display: var(--font-ui);
   --font-kbd: "Schibsted Grotesk Variable", system-ui, sans-serif;
+  /* Kbd keycap geometry (design-system §03 Kbd) — single source for the Kbd
+     primitive and every hand-rolled keycap (e.g. the composer placeholder's
+     decoration-layer caps). Border width stays on --p-hairline. */
+  --kbd-height: 18px;
+  --kbd-min-width: 18px;
+  --kbd-padding-x: 5px;
+  --kbd-font-size: 11px;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 

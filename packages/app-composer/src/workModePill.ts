@@ -16,6 +16,7 @@
 // etc., scoped-deep) — same split as the mention pill (app-ui global rules).
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import type { Node as PMNode } from 'prosemirror-model';
+import { placeholderHtml } from '@moonshot-ai/app-core/lib';
 import { iconSvg } from './icons';
 
 export type WorkModeKind = 'plan' | 'goal';
@@ -68,12 +69,17 @@ export function buildWorkModePill(spec: WorkModePillSpec, onDismiss: () => void)
  *  placeholder has no analogue inside a contenteditable). Purely visual: the
  *  same text already names the editor via the root's aria-label, so the span
  *  is hidden from the accessibility tree — a visible placeholder must not
- *  read as the field's VALUE (the old ::before overlay never entered it). */
+ *  read as the field's VALUE (the old ::before overlay never entered it).
+ *  The copy is our own i18n string and may carry a CONTROLLED HTML subset:
+ *  placeholderHtml escapes everything except exact <kbd>…</kbd> pairs, which
+ *  render as keycaps (shortcuts) — anything else degrades to literal text.
+ *  innerHTML with that whitelisted output is the same pattern as the pill
+ *  icons above. */
 export function buildComposerPlaceholder(text: string): HTMLElement {
   const span = document.createElement('span');
   span.className = 'wm-placeholder';
   span.setAttribute('aria-hidden', 'true');
-  span.textContent = text;
+  span.innerHTML = placeholderHtml(text);
   return span;
 }
 

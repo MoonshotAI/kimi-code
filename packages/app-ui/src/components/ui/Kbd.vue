@@ -27,15 +27,15 @@ defineProps<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border: 0.5px solid var(--color-line);
+  min-width: var(--kbd-min-width);
+  height: var(--kbd-height);
+  padding: 0 var(--kbd-padding-x);
+  border: var(--p-hairline) solid var(--color-line);
   border-radius: var(--radius-xs);
   background: transparent;
   color: inherit;
   font-family: var(--font-kbd);
-  font-size: 11px;
-  line-height: 1;
+  font-size: var(--kbd-font-size);
+  line-height: var(--leading-solid);
 }
 </style>

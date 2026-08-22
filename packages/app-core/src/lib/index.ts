@@ -22,6 +22,7 @@ export * from './pathDirname';
 export * from './pathRelativeTo';
 export * from './pinnedSectionLayout';
 export * from './pinnedSessions';
+export * from './placeholderHtml';
 export * from './planUsage';
 export * from './providerForm';
 export * from './rcDevices';

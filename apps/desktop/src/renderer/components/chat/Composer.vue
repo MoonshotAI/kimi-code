@@ -7,6 +7,7 @@ import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, matchSlashItem, parseSlash, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { FileItem } from './MentionMenu.vue';
@@ -264,12 +265,13 @@ onMounted(() => {
 
   // Combobox semantics for the slash/mention menus live on the focusable PM
   // root (the textarea used to carry them in template bindings). The
-  // localized placeholder doubles as the accessible name — the CSS ::before
-  // placeholder overlay never reaches the a11y tree.
+  // localized placeholder doubles as the accessible name — the placeholder
+  // decoration is aria-hidden, and the label takes the tag-stripped plain
+  // form (the copy may carry <kbd> keycap markup).
   watchEffect(() => {
     const dom = editor?.dom;
     if (!dom) return;
-    dom.setAttribute('aria-label', placeholder.value);
+    dom.setAttribute('aria-label', placeholderText(placeholder.value));
     dom.setAttribute('aria-expanded', String(!!menuAriaControls.value));
     const controls = menuAriaControls.value;
     if (controls) dom.setAttribute('aria-controls', controls);
@@ -2771,6 +2773,25 @@ function selectModel(modelId: string): void {
   color: var(--muted);
   pointer-events: none;
   user-select: none;
+}
+
+/* Shortcut keycaps in the placeholder (the copy's whitelisted <kbd> pairs):
+   the §03 Kbd look, geometry from the shared --kbd-* / --p-hairline tokens,
+   colour inherited from the placeholder text. */
+.ph :deep(.wm-placeholder kbd) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--kbd-min-width);
+  height: var(--kbd-height);
+  padding: 0 var(--kbd-padding-x);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-kbd);
+  font-size: var(--kbd-font-size);
+  line-height: var(--leading-solid);
 }
 
 /* Expanded editor: a tall composing area at ~70% of the viewport — clearly
