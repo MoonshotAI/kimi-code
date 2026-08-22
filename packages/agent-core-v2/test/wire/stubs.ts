@@ -2,14 +2,16 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IEventBus } from '#/app/event/eventBus';
-import { createHooks } from '#/hooks';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
+import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { EventDispatcherService } from '#/state/eventDispatcherService';
 import {
   IWireService,
   type IWireService as AgentWire,
-  type WireHooks,
 } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
@@ -28,6 +30,7 @@ const noopLog: IAppendLogStore = {
   flush: async () => {},
   close: async () => {},
   acquire: () => toDisposable(() => {}),
+  drainRetirements: () => Promise.resolve(),
 };
 
 const noopBlob: IAgentBlobService = {
@@ -48,12 +51,7 @@ export function testWireScope(scope: string, journal: string): string {
 }
 
 export function stubAgentScopeContext(scope: string): AgentScopeContext {
-  return {
-    _serviceBrand: undefined,
-    agentId: 'test-agent',
-    scope: (subKey?: string): string =>
-      subKey === undefined || subKey === '' ? scope : `${scope}/${subKey}`,
-  };
+  return makeAgentScopeContext({ agentId: 'test-agent', agentScope: scope, generation: 0 });
 }
 
 export function registerTestAgentWire(
@@ -61,11 +59,16 @@ export function registerTestAgentWire(
   scope: string,
   dependencies: TestAgentWireDependencies = {},
 ): AgentWire {
-  ix.stub(IAgentScopeContext, stubAgentScopeContext(scope));
+  const agentScope = stubAgentScopeContext(scope);
+  ix.stub(IAgentScopeContext, agentScope);
   ix.set(IAppendLogStore, dependencies.log ?? noopLog);
   ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
   ix.set(IEventBus, dependencies.eventBus ?? noopEventBus);
   ix.set(IWireService, new SyncDescriptor(WireService));
+  const eventBus = ix.get(IEventBus);
+  if (typeof (eventBus as Partial<ISessionEventBus>).activateAgent === 'function') {
+    (eventBus as ISessionEventBus).activateAgent(agentScope.agentContext);
+  }
   return ix.get(IWireService);
 }
 
@@ -77,17 +80,28 @@ export function registerTestAgentWireServices(
   registration.defineInstance(IAppendLogStore, noopLog);
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);
+  registration.defineInstance(IAgentStateService, new AgentStateService());
   registration.define(IWireService, WireService);
+  registration.define(IEventDispatcher, EventDispatcherService);
 }
 
-export async function restoreTestAgentWire(
-  wire: AgentWire,
+export function registerTestEventDispatcher(ix: TestInstantiationService): IEventDispatcher {
+  const previous = ix.set(IAgentStateService, new AgentStateService());
+  if (previous !== undefined) {
+    ix.set(IAgentStateService, previous as IAgentStateService);
+  }
+  ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+  return ix.get(IEventDispatcher);
+}
+
+export async function restoreTestEventDispatcher(
+  dispatcher: IEventDispatcher,
   log: IAppendLogStore,
   scope: string,
   records: readonly WireRecord[],
 ): Promise<void> {
   await log.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
-  await wire.restore();
+  await dispatcher.restore();
 }
 
 export function stubAgentWire(
@@ -95,12 +109,22 @@ export function stubAgentWire(
 ): AgentWire {
   return {
     _serviceBrand: undefined,
-    hooks: createHooks<WireHooks, keyof WireHooks>(['onDidRestore']),
-    dispatch: () => {},
     seal: async () => {},
-    restore: async () => {},
+    appendRecord: () => {},
+    readJournal: async function* () {},
     flush,
-    getModel: (model) => model.initial() as never,
+  };
+}
+
+export function stubWireJournal(journal: WireRecord[]): AgentWire {
+  return {
+    ...stubAgentWire(),
+    appendRecord: (record) => {
+      journal.push(record);
+    },
+    readJournal: async function* () {
+      for (const record of journal) yield record;
+    },
   };
 }
 
@@ -123,5 +147,6 @@ export function recordingWireLog(
     flush: async () => {},
     close: async () => {},
     acquire: () => toDisposable(() => {}),
+    drainRetirements: () => Promise.resolve(),
   };
 }

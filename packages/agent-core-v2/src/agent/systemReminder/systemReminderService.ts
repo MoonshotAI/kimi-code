@@ -1,10 +1,10 @@
-import { Service } from "#/_base/di/service";
+import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 
-import { IAgentSystemReminderService } from './systemReminder';
+import { IAgentSystemReminderService, wrapSystemReminder } from './systemReminder';
 
 export class AgentSystemReminderService extends Service implements IAgentSystemReminderService {
   declare readonly _serviceBrand: undefined;
@@ -21,7 +21,7 @@ export class AgentSystemReminderService extends Service implements IAgentSystemR
       content: [
         {
           type: 'text',
-          text: `<system-reminder>\n${content.trim()}\n</system-reminder>`,
+          text: wrapSystemReminder(content),
         },
       ],
       toolCalls: [],

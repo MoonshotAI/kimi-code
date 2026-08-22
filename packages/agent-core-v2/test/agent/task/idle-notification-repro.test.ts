@@ -1,23 +1,3 @@
-/**
- * Repro for bug: "after a group of background agents complete, the
- * main agent doesn't receive notifications".
- *
- * Unlike `background-manager.test.ts` (which mocks `agent.turn.steer`),
- * this file drives a real `Agent` instance so we can verify the
- * full chain:
- *
- *    task terminal → notifyAgentTask → loop.enqueue(TaskNotificationStepRequest)
- *      → (busy) the mergeable request folds into the active turn's next step
- *      → (idle / race) `activeOrNewTurn` admission launches a fresh turn for
- *        the notification — matching v1's `turn.steer`, the model consumes it
- *        without waiting for the user
- *
- * Delivery is queue-ordered and the message only materializes when the loop
- * pops the request. If a scenario fails to inject the notification into an
- * LLM call, the per-notification `waitFor` times out, making the failure
- * mode explicit.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';

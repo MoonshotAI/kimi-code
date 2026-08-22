@@ -12,6 +12,8 @@
  *     pending_interaction, last_turn_reason}` for one session;
  *   - `event.session.created` / `session.meta.updated` → list-level signals
  *     (a session appeared / retitled), forwarded for list invalidation;
+ *   - `event.session.archived` (live or cold) / `event.workspace.*` →
+ *     list-level signals, forwarded for list invalidation;
  *   - `event.di.unit_changed` → one DI unit state transition of the engine's
  *     scope tree (the debug-surface feed), forwarded for `['di']`
  *     invalidation. Global like the rest: it carries the `__global__`
@@ -58,6 +60,12 @@ export interface GlobalEventsWsHandlers {
   onSessionCreated: (sessionId: string) => void;
   /** A session's title/patch changed (list-level signal). */
   onMetaUpdated: (sessionId: string) => void;
+  /** A session was archived, live or cold (list-level signal). The envelope
+   *  carries the `__global__` watermark; the real session id rides in the
+   *  payload. */
+  onSessionArchived?: ((sessionId: string) => void) | undefined;
+  /** A workspace was created / updated / deleted (list-level signal). */
+  onWorkspaceChanged?: (() => void) | undefined;
   /** A DI unit of the engine's scope tree changed state (debug feed). */
   onDiUnitChanged?: ((payload: DiUnitChangedPayload) => void) | undefined;
   /** Socket established (initial connect and every reconnect) — the consumer
@@ -177,6 +185,20 @@ export class GlobalEventsWs {
       }
       case 'event.session.created': {
         this.handlers.onSessionCreated(sessionId);
+        return;
+      }
+      case 'event.session.archived': {
+        const payload = frame.payload as { sessionId?: unknown } | undefined;
+        const archivedId = payload?.sessionId;
+        if (typeof archivedId === 'string' && archivedId !== '') {
+          this.handlers.onSessionArchived?.(archivedId);
+        }
+        return;
+      }
+      case 'event.workspace.created':
+      case 'event.workspace.updated':
+      case 'event.workspace.deleted': {
+        this.handlers.onWorkspaceChanged?.();
         return;
       }
       case 'session.meta.updated': {

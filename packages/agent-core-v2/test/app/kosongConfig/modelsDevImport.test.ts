@@ -1,21 +1,3 @@
-/**
- * `app/kosongConfig` models.dev import tests — `IModelsDevImportService`:
- *
- *  - the browse surface prunes the models.dev directory and resolves import
- *    eligibility (ok / needs-base-url / rejected), and a missing entry throws
- *    `provider.catalog_entry_not_found`;
- *  - a failed upstream fetch with no built-in snapshot throws
- *    `provider.catalog_unavailable`;
- *  - `importModelsDevProvider` writes the provider + model aliases through
- *    `config.replace` (never the default pointers), keeps the stored api_key
- *    on a re-import without one, and rejects OAuth-managed providers and
- *    non-importable entries with coded errors;
- *  - `importCustomRegistry` applies every valid entry with a `source` blob,
- *    drops same-URL providers that vanished upstream, rejects OAuth-managed
- *    targets, and maps fetch/validation failures to
- *    `provider.registry_import_invalid`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
@@ -254,6 +236,58 @@ describe('IModelsDevImportService', () => {
     expect(config.get('defaultModel')).toBe('k2');
   });
 
+  it('filters pool entries a catalog import drops, keeping a surviving default', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'openai/gpt-4o': { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+        k2: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 131072 },
+      },
+      secondaryModel: {
+        defaultModel: 'k2',
+        models: { k2: 'fast', 'openai/gpt-4o': 'smart' },
+      },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+
+    expect(config.get('secondaryModel')).toEqual({
+      defaultModel: 'k2',
+      models: { k2: 'fast' },
+    });
+  });
+
+  it('clears the pool when a catalog import orphans its default', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'openai/gpt-4o': { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+      },
+      secondaryModel: { defaultModel: 'openai/gpt-4o' },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+
+    expect(config.get('secondaryModel')).toBeUndefined();
+  });
+
+  it('cascades the pool on custom-registry imports too', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
+    const { config, imports } = createHost({
+      providers: { 'acme-gpt': { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'acme-gpt/gpt-old': { provider: 'acme-gpt', model: 'gpt-old', maxContextSize: 64000 },
+      },
+      secondaryModel: { defaultModel: 'acme-gpt/gpt-old' },
+    });
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(config.get('secondaryModel')).toBeUndefined();
+  });
+
   it('seeds default_model from the first imported model only when none is configured', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { config, imports } = createHost({ providers: {}, models: {} });
@@ -308,9 +342,6 @@ describe('IModelsDevImportService', () => {
     expect(err.message).toContain('requires a base_url');
   });
 
-  // A custom registry is a user-supplied third-party endpoint, so this request
-  // carries the same identity the scheduled refresh of that registry sends —
-  // it used to go out with a hardcoded product token instead.
   it('sends the configured identity as the custom-registry import User-Agent', async () => {
     const seen: Array<string | null> = [];
     setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
@@ -341,9 +372,6 @@ describe('IModelsDevImportService', () => {
     expect(seen).toEqual(['acme/1.0']);
   });
 
-  // The fourth combination of (host header, configured slug): a host that
-  // states no User-Agent must still present the configured identity, not the
-  // neutral stand-in — this is exactly the case the fallback exists to serve.
   it('presents the configured slug when the host states no User-Agent', async () => {
     const seen: Array<string | null> = [];
     setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
@@ -354,8 +382,6 @@ describe('IModelsDevImportService', () => {
     expect(seen).toEqual(['acme']);
   });
 
-  // These directories are ones this service chooses to call, so a host that
-  // states no User-Agent gets a neutral token rather than no header at all.
   it('falls back to a neutral token when the host states no User-Agent', async () => {
     const seen: Array<string | null> = [];
     setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });

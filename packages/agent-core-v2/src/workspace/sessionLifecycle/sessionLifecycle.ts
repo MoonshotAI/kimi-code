@@ -1,33 +1,12 @@
-/**
- * `sessionLifecycle` domain — per-handler session lifecycle contract.
- *
- * Defines the public contract of one workspace handler: the
- * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,
- * `ResumeSessionOptions`, and the `ISessionLifecycleService` used to create
- * sessions (`create`), look up the live ones (`get` / `list`), close them
- * (`close`), archive/restore them, delete them (`delete` — closes a live
- * session first, then removes its persisted data and its index entries;
- * unknown ids raise `session.not_found`), fork them (`fork`), and
- * fork-then-tag
- * them as direct children (`createChild`) — always as child scopes of THIS
- * handler's Workspace scope, so a handler owns exactly the sessions of one
- * workspace and fork never crosses handlers. Announces lifecycle transitions
- * through `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession`
- * / `onDidForkSession`; the ordered hook slots are per-session seeds.
- * Workspace-scoped — one instance per materialized handler.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
-import type { Event } from '#/_base/event';
+import { type Event, type IWaitUntil } from '#/_base/event';
 import type { BindAgentInput } from '#/agent/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type {
-  SessionCloseReason,
-  SessionCreateSource,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
 
-export type { SessionCloseReason, SessionCreateSource };
+export type SessionCreateSource = 'startup' | 'resume' | 'fork';
+
+export type SessionCloseReason = 'exit' | 'archive';
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;
@@ -48,6 +27,11 @@ export interface ForkSessionOptions {
   readonly newSessionId?: string;
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
+  /**
+   * Zero-based index of the user-visible turn to retain through. When omitted,
+   * the complete session is copied (the existing fork behavior).
+   */
+  readonly turnIndex?: number;
 }
 
 export interface ResumeSessionOptions {
@@ -94,10 +78,33 @@ export interface SessionForkedEvent {
   readonly handle: ISessionScopeHandle;
 }
 
+/**
+ * Participation surface of `onWillCreateSession` — the business-lifecycle
+ * moment "a session is being created", fired synchronously before the new
+ * session's services activate (the `will` half of `onDidCreateSession`;
+ * resume and fork are creations too). Workspace-scope participants step
+ * into the creation through the session domain's own vocabulary — read the
+ * session's seeded facts (`readSeed`), contribute or replace a session seed
+ * (`contributeSeed`; a seed already projected by the workspace seed
+ * adapters is replaced), and attach teardown work to the session's lifetime
+ * (`onSessionDispose` — runs with the session's teardown on every path:
+ * close, archive, delete, a failed create, workspace teardown). The event
+ * carries only facts the lifecycle itself owns; anything a participant
+ * needs beyond them travels as a session-domain seed.
+ */
+export interface SessionWillCreateEvent {
+  readonly sessionId: string;
+  readSeed<T>(id: ServiceIdentifier<T>): T;
+  contributeSeed<T>(id: ServiceIdentifier<T>, value: T): void;
+  onSessionDispose(dispose: () => void): void;
+}
+
 export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
 
-  readonly onDidCreateSession: Event<SessionCreatedEvent>;
+  readonly onWillCreateSession: Event<SessionWillCreateEvent>;
+  readonly onDidCreateSession: Event<SessionCreatedEvent & IWaitUntil>;
+  readonly onWillCloseSession: Event<SessionWillCloseEvent & IWaitUntil>;
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;

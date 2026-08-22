@@ -1,14 +1,3 @@
-/**
- * `di` domain — DI Scope tree (`Scope`) and scoped service registry.
- *
- * Scoped services are resolved when their scope is created by default;
- * registrations that defer construction until first resolution use `OnDemand`.
- *
- * The kernel only knows the scope tree and the `ScopeKind` partial order.
- * The tier set is a business concept: the host bootstrap declares it through
- * `setScopeTopology` (see `src/app/scopes.ts`).
- */
-
 import { BugIndicatingError } from '../errors/errors';
 import { SyncDescriptor } from './descriptors';
 import { ScopeActivation, type ProvideAllEntry } from './instantiation';
@@ -51,14 +40,23 @@ export interface ScopedEntry {
 
 const _scopedRegistry: ScopedEntry[] = [];
 
+function findScopedEntryIndex(scope: ScopeKind, id: ServiceIdentifier<unknown>): number {
+  return _scopedRegistry.findIndex((entry) => entry.scope === scope && entry.id === id);
+}
+
 export function registerScopedService<T>(
   scope: ScopeKind,
   id: ServiceIdentifier<T>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
   activation: ScopeActivation = ScopeActivation.OnScopeCreated,
   domain: string = 'unknown',
 ): void {
+  const existing = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (existing !== -1) {
+    throw new BugIndicatingError(
+      `duplicate scoped service registration for '${String(id)}' in scope '${scope}' (registered domain '${_scopedRegistry[existing]?.domain}', attempted domain '${domain}'); use overrideScopedService for intentional replacement`,
+    );
+  }
   const descriptor = new SyncDescriptor<T>(ctor);
   _scopedRegistry.push({
     scope,
@@ -67,6 +65,29 @@ export function registerScopedService<T>(
     domain,
     activation,
   });
+}
+
+export function overrideScopedService<T>(
+  scope: ScopeKind,
+  id: ServiceIdentifier<T>,
+  ctor: new (...args: any[]) => T,
+  activation: ScopeActivation = ScopeActivation.OnScopeCreated,
+  domain: string = 'unknown',
+): void {
+  const index = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (index === -1) {
+    throw new BugIndicatingError(
+      `overrideScopedService found no registration for '${String(id)}' in scope '${scope}' (domain '${domain}'); use registerScopedService for the initial registration`,
+    );
+  }
+  const descriptor = new SyncDescriptor<T>(ctor);
+  _scopedRegistry[index] = {
+    scope,
+    id: id as ServiceIdentifier<unknown>,
+    descriptor: descriptor as SyncDescriptor<unknown>,
+    domain,
+    activation,
+  };
 }
 
 export function getScopedServiceDescriptors(scope: ScopeKind): ReadonlyArray<ScopedEntry> {
@@ -78,14 +99,13 @@ export function _clearScopedRegistryForTests(): void {
 }
 
 export type ScopeSeed = ReadonlyArray<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly [ServiceIdentifier<any>, unknown]
 >;
 
 export interface ScopeOptions {
   readonly id?: string;
-  readonly extra?: ScopeSeed;
-  readonly assemble?: (container: InstantiationService) => void;
+  readonly seeds?: ScopeSeed;
+  readonly configureContainer?: (container: InstantiationService) => void;
 }
 
 export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
@@ -96,14 +116,13 @@ export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
 }
 
 export type IAppScopeHandle = IScopeHandle<'app'>;
-export type IWorkspaceScopeHandle = IScopeHandle<'workspace'>;
 export type ISessionScopeHandle = IScopeHandle<'session'>;
 export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
-function buildCollection(extra?: ScopeSeed): ServiceCollection {
+function buildCollection(seeds?: ScopeSeed): ServiceCollection {
   const collection = new ServiceCollection();
-  if (extra) {
-    for (const [id, value] of extra) {
+  if (seeds) {
+    for (const [id, value] of seeds) {
       collection.set(id, value);
     }
   }
@@ -137,12 +156,12 @@ export function createScopedChildHandle(
   id: string,
   options: ScopeOptions = {},
 ): IScopeHandle {
-  const collection = buildCollection(options.extra);
+  const collection = buildCollection(options.seeds);
   const child = parent.createChild(collection);
   (child as InstantiationService).debugLabel = id;
   try {
     watchScopeUnits(child as InstantiationService, kind);
-    options.assemble?.(child as InstantiationService);
+    options.configureContainer?.(child as InstantiationService);
     provideScopeServices(child, kind, collection);
   } catch (error) {
     child.dispose();
@@ -189,12 +208,12 @@ export class Scope implements IDisposable {
 
   static createApp(options: ScopeOptions = {}): Scope {
     const kind: ScopeKind = 'app';
-    const collection = buildCollection(options.extra);
+    const collection = buildCollection(options.seeds);
     const instantiation = new InstantiationService(collection, true);
     instantiation.debugLabel = options.id ?? 'app';
     try {
       watchScopeUnits(instantiation, kind);
-      options.assemble?.(instantiation);
+      options.configureContainer?.(instantiation);
       provideScopeServices(instantiation, kind, collection);
     } catch (error) {
       instantiation.dispose();
@@ -223,12 +242,12 @@ export class Scope implements IDisposable {
     if (this.children.has(id)) {
       throw new Error(`Scope '${this.id}' already has a child with id '${id}'`);
     }
-    const collection = buildCollection(options.extra);
+    const collection = buildCollection(options.seeds);
     const childInstantiation = this.instantiation.createChild(collection);
     (childInstantiation as InstantiationService).debugLabel = id;
     try {
       watchScopeUnits(childInstantiation as InstantiationService, kind);
-      options.assemble?.(childInstantiation as InstantiationService);
+      options.configureContainer?.(childInstantiation as InstantiationService);
       provideScopeServices(childInstantiation, kind, collection);
     } catch (error) {
       childInstantiation.dispose();

@@ -1,15 +1,6 @@
-/**
- * `kosong/contract` generate() — the stream-merging generation driver.
- *
- * Covers event normalization (text/think deltas merged, tool-call argument
- * deltas routed by stream index), the empty/thinking-only response
- * rejections, the abort contract (standard DOMException, stream cancelled),
- * callback plumbing, and per-turn intent passthrough via GenerateOptions.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
-import { APIEmptyResponseError } from '#/kosong/contract/errors';
+import { APIEmptyResponseError, isRetryableGenerateError } from '#/kosong/contract/errors';
 import { generate, type GenerateResult } from '#/kosong/contract/generate';
 import type { Message, StreamedMessagePart, ToolCall } from '#/kosong/contract/message';
 import type {
@@ -205,6 +196,22 @@ describe('generate() stream normalization', () => {
     await expect(generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY)).rejects.toBeInstanceOf(
       APIEmptyResponseError,
     );
+  });
+
+  it('marks a provider-filtered thinking-only response as non-retryable', async () => {
+    class FilteredStream extends FakeStreamedMessage {
+      override readonly finishReason: FinishReason | null = 'filtered';
+      override readonly rawFinishReason: string | null = 'content_filter';
+    }
+    const stream = new FilteredStream([{ type: 'think', think: 'filtered mid-thought' }]);
+    const { provider } = createFakeProvider(stream);
+
+    const caught = await generate(provider, SYSTEM_PROMPT, NO_TOOLS, HISTORY).catch(
+      (error: unknown) => error,
+    );
+
+    expect(caught).toBeInstanceOf(APIEmptyResponseError);
+    expect(isRetryableGenerateError(caught)).toBe(false);
   });
 
   it('forwards the trace id to onTraceId and the result', async () => {

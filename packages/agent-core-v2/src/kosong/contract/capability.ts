@@ -1,15 +1,3 @@
-/**
- * `kosong/contract` domain — declared model capabilities.
- *
- * `ModelCapability` describes the modalities and limits of a specific model
- * so callers can gate requests against what the model accepts without
- * dispatching the request and watching it fail upstream.
- *
- * `UNKNOWN_CAPABILITY` is the marker value returned when nothing is known
- * about a model: `max_context_tokens: 0` means "unknown"; callers that do
- * not gate on context length can ignore the field.
- */
-
 export interface ModelCapability {
   readonly image_in: boolean;
   readonly video_in: boolean;

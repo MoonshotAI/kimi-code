@@ -1,17 +1,3 @@
-/**
- * `tools` domain — `SelectToolsTool` implementation (the `select_tools`
- * tool).
- *
- * The built-in tool that lets the model load dynamic schemas named in
- * loadable-tools announcements. Delegates loading to
- * `IAgentToolSelectService` (`toolSelect` domain); offered by the shaped tool
- * view only while the disclosure gate is open.
- *
- * Registered via the module-level `registerAgentToolService(ISelectToolsTool,
- * SelectToolsTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/acp-server",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Agent Client Protocol (ACP) host backed directly by the DI × Scope agent engine (agent-core-v2)",
   "license": "MIT",

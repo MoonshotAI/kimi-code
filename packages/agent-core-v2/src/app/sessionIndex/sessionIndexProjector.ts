@@ -1,40 +1,3 @@
-/**
- * `sessionIndex` domain (L2) — projector and reconciliation for the read
- * model.
- *
- * The projector materializes the authoritative session metadata
- * (`state.json` documents) into a fresh read-model generation: a full scan
- * with bounded concurrency, chunked `batch` writes (no cross-shard atomicity
- * required), per-workspace counters recomputed exactly, and finally one
- * atomic checkpoint publish that makes the generation readable. A projector
- * that dies midway never publishes, so readers keep serving the previous
- * generation; the next run clears its own stragglers before writing.
- * Publishing also schedules the previous generation's drop.
- *
- * The initial projection coincides with the first list request (read paths
- * kick `prepare()` single-flight and fall back to the authoritative scan
- * while unprepared). `sharedScan()` makes that ONE scan serve both: the
- * projection joins a running scan — or reuses one that just settled within
- * a short window — instead of enumerating every session directory a second
- * time. Fallback reads use `sharedScanForRead()`: they join only a scan
- * that is still in flight and otherwise drive a fresh one, so a read never
- * serves a settled snapshot that could predate a just-created session. (A
- * joined scan may still have started before the read; the index folds the
- * mirror's pending queue into the result to cover that window.) A
- * projection run consumes the slot on settle, so a later re-projection
- * always scans fresh.
- *
- * Reconciliation runs against the *published* generation: it re-scans the
- * authoritative set (always fresh — a stale snapshot could regress counters
- * the mirror just updated), upserts summaries that drifted (mirror loss,
- * external edits), deletes entries whose document disappeared, and rewrites
- * every counter from the authoritative scan — bounding counter drift to one
- * reconcile interval.
- *
- * This is an internal collaborator of `FileSessionIndex`, not a DI service:
- * the index drives it single-flight and owns the state machine around it.
- */
-
 import { ILogService } from '#/_base/log/log';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
@@ -60,14 +23,6 @@ import {
 
 const WRITE_CHUNK = 500;
 const SCAN_CONCURRENCY = 16;
-/**
- * How long a settled shared scan stays reusable BY A PROJECTION. The window
- * only needs to cover the gap between a fallback read finishing its scan and
- * the kicked projection reaching its own scan call (query-store open +
- * collection housekeeping in between); a projection never reuses a slot
- * older than this. Fallback reads never reuse a settled scan at all (see
- * `sharedScanForRead`).
- */
 const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
@@ -153,15 +108,10 @@ export class SessionIndexProjector {
 
   /** Scan the authoritative set into a fresh generation and publish it. */
   async project(generation: number): Promise<ProjectionResult> {
-    // Captured BEFORE the housekeeping below: the scan overlaps it, and the
-    // finally invalidates exactly the slot this run consumed — never a newer
-    // scan a concurrent fallback read started meanwhile.
     const scan = this.sharedScan();
     try {
       return await this.doProject(generation, scan);
     } finally {
-      // The consumed slot must not serve a LATER projection: a re-projection
-      // always scans the authoritative set fresh.
       if (this.scanSlot?.promise === scan) this.scanSlot = undefined;
     }
   }
@@ -173,7 +123,6 @@ export class SessionIndexProjector {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    // Clear stragglers of a crashed earlier attempt at this generation.
     await queryStore.dropCollection(collection);
     await queryStore.dropCollection(counters);
     await queryStore.ensureIndex(collection, {
@@ -286,7 +235,6 @@ export class SessionIndexProjector {
       key: workspaceId,
       value: { active: value.active, archived: value.archived } satisfies SessionWorkspaceCounts,
     }));
-    // Workspaces that vanished entirely lose their counter document.
     const existing = await queryStore.listKeys(counters);
     for (const key of existing) {
       if (!counts.has(key)) ops.push({ kind: 'delete', collection: counters, key });

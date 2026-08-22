@@ -1,22 +1,3 @@
-/**
- * `kosong/model` domain — the `IModelCatalog.inspect` payload and its
- * assembly.
- *
- * The inspection is a *god object* for one configured model: the raw config
- * layers (`[models.*]` record + effective record, `[providers.*]` config +
- * provider-definition facts) beside the
- * resolved runtime view — plus `sources`, a dot-path → provenance map that
- * answers "where did this value come from" (`config` / `override` /
- * `builtin` / `env` / `synthesized` / `none`).
- *
- * Everything here is on-demand: `ModelCatalog.entry` captures a
- * `ResolutionTraceCollector` while resolving (reference-only, no copies), and
- * `assembleModelInspection` builds the god object — including secret
- * redaction — only when `inspect` is called. The trace and the resolved
- * Model come from the SAME resolution pass, so the inspection can never
- * drift from what `get` served (same config generation, same cache entry).
- */
-
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { BugIndicatingError } from '#/_base/errors/errors';
@@ -31,7 +12,6 @@ import { getProviderDefinition } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
-
 
 export interface InspectedAuth {
   readonly kind: 'apiKey' | 'oauth' | 'none';
@@ -83,7 +63,6 @@ export interface ModelInspection {
   readonly sources: Readonly<Record<string, InspectionSource>>;
 }
 
-
 export const TRACE = {
   configuredModel: 'configuredModel',
   effectiveModel: 'effectiveModel',
@@ -120,7 +99,6 @@ export class ResolutionTraceCollector implements ResolutionTrace {
   }
 }
 
-
 const SECRET_KEY_RE = /api[-_]?key|token|secret|password|authorization/i;
 
 export function maskSecret(value: string): string {
@@ -139,7 +117,6 @@ export function redactSecrets<T>(value: T): T {
   }
   return value;
 }
-
 
 export function attributeEffectiveFields(
   trace: ResolutionTraceCollector,
@@ -235,7 +212,6 @@ export function attributeProviderOptions(
     trace.record(path, source ?? { kind: 'config', detail: '[models.*] section' });
   }
 }
-
 
 interface ResolvedModelLike {
   readonly protocol: Protocol;

@@ -1,16 +1,6 @@
-/**
- * The v1 WS `Event` union — the per-agent event stream frame payloads.
- *
- * Most frames are the engine's own `DomainEvent`s (turn / tool / subagent /
- * compaction / mcp / …), re-exported here as the stream's backbone. The
- * remaining interfaces are the v1-only frames this transport synthesizes
- * (session/workspace lifecycle, config changes, the merged
- * legacy status overlay, and the legacy background-task spellings) — they
- * never had an engine-side producer, so they are defined here, next to the
- * broadcaster that emits them.
- */
+import type { z } from 'zod';
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import type { agentEventSchema } from '../../../protocol/events-zod';
 import type { MessageContent } from '../../../protocol/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
@@ -28,6 +18,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -50,6 +41,11 @@ export interface SessionMetaUpdatedEvent {
 export interface SessionCreatedEvent {
   readonly type: 'event.session.created';
   readonly session: Session;
+}
+
+export interface SessionArchivedEvent {
+  readonly type: 'event.session.archived';
+  readonly workspace_id: string;
 }
 
 export interface WorkspaceCreatedEvent {
@@ -111,6 +107,30 @@ export interface ConfigWarningItem {
 export interface ConfigWarningEvent {
   readonly type: 'event.config.warning';
   readonly warnings: readonly ConfigWarningItem[];
+}
+
+/**
+ * Plugin set mutation (install / enable / disable / remove from any client).
+ * Bare fan-out signal — clients re-read the plugins REST surface.
+ */
+export interface PluginChangedEvent {
+  readonly type: 'event.plugin.changed';
+}
+
+/**
+ * Capability install progress transition. Global fan-out; clients update the
+ * row live and re-read the capability once it settles (`running: false`).
+ */
+export interface CapabilityChangedEvent {
+  readonly type: 'event.capability.changed';
+  readonly capability_id: string;
+  readonly install: {
+    readonly running: boolean;
+    readonly step?: string;
+    readonly percent?: number;
+    readonly error?: string;
+    readonly note?: string;
+  };
 }
 
 /**
@@ -196,13 +216,16 @@ export interface BackgroundTaskTerminatedEvent {
   readonly info: TaskInfo;
 }
 
+type CoreStreamEvent = z.infer<typeof agentEventSchema>;
+
 export type AgentEvent =
-  | DomainEvent
+  | CoreStreamEvent
   | AgentStatusUpdatedEvent
   | AgentCreatedEvent
   | AgentDisposedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionArchivedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
@@ -210,12 +233,14 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
+  | PluginChangedEvent
+  | CapabilityChangedEvent
   | DiUnitChangedEvent
   | PromptSubmittedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;
 
-export type Event = AgentEvent & { agentId: string; sessionId: string };
+export type Event = AgentEvent & { agentId: string; sessionId: string; readonly time?: number };
 
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',
@@ -227,6 +252,7 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.completed',
   'agent.status.updated',
   'event.di.unit_changed',
+  'event.capability.changed',
 ] as const;
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];

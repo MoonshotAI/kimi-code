@@ -1,26 +1,3 @@
-/**
- * `/sessions/{session_id}/terminals*` route handlers — server-v2 port.
- *
- * Mirrors `packages/server/src/routes/terminals.ts` path-for-path and
- * schema-for-schema so existing v1 clients keep working against server-v2.
- * Backed by the v2 Session-scoped `ISessionTerminalService`
- * (`agent-core-v2/src/session/terminal`): the route resolves the session from
- * the URL, then dispatches to the matching `ISessionTerminalService` method.
- * The wire schema comes from the engine's own terminal contract
- * (`agent-core-v2`).
- *
- * The v2 service is Session-scoped (one instance owns only its own session's
- * terminals), so unlike v1 the methods do not take a `session_id` — the session
- * is fixed by the scope the service is resolved from. The actual OS PTY
- * processes are owned by the App-scoped `IHostTerminalService`.
- *
- * **Error mapping**:
- *   - unknown session     → `40401` (session.not_found)
- *   - unknown terminal    → `40414` (terminal.not_found)
- *   - cwd escapes workspace → `41304` (fs.path_escapes_session)
- *   - invalid suffix/body → `40001` (validation.failed, via defineRoute / parseActionSuffix)
- */
-
 import {
   ErrorCodes,
   ISessionTerminalService,
@@ -42,6 +19,10 @@ import {
   listTerminalsResponseSchema,
 } from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
+
+const createTerminalCompatRequestSchema = createTerminalRequestSchema.extend({
+  runtime_id: z.string().min(1).optional(),
+});
 
 interface TerminalsRouteHost {
   get(
@@ -78,12 +59,6 @@ const sessionAndTailParamSchema = z.object({
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-/**
- * Resolve the session's `ISessionTerminalService` from the URL session id,
- * cold-loading a persisted-but-not-live session first (matches v1, which spawns
- * from the persisted cwd). Throws `session.not_found` only when the session is
- * unknown or its workspace is gone.
- */
 async function resolveTerminal(core: Scope, sessionId: string): Promise<ISessionTerminalService> {
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
@@ -127,7 +102,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       method: 'POST',
       path: '/sessions/{session_id}/terminals',
       params: sessionIdParamSchema,
-      body: createTerminalRequestSchema,
+      body: createTerminalCompatRequestSchema,
       success: { data: getTerminalResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
@@ -140,7 +115,9 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const terminal = await (await resolveTerminal(core, session_id)).create(req.body);
+        const session = await resumeSessionById(core.accessor, session_id);
+        if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        const terminal = await session.accessor.get(ISessionTerminalService).create({ ...req.body, runtime_id: req.body.runtime_id ?? 'local' });
         requestLog(req)?.info({ session_id, terminal_id: terminal.id }, 'terminal created');
         reply.send(okEnvelope(terminal, req.id));
       } catch (err) {
@@ -241,12 +218,11 @@ function sendMappedError(
       case ErrorCodes.TERMINAL_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.TERMINAL_NOT_FOUND, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.FS_PATH_ESCAPES:
+        reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
+        return;
     }
   }
-  // `ISessionWorkspaceContext.assertAllowed` throws a plain (uncoded) Error when a cwd
-  // escapes the workspace — map it to the same wire code v1 uses for path
-  // escapes. TODO: push a coded error into `assertAllowed` so this branch can
-  // be folded into the `isError2` switch above.
   if (err instanceof Error && err.message.startsWith('Path outside workspace')) {
     reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
     return;

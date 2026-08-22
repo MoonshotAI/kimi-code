@@ -1,12 +1,3 @@
-/**
- * `fileTools` domain — shared ripgrep subprocess plumbing.
- *
- * Single place that knows how to spawn `rg` through the host
- * `IHostProcessService`: timeout / abort handling, capped stdout / stderr
- * draining, two-phase kill with process disposal, and the EAGAIN retry
- * predicate.
- */
-
 import type { Readable } from 'node:stream';
 
 import { BugIndicatingError } from '#/errors';
@@ -30,7 +21,7 @@ export type RunRgOutcome = RunRgResult | { readonly kind: 'aborted' };
 
 function disposeProcess(proc: IHostProcess): void {
   try {
-    proc.dispose();
+    void proc.dispose();
   } catch {
   }
 }

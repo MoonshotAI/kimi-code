@@ -1,15 +1,3 @@
-/**
- * `tools` domain — `IWebSearchTool` contract (the `WebSearch` tool).
- *
- * Public contract of the `WebSearch` builtin tool: the model-facing
- * `WebSearchInputSchema` / `WebSearchInput`, the host-injected
- * `WebSearchProvider` interface (plus `WebSearchResult`) the tool delegates
- * the actual search to, and the `IWebSearchTool` DI decorator. Web search
- * needs an authenticated Moonshot backend, so the provider is wired in from
- * the App-scope `IWebSearchProviderService` (`auth` domain) at activation
- * time. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -33,13 +21,11 @@ export interface WebSearchProvider {
   ): Promise<WebSearchResult[]>;
 }
 
-
 export const WebSearchInputSchema = z.object({
   query: z.string().describe('The query text to search for.'),
 });
 
 export type WebSearchInput = z.infer<typeof WebSearchInputSchema>;
-
 
 export interface IWebSearchTool extends AgentTool<WebSearchInput> {
   readonly _serviceBrand: undefined;

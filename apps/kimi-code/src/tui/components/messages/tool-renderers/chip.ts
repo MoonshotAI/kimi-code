@@ -14,6 +14,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { goalStatusChip } from './goal';
 import { readMediaChip } from './media';
 import { strArg } from './types';
+import { waitForChip } from './wait-for';
 
 export type ChipProvider = (toolCall: ToolCallBlockData, result: ToolResultBlockData) => string;
 
@@ -125,6 +126,7 @@ const REGISTRY: Record<string, ChipProvider> = {
   WebSearch: webSearchChip,
   CreateGoal: goalStatusOutputChip,
   GetGoal: goalStatusOutputChip,
+  WaitFor: waitForChip,
 };
 
 export function pickChip(toolName: string): ChipProvider | undefined {

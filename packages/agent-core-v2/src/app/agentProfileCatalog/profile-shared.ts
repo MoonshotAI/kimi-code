@@ -1,41 +1,13 @@
-/**
- * `agentProfileCatalog` domain — shared prompt helpers for builtin profiles.
- *
- * Keeps the base system-prompt template and the task-agent role prefix in the
- * agent-profile domain.
- *
- * All system-prompt rendering — the builtin template, `SYSTEM.md`, and agent
- * files — shares one `${var}` substitution pass over one variable table
- * ({@link systemPromptVars}); unknown placeholders stay verbatim. Conditional
- * sections (Windows notes, additional directories, skills, plugin
- * instructions) are composed here
- * as pre-rendered blocks because the renderer has no conditional syntax. Raw
- * context fields render as empty strings when missing and the composed
- * `*_section` / `windows_notes` blocks are empty unless their content exists,
- * so templates can place them on their own line without leaving stray
- * headings behind. Host-identity blocks (`product_name`, `reply_style_guide`)
- * work the same way: the context may carry overrides seeded by the embedding
- * host (e.g. a desktop app), and the table falls back to the CLI defaults
- * ({@link DEFAULT_PRODUCT_NAME}, {@link DEFAULT_REPLY_STYLE_GUIDE}) when it
- * does not. `renderPromptTemplateResult` renders a user-owned template (an
- * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
- * bound to the default profile's prompt when a `basePrompt` is given,
- * resolved lazily and only when the template actually references it. Also
- * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
- * list — drives skills injection) and the `subagents`-allowlist helpers
- * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`). Structured
- * renderers also carry disclosure metadata so runtime reminders never need to
- * parse the rendered text.
- */
-
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
 import {
+  DEFAULT_AGENT_PROFILE_NAME,
   type AgentProfile,
   type AgentProfileContext,
   type EnvironmentDisclosureSnapshot,
   type SystemPromptRenderResult,
 } from './agentProfileCatalog';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from './builtinAgentProfileLoader';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
 
@@ -57,8 +29,68 @@ export function subagentAllowlistFor(
     readonly profileName?: string;
     readonly subagents?: readonly string[];
   },
+  extras?: readonly string[],
 ): readonly string[] | undefined {
-  return caller.profileName === undefined ? catalog.getDefault().subagents : caller.subagents;
+  const declared = caller.subagents ?? catalog.getDefault().subagents;
+  if (declared?.length === 1 && declared[0] === '*') return undefined;
+  if (extras === undefined || extras.length === 0) return declared;
+  return [...new Set([...(declared ?? []), ...extras])];
+}
+
+export function isDiscoveredAgentProfileSource(sourceId: string | undefined): boolean {
+  return (
+    sourceId !== undefined &&
+    sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID &&
+    !sourceId.startsWith('feature:')
+  );
+}
+
+export function rootDelegationExtras(
+  catalog: {
+    inspect(name: string): { readonly sourceId: string } | undefined;
+  },
+  caller: {
+    readonly profileName?: string;
+    readonly subagents?: readonly string[];
+  },
+  profiles: readonly { readonly name: string }[],
+): readonly string[] | undefined {
+  if (
+    caller.profileName !== undefined &&
+    caller.profileName !== DEFAULT_AGENT_PROFILE_NAME &&
+    caller.subagents !== undefined
+  ) {
+    return undefined;
+  }
+  const discovered = profiles
+    .filter(
+      (profile) =>
+        profile.name !== DEFAULT_AGENT_PROFILE_NAME &&
+        isDiscoveredAgentProfileSource(catalog.inspect(profile.name)?.sourceId),
+    )
+    .map((profile) => profile.name);
+  return discovered.length === 0 ? undefined : discovered;
+}
+
+export function profileCanDelegate(
+  profile: Pick<AgentProfile, 'tools' | 'disallowedTools'>,
+): boolean {
+  const possesses = (name: string) =>
+    (profile.tools === undefined || profile.tools.includes(name)) &&
+    !(profile.disallowedTools ?? []).includes(name);
+  return possesses('Agent') || possesses('AgentSwarm');
+}
+
+export function withoutDelegatingTargets(
+  catalog: {
+    get(name: string): Pick<AgentProfile, 'tools' | 'disallowedTools'> | undefined;
+  },
+  allowlist: readonly string[],
+): readonly string[] {
+  return allowlist.filter((name) => {
+    const target = catalog.get(name);
+    return target === undefined || !profileCanDelegate(target);
+  });
 }
 
 export function subagentTypeNotAllowedMessage(

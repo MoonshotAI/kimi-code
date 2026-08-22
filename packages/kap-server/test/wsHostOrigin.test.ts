@@ -1,13 +1,3 @@
-/**
- * WebSocket upgrade Host/Origin checks (port of v1 `host-origin.e2e.test.ts`).
- *
- * The raw HTTP `upgrade` event bypasses Fastify's `onRequest` hooks, so the
- * Host and Origin allowlists are enforced explicitly in the upgrade handler
- * (matching v1's wsGatewayService) — and BEFORE token validation. A spoofed
- * Host or a disallowed browser Origin is rejected with 403; a missing Origin
- * is treated as a non-browser client and allowed (present-only).
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,7 +32,6 @@ function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
       try {
         ws.terminate();
       } catch {
-        // ignore
       }
       if (err !== undefined) reject(err);
       else resolve();
@@ -81,7 +70,6 @@ describe('WS upgrade Host/Origin checks', () => {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
     if (server !== undefined) {

@@ -36,6 +36,22 @@ export KIMI_DISABLE_TELEMETRY=1
 
 Switch models temporarily without modifying `config.toml` — when `KIMI_MODEL_NAME` is set, the CLI synthesizes a temporary provider in memory; the change does not persist after restart. See [Define a model from environment variables](#define-a-model-from-environment-variables-kimi-model).
 
+### `KIMI_CODE_CUSTOM_HEADERS`
+
+Attaches custom HTTP headers to every outbound model request — both LLM chat requests (across all provider protocols) and `/models` listing requests. Useful when a gateway routes by header, for example to pin a specific cluster:
+
+```sh
+export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: debug'
+```
+
+The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` lines. Names and values are trimmed, and lines without a colon are ignored.
+
+::: info Added
+Added in 0.20.2.
+:::
+
+> Precedence: the Kimi identity headers (`User-Agent`, `X-Msh-*`) and a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)) override same-named entries here. Authentication is protocol-dependent: on the `kimi`, `openai`, and `openai_responses` protocols an exact `Authorization` entry replaces the generated bearer token, while `/models` listing requests keep their own authentication. A case variant such as `authorization` is never treated as the same name — it is combined with the real header, which can break requests. Do not use this variable for authentication or other reserved headers. Use `custom_headers` when headers need to differ per provider.
+
 ## Provider credential key names (written in config.toml)
 
 The key names below are not read directly from the shell — they are key names written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. The CLI reads only from the config file, not from `process.env`.
@@ -121,6 +137,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | Variable | Purpose | Valid values |
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | Disable anonymous telemetry reporting | `1`, `true`, `yes`, `y` (case-insensitive) |
+| `KIMI_CODE_PASSWORD` | Set a parallel auth credential for the `kimi web` local server, valid alongside the bearer token; recommended when binding the server beyond loopback — see [Local server and API](../guides/server.md#authentication) | Any non-empty string; when unset, only the token is valid |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | Whether to keep background tasks when the session closes; takes higher priority than `config.toml`. The default is to stop them on exit | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | Cap on concurrently running background tasks; takes higher priority than `[background] max_running_tasks` in `config.toml` (unset means no cap) | Positive integer; invalid values are ignored |
 | `KIMI_IMAGE_MAX_EDGE_PX` | Longest-edge ceiling (px) for image compression; takes higher priority than `[image] max_edge_px` in `config.toml` (default `2000`) | Positive integer; invalid values are ignored |
@@ -131,9 +148,9 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_IDENTITY_NAME` | Display name the agent calls itself in the system prompt; takes higher priority than `[identity] name` in `config.toml` and is never written back to it | Any non-empty string; blank values read as unset |
 | `KIMI_CODE_IDENTITY_SLUG` | Protocol identifier for the `User-Agent` product token sent to third-party providers and the MCP client name; takes higher priority than `[identity] slug`. Derived from the name when unset | Any non-empty string; normalized to lowercase with non-alphanumeric runs folded to `-` |
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | Whether the built-in skills documenting Kimi Code itself are offered to the model; takes higher priority than `builtin_product_skills` in `config.toml` (default enabled) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
-| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | Enable the experimental secondary-model feature in every launch mode, including the interactive TUI; the master `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
-| `KIMI_SECONDARY_MODEL` | Secondary model; takes higher priority than [`[secondary_model] model`](./config-files.md#secondary-model) in `config.toml`. When the secondary-model experiment is enabled, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model | The alias of a configured `[models]` entry, e.g. `kimi-code/kimi-k2.5`; blank values are ignored |
-| `KIMI_SECONDARY_EFFORT` | Thinking effort for the secondary model; takes higher priority than `[secondary_model] default_effort` in `config.toml` and applies only when both the model and its experiment are enabled | An effort value, e.g. `low`; blank values are ignored |
+| `KIMI_CODE_TUI_FULL_SCREEN` | Enable the experimental fullscreen alternate-screen UI: scrollable transcript viewport, mouse text selection, clickable links, and Ctrl-Shift-F transcript search | `1` enables it; anything else keeps the regular inline UI |
+| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | Enable the experimental [subagent model pool](./config-files.md#subagent-model-pool) in every launch mode, including the interactive TUI; the master `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | Enable the experimental `fork` parameter on the `Agent` and `AgentSwarm` tools, letting the model start a subagent with a snapshot of the calling agent's conversation history instead of an empty context; the master `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_MCP_STARTUP_TIMEOUT_MS` | Global default connection timeout (ms) for all MCP servers; takes higher priority than `[mcp] startup_timeout_ms` in `config.toml`, but a per-server `startupTimeoutMs` in `mcp.json` still wins (default `30000`) | Integer from `1` to `2147483647`; invalid values are ignored |
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | Global default single tool-call timeout (ms) for all MCP servers; takes higher priority than `[mcp] tool_timeout_ms` in `config.toml`, but a per-server `toolTimeoutMs` in `mcp.json` still wins (default `60000`) | Integer from `1` to `2147483647`; invalid values are ignored |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Maximum Agent steps per turn; takes higher priority than `[loop_control] max_steps_per_turn` in `config.toml` (unset or `0` means unlimited) | Non-negative integer; invalid values are ignored |

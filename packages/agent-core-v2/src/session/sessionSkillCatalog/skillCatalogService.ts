@@ -1,24 +1,8 @@
-/**
- * `sessionSkillCatalog` domain — `ISessionSkillCatalog` sink
- * implementation.
- *
- * The Session-scope business view over the workspace's merged skill catalog:
- * the data arrives through the seeded `ISessionSkillCatalogData` read view —
- * this service never scans the filesystem itself. It re-folds the data
- * snapshot on every seeded change
- * event (forwarding the source id) and merges session-local ad-hoc
- * contributions (`ISkillCatalogSink`) on top by priority. `reload()` no
- * longer re-scans: it re-folds the current seed and re-fires `catalog`.
- * The plain-data state (`contributions`, `merged`) is registered into
- * `sessionState` (`ISessionStateService`) and read/written through it.
- * Bound at Session scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { SkillContribution } from '#/app/skillCatalog/skillSource';
 import { summarizeSkill, type SkillCatalog, type SkillSummary } from '#/app/skillCatalog/types';
@@ -50,8 +34,8 @@ export class SessionSkillCatalogService
     @ISessionStateService private readonly states: ISessionStateService,
   ) {
     super();
-    this.states.register(skillCatalogContributionsKey);
-    this.states.register(skillCatalogMergedKey);
+    this.states.contributeState(skillCatalogContributionsKey);
+    this.states.contributeState(skillCatalogMergedKey);
     this._register(
       this.data.onDidChange((sourceId) => {
         this.remerge();

@@ -12,7 +12,6 @@
  * Windows separator or case variants can match the same rule. Pure
  * functions; no scoped service.
  */
-
 import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';

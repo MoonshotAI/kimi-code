@@ -1,33 +1,12 @@
-/**
- * `workspaceInstructions` domain — `IWorkspaceInstructionsService`
- * implementation.
- *
- * Loads the workspace root's AGENTS.md hierarchy at construction through the
- * `profile` domain's pure loader (over the os `hostFs`, the host home dir,
- * and the `bootstrap` brand dir), then watches the loader's probe set
- * (`agentsMdWatchRoots` — brand / user-generic / project-root→leaf chain,
- * each plan root watched recursively and pruned to its candidates so files
- * created later inside not-yet-existing directories are still caught)
- * through `hostFsWatch` and reloads debounced; the change event fires only
- * when the combined content or warning actually changed. The snapshot is shared by every session of
- * the handler through the `ISessionInstructionsProvider` seed
- * (`sessionProvider()`), a live read view over this service. The plain-data
- * state (`current`) is registered into `workspaceState`
- * (`IWorkspaceStateService`) and read/written through it. Bound at
- * Workspace scope.
- */
-
-import { Service } from '#/_base/di/service';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/agent/profile/context';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostEnvironment, type HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -47,7 +26,7 @@ export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructions
 );
 
 export class WorkspaceInstructionsService
-  extends Service
+  extends Disposable
   implements IWorkspaceInstructionsService
 {
   declare readonly _serviceBrand: undefined;
@@ -61,14 +40,14 @@ export class WorkspaceInstructionsService
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IHostEnvironment private readonly env: HostEnvironmentInfo,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
-    this.states.register(workspaceInstructionsCurrentKey);
+    this.states.contributeState(workspaceInstructionsCurrentKey);
     this.ready = this.reload();
     void this.watchCandidateFiles();
   }
@@ -157,10 +136,3 @@ export class WorkspaceInstructionsService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IWorkspaceInstructionsService,
-  WorkspaceInstructionsService,
-  ScopeActivation.OnScopeCreated,
-  'workspaceInstructions',
-);

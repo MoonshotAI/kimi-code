@@ -1,27 +1,3 @@
-/**
- * `toolExecutor` domain — `onBeforeExecuteTool` veto-event machinery.
- *
- * `BeforeToolExecuteEventImpl` is the per-fire event object listeners
- * adjudicate through; `BeforeToolExecuteEmitter` owns the listener registry
- * and the two-pass fire:
- *
- * 1. immediate statements — each listener is awaited in registration order;
- *    `veto(result)` wins on the spot (first come, first served) and
- *    `allow()` ends adjudication outright, both before any later listener
- *    runs;
- * 2. deferred adjudications — only when pass 1 produced no decision, the
- *    cold factories registered via `waitUntil(factory)` are invoked one at a
- *    time; the first returned `veto` decides the call, while a returned
- *    `executionMetadata` joins the pass trace.
- *
- * Because the factories stay cold through pass 1, an approval round-trip
- * (the only side-effecting adjudication) can never start while another
- * listener would have denied the call. All four statements throw once the
- * statement window closes (mirroring `AsyncEmitter`'s "waitUntil can NOT be
- * called asynchronously" rule): a late veto would otherwise be silently
- * ignored.
- */
-
 import { Emitter } from '#/_base/event';
 import { BugIndicatingError } from '#/errors';
 import type { ToolCall } from '#/kosong/contract/message';

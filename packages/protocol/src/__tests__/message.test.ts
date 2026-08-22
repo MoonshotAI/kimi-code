@@ -89,6 +89,14 @@ describe('messageContentSchema variants', () => {
     expect(parsed.source.kind).toBe('file');
   });
 
+  it('parses session-owned media source from stored history', () => {
+    const parsed = imageContentSchema.parse({
+      type: 'image',
+      source: { kind: 'session_media', file_id: 'file_image_01' },
+    });
+    expect(parsed.source.kind).toBe('session_media');
+  });
+
   it('parses file content', () => {
     const parsed = fileContentSchema.parse({
       type: 'file',

@@ -1,23 +1,3 @@
-/**
- * `tokenCounting` domain — `tokenCounting` config-section schema and env binding.
- *
- * Owns the `[token_counting]` section: the `strategy` switch selecting which
- * context token count is EXTERNALLY reported (status events, REST status,
- * RPC reads) — `measured+estimated` (default; the live size floored by the
- * last measured total), `measured` (the latest measured anchor alone), or
- * `estimated` (a pure estimate with anchors ignored — the escape hatch for
- * providers with absent or unreliable usage reporting). Both tracks are
- * always recorded and always feed internal logic (triggers, budgets,
- * overflow backoff); the strategy never gates them.
- * Persisted user preference with an operational env override
- * (`KIMI_TOKEN_COUNTING_STRATEGY`); `config` resolves it as
- * `env > config.toml > default` on every read.
- *
- * While the env var is set, `stripEnvBoundFields` restores the env-free raw
- * value before `set`/`replace` persists, so an echoed override never leaks
- * into `config.toml`.
- */
-
 import { z } from 'zod';
 
 import {

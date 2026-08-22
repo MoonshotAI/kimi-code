@@ -1,15 +1,6 @@
-/**
- * `workspaceFs` domain — `runCommand` helper over `ISessionProcessRunner`.
- *
- * Collects a child process's full stdout/stderr and exit code through the
- * Agent's backend-pluggable `ISessionProcessRunner`, with optional `AbortSignal`
- * support (the caller decides timeout semantics). Kept as a standalone
- * helper so it can be unit-tested with a fake runner.
- */
-
 import { type Readable } from 'node:stream';
 
-import { type IProcess, type ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 
 export interface RunResult {
   readonly exitCode: number;
@@ -24,11 +15,13 @@ export interface RunCommandOptions {
 }
 
 export async function runCommand(
-  runner: ISessionProcessRunner,
+  runner: IHostProcessService,
   args: readonly string[],
   options: RunCommandOptions = {},
 ): Promise<RunResult> {
-  const proc: IProcess = await runner.exec(args, {
+  const command = args[0];
+  if (command === undefined) throw new Error('runCommand requires a command');
+  const proc: IHostProcess = await runner.spawn(command, args.slice(1), {
     cwd: options.cwd,
     env: options.env,
   });

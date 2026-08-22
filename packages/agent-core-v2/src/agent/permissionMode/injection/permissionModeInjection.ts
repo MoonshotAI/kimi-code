@@ -1,17 +1,5 @@
-/**
- * `permissionMode` domain — permission-mode context injection.
- *
- * Owns the `permission_mode` context-injection provider. It reads the live mode
- * from `IAgentPermissionModeService` and registers reminders through
- * `contextInjector`. Dedup is history-derived: the framework mirrors this
- * variant's live positions across splices, so a reminder folded away by
- * compaction (or undo) is re-announced on the next inject, matching v1's
- * compaction behavior. The plain-data state (`lastMode`) is registered into
- * `agentState` (`IAgentStateService`) and read/written through it.
- */
-
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import {
   IAgentContextInjectorService,
   type ContextInjectionContext,
@@ -32,13 +20,13 @@ export const permissionModeLastModeKey = defineState<PermissionMode | undefined>
 export class PermissionModeInjection extends Service {
   constructor(
     private readonly permissionMode: Pick<IAgentPermissionModeService, 'mode'>,
-    @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(permissionModeLastModeKey);
+    this.states.contributeState(permissionModeLastModeKey);
     this._register(
-      dynamicInjector.register(PERMISSION_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
+      injector.register(PERMISSION_MODE_INJECTION_VARIANT, (ctx) => this.reminder(ctx)),
     );
   }
 
