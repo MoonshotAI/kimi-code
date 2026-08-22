@@ -291,43 +291,60 @@ describe('acp-server session lifecycle', () => {
   );
 
   it(
-    'session/new rejects stdio MCP servers without runtime identity',
+    'session/new connects type-absent stdio MCP servers in the local runtime',
     async () => {
       const c = await boot();
-      await expect(c.send('session/new', {
+      const created = (await c.send('session/new', {
         cwd: homeDir,
         mcpServers: [
           {
-            name: 'mock',
+            name: '__proto__',
             command: process.execPath,
             args: [STDIO_MCP_FIXTURE],
             env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
           },
         ],
-      })).rejects.toThrow('ACP stdio MCP server mock does not declare a runtime identity');
+      })) as { sessionId: string };
+      expect(created.sessionId).toMatch(/^session_/);
 
       // Engine-side assertion: the session scope's MCP handle is the overlay
       // view and the converted server ended up connected under its ACP name.
+      const entries = await sessionMcpEntries(c, created.sessionId);
+      expect(entries.find((e) => e.name === '__proto__')).toMatchObject({
+        name: '__proto__',
+        status: 'connected',
+      });
     },
     30_000,
   );
 
   it(
-    'session/load rejects stdio MCP servers without runtime identity',
+    'session/load connects type-absent stdio MCP servers after restart',
     async () => {
       const c = await boot();
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
         sessionId: string;
       };
-      await c.send('session/close', { sessionId: created.sessionId });
+      await c.close();
+      client = undefined;
 
-      await expect(c.send('session/load', {
+      client = await createTestClient({ homeDir: homeDir! });
+      const restoredClient = client;
+      await restoredClient.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      await restoredClient.send('session/load', {
         sessionId: created.sessionId,
         cwd: homeDir,
         mcpServers: [
           { name: 'mock', command: process.execPath, args: [STDIO_MCP_FIXTURE], env: [] },
         ],
-      })).rejects.toThrow('ACP stdio MCP server mock does not declare a runtime identity');
+      });
+
+      const entries = await sessionMcpEntries(restoredClient, created.sessionId);
+      expect(entries.find((e) => e.name === 'mock')).toMatchObject({
+        name: 'mock',
+        status: 'connected',
+      });
     },
     30_000,
   );

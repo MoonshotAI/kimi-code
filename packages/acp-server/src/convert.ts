@@ -173,10 +173,17 @@ export function acpMcpServersToConfigRecord(
   servers: readonly McpServer[] | undefined,
 ): Record<string, McpServerConfig> | undefined {
   if (servers === undefined || servers.length === 0) return undefined;
-  const out: Record<string, McpServerConfig> = {};
+  const out: Record<string, McpServerConfig> = Object.create(null);
   for (const server of servers) {
     if (!('type' in server)) {
-      throw new Error(`ACP stdio MCP server ${server.name} does not declare a runtime identity`);
+      out[server.name] = {
+        transport: 'stdio',
+        command: server.command,
+        args: server.args,
+        env: namedPairsToRecord(server.env),
+        runtime_id: 'local',
+      };
+      continue;
     }
     if (server.type === 'http' || server.type === 'sse') {
       out[server.name] = {

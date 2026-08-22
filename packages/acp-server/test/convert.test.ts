@@ -19,7 +19,7 @@ describe('acpMcpServersToConfigRecord', () => {
     expect(acpMcpServersToConfigRecord([])).toBeUndefined();
   });
 
-  it('rejects stdio servers that cannot declare a runtime identity', () => {
+  it('maps type-absent stdio servers to the local runtime with args and env', () => {
     const servers: McpServer[] = [
       {
         name: 'fs',
@@ -31,9 +31,37 @@ describe('acpMcpServersToConfigRecord', () => {
         ],
       },
     ];
-    expect(() => acpMcpServersToConfigRecord(servers)).toThrow(
-      'ACP stdio MCP server fs does not declare a runtime identity',
-    );
+    expect(acpMcpServersToConfigRecord(servers)).toEqual({
+      fs: {
+        transport: 'stdio',
+        command: '/usr/local/bin/mcp-fs',
+        args: ['--root', '/tmp'],
+        env: { API_KEY: 'secret', DEBUG: '1' },
+        runtime_id: 'local',
+      },
+    });
+  });
+
+  it('preserves stdio server names that match object prototype properties', () => {
+    const servers: McpServer[] = [
+      {
+        name: '__proto__',
+        command: '/usr/local/bin/mcp-proto',
+        args: [],
+        env: [],
+      },
+    ];
+
+    const converted = acpMcpServersToConfigRecord(servers);
+    expect(converted).toBeDefined();
+    expect(Object.keys(converted ?? {})).toEqual(['__proto__']);
+    expect(converted?.['__proto__']).toEqual({
+      transport: 'stdio',
+      command: '/usr/local/bin/mcp-proto',
+      args: [],
+      env: undefined,
+      runtime_id: 'local',
+    });
   });
 
   it('maps http and sse servers with header pairs as a record', () => {
