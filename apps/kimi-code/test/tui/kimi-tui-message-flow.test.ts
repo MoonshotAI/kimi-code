@@ -62,7 +62,7 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import type { QueuedMessage } from '#/tui/types';
+import type { QueuedMessage, TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -132,6 +132,7 @@ interface MessageDriver {
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
+  appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   recallLastQueued(): QueuedMessage | undefined;
@@ -3491,9 +3492,9 @@ command = "vim"
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
-          name: 'tower',
-          description: 'multi-agent tower mode',
-          path: 'builtin://tower',
+          name: 'demo',
+          description: 'demo skill',
+          path: 'builtin://demo',
           source: 'builtin',
           type: 'inline',
         },
@@ -3506,15 +3507,15 @@ command = "vim"
     driver.state.appState.streamingPhase = 'waiting';
     harness.track.mockClear();
 
-    driver.handleUserInput('/tower refactor auth and ui');
+    driver.handleUserInput('/demo refactor auth and ui');
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
       {
-        text: '/tower refactor auth and ui',
+        text: '/demo refactor auth and ui',
         agentId: 'main',
         mode: 'skill',
-        skillName: 'tower',
+        skillName: 'demo',
         skillArgs: 'refactor auth and ui',
       },
     ]);
@@ -3526,16 +3527,16 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('tower', 'refactor auth and ui');
+    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
   });
 
   it('queues a slash-skill activation while compacting and activates it on drain', async () => {
     const session = makeSession({
       listSkills: vi.fn(async () => [
         {
-          name: 'tower',
-          description: 'multi-agent tower mode',
-          path: 'builtin://tower',
+          name: 'demo',
+          description: 'demo skill',
+          path: 'builtin://demo',
           source: 'builtin',
           type: 'inline',
         },
@@ -3548,15 +3549,15 @@ command = "vim"
     driver.state.appState.isCompacting = true;
     harness.track.mockClear();
 
-    driver.handleUserInput('/tower refactor auth and ui');
+    driver.handleUserInput('/demo refactor auth and ui');
 
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
       {
-        text: '/tower refactor auth and ui',
+        text: '/demo refactor auth and ui',
         agentId: 'main',
         mode: 'skill',
-        skillName: 'tower',
+        skillName: 'demo',
         skillArgs: 'refactor auth and ui',
       },
     ]);
@@ -3568,7 +3569,7 @@ command = "vim"
     driver.state.queuedMessages = [];
     driver.sendQueuedMessage(session, queued);
 
-    expect(session.activateSkill).toHaveBeenCalledWith('tower', 'refactor auth and ui');
+    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
   });
 
   it('steers fresh input while a goal is active even when the streaming phase is idle', async () => {
@@ -4323,6 +4324,85 @@ command = "vim"
     expect(transcript).toContain('* * * * *');
     expect(transcript).toContain('Remind the user: this is a once-per-minute reminder');
     expect(transcript).not.toContain('<cron-fire');
+  });
+
+  it('keeps the previous turn’s final answer mounted when a cron turn completes', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `cron-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    const cronOrigin = {
+      kind: 'cron_job',
+      jobId: 'job-42',
+      cron: '*/5 * * * *',
+      recurring: true,
+      coalescedCount: 1,
+      stale: false,
+    };
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: cronOrigin } as Event);
+    emit({ type: 'cron.fired', agentId: 'main', origin: cronOrigin, prompt: 'inspect the fleet' } as Event);
+    entry('assistant', 'cron report part one', '2');
+    entry('assistant', 'cron report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('cron report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+  });
+
+  it('keeps the in-flight answer mounted when a cron fires mid-turn', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `cron-buffered-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'FINAL-ANSWER', '1');
+
+    const cronOrigin = {
+      kind: 'cron_job',
+      jobId: 'job-42',
+      cron: '*/5 * * * *',
+      recurring: true,
+      coalescedCount: 1,
+      stale: false,
+    };
+    emit({ type: 'cron.fired', agentId: 'main', origin: cronOrigin, prompt: 'inspect the fleet' } as Event);
+    entry('assistant', 'cron report part one', '1');
+    entry('assistant', 'cron report final', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('FINAL-ANSWER');
+    expect(transcript).toContain('cron report final');
   });
 
   it('coalesces assistant delta component updates', async () => {
@@ -5446,6 +5526,32 @@ command = "vim"
 
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinkingEffort).toBe('mid');
+  });
+
+  it('applies tower mode from status updates', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: true,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.towerMode).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: false,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.towerMode).toBe(false);
   });
 
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
