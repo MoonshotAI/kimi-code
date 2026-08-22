@@ -702,6 +702,33 @@ describe('projector tool-exchange normalization', () => {
       };
     }
 
+    it('applies strict repairs alongside media stripping', () => {
+      const history = [
+        user('go'),
+        imageMessage('data:image/png;base64,AAAA'),
+        assistant('', ['c1']),
+        toolResult('c1', 'one'),
+        assistant('', ['c1']),
+        toolResult('c1', 'two'),
+      ];
+      const snapshot = projector.captureMediaStripSnapshot(history);
+      const projected = projector.project(history, {
+        structure: 'strict',
+        media: { strip: snapshot },
+      });
+
+      const toolCallIds = projected.flatMap((message) => message.toolCalls.map((call) => call.id));
+      expect(toolCallIds).toEqual(['c1']);
+      const parts = projected.flatMap((message) => message.content);
+      expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+      expect(
+        parts.some(
+          (part) =>
+            part.type === 'text' && part.text.includes('omitted for provider compatibility'),
+        ),
+      ).toBe(true);
+    });
+
     function projectStripped(
       history: readonly ContextMessage[],
       snapshot = projector.captureMediaStripSnapshot(history),
