@@ -40,7 +40,6 @@ export interface AuthFlowHost {
   resetSessionRuntime(): void;
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
-  closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
   hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
@@ -83,6 +82,10 @@ export class AuthFlowController {
       if (effort !== undefined) {
         await host.session.setThinking(effort);
       }
+      // Logging out with the session retained zeroed the footer's context
+      // counters; resync from the live session even when setModel was a
+      // no-op (same alias), so contextTokens/contextUsage are accurate again.
+      await host.syncRuntimeState(host.session);
       return;
     }
 
@@ -132,18 +135,6 @@ export class AuthFlowController {
     host.updateTerminalTitle();
     void host.refreshSkillCommands(host.session);
     void host.refreshPluginCommands(host.session);
-  }
-
-  async clearActiveSessionAfterLogout(): Promise<void> {
-    await this.host.closeSession('logged out');
-    this.host.resetSessionRuntime();
-    this.host.setAppState({
-      sessionId: '',
-      model: '',
-      sessionTitle: null,
-    });
-    await this.host.refreshSkillCommands();
-    await this.host.refreshPluginCommands();
   }
 
   async refreshConfigAfterLogin(): Promise<void> {

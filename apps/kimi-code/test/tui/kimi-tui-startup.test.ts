@@ -1904,7 +1904,7 @@ describe('KimiTUI startup', () => {
     }
   });
 
-  it('tracks logout after managed credentials and session state are cleared', async () => {
+  it('keeps the session and clears model state when logging out the current provider', async () => {
     const session = makeSession();
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
@@ -1926,17 +1926,21 @@ describe('KimiTUI startup', () => {
 
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
+    const showStatus = vi.spyOn(driver as any, 'showStatus').mockImplementation(() => {});
 
     vi.mocked(promptLogoutProviderSelection).mockResolvedValue('managed:kimi-code');
     await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith('managed:kimi-code');
-    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.close).not.toHaveBeenCalled();
     expect(driver.state.appState).toMatchObject({
-      sessionId: '',
+      sessionId: 'ses-1',
       model: '',
-      sessionTitle: null,
     });
+    expect(showStatus).toHaveBeenCalledWith(
+      'Logged out from Kimi Code. Current model is unavailable — /login or /model to continue.',
+      'warning',
+    );
     expect(harness.track).toHaveBeenCalledWith('logout', { provider: 'managed:kimi-code' });
   });
 
@@ -1979,6 +1983,46 @@ describe('KimiTUI startup', () => {
       model: 'k2',
     });
     expect(harness.track).toHaveBeenCalledWith('logout', { provider: 'openai' });
+  });
+
+  it('restores the retained session counters when logging back in after logout', async () => {
+    const session = makeSession();
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        defaultModel: 'k2',
+        models: {
+          k2: { provider: 'managed:kimi-code', model: 'moonshot-v1', maxContextSize: 100 },
+        },
+        providers: { 'managed:kimi-code': { type: 'kimi' } },
+      })),
+      auth: {
+        status: vi.fn(async () => ({
+          providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+        })),
+        login: vi.fn(async () => {}),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    vi.mocked(promptLogoutProviderSelection).mockResolvedValue('managed:kimi-code');
+    await handleLogoutCommand(driver as any);
+    expect(driver.state.appState).toMatchObject({ model: '', contextTokens: 0 });
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(session.setModel).toHaveBeenCalledWith('k2');
+    expect(driver.state.appState).toMatchObject({
+      sessionId: 'ses-1',
+      model: 'k2',
+      contextTokens: 10,
+      maxContextTokens: 100,
+      contextUsage: 0.1,
+    });
   });
 
   it('can log out a stale managed entry even after the OAuth token is gone', async () => {
