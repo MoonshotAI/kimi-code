@@ -136,6 +136,7 @@ import {
   ensureConfigFile,
   ErrorCodes,
   HookDefSchema,
+  isKimiErrorCode,
   KimiError,
   limitAgentReplayByTurns,
   noopTelemetryClient,
@@ -180,6 +181,7 @@ import {
   IHostEnvironment,
   IHostFileSystem,
   IMcpManagementService,
+  IMcpOAuthService,
   IModelService,
   IProviderService,
   ISessionBtwService,
@@ -502,6 +504,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // disposal fires — a host that removes homeDir right after close() must
     // not race an in-flight shard close (ENOTEMPTY on teardown).
     await this.app.accessor.get(ISessionIndexMirror).drain();
+    // Await the OAuth service shutdown directly rather than after dispose():
+    // its ledger-teardown dispose can queue behind slow async disposables, and
+    // the accessor throws once the scope is disposed. shutdown() is
+    // idempotent, so the ledger's own teardown turns into a no-op.
+    await this.app.accessor.get(IMcpOAuthService).shutdown();
     this.app.dispose();
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
@@ -2572,9 +2579,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (input.persist === true) {
       const cwd = session.accessor.get(ISessionWorkspaceContext).workDir;
       await this.rejectProjectLayerPersistedMcpAdd(cwd, target.name);
-      await this.engineAccessor
-        .get(IMcpManagementService)
-        .addServer(target, { cwd });
+      await this.mcpManagement((management) => management.addServer(target, { cwd }));
     }
     await manager.connect(target.name, mcpConfigWithoutName(target));
     const entry = manager.get(target.name);
@@ -2619,10 +2624,16 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
  * what `isKimiError` branches on) so the delegated management plane throws
  * the same class the v1 client throws for the same failure. Non-Error2
  * failures (DI resolution bugs, aborts) pass through untouched.
+ *
+ * An engine code this build's registry does not declare (a newer engine than
+ * the pinned SDK) restates as `internal` — stamping the unknown code would
+ * mint a `KimiError` that `toKimiErrorPayload` cannot serialize (its
+ * `KIMI_ERROR_INFO` lookup throws on undeclared codes).
  */
 function restateMcpManagementError(error: unknown): unknown {
   if (!isError2(error)) return error;
-  return new KimiError(error.code as KimiErrorCode, error.message, {
+  const code: KimiErrorCode = isKimiErrorCode(error.code) ? error.code : ErrorCodes.INTERNAL;
+  return new KimiError(code, error.message, {
     details: error.details as Record<string, unknown> | undefined,
     cause: error.cause,
   });

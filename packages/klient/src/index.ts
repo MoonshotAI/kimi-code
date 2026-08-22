@@ -7,6 +7,7 @@
  */
 
 export type {
+  CallOptions,
   EventSourceRef,
   IDisposable,
   KlientChannel,

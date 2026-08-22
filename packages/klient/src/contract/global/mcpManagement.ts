@@ -125,7 +125,9 @@ export const mcpServerAuthBeginResultSchema = z.discriminatedUnion('status', [
 
 export const mcpServerAuthFlowHandleSchema = z.object({
   flowId: z.string().min(1),
-  timeoutMs: z.number().int().min(1).optional(),
+  // Node overflows setTimeout delays above 2^31-1 into ~1ms; the REST schema
+  // and the engine reject the same range.
+  timeoutMs: z.number().int().min(1).max(2 ** 31 - 1).optional(),
 });
 
 export const mcpManagementContract = {

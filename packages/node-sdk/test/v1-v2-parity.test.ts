@@ -30,6 +30,7 @@ import {
   createKimiHarness,
   createKimiHarnessV2,
   ErrorCodes,
+  isKimiError,
   SDKRpcClient,
   SDKRpcClientV2,
   type ApprovalRequest,
@@ -4765,12 +4766,17 @@ describe('v1↔v2 session MCP parity', () => {
         args: [MCP_STDIO_FIXTURE],
       };
 
-      await expect(
-        pair.v1.addSessionMcpServer({ ...input, server, persist: true }),
-      ).rejects.toMatchObject({ code: 'request.invalid' });
-      await expect(
-        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
-      ).rejects.toMatchObject({ code: 'request.invalid' });
+      // Both engines surface the SDK's public error class on the persisted
+      // add — the v2 persist branch restates the engine's Error2 into a
+      // KimiError instead of leaking it past the delegation.
+      const [v1Error, v2Error] = await Promise.all([
+        captureRejection(pair.v1.addSessionMcpServer({ ...input, server, persist: true })),
+        captureRejection(pair.v2.addSessionMcpServer({ ...input, server, persist: true })),
+      ]);
+      expect(isKimiError(v1Error)).toBe(true);
+      expect(isKimiError(v2Error)).toBe(true);
+      expect(v1Error).toMatchObject({ code: 'request.invalid' });
+      expect(v2Error).toMatchObject({ code: 'request.invalid' });
 
       const [v1File, v2File] = await Promise.all([
         readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),

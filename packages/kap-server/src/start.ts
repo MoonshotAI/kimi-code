@@ -7,6 +7,7 @@ import {
   CapabilityChanged,
   IConfigService,
   IEventService,
+  IMcpOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
   ISessionIndexMirror,
@@ -347,6 +348,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     try {
       await drainSessionMetadataWrites();
       await core.accessor.get(ISessionIndexMirror).drain();
+      await core.accessor.get(IMcpOAuthService).shutdown();
       fsWatchBridge.dispose();
       core.dispose();
       await drainSessionIndexMirror();

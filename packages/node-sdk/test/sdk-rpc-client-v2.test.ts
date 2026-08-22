@@ -24,9 +24,11 @@ import {
   createKimiHarnessV2,
   ErrorCodes,
   isDaemonFileUrl,
+  isKimiError,
   KimiHarness,
   removeProviderFromConfig,
   SDKRpcClientV2,
+  toKimiErrorPayload,
   type Event,
   type KimiConfig,
 } from '#/index';
@@ -34,16 +36,20 @@ import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  Error2,
   getLiveSessionById,
   HostProcessError,
   IAgentLifecycleService,
   IHostRequestHeaders,
+  IMcpManagementService,
+  IMcpOAuthService,
   ISessionManager,
   ISessionTodoService,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
+import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 
 import { TEST_IDENTITY } from './test-identity';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
@@ -205,6 +211,113 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await harness.close();
     }
   }, 15_000);
+
+  it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const management = client.engineAccessor.get(IMcpManagementService);
+      const listSpy = vi.spyOn(management, 'listServers');
+      const captureRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+          await promise;
+        } catch (error) {
+          return error;
+        }
+        return expect.unreachable('expected the call to reject');
+      };
+      try {
+        // A declared engine code keeps its identity across the restate: the
+        // SDK throws the same class v1 throws, and the payload serializer
+        // accepts the code.
+        listSpy.mockRejectedValueOnce(
+          new Error2('mcp.oauth_failed', 'OAuth flow timed out', {
+            details: { flowId: 'flow-1' },
+          }),
+        );
+        const oauthError = await captureRejection(client.listGlobalMcpServers());
+        expect(isKimiError(oauthError)).toBe(true);
+        expect(oauthError).toMatchObject({
+          code: 'mcp.oauth_failed',
+          message: 'OAuth flow timed out',
+          details: { flowId: 'flow-1' },
+        });
+        expect(toKimiErrorPayload(oauthError)).toMatchObject({
+          code: 'mcp.oauth_failed',
+          message: 'OAuth flow timed out',
+        });
+
+        // A code this build's registry does not declare (a newer engine than
+        // the pinned SDK) restates as `internal` instead of minting an
+        // undeclared KimiError code the serializer would reject.
+        listSpy.mockRejectedValueOnce(new Error2('mcp.future_code' as never, 'from a newer engine'));
+        const unknownError = await captureRejection(client.listGlobalMcpServers());
+        expect(isKimiError(unknownError)).toBe(true);
+        expect(unknownError).toMatchObject({
+          code: ErrorCodes.INTERNAL,
+          message: 'from a newer engine',
+        });
+        expect(toKimiErrorPayload(unknownError)).toMatchObject({
+          code: ErrorCodes.INTERNAL,
+          message: 'from a newer engine',
+        });
+      } finally {
+        listSpy.mockRestore();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('close() awaits the MCP OAuth service shutdown', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    // Activate the OnDemand OAuth service, then gate its shutdown behind a
+    // manual release: close() alone (no manual service.shutdown()) must
+    // trigger and await that shutdown, so a host removing homeDir right after
+    // close() cannot race in-flight token writes.
+    client.engineAccessor.get(IMcpOAuthService);
+    let releaseShutdown: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseShutdown = resolve;
+    });
+    const baseShutdown = McpOAuthServiceV2.prototype.shutdown;
+    const shutdownSpy = vi
+      .spyOn(McpOAuthServiceV2.prototype, 'shutdown')
+      .mockImplementation(function (this: McpOAuthServiceV2) {
+        return baseShutdown.call(this).then(() => gate);
+      });
+    try {
+      let closed = false;
+      const closePromise = client.close().then(() => {
+        closed = true;
+      });
+      await vi.waitFor(() => {
+        expect(shutdownSpy).toHaveBeenCalled();
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      releaseShutdown();
+      await closePromise;
+      expect(closed).toBe(true);
+    } finally {
+      releaseShutdown();
+      shutdownSpy.mockRestore();
+    }
+  });
+
+  it('close() resolves promptly when the MCP OAuth service was never used', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    // Nothing touched IMcpOAuthService: close() force-activates the OnDemand
+    // service only to shut it down, and that activate-then-shutdown cycle
+    // must be a clean no-op (the proactive-refresh sweep bows out on the
+    // shutdown flag).
+    await expect(client.close()).resolves.toBeUndefined();
+  });
 
   it('seeds the host request headers (User-Agent + X-Msh-*) into the engine', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));

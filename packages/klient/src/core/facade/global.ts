@@ -37,6 +37,7 @@ import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/cata
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 
 import type { McpServerConfig } from '../../contract/mcp.js';
+import type { CallOptions } from '../channel.js';
 import type {
   GlobalMcpServerConfig,
   McpManagedServer,
@@ -58,7 +59,12 @@ import type {
 import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
-export type Caller = (service: string, method: string, args: unknown[]) => Promise<unknown>;
+export type Caller = (
+  service: string,
+  method: string,
+  args: unknown[],
+  options?: CallOptions,
+) => Promise<unknown>;
 
 /** Scoped variant — the factory's real signature; global methods bind the core scope. */
 export type ScopedCaller = (
@@ -66,6 +72,7 @@ export type ScopedCaller = (
   service: string,
   method: string,
   args: unknown[],
+  options?: CallOptions,
 ) => Promise<unknown>;
 
 /** Streaming variant of `ScopedCaller` — returns a validated `AsyncIterable`. */
@@ -351,8 +358,18 @@ const ENV_SCALAR_PROPERTIES = [
   'logsDir',
 ] as const;
 
+// The IPC transport enforces a per-call deadline (default 30s) that would
+// truncate the completeAuth long poll: the engine waits up to
+// `DEFAULT_AUTH_TIMEOUT_MS` for the browser callback when the caller omits
+// `timeoutMs` (agent-core-v2 `mcpManagementService.ts`), and the
+// authorization-code exchange afterwards is itself bounded at 30s per grant
+// request (agent-core-v2 `mcpCore/oauth/service.ts`). The per-call deadline
+// below covers both, so IPC behaves like the timeout-free memory transport.
+const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
+const AUTH_COMPLETION_MARGIN_MS = 30_000;
+
 export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStreamCaller): GlobalFacade {
-  const call: Caller = (service, method, args) => scoped({}, service, method, args);
+  const call: Caller = (service, method, args, options) => scoped({}, service, method, args, options);
   const streamCall = (service: string, method: string, args: unknown[]) =>
     scopedStream({}, service, method, args);
   // The bootstrap snapshot is frozen at process start, so the aggregated
@@ -617,7 +634,15 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
           { cwd },
         ]) as Promise<McpServerAuthBeginResult>,
       completeAuth: ({ flowId, timeoutMs }) =>
-        call('mcpManagementService', 'completeServerAuth', [{ flowId, timeoutMs }]) as Promise<void>,
+        call('mcpManagementService', 'completeServerAuth', [{ flowId, timeoutMs }], {
+          // Clamp to Node's 32-bit timer ceiling: `timeoutMs` may legally be
+          // the contract max (2**31 - 1), and adding the margin would
+          // overflow setTimeout into a ~1ms deadline.
+          timeoutMs: Math.min(
+            (timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS) + AUTH_COMPLETION_MARGIN_MS,
+            2 ** 31 - 1,
+          ),
+        }) as Promise<void>,
       cancelAuth: ({ flowId }) =>
         call('mcpManagementService', 'cancelServerAuth', [{ flowId }]) as Promise<void>,
       resetAuth: ({ locator, cwd }) =>
