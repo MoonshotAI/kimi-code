@@ -225,7 +225,7 @@ export const AgentInteraction = defineAgentRuntime<InteractionModelState, Intera
     read: (snapshot) => (snapshot as InteractionActorSnapshot).context.records,
     commit: (actor, records) => { actor.send({ type: 'interaction.commit', records }); },
   },
-  create: (context) => new InteractionRuntime(context),
+  createApi: (context) => new InteractionRuntime(context),
   inspect: (snapshot) => {
     const records = (snapshot as InteractionActorSnapshot).context.records;
     return [...records.values()].map((record) => ({

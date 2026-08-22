@@ -31,7 +31,7 @@ import {
   attachGoalRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
-  restoreTestEventDispatcher,
+  restoreTestEventDispatcher as restoreDispatcher,
   testWireScope,
 } from '../../wire/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -119,6 +119,17 @@ let runtimes: AgentRuntimeSet;
 let svc: GoalRuntime;
 let log: IAppendLogStore;
 let eventBus: IEventBus;
+
+async function restoreGoalDispatcher(
+  targetDispatcher: IEventDispatcher,
+  targetLog: IAppendLogStore,
+  scope: string,
+  records: readonly WireRecord[],
+  targetRuntimes = runtimes,
+): Promise<void> {
+  await restoreDispatcher(targetDispatcher, targetLog, scope, records);
+  await targetRuntimes.restore();
+}
 
 function buildHost(key: string): GoalHost {
   const ix = disposables.add(new TestInstantiationService());
@@ -233,11 +244,12 @@ describe('goal runtime (wire-backed)', () => {
         replaySignals.push(e.type);
       }
     });
-    await restoreTestEventDispatcher(
+    await restoreGoalDispatcher(
       host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'goal-replay'),
       records,
+      host.runtimes,
     );
     expect(inspectGoal(host.runtimes)?.['status']).toBe('paused');
     expect(replaySignals).toEqual([]);
@@ -250,11 +262,12 @@ describe('goal runtime (wire-backed)', () => {
     const host = buildHost('goal-restore');
     void host.svc;
 
-    await restoreTestEventDispatcher(
+    await restoreGoalDispatcher(
       host.dispatcher,
       host.log,
       testWireScope(SCOPE, 'goal-restore'),
       records,
+      host.runtimes,
     );
     expect(inspectGoal(host.runtimes)?.['status']).toBe('paused');
     expect(inspectGoal(host.runtimes)?.['terminalReason']).toBe('Paused after agent resume');
@@ -280,7 +293,7 @@ describe('goal runtime (wire-backed)', () => {
   });
 
   it('restores goal records with omitted optional fields from older journals', async () => {
-    await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+    await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
       { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
       { type: 'goal.update' },
     ]);
@@ -293,7 +306,7 @@ describe('goal runtime (wire-backed)', () => {
   });
 
   it('restores legacy goal create audit fields without changing normalized state', async () => {
-    await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+    await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
       {
         type: 'goal.create',
         goalId: 'goal-1',
@@ -312,7 +325,7 @@ describe('goal runtime (wire-backed)', () => {
   });
 
   it('restores a legacy goal update identity without changing state selection', async () => {
-    await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+    await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
       { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
       { type: 'goal.update', goalId: 'goal-1', status: 'blocked', reason: 'waiting' },
     ]);
@@ -325,7 +338,7 @@ describe('goal runtime (wire-backed)', () => {
   });
 
   it('strips forward-compatible goal fields during restore', async () => {
-    await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+    await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
       {
         type: 'goal.create',
         goalId: 'goal-1',
@@ -341,7 +354,7 @@ describe('goal runtime (wire-backed)', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+      await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
         { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
         { type: 'goal.update', status: 'cancelled' },
       ]);
@@ -359,7 +372,7 @@ describe('goal runtime (wire-backed)', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+      await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
         { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
         { type: 'goal.update', actor: 'assistant' },
       ]);
@@ -377,7 +390,7 @@ describe('goal runtime (wire-backed)', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      await restoreTestEventDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
+      await restoreGoalDispatcher(dispatcher, log, testWireScope(SCOPE, KEY), [
         { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
         { type: 'goal.update', turnsUsed: -1 },
         { type: 'goal.update', tokensUsed: Number.POSITIVE_INFINITY },
@@ -404,7 +417,7 @@ describe('goal runtime (wire-backed)', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      await restoreTestEventDispatcher(
+      await restoreGoalDispatcher(
         dispatcher,
         log,
         testWireScope(SCOPE, KEY),

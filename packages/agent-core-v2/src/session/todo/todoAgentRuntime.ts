@@ -1,8 +1,10 @@
-import { assign, setup, type Snapshot } from 'xstate';
+import { assign, fromCallback, setup, type Snapshot } from 'xstate';
 
 import {
-  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
   type AgentRuntimeContext,
+  type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -16,6 +18,7 @@ import '#/agent/contextMemory/conversationTime';
 
 interface TodoActorContext {
   readonly todos: TodoState;
+  readonly runtime: AgentRuntimeContext<TodoState>;
 }
 
 interface TodoCommitEvent {
@@ -25,13 +28,52 @@ interface TodoCommitEvent {
 
 type TodoActorSnapshot = Snapshot<unknown> & { readonly context: TodoActorContext };
 
+const todoReminder = fromCallback(({
+  input,
+}: {
+  input: {
+    readonly runtime: AgentRuntimeContext<TodoState>;
+    readonly restore: AgentRuntimeRestoreEvent;
+  };
+}) => {
+  const injector = input.runtime.get(IAgentContextInjectorService);
+  const memory = input.runtime.get(IAgentContextMemoryService);
+  const toolPolicy = input.runtime.get(IAgentToolPolicyService);
+  const registration = injector.register(TODO_LIST_REMINDER_VARIANT, () =>
+    todoListStaleReminder({
+      active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
+      history: memory.get(),
+      todos: input.runtime.getState(),
+    }),
+  );
+  input.restore.waitUntil(Promise.resolve());
+  return () => { registration.dispose(); };
+});
+
 const todoActorLogic = setup({
   types: {} as {
     context: TodoActorContext;
-    events: TodoCommitEvent;
+    input: AgentRuntimeContext<TodoState>;
+    events: TodoCommitEvent | AgentRuntimeRestoreEvent;
   },
+  actors: { todoReminder },
 }).createMachine({
-  context: { todos: [] },
+  context: ({ input }) => ({ todos: [], runtime: input }),
+  initial: 'beforeRestore',
+  states: {
+    beforeRestore: {
+      on: { 'runtime.restore': 'active' },
+    },
+    active: {
+      invoke: {
+        src: 'todoReminder',
+        input: ({ context, event }) => ({
+          runtime: context.runtime,
+          restore: event as AgentRuntimeRestoreEvent,
+        }),
+      },
+    },
+  },
   on: {
     'todo.commit': {
       actions: assign({ todos: ({ event }) => event.todos }),
@@ -44,16 +86,6 @@ export class TodoRuntime {
 
   constructor(private readonly context: AgentRuntimeContext<TodoState>) {
     this.onDidChange = context.onDidChange;
-    const injector = context.get(IAgentContextInjectorService);
-    const memory = context.get(IAgentContextMemoryService);
-    const toolPolicy = context.get(IAgentToolPolicyService);
-    context.own(injector.register(TODO_LIST_REMINDER_VARIANT, () =>
-      todoListStaleReminder({
-        active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
-        history: memory.get(),
-        todos: context.getState(),
-      }),
-    ));
   }
 
   get(): readonly TodoItem[] {
@@ -77,7 +109,9 @@ export class TodoRuntime {
   }
 }
 
-export const AgentTodo = defineAgentRuntime<TodoState, TodoRuntime>({
+export const AgentTodo = defineAgentRuntimeContract<TodoRuntime>('todo');
+
+export const todoAgentRuntimeProvider = defineAgentRuntimeProvider<TodoState, TodoRuntime>(AgentTodo, {
   id: 'todo',
   logic: todoActorLogic,
   durable: {
@@ -90,7 +124,7 @@ export const AgentTodo = defineAgentRuntime<TodoState, TodoRuntime>({
     read: (snapshot) => (snapshot as TodoActorSnapshot).context.todos,
     commit: (actor, todos) => { actor.send({ type: 'todo.commit', todos }); },
   },
-  create: (context) => new TodoRuntime(context),
+  createApi: (context) => new TodoRuntime(context),
   inspect: (snapshot) => (snapshot as TodoActorSnapshot).context.todos.map((todo) => ({
     title: todo.title,
     status: todo.status,

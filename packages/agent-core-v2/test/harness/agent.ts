@@ -16,9 +16,8 @@ import type {
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
-import {
-  IAgentManager,
-} from '#/session/agentManager/agentManager';
+import { IAgentManager } from '#/session/agentManager/agentManager';
+import type { AgentManagerService } from '#/session/agentManager/agentManagerService';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -1483,13 +1482,22 @@ export class AgentTestContext {
 
   async restorePersisted(): Promise<void> {
     await this.dispatcher.restore();
+    await this.restoreRuntimes();
+  }
+
+  restoreRuntimes(): Promise<void> {
+    const agent = this.get(IAgentScopeContext).agentContext;
+    return (this.session.accessor.get(IAgentManager) as AgentManagerService).restoreRuntimes(agent);
   }
 
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
-    const scope = this.get(IAgentScopeContext).scope();
+    const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
-    await log.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
+    await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
     await this.dispatcher.restore();
+    await (this.session.accessor.get(IAgentManager) as AgentManagerService).restoreRuntimes(
+      scopeContext.agentContext,
+    );
   }
 
   private async dispatchRecordsOnly(records: readonly WireRecord[]): Promise<void> {

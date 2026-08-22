@@ -12,9 +12,13 @@ import {
   type AgentRuntimeContributionSnapshot,
   type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
+  type AgentRuntimeDescriptor,
   type AgentRuntimeLifecycle as AgentRuntimeLifecycleProtocol,
+  type AgentRuntimeRestoreEvent,
   type AgentRuntimeStatus,
   type DurableAgentRuntimeParticipant,
+  getAgentRuntimeDefinitionId,
+  getAgentRuntimeDescriptor,
   type RuntimeOf,
 } from './agentRuntime';
 
@@ -53,6 +57,7 @@ class RuntimeScope {
 
 interface RuntimeEntry {
   record: AgentRuntimeDefinitionRecord;
+  descriptor: AgentRuntimeDescriptor<any, any>;
   status: AgentRuntimeStatus;
   actor?: AnyActorRef;
   runtime?: unknown;
@@ -65,12 +70,16 @@ interface RuntimeEntry {
   drain?: Promise<void>;
   error?: unknown;
   scope?: RuntimeScope;
+  context?: AgentRuntimeContext<any>;
+  restored: boolean;
+  restorePromise?: Promise<void>;
 }
 
 export class AgentRuntimeSet {
   private readonly entries = new Map<string, RuntimeEntry>();
   private readonly graveyard = new Set<RuntimeEntry>();
   private durableHost: DurableRuntimeParticipantHost | undefined;
+  private restored = false;
   private closed = false;
   private closeDrain: Promise<void> | undefined;
 
@@ -81,29 +90,31 @@ export class AgentRuntimeSet {
 
   apply(record: AgentRuntimeDefinitionRecord): void {
     if (this.closed) return;
-    const id = record.definition.id;
-    const existing = this.entries.get(id);
+    const descriptor = getAgentRuntimeDescriptor(record.provider ?? record.definition);
+    const existing = this.entries.get(descriptor.id);
     if (existing !== undefined) {
       if (existing.record === record) return;
-      this.entries.delete(id);
+      this.entries.delete(descriptor.id);
       this.graveyard.add(existing);
       this.retireEntry(existing);
     }
     const entry: RuntimeEntry = {
       record,
+      descriptor,
       status: 'registered',
       leases: new Set(),
       retiring: false,
       retired: false,
+      restored: false,
     };
-    this.entries.set(id, entry);
-    if (record.definition.durable !== undefined && this.durableHost !== undefined) {
+    this.entries.set(descriptor.id, entry);
+    if (descriptor.durable !== undefined && this.durableHost !== undefined) {
       this.attachDurableEntry(entry, this.durableHost);
     }
   }
 
   retireDefinition(record: AgentRuntimeDefinitionRecord): void {
-    const id = record.definition.id;
+    const id = getAgentRuntimeDefinitionId(record.definition);
     const entry = this.entries.get(id);
     if (entry === undefined || entry.record !== record) return;
     this.entries.delete(id);
@@ -119,9 +130,10 @@ export class AgentRuntimeSet {
         `Agent ${this.agent.agentId}:${String(this.agent.generation)} runtime set is closed`,
       );
     }
-    const entry = this.entries.get(definition.id);
+    const id = getAgentRuntimeDefinitionId(definition);
+    const entry = this.entries.get(id);
     if (entry === undefined || entry.record.definition !== definition || !entry.record.active) {
-      throw new Error(`Agent runtime '${definition.id}' is unavailable`);
+      throw new Error(`Agent runtime '${id}' is unavailable`);
     }
     return this.runtime(entry) as RuntimeOf<Definition>;
   }
@@ -130,16 +142,39 @@ export class AgentRuntimeSet {
     if (this.closed) return;
     this.durableHost = host;
     for (const entry of this.entries.values()) {
-      if (entry.record.definition.durable === undefined) continue;
+      if (entry.descriptor.durable === undefined) continue;
       this.attachDurableEntry(entry, host);
     }
+  }
+
+  async restore(): Promise<void> {
+    if (this.closed) return;
+    this.restored = true;
+    await Promise.all(
+      [...this.entries.values()]
+        .filter((entry) => entry.actor !== undefined)
+        .map((entry) => this.restoreEntry(entry)),
+    );
+  }
+
+  private restoreEntry(entry: RuntimeEntry): Promise<void> {
+    if (entry.restored) return entry.restorePromise ?? Promise.resolve();
+    entry.restored = true;
+    const readiness: Promise<unknown>[] = [];
+    const event: AgentRuntimeRestoreEvent = {
+      type: 'runtime.restore',
+      waitUntil: (work) => { readiness.push(work); },
+    };
+    entry.actor!.send(event);
+    entry.restorePromise = Promise.all(readiness).then(() => undefined);
+    return entry.restorePromise;
   }
 
   inspect(): readonly AgentRuntimeContributionSnapshot[] {
     const out: AgentRuntimeContributionSnapshot[] = [];
     for (const entry of this.entries.values()) out.push(this.line(entry));
     for (const entry of this.graveyard) {
-      if (this.entries.has(entry.record.definition.id)) continue;
+      if (this.entries.has(entry.descriptor.id)) continue;
       out.push(this.line(entry));
     }
     return out;
@@ -163,32 +198,9 @@ export class AgentRuntimeSet {
   private runtime(entry: RuntimeEntry): unknown {
     if (entry.runtime !== undefined) return entry.runtime;
     this.materialize(entry);
-    const definition = entry.record.definition;
-    const actor = entry.actor!;
-    const listeners = entry.listeners!;
-    const scope = new RuntimeScope();
-    entry.scope = scope;
-    const context: AgentRuntimeContext<any> = {
-      agent: this.agent,
-      get: (id) => this.accessor.get(id),
-      getState: () => {
-        if (definition.durable === undefined) {
-          throw new BugIndicatingError(`Agent runtime '${definition.id}' has no durable state`);
-        }
-        return definition.durable.read(actor.getSnapshot());
-      },
-      dispatch: (event) => this.accessor.get(IEventDispatcher).dispatch(event),
-      own: (resource) => scope.register(resource),
-      track: (work) => scope.track(this.track(entry, work)),
-      onDidChange: (listener) => {
-        listeners.add(listener);
-        const disposable = toDisposable(() => { listeners.delete(listener); });
-        scope.register(disposable);
-        return disposable;
-      },
-    };
+    const context = entry.context!;
     try {
-      const runtime = definition.create(context);
+      const runtime = entry.descriptor.createApi(context);
       entry.runtime = runtime;
       this.lifecycleOf(runtime)?.start?.();
       return runtime;
@@ -203,12 +215,36 @@ export class AgentRuntimeSet {
   private materialize(entry: RuntimeEntry): void {
     if (entry.actor !== undefined) return;
     if (this.closed || entry.retiring) {
-      throw new Error(`Agent runtime '${entry.record.definition.id}' is unavailable`);
+      throw new Error(`Agent runtime '${entry.descriptor.id}' is unavailable`);
     }
-    const definition = entry.record.definition;
+    const descriptor = entry.descriptor;
+    const listeners = new Set<(state: any) => void>();
+    const scope = new RuntimeScope();
+    entry.listeners = listeners;
+    entry.scope = scope;
+    entry.context = {
+      agent: this.agent,
+      get: (id) => this.accessor.get(id),
+      getState: () => {
+        if (descriptor.durable === undefined) {
+          throw new BugIndicatingError(`Agent runtime '${entry.descriptor.id}' has no durable state`);
+        }
+        return descriptor.durable.read(entry.actor!.getSnapshot());
+      },
+      getLogicState: <T>() => entry.actor!.getSnapshot().context as T,
+      dispatch: (event) => this.accessor.get(IEventDispatcher).dispatch(event),
+      send: (event) => { entry.actor!.send(event); },
+      own: (resource) => scope.register(resource),
+      track: (work) => scope.track(this.track(entry, work)),
+      onDidChange: (listener) => {
+        listeners.add(listener);
+        const disposable = toDisposable(() => { listeners.delete(listener); });
+        scope.register(disposable);
+        return disposable;
+      },
+    };
     try {
-      const actor = createActor(definition.logic, { input: definition.input?.(this.agent) });
-      const listeners = new Set<(state: any) => void>();
+      const actor = createActor(descriptor.logic, { input: descriptor.input ?? entry.context });
       entry.actor = actor;
       entry.listeners = listeners;
       let previous: unknown;
@@ -219,8 +255,8 @@ export class AgentRuntimeSet {
             entry.status = 'failed';
             entry.error = snapshot.error;
           }
-          if (definition.durable === undefined) return;
-          const next = definition.durable.read(snapshot);
+          if (descriptor.durable === undefined) return;
+          const next = descriptor.durable.read(snapshot);
           if (Object.is(previous, next)) return;
           if (previous !== undefined) {
             for (const listener of listeners) listener(next);
@@ -233,8 +269,14 @@ export class AgentRuntimeSet {
         },
       });
       actor.start();
-      previous = definition.durable?.read(actor.getSnapshot());
+      previous = descriptor.durable?.read(actor.getSnapshot());
       if (entry.status === 'registered') entry.status = 'materialized';
+      if (this.restored) {
+        void this.restoreEntry(entry).catch((error: unknown) => {
+          entry.status = 'failed';
+          entry.error = error;
+        });
+      }
     } catch (error) {
       entry.status = 'failed';
       entry.error = error;
@@ -249,11 +291,11 @@ export class AgentRuntimeSet {
   private attachDurableEntry(entry: RuntimeEntry, host: DurableRuntimeParticipantHost): void {
     if (entry.attachment !== undefined) return;
     this.materialize(entry);
-    const definition = entry.record.definition;
-    const durable = definition.durable!;
+    const descriptor = entry.descriptor;
+    const durable = descriptor.durable!;
     const actor = entry.actor!;
     const participant: DurableAgentRuntimeParticipant = {
-      id: definition.id,
+      id: entry.descriptor.id,
       events: durable.events,
       undoable: durable.undoable,
       transition: durable.transition,
@@ -261,12 +303,12 @@ export class AgentRuntimeSet {
       commit: (state) => { durable.commit(actor, state); },
     };
     entry.attachment = host.attach(participant);
-    if (definition.eager === true) this.runtime(entry);
+    if (descriptor.eager === true) this.runtime(entry);
   }
 
   private track<T>(entry: RuntimeEntry, work: Promise<T>): Promise<T> {
     if (this.closed || entry.retiring) {
-      throw new Error(`Agent runtime '${entry.record.definition.id}' is retiring`);
+      throw new Error(`Agent runtime '${entry.descriptor.id}' is retiring`);
     }
     const lease = work.finally(() => { entry.leases.delete(lease); });
     entry.leases.add(lease);
@@ -299,6 +341,8 @@ export class AgentRuntimeSet {
       entry.runtime = undefined;
       entry.listeners = undefined;
       entry.scope = undefined;
+      entry.context = undefined;
+      entry.restored = false;
     };
     const disposeScope = (): Promise<void> => {
       const scope = entry.scope;
@@ -333,21 +377,21 @@ export class AgentRuntimeSet {
 
   private line(entry: RuntimeEntry): AgentRuntimeContributionSnapshot {
     return {
-      id: entry.record.definition.id,
+      id: entry.descriptor.id,
       generation: entry.record.generation,
       status: entry.status,
-      state: entry.actor === undefined ? undefined : this.project(entry.record.definition, entry.actor),
+      state: entry.actor === undefined ? undefined : this.project(entry.descriptor, entry.actor),
       error: serializeError(entry.error),
     };
   }
 
   private project(
-    definition: AgentRuntimeDefinition<any, any>,
+    descriptor: AgentRuntimeDescriptor<any, any>,
     actor: AnyActorRef,
   ): unknown {
     const snapshot = actor.getSnapshot();
-    if (definition.inspect !== undefined) return definition.inspect(snapshot);
-    return definition.durable?.read(snapshot);
+    if (descriptor.inspect !== undefined) return descriptor.inspect(snapshot);
+    return descriptor.durable?.read(snapshot);
   }
 }
 

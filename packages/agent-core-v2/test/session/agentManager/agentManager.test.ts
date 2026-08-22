@@ -46,7 +46,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
-import { AgentCron } from '#/session/cron/cronAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/session/cron/cronAgentRuntime';
 import { ICronCreateTool } from '#/agent/tools/cron/cron-create/cron-create';
 import { ICronDeleteTool } from '#/agent/tools/cron/cron-delete/cron-delete';
 import { ICronListTool } from '#/agent/tools/cron/cron-list/cron-list';
@@ -56,7 +56,7 @@ import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
-import { AgentTodo } from '#/session/todo/todoAgentRuntime';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/session/todo/todoAgentRuntime';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -452,7 +452,7 @@ describe('AgentManagerService', () => {
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      AgentTodo,
+      todoAgentRuntimeProvider,
     );
   }
 
@@ -461,7 +461,7 @@ describe('AgentManagerService', () => {
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      AgentCron,
+      cronAgentRuntimeProvider,
     );
   }
 
@@ -786,6 +786,44 @@ describe('AgentManagerService', () => {
     expect(contributions.find((line) => line.id === 'cron')?.state).toEqual([
       { id: 'cron-1', cron: '0 9 * * *', recurring: true, createdAt: 1, lastFiredAt: undefined },
     ]);
+  });
+
+  it('waits for Cron restore readiness before create returns', async () => {
+    let releaseConfig!: () => void;
+    const configReady = new Promise<void>((resolve) => { releaseConfig = resolve; });
+    ix.stub(IConfigService, {
+      ready: configReady,
+      get: ((section: unknown) => section === CRON_SECTION
+        ? { debug: false, noJitter: true, noStale: false, disabled: false, manualTick: true }
+        : undefined) as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+    const registerTool = vi.fn(() => ({ dispose: () => {} }));
+    ix.stub(IAgentToolRegistryService, {
+      _serviceBrand: undefined,
+      register: registerTool,
+    } as unknown as IAgentToolRegistryService);
+    ix.stub(ICronCreateTool, { _serviceBrand: undefined });
+    ix.stub(ICronListTool, { _serviceBrand: undefined });
+    ix.stub(ICronDeleteTool, { _serviceBrand: undefined });
+    contributeCron();
+    const svc = ix.get(IAgentManager);
+    let created = false;
+
+    const creation = svc.create({ agentId: 'main' }).then((agent) => {
+      created = true;
+      return agent;
+    });
+    await vi.waitFor(() => { expect(registerAgent).toHaveBeenCalledOnce(); });
+
+    expect(created).toBe(false);
+    expect(registerTool).not.toHaveBeenCalled();
+
+    releaseConfig();
+    await creation;
+
+    expect(created).toBe(true);
+    expect(registerTool).toHaveBeenCalledTimes(3);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
@@ -1130,7 +1168,7 @@ describe('AgentManagerService', () => {
 
     withdraw();
 
-    expect(reminders).toBe(0);
+    await vi.waitFor(() => { expect(reminders).toBe(0); });
     expect(() => svc.resolve(main, AgentTodo)).toThrow('unavailable');
     expect(svc.inspect(main).contributions[0]).toMatchObject({ id: 'todo', status: 'retired' });
   });

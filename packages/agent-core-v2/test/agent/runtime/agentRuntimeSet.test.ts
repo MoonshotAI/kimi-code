@@ -8,6 +8,8 @@ import {
   defineAgentRuntime,
   type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
+  type AgentRuntimeDescriptor,
+  type AgentRuntimeRestoreEvent,
   type DurableAgentRuntimeParticipant,
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
@@ -18,13 +20,13 @@ const accessor = { get: vi.fn() } as unknown as ServicesAccessor;
 
 function record<Runtime>(
   id: string,
-  create: AgentRuntimeDefinition<any, Runtime>['create'] = () => ({}) as Runtime,
+  createApi: AgentRuntimeDescriptor<any, Runtime>['createApi'] = () => ({}) as Runtime,
   generation = 1,
-  logic: AgentRuntimeDefinition<any, any>['logic'] = fromCallback(() => {}),
-  durable?: AgentRuntimeDefinition<any, any>['durable'],
+  logic: AgentRuntimeDescriptor<any, any>['logic'] = fromCallback(() => {}),
+  durable?: AgentRuntimeDescriptor<any, any>['durable'],
 ): AgentRuntimeDefinitionRecord & { definition: AgentRuntimeDefinition<any, Runtime> } {
   return {
-    definition: defineAgentRuntime({ id, logic, durable, create }),
+    definition: defineAgentRuntime({ id, logic, durable, createApi }),
     generation,
     active: true,
   };
@@ -37,6 +39,23 @@ function host<T extends DurableRuntimeParticipantHost['attach']>(
 }
 
 describe('AgentRuntimeSet', () => {
+  it('exposes an opaque definition token while preserving typed resolution', async () => {
+    const runtime = record('opaque', () => ({ read: () => 42 }));
+    const set = new AgentRuntimeSet(agent, accessor);
+    set.apply(runtime);
+
+    expect(Object.keys(runtime.definition)).toEqual([]);
+    expect(runtime.definition).not.toHaveProperty('id');
+    expect(runtime.definition).not.toHaveProperty('logic');
+    expect(runtime.definition).not.toHaveProperty('createApi');
+    expect(runtime.definition).not.toHaveProperty('durable');
+    expect(runtime.definition).not.toHaveProperty('inspect');
+    expect(runtime.definition).not.toHaveProperty('eager');
+    expect(runtime.definition).not.toHaveProperty('input');
+    expect(set.resolve(runtime.definition).read()).toBe(42);
+    await set.close();
+  });
+
   it('materializes lazily and cleans up the actor when runtimeInstance creation fails', async () => {
     let stopped = 0;
     const runtime = record(
@@ -115,6 +134,49 @@ describe('AgentRuntimeSet', () => {
     expect(attach).toHaveBeenCalledTimes(1);
     await set.close();
     expect(attach.mock.results[0]!.value.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends restore once and waits for actor readiness', async () => {
+    let restores = 0;
+    let release!: () => void;
+    const runtime = record(
+      'restore-ready',
+      undefined,
+      1,
+      fromCallback(({ receive }) => {
+        receive((event) => {
+          const restore = event as AgentRuntimeRestoreEvent;
+          if (restore.type !== 'runtime.restore') return;
+          restores += 1;
+          restore.waitUntil(new Promise<void>((resolve) => { release = resolve; }));
+        });
+      }),
+      {
+        events: [],
+        undoable: false,
+        transition: () => {},
+        read: () => undefined,
+        commit: () => {},
+      },
+    );
+    const set = new AgentRuntimeSet(agent, accessor);
+    set.apply(runtime);
+    set.attachDurable(host(vi.fn(() => ({ dispose: vi.fn() }))));
+
+    let ready = false;
+    const first = set.restore().then(() => { ready = true; });
+    const second = set.restore();
+    await Promise.resolve();
+
+    expect(restores).toBe(1);
+    expect(ready).toBe(false);
+
+    release();
+    await Promise.all([first, second, set.restore()]);
+
+    expect(restores).toBe(1);
+    expect(ready).toBe(true);
+    await set.close();
   });
 
   it('disposes change listeners independently', async () => {
@@ -220,7 +282,7 @@ describe('AgentRuntimeSet', () => {
     const forged = defineAgentRuntime({
       id: 'identity',
       logic: fromCallback(() => {}),
-      create: () => ({ generation: 999 }),
+      createApi: () => ({ generation: 999 }),
     });
     const set = new AgentRuntimeSet(agent, accessor);
     set.apply(old);

@@ -24,7 +24,7 @@ import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { agentService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
+import { agentService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent as createTestAgent } from '../../harness';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import {
   IAgentFullCompactionService,
@@ -44,6 +44,14 @@ import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryCon
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
+
+function testAgent(
+  ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
+): TestAgentContext {
+  const context = createTestAgent(...inputs);
+  void context.restoreRuntimes();
+  return context;
+}
 
 const CATALOGUED_PROVIDER = {
   type: 'kimi',
@@ -290,7 +298,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 6_162,
+        tokens_before: 3_220,
         tokens_after: expect.any(Number),
         duration_ms: expect.any(Number),
         compacted_count: 6,
@@ -569,7 +577,7 @@ describe('FullCompaction', () => {
       session_id: 'test-session',
       cwd: dir,
       trigger: 'auto',
-      token_count: 6_162,
+      token_count: 3_220,
     });
     expect(post).toMatchObject({
       hook_event_name: 'PostCompact',
@@ -655,7 +663,7 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_840,
+        tokens_before: 14_898,
         retry_count: 1,
         trace_id: 'trace-compact-1',
       }),
@@ -1069,7 +1077,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 17_840,
+        tokens_before: 14_898,
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 0,
@@ -1294,7 +1302,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 17_840,
+        tokens_before: 14_898,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',

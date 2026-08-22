@@ -55,6 +55,7 @@ describe('goal tools', () => {
       permissionModeServices('auto'),
     );
     goals = ctx.resolve(AgentGoal);
+    ctx.restoreRuntimes();
     eventBus = ctx.get(IEventBus);
     toolExecutor = ctx.get(IAgentToolExecutorService);
     const manager = { resolve: () => goals } as unknown as IAgentManager;

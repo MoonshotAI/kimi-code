@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { CronCursor } from '#/session/cron/cronOps';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentCron } from '#/session/cron/cronAgentRuntime';
+import { CronCursor } from '#/session/cron/cronOps';
 
 import {
   createTestAgent,
@@ -87,6 +88,36 @@ describe('session cron wire persistence', () => {
       expect(resumed.list().map((task) => task.prompt)).toEqual(['keep']);
     } finally {
       await second.dispose();
+    }
+  });
+
+  it('activates effects once after restore and cleans them up on close', async () => {
+    const ctx = await bootCronContext();
+    const registry = ctx.get(IAgentToolRegistryService);
+    let disposed = false;
+    try {
+      expect(registry.resolve('CronCreate')).toBeUndefined();
+      expect(registry.resolve('CronList')).toBeUndefined();
+      expect(registry.resolve('CronDelete')).toBeUndefined();
+      await expect(ctx.resolve(AgentCron).tick()).rejects.toThrow('not restored');
+
+      await ctx.restorePersisted();
+      ctx.restoreRuntimes();
+
+      expect(registry.listReferences().filter((tool) => tool.name.startsWith('Cron'))).toEqual([
+        { name: 'CronCreate', source: 'builtin' },
+        { name: 'CronDelete', source: 'builtin' },
+        { name: 'CronList', source: 'builtin' },
+      ]);
+
+      await ctx.dispose();
+      disposed = true;
+
+      expect(registry.resolve('CronCreate')).toBeUndefined();
+      expect(registry.resolve('CronList')).toBeUndefined();
+      expect(registry.resolve('CronDelete')).toBeUndefined();
+    } finally {
+      if (!disposed) await ctx.dispose();
     }
   });
 });

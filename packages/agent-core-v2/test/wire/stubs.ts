@@ -10,10 +10,10 @@ import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
-import { AgentTodo } from '#/session/todo/todoAgentRuntime';
-import { AgentCron } from '#/session/cron/cronAgentRuntime';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/session/todo/todoAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/session/cron/cronAgentRuntime';
 import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
-import { AgentGoal } from '#/agent/goal/goalAgentRuntime';
+import { AgentGoal, goalAgentRuntimeProvider } from '#/agent/goal/goalAgentRuntime';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -106,6 +106,7 @@ export function attachTodoRuntime(
   const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
   runtimes.apply({
     definition: AgentTodo,
+    provider: todoAgentRuntimeProvider,
     generation: 1,
     active: true,
   });
@@ -121,6 +122,7 @@ export function attachCronRuntime(
   const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
   runtimes.apply({
     definition: AgentCron,
+    provider: cronAgentRuntimeProvider,
     generation: 1,
     active: true,
   });
@@ -151,6 +153,7 @@ export function attachGoalRuntime(
   const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
   runtimes.apply({
     definition: AgentGoal,
+    provider: goalAgentRuntimeProvider,
     generation: 1,
     active: true,
   });

@@ -1,4 +1,4 @@
-import { AgentGoal } from '#/agent/goal/goalAgentRuntime';
+import { goalAgentRuntimeProvider } from '#/agent/goal/goalAgentRuntime';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
@@ -7,7 +7,7 @@ export class GoalFeature extends Feature {
 
   constructor() {
     super();
-    this.contributeAgentRuntime(AgentGoal);
+    this.contributeAgentRuntime(goalAgentRuntimeProvider);
   }
 }
 

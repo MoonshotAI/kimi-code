@@ -65,6 +65,7 @@ describe('GoalInjection content', () => {
   beforeEach(() => {
     ctx = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
     goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
+    ctx.restoreRuntimes();
     context = ctx.get(IAgentContextMemoryService);
     injector = ctx.get(IAgentContextInjectorService) as InjectableContextInjector;
   });
@@ -87,6 +88,30 @@ describe('GoalInjection content', () => {
 
   it('produces no injection when there is no current goal', async () => {
     expect(await readGoalReminder(async () => undefined)).toBeUndefined();
+  });
+
+  it('activates injection after restore and removes it on close', async () => {
+    const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
+    const localGoals = local.resolve(AgentGoal) as GoalServiceTestManager;
+    const localInjector = local.get(IAgentContextInjectorService) as InjectableContextInjector;
+    const localContext = local.get(IAgentContextMemoryService);
+    await localGoals.createGoal({ objective: 'work' });
+
+    await injectDynamic(localInjector, true);
+    expect(lastGoalReminder(localContext)).toBeUndefined();
+
+    local.restoreRuntimes();
+    local.restoreRuntimes();
+    await injectDynamic(localInjector, true);
+    expect(lastGoalReminder(localContext)).toContain('<untrusted_objective>');
+    expect(localContext.get().filter((message) =>
+      message.origin?.kind === 'injection' && message.origin.variant === 'goal'
+    )).toHaveLength(1);
+
+    await local.dispose();
+    const count = localContext.get().length;
+    await injectDynamic(localInjector, true);
+    expect(localContext.get()).toHaveLength(count);
   });
 
   it('wraps the objective for a paused goal', async () => {
@@ -252,6 +277,7 @@ describe('GoalInjection integration', () => {
         agentService(IAgentSwarmService, stubAgentSwarm()),
       );
       goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
+      ctx.restoreRuntimes();
       profile = ctx.get(IAgentProfileService);
       injector = ctx.get(IAgentContextInjectorService) as InjectableContextInjector;
     });

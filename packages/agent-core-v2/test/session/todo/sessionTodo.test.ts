@@ -11,6 +11,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   defineAgentRuntime,
   type AgentRuntimeDefinitionRecord,
+  getAgentRuntimeDefinitionId,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -24,7 +25,11 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentManager } from '#/session/agentManager/agentManager';
 import { ManagedAgent } from '#/session/agentManager/managedAgent';
-import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
+import {
+  AgentTodo,
+  todoAgentRuntimeProvider,
+  type TodoRuntime,
+} from '#/session/todo/todoAgentRuntime';
 import type { TodoItem } from '#/session/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -56,7 +61,9 @@ interface RuntimeAgent {
 function todoRecord(generation = 1): AgentRuntimeDefinitionRecord {
   return {
     definition: AgentTodo,
+    provider: todoAgentRuntimeProvider,
     generation,
+    providerGeneration: generation,
     active: true,
   };
 }
@@ -66,13 +73,15 @@ class RuntimeRegistry {
   private readonly records = new Map<string, AgentRuntimeDefinitionRecord>();
 
   register(record: AgentRuntimeDefinitionRecord): void {
-    this.records.set(record.definition.id, record);
+    const id = getAgentRuntimeDefinitionId(record.definition);
+    this.records.set(id, record);
     for (const managed of this.managed) managed.runtimeSet.apply(record);
   }
 
   withdraw(record: AgentRuntimeDefinitionRecord): void {
-    if (this.records.get(record.definition.id) !== record) return;
-    this.records.delete(record.definition.id);
+    const id = getAgentRuntimeDefinitionId(record.definition);
+    if (this.records.get(id) !== record) return;
+    this.records.delete(id);
     record.active = false;
     for (const managed of this.managed) managed.runtimeSet.retireDefinition(record);
   }
@@ -138,6 +147,7 @@ function makeRuntimeAgent(
   registry.track(managed);
   managed.attachDurableRuntimes();
   const dispatcher = ix.get(IEventDispatcher);
+  void managed.runtimeSet.restore();
   return {
     context,
     managed,
@@ -149,6 +159,7 @@ function makeRuntimeAgent(
     restore: async (records) => {
       journal.push(...records);
       await dispatcher.restore();
+      await managed.runtimeSet.restore();
     },
     dispose: async () => {
       registry.untrack(managed);
@@ -226,6 +237,7 @@ describe('TodoAgentRuntime', () => {
       state: [],
     });
 
+    managed.runtimeSet.restore();
     const todo = managed.runtimeSet.resolve(AgentTodo);
     expect(reminders).toBe(1);
     expect(managed.runtimeSet.resolve(AgentTodo)).toBe(todo);
@@ -358,7 +370,7 @@ describe('TodoAgentRuntime', () => {
     const ephemeral = defineAgentRuntime<undefined, object>({
       id: 'ephemeral-runtime',
       logic: fromCallback(() => {}),
-      create: () => {
+      createApi: () => {
         creates += 1;
         return {};
       },
@@ -401,7 +413,7 @@ describe('TodoAgentRuntime', () => {
     const leaseDefinition = defineAgentRuntime<undefined, { run(): Promise<void> }>({
       id: 'lease-runtime',
       logic: fromCallback(() => {}),
-      create: (context) => ({
+      createApi: (context) => ({
         run: () => {
           let resolveWork!: () => void;
           const work = new Promise<void>((resolve) => {
@@ -524,7 +536,7 @@ describe('TodoAgentRuntime', () => {
         read: () => 0,
         commit: () => {},
       },
-      create: () => ({}),
+      createApi: () => ({}),
       inspect: () => ({ value: 0 }),
     });
     const registry = new RuntimeRegistry();

@@ -59,8 +59,6 @@ type CronToolApi = Pick<
   | 'handleMissed'
   | 'emitScheduled'
   | 'emitDeleted'
-  | 'start'
-  | 'stop'
   | 'tick'
 >;
 
@@ -149,8 +147,6 @@ function createToolHarness(options: {
       deleted.push(id);
       deletedAgentIds.push(agentId);
     },
-    start: () => Promise.resolve(),
-    stop: async () => {},
     tick: () => Promise.resolve(),
     handleMissed: () => undefined,
   };

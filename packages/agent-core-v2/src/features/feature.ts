@@ -30,7 +30,10 @@ import {
 } from '#/agent/toolRegistry/toolContribution';
 import {
   AgentRuntimeContributionPoint,
+  AgentRuntimeOverrideContributionPoint,
+  type AgentRuntimeContribution,
   type AgentRuntimeDefinition,
+  type AgentRuntimeProvider,
 } from '#/agent/runtime/agentRuntime';
 import type {
   AgentModel,
@@ -54,12 +57,21 @@ export abstract class Feature extends Service {
     return this.provide(AgentModelContribution, definition as AgentModelDefinition<any, any>);
   }
 
-  contributeAgentRuntime<State, Runtime>(
-    definition: AgentRuntimeDefinition<State, Runtime>,
+  contributeAgentRuntime<Runtime>(
+    provider: AgentRuntimeProvider<any, Runtime> | AgentRuntimeDefinition<Runtime>,
   ): FiberHandle {
     return this.provide(
       AgentRuntimeContributionPoint,
-      definition as AgentRuntimeDefinition<any, any>,
+      provider as AgentRuntimeContribution,
+    );
+  }
+
+  overrideAgentRuntime<Runtime>(
+    provider: AgentRuntimeProvider<any, Runtime> | AgentRuntimeDefinition<Runtime>,
+  ): FiberHandle {
+    return this.provide(
+      AgentRuntimeOverrideContributionPoint,
+      provider as AgentRuntimeContribution,
     );
   }
 

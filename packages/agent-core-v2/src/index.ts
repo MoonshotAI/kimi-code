@@ -109,8 +109,22 @@ export * from '#/state/errors';
 export * from '#/state/state';
 export * from '#/state/stateContribution';
 export * from '#/state/agentModel';
-export * from '#/agent/runtime/agentRuntime';
-export * from '#/agent/runtime/agentRuntimeSet';
+export {
+  AgentRuntimeContributionPoint,
+  AgentRuntimeOverrideContributionPoint,
+  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
+} from '#/agent/runtime/agentRuntime';
+export type {
+  AgentRuntimeContributionSnapshot,
+  AgentRuntimeDefinition,
+  AgentRuntimeIdentity,
+  AgentRuntimeProvider,
+  AgentRuntimeSnapshot,
+  AgentRuntimeStatus,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 export * from '#/state/eventDispatcher';
 import '#/state/eventDispatcherService';
 export * from '#/_base/state/stateRegistry';
