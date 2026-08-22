@@ -530,10 +530,15 @@ export class ToolManager {
   }
 
   setActiveTools(names: readonly string[], disallowedNames?: readonly string[]): void {
+    // Callers compose [tools].disabled into an array, but an empty denylist
+    // carries no information; normalize to undefined so the serialized record
+    // omits it (matching the pre-config behavior) instead of changing every
+    // set_active_tools record with an empty disallowedNames. #2534.
     this.agent.records.logRecord({
       type: 'tools.set_active_tools',
       names,
-      disallowedNames,
+      disallowedNames:
+        disallowedNames && disallowedNames.length > 0 ? disallowedNames : undefined,
     });
     // MCP entries are glob patterns gated separately; the rest are exact
     // builtin/user tool names. The split keeps every caller on one string[].
@@ -547,6 +552,33 @@ export class ToolManager {
     // re-init in `get tools()` only fires on an empty map, so rebuild here —
     // otherwise a profile applied after construction (every subagent) keeps
     // the construction-time capabilities.
+    if (this.agent.config.hasProvider) {
+      this.initializeBuiltinTools();
+    }
+  }
+
+  /**
+   * Add to the denied set without replacing the replayed enabled set. Used by
+   * the resume path so applying [tools].disabled to a restored agent does not
+   * drop unrelated replayed host/user tools or a previous runtime selection.
+   * #2534.
+   */
+  addDisallowedTools(names: readonly string[]): void {
+    if (names.length === 0) return;
+    const denials = names.filter((name) => !isMcpToolName(name));
+    const mcpDenies = names.filter((name) => isMcpToolName(name));
+    if (denials.length > 0) {
+      this.disabledTools = new Set([...this.disabledTools, ...denials]);
+    }
+    if (mcpDenies.length > 0) {
+      this.mcpDenyPatterns = [...this.mcpDenyPatterns, ...mcpDenies];
+    }
+    // Builtin construction bakes `allowBackground` from the Task* trio into
+    // Bash/Agent (see setActiveTools). The resume path already rebuilt the
+    // builtins during wire replay, before these denies were applied, so a
+    // newly-denied Task* tool would leave allowBackground stuck on until the
+    // next setActiveTools. Rebuild here so the denylist takes effect on the
+    // already-constructed builtins. #2534.
     if (this.agent.config.hasProvider) {
       this.initializeBuiltinTools();
     }
