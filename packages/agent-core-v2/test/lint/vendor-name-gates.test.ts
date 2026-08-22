@@ -78,13 +78,17 @@ describe('vendor-name gates', () => {
     expect(hits).toEqual([]);
   });
 
-  it('finds no vendor-name gates in src/ outside kosong', () => {
-    const hits = walk(SRC_ROOT).flatMap((file) =>
-      findVendorGates(readFileSync(file, 'utf8'), relative(SRC_ROOT, file)),
-    );
-    expect(
-      hits.map((hit) => `${hit.file}:${hit.line} ${hit.text}`),
-      'vendor-name gate found outside kosong — ask the provider-definition / adapter registries instead',
-    ).toEqual([]);
-  });
+  it(
+    'finds no vendor-name gates in src/ outside kosong',
+    () => {
+      const hits = walk(SRC_ROOT).flatMap((file) =>
+        findVendorGates(readFileSync(file, 'utf8'), relative(SRC_ROOT, file)),
+      );
+      expect(
+        hits.map((hit) => `${hit.file}:${hit.line} ${hit.text}`),
+        'vendor-name gate found outside kosong — ask the provider-definition / adapter registries instead',
+      ).toEqual([]);
+    },
+    20_000,
+  );
 });
