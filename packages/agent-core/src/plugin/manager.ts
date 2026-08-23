@@ -63,7 +63,10 @@ export class PluginManager {
   }
 
   async install(source: string): Promise<PluginRecord> {
-    await discardStaleManagedRoots(this.kimiHomeDir);
+    await discardStaleManagedRoots(
+      this.kimiHomeDir,
+      new Set([...this.records.values()].map((record) => path.basename(record.root))),
+    );
     const resolved = resolveInstallSource(source);
 
     let managedCopy: ManagedPluginCopy | undefined;
@@ -464,12 +467,15 @@ async function discardPreviousManagedRoot(previousRoot: string | undefined): Pro
   await rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
 }
 
-async function discardStaleManagedRoots(kimiHomeDir: string): Promise<void> {
+async function discardStaleManagedRoots(
+  kimiHomeDir: string,
+  installedRootNames: ReadonlySet<string>,
+): Promise<void> {
   const managedDir = path.join(kimiHomeDir, 'plugins', 'managed');
   const entries = await readdir(managedDir).catch(() => []);
   await Promise.all(
     entries
-      .filter((name) => name.endsWith('-previous'))
+      .filter((name) => name.endsWith('-previous') && !installedRootNames.has(name))
       .map((name) =>
         rm(path.join(managedDir, name), { recursive: true, force: true }).catch(() => undefined),
       ),

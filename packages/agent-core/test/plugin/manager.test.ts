@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -380,6 +380,18 @@ describe('PluginManager', () => {
 
     const leftovers = (await readdir(managedDir)).filter((name) => name.endsWith('-previous'));
     expect(leftovers).toEqual([]);
+  });
+
+  it('does not sweep a live installed plugin whose id ends in -previous', async () => {
+    const home = await makeKimiHome();
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(await makePlugin('demo-previous', { version: '1.0.0' }));
+    await manager.install(await makePlugin('other', { version: '1.0.0' }));
+
+    const installed = manager.get('demo-previous');
+    expect(installed?.manifest?.version).toBe('1.0.0');
+    expect((await stat(installed!.root)).isDirectory()).toBe(true);
   });
 
   it('keeps a plugin in error state instead of losing it on a broken manifest', async () => {
