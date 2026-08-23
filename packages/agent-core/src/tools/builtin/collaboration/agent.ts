@@ -153,7 +153,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         ? 'Subagents have no timeout in this session. If one is interrupted, resume the same agent instead of starting over.'
         : `Subagents use a ${formatSubagentTimeoutDescription(timeoutMs)} timeout by default (overridable via config/env). If one times out, resume the same agent instead of starting over.`;
     const descriptionBase = AGENT_DESCRIPTION_BASE.replace(
-      '{{SUBAGENT_TIMEOUT_NOTE}}',
+      '__SUBAGENT_TIMEOUT_NOTE__',
       timeoutNote,
     );
     const baseDescription = `${descriptionBase}\n\n${
