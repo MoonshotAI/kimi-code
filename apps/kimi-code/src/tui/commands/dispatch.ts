@@ -699,7 +699,7 @@ async function handleSkillCommand(
     }
   }
 
-  const selectedSkill = await runSkillSelector(host, activatableSkills);
+  const selectedSkill = await runSkillSelector(host, activatableSkills, host.state.appState.skillDirs);
   if (selectedSkill !== undefined) {
     const busyCheck = slashCommandBusyReason({
       isStreaming: host.state.appState.streamingPhase !== 'idle',

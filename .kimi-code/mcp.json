@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "mcpjungle-localfiles-rag": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8090/v0/groups/localfiles-rag/mcp",
+        "--allow-http"
+      ]
+    },
+    "mcpjungle-coding-architecture": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8090/v0/groups/coding-architecture/mcp",
+        "--allow-http"
+      ]
+    },
+    "mcpjungle-docker-devops": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8090/v0/groups/docker-devops/mcp",
+        "--allow-http"
+      ]
+    }
+  }
+}

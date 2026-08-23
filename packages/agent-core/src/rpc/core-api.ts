@@ -48,17 +48,17 @@ export type EmptyPayload = {};
 export type SessionMetadataPatch = Partial<Omit<SessionMeta, 'agents' | 'additionalDirs'>>;
 
 export interface ClientTelemetryInfo {
-  readonly id?: string | undefined;
-  readonly name?: string | undefined;
-  readonly version?: string | undefined;
-  readonly uiMode?: string | undefined;
+  readonly id?: string;
+  readonly name?: string;
+  readonly version?: string;
+  readonly uiMode?: string;
 }
 
 export interface CreateSessionPayload {
-  readonly id?: string | undefined;
+  readonly id?: string;
   readonly workDir: string;
-  readonly model?: string | undefined;
-  readonly thinking?: string | undefined;
+  readonly model?: string;
+  readonly thinking?: string;
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
@@ -123,26 +123,26 @@ export interface ForkSessionPayload {
 }
 
 export interface ShellEnvironment {
-  readonly term?: string | undefined;
-  readonly termProgram?: string | undefined;
-  readonly termProgramVersion?: string | undefined;
-  readonly multiplexer?: string | undefined;
-  readonly shell?: string | undefined;
+  readonly term?: string;
+  readonly termProgram?: string;
+  readonly termProgramVersion?: string;
+  readonly multiplexer?: string;
+  readonly shell?: string;
 }
 
 export interface ExportSessionPayload {
   readonly sessionId: string;
-  readonly outputPath?: string | undefined;
+  readonly outputPath?: string;
   /**
    * When true, the active global diagnostic log (`$KIMI_CODE_HOME/logs/kimi-code.log`)
    * is copied into the zip at `logs/global/kimi-code.log`. Off by default to
    * avoid bundling events from concurrent sessions / other projects.
    */
-  readonly includeGlobalLog?: boolean | undefined;
+  readonly includeGlobalLog?: boolean;
   /** Host version to record in the export manifest. */
   readonly version: string;
   /** How the CLI was installed (e.g. 'npm-global', 'native'). */
-  readonly installSource?: string | undefined;
+  readonly installSource?: string;
   readonly shellEnv?: ShellEnvironment | undefined;
 }
 
@@ -153,16 +153,16 @@ export interface ExportSessionManifest {
   readonly wireProtocolVersion: string;
   readonly os: string;
   readonly nodejsVersion: string;
-  readonly sessionFirstActivity?: string | undefined;
-  readonly sessionLastActivity?: string | undefined;
-  readonly title?: string | undefined;
-  readonly workspaceDir?: string | undefined;
+  readonly sessionFirstActivity?: string;
+  readonly sessionLastActivity?: string;
+  readonly title?: string;
+  readonly workspaceDir?: string;
   /** zip-relative path to the session diagnostic log when present. */
-  readonly sessionLogPath?: string | undefined;
+  readonly sessionLogPath?: string;
   /** zip-relative path to the bundled global diagnostic log (only when --include-global-log). */
-  readonly globalLogPath?: string | undefined;
+  readonly globalLogPath?: string;
   /** How the CLI was installed (e.g. 'npm-global', 'native'). */
-  readonly installSource?: string | undefined;
+  readonly installSource?: string;
   readonly shellEnv?: ShellEnvironment | undefined;
 }
 
@@ -185,13 +185,13 @@ export interface CoreInfo {
 
 export interface SessionSummary {
   readonly id: string;
-  readonly title?: string | undefined;
+  readonly title?: string;
   readonly lastPrompt?: string;
   readonly workDir: string;
   readonly sessionDir: string;
   readonly createdAt: number;
   readonly updatedAt: number;
-  readonly archived?: boolean | undefined;
+  readonly archived?: boolean;
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
 }
@@ -247,7 +247,7 @@ export interface SetModelPayload {
 }
 export interface SetModelResult {
   readonly model: string;
-  readonly providerName?: string | undefined;
+  readonly providerName?: string;
 }
 export interface CancelPlanPayload {
   readonly id?: string;
@@ -306,20 +306,20 @@ export interface SkillSummary {
   readonly description: string;
   readonly path: string;
   readonly source: 'builtin' | 'user' | 'extra' | 'project';
-  readonly type?: string | undefined;
-  readonly disableModelInvocation?: boolean | undefined;
-  readonly isSubSkill?: boolean | undefined;
-  readonly category?: string | undefined;
-  readonly categories?: readonly string[] | undefined;
-  readonly issuer?: string | undefined;
-  readonly collection?: string | undefined;
-  readonly groups?: readonly string[] | undefined;
-  readonly tags?: readonly string[] | undefined;
+  readonly type?: string;
+  readonly disableModelInvocation?: boolean;
+  readonly isSubSkill?: boolean;
+  readonly category?: string;
+  readonly categories?: readonly string[];
+  readonly issuer?: string;
+  readonly collection?: string;
+  readonly groups?: readonly string[];
+  readonly tags?: readonly string[];
 }
 
 export interface ActivateSkillPayload {
   readonly name: string;
-  readonly args?: string | undefined;
+  readonly args?: string;
 }
 
 export interface ListWorkspaceSkillsPayload {
@@ -329,7 +329,7 @@ export interface ListWorkspaceSkillsPayload {
 export interface ActivatePluginCommandPayload {
   readonly pluginId: string;
   readonly commandName: string;
-  readonly args?: string | undefined;
+  readonly args?: string;
 }
 
 export interface McpServerInfo {

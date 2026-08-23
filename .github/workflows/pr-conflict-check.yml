@@ -1,0 +1,51 @@
+name: PR Conflict & Sanity Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-conflict-markers:
+    name: Check Conflict Markers & Code Health
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for Unresolved Conflict Markers
+        run: |
+          echo "Searching for unresolved conflict markers (<<<<<<<, =======, >>>>>>>)..."
+          FOUND=$(grep -rnE "^(<<<<<<<|=======|>>>>>>>)" --exclude-dir={node_modules,.git,dist} . || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Unresolved conflict markers found in files:"
+            echo "$FOUND"
+            exit 1
+          else
+            echo "No conflict markers found."
+          fi
+
+      - name: Check for Accidental Root Configuration Files
+        run: |
+          if [ -f "mcp.json" ]; then
+            echo "::error::Accidental mcp.json found in repository root!"
+            exit 1
+          fi
+
+      - name: Setup Node & pnpm
+        uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck & Build Sanity Check
+        run: pnpm run build

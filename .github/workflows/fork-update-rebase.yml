@@ -1,0 +1,51 @@
+name: Fork Update & Automated Rebase
+
+on:
+  schedule:
+    # Run daily at midnight
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-and-rebase:
+    name: Sync Fork with Upstream and Rebase PRs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Fork Main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git User
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch Upstream
+        run: |
+          git remote add upstream https://github.com/MoonshotAI/kimi-code.git || true
+          git fetch upstream main
+
+      - name: Sync Main Branch
+        run: |
+          git checkout main
+          git reset --hard upstream/main
+          git push origin main --force
+
+      - name: Setup Node & pnpm
+        uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install & Verify Build
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm run build

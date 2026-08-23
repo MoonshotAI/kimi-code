@@ -36,6 +36,8 @@ export interface AppState {
   agentProfile?: string;
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
   agentFiles?: readonly string[];
+  /** Configured skill roots from --skillsDir, passed to session creation and selector */
+  skillDirs?: readonly string[];
   /** 'bash' when the editor is in `!` shell-command mode. */
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
