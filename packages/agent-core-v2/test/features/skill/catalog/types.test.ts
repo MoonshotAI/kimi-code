@@ -38,7 +38,7 @@ describe('skill/types', () => {
       path: '/skills/commit',
       source: 'user',
       metadata: { type: 'prompt', disableModelInvocation: false, isSubSkill: false },
-    } as SkillDefinition;
+    } as unknown as SkillDefinition;
     expect(summarizeSkill(skill)).toEqual({
       name: 'commit',
       description: 'Commit helper',
@@ -64,7 +64,7 @@ describe('skill/types', () => {
         groups: ['cv', 'cv/ops'],
         tags: ['cv', 'ssh'],
       },
-    } as SkillDefinition;
+    } as unknown as SkillDefinition;
     expect(summarizeSkill(skill)).toEqual({
       name: 'cv_ssh-ops',
       description: 'SSH ops',
