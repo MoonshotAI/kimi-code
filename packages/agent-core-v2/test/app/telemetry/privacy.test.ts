@@ -59,6 +59,8 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
     expect(cleanTelemetryString('\\\\fileserver\\alice')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\fileserver\\alice\\')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\server\\C$\\Users\\alice\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\Secret \\file.txt')).toBe(REDACTED);
   });
 
   it('redacts drive-letter paths spelled with forward slashes', () => {
