@@ -1,10 +1,3 @@
-/**
- * `kosongConfig` domain — models.dev import error codes.
- *
- * The edge server branches on these codes to map them onto its numeric
- * protocol envelope, so the code strings are part of the wire contract.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const ModelsDevImportErrors = {

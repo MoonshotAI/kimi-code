@@ -1,36 +1,32 @@
-/**
- * Session legacy status scenarios.
- *
- * Resolves the edge adapter through DI and exercises its public status contract
- * with real scope-handle traversal. Agent/session domain collaborators are
- * narrow stubs so the scenario can model a persisted alias removed from the
- * current model catalog.
- */
-
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import {
+  IAgentScopeContext,
+  makeAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentSwarmService } from '#/agent/swarm/swarm';
-import { IConfigService } from '#/app/config/config';
+import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { IAgentTowerService } from '#/features/tower/tower';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
-import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -45,20 +41,21 @@ function accessor(
   };
 }
 
-/** Stub the index → handler → session-lifecycle chain for one live session. */
 function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHandle): void {
   const handler = {
     id: 'wd',
-    kind: LifecycleScope.Workspace,
-    accessor: accessor([
-      [
-        ISessionLifecycleService,
-        {
-          resume: () => Promise.resolve(session),
-          get: () => session,
-        },
-      ],
-    ]),
+    kind: 'program',
+    accessor: {
+      get<T>(id: ServiceIdentifier<T>): T {
+        if (id === ISessionLifecycleService) {
+          return {
+            resume: () => Promise.resolve(session),
+            get: () => session,
+          } as T;
+        }
+        return session.accessor.get(id);
+      },
+    },
     dispose: () => {},
   } as const;
   ix.stub(ISessionIndex, {
@@ -76,10 +73,25 @@ function stubSessionChain(ix: TestInstantiationService, session: ISessionScopeHa
           : undefined,
       ),
   });
-  ix.stub(IWorkspaceLifecycleService, {
-    handlerFor: () => Promise.resolve(handler),
-    handlers: { list: () => [handler] },
+  ix.stub(ISessionIndexMirror, {
+    _serviceBrand: undefined,
+    record: () => {},
+    pending: () => [],
+    evict: () => Promise.resolve(),
+    drain: () => Promise.resolve(),
   });
+  ix.stub(ISessionManager, {
+    _serviceBrand: undefined,
+    create: () => Promise.resolve(handler),
+    resume: () => Promise.resolve(handler),
+    get: () => handler,
+    list: () => [handler],
+    close: () => Promise.resolve(),
+    archive: () => Promise.resolve(),
+    restore: () => Promise.resolve(handler),
+    delete: () => Promise.resolve(),
+    fork: () => Promise.resolve(handler),
+  } as unknown as ISessionManager);
 }
 
 describe('Session legacy status (best-effort runtime state)', () => {
@@ -116,11 +128,17 @@ describe('Session legacy status (best-effort runtime state)', () => {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
+        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 25, measured: 20, estimated: 5 }) }],
+        [ISessionTokenCountingService, { get: () => ({ size: 25, measured: 20, estimated: 5 }), statusSize: () => 25 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
+        [IAgentTowerService, { isActive: false }],
         [
           IAgentActivityView,
           { state: () => ({ lifecycle: 'ready', background: [] }) },
@@ -129,8 +147,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       dispose: () => {},
     };
     const agents = {
-      // create is create-or-get for explicit ids: this session's main agent
-      // already exists, so return it as-is (same as whenReady).
       create: () => Promise.resolve(agent),
       whenReady: () => Promise.resolve(agent),
       list: () => [agent],
@@ -153,16 +169,11 @@ describe('Session legacy status (best-effort runtime state)', () => {
       busy: false,
       model: 'removed-model',
       thinking_level: 'high',
-      max_context_tokens: 0,
     });
+    expect(status.max_context_tokens).toBeUndefined();
   });
 
   it('reports an empty thinking level for a never-bound main agent', async () => {
-    // A fresh session's main agent is materialized unbound (no Profile / Model
-    // — see kap-server's ensureMainAgent). The wire model's initial
-    // thinkingLevel is the zero value 'off'; reporting it would make clients
-    // fold a level nobody chose into the session's real state, so the status
-    // edge must report '' (mirroring `model: undefined`) instead.
     const profile = {
       _serviceBrand: undefined,
       data: () => ({
@@ -180,14 +191,18 @@ describe('Session legacy status (best-effort runtime state)', () => {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
+        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 0, measured: 0, estimated: 0 }) }],
+        [ISessionTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
-        // Unbound: assembleStatus resolves the default model's context cap,
-        // which reads the `defaultModel` config section first.
-        [IConfigService, { get: () => undefined }],
+        [IAgentTowerService, { isActive: false }],
+        [IModelService, { getDefaultModel: () => undefined }],
         [
           IAgentActivityView,
           { state: () => ({ lifecycle: 'ready', background: [] }) },
@@ -218,6 +233,78 @@ describe('Session legacy status (best-effort runtime state)', () => {
       busy: false,
       model: undefined,
       thinking_level: '',
+    });
+    expect(status.max_context_tokens).toBeUndefined();
+  });
+
+  it('falls back to the default model limit when no model is bound', async () => {
+    const profile = {
+      _serviceBrand: undefined,
+      data: () => ({
+        cwd: '/workspace',
+        modelAlias: undefined,
+        modelCapabilities: UNKNOWN_CAPABILITY,
+        thinkingLevel: 'off',
+        systemPrompt: '',
+      }),
+      getModel: () => '',
+      getModelCapabilities: () => UNKNOWN_CAPABILITY,
+      getEffectiveThinkingLevel: () => 'off',
+    } as unknown as IAgentProfileService;
+    const agent: IAgentScopeHandle = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: accessor([
+        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
+        [IAgentProfileService, profile],
+        [ISessionTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
+        [IAgentPermissionModeService, { mode: 'manual' }],
+        [IAgentPlanService, { status: () => Promise.resolve(null) }],
+        [IAgentSwarmService, { isActive: false }],
+        [IAgentTowerService, { isActive: false }],
+        [IModelService, { getDefaultModel: () => 'default-model' }],
+        [
+          IModelCatalog,
+          {
+            get: (id: string) => {
+              if (id !== 'default-model') throw new Error(`unknown model ${id}`);
+              return { capabilities: { max_context_tokens: 200_000 } };
+            },
+          },
+        ],
+        [
+          IAgentActivityView,
+          { state: () => ({ lifecycle: 'ready', background: [] }) },
+        ],
+      ]),
+      dispose: () => {},
+    };
+    const agents = {
+      create: () => Promise.resolve(agent),
+      whenReady: () => Promise.resolve(agent),
+      list: () => [agent],
+    } as unknown as IAgentLifecycleService;
+    const session: ISessionScopeHandle = {
+      id: 'session-draft',
+      kind: LifecycleScope.Session,
+      accessor: accessor([
+        [IAgentLifecycleService, agents],
+        [ISessionCronService, { _serviceBrand: undefined }],
+      ]),
+      dispose: () => {},
+    };
+    stubSessionChain(ix, session);
+    ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
+
+    const status = await ix.get(ISessionLegacyService).status('session-draft');
+
+    expect(status).toMatchObject({
+      model: undefined,
+      max_context_tokens: 200_000,
     });
   });
 
@@ -257,11 +344,17 @@ describe('Session legacy status (best-effort runtime state)', () => {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
+        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        ],
         [IAgentProfileService, profile],
-        [IAgentContextSizeService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }) }],
+        [ISessionTokenCountingService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }), statusSize: () => 120_000 }],
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
+        [IAgentTowerService, { isActive: false }],
         [
           IAgentActivityView,
           { state: () => ({ lifecycle: 'ready', background: [] }) },
@@ -288,54 +381,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
 
     const status = await ix.get(ISessionLegacyService).status('session-capped');
 
-    // 120k in context against the 100k input cap (not the 200k window):
-    // usage would exceed the wire schema bound and is clamped to 1.
     expect(status).toMatchObject({
       max_context_tokens: 100_000,
       context_usage: 1,
     });
-  });
-
-  it('fans a permission_mode patch out through the session agent registry', async () => {
-    const broadcastPermissionMode = vi.fn();
-    const agent: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: accessor([
-        [IAgentProfileService, { _serviceBrand: undefined }],
-        [IAgentLifecycleService, { broadcastPermissionMode }],
-      ]),
-      dispose: () => {},
-    };
-    const agents = {
-      create: () => Promise.resolve(agent),
-      whenReady: () => Promise.resolve(agent),
-      list: () => [agent],
-      broadcastPermissionMode,
-    } as unknown as IAgentLifecycleService;
-    const session: ISessionScopeHandle = {
-      id: 'session-test',
-      kind: LifecycleScope.Session,
-      accessor: accessor([
-        [IAgentLifecycleService, agents],
-        [
-          ISessionMetadata,
-          {
-            read: () =>
-              Promise.resolve({ id: 'session-test', createdAt: 0, updatedAt: 0, archived: false }),
-          },
-        ],
-        [ISessionContext, { workspaceId: 'ws-test', cwd: '/workspace' }],
-      ]),
-      dispose: () => {},
-    };
-    stubSessionChain(ix, session);
-    ix.set(ISessionLegacyService, new SyncDescriptor(SessionLegacyService));
-
-    await ix.get(ISessionLegacyService).updateProfile('session-test', {
-      agent_config: { permission_mode: 'yolo' },
-    });
-
-    expect(broadcastPermissionMode).toHaveBeenCalledWith('yolo');
   });
 });

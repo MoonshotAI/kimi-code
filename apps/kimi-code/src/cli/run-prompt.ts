@@ -101,10 +101,9 @@ export async function runPrompt(
   io: PromptRunIO = {},
 ): Promise<void> {
   if (isKimiV2Enabled()) {
-    // The experimental agent-core-v2 engine runs on its own native DI service
-    // runtime (see v2/run-v2-print.ts); it does not share the v1 PromptHarness
-    // path below. Loaded lazily so the v2 module graph stays off the default
-    // (v1) path.
+    // The agent-core-v2 engine runs on its own native DI service runtime (see
+    // v2/run-v2-print.ts); it does not share the v1 PromptHarness path below.
+    // Loaded lazily so the v2 module graph stays off the legacy path.
     const { runV2Print } = await import('./v2/run-v2-print');
     await runV2Print(opts, version, io);
     return;

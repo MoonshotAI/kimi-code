@@ -47,7 +47,8 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -144,15 +145,16 @@ const meta = accessor.get(ISessionMetadata);   // 类型是 ISessionMetadata
 ### 3.1 四层，按寿命从长到短
 
 ```ts
+// src/app/scopes.ts（业务层声明；内核只认识字符串 kind 与拓扑序）
 export enum LifecycleScope {
-  App = 0,       // 进程级，全局一份
-  Workspace = 1, // 一个工作区 handler（与 Session 一对多）
-  Session = 2,   // 一次会话
-  Agent = 3,     // 一个 agent
+  App = 'app',             // 进程级，全局一份
+  Workspace = 'workspace', // 一个工作区 handler（与 Session 一对多）
+  Session = 'session',     // 一次会话
+  Agent = 'agent',         // 一个 agent
 }
 ```
 
-数值越大，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
+拓扑里越靠后，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
 
 ```ts
 registerScopedService(
@@ -414,7 +416,7 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 5. 父 scope 的服务不依赖子 scope 的服务（运行时也解析不到）。
 6. **不写循环依赖**——容器会抛 `CyclicDependencyError`；撞上时按场景 9 重构，激活方式不能绕过循环检测。
 7. `ServicesAccessor` 只在 `invokeFunction` 调用期间有效，不存起来异步用。
-8. 注册写在实现文件顶层；测试里用 `_clearScopedRegistryForTests()` 后显式重注册，不依赖生产 import 顺序。
+8. 注册写在实现文件顶层；同一 (scope, token) 只能静态注册一次——重复注册（包括经别名的同一 decorator 对象）在 import 期抛 `BugIndicatingError`，有意替换用 `overrideScopedService`（目标没有注册时同样抛错）。测试里用 `_clearScopedRegistryForTests()` 后显式重注册，不依赖生产 import 顺序。
 
 ## 附录 C：新增一个服务的标准动作
 

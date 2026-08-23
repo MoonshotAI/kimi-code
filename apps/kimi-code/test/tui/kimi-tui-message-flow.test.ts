@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,12 +14,13 @@ import type {
   ApprovalResponse,
   Event,
   GoalSnapshot,
+  Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
@@ -28,6 +30,7 @@ import { AssistantMessageComponent } from '#/tui/components/messages/assistant-m
 import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import {
+  groupTurns,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT,
   TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
   TRANSCRIPT_KEEP_RECENT_STEPS,
@@ -45,8 +48,12 @@ import {
   PluginsPanelComponent,
 } from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import type { SessionReplayRenderer } from '#/tui/controllers/session-replay';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { openUrl } from '#/utils/open-url';
+import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
 import { uploadArchive } from '../../src/feedback/upload';
 import {
@@ -55,8 +62,12 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import type { QueuedMessage } from '#/tui/types';
+import type { QueuedMessage, TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import {
+  extractMediaAttachments,
+  type ExtractionResult,
+} from '#/tui/utils/image-placeholder';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
@@ -80,10 +91,26 @@ vi.mock('../../src/feedback/upload', () => ({
   uploadArchive: vi.fn(),
 }));
 
-// /feedback falls back to opening GitHub Issues in a browser when not signed in
-// or when submission fails — stub it out so the test suite never spawns a
-// browser window.
+vi.mock('../../src/feedback/archive', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/feedback/archive')>();
+  return {
+    ...actual,
+    // Wrap the real implementation so archive packaging keeps working in the
+    // other tests; individual tests can reject it to simulate an unwritable
+    // cache dir.
+    createFeedbackArchivePath: vi.fn(actual.createFeedbackArchivePath),
+  };
+});
+
+// /feedback opens GitHub Issues in a browser when submission fails — stub it
+// out so the test suite never spawns a browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+
+// Clipboard access spawns platform tools (pbcopy/wl-copy …) and emits OSC 52 —
+// stub it out so the suite never touches the real clipboard or stdout.
+vi.mock('#/utils/clipboard/clipboard-text', () => ({
+  copyTextToClipboard: vi.fn(async () => 'native'),
+}));
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -97,14 +124,22 @@ function stripSgr(text: string): string {
 interface MessageDriver {
   state: TUIState;
   streamingUI: StreamingUIController;
+  sessionReplay: SessionReplayRenderer;
+  pluginCommandMap: Map<string, string>;
   sessionEventHandler: {
     startSubscription(): void;
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
+  appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
+  recallLastQueued(): QueuedMessage | undefined;
+  recallStashedMedia(extraction: ExtractionResult | undefined): void;
+  clearQueuedMessages(): void;
+  closeSession(reason: string): Promise<void>;
+  setSession(session: unknown): Promise<void>;
   getCurrentSessionId(): string;
 }
 
@@ -233,6 +268,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
     activateSkill: vi.fn(async () => {}),
+    promptWithSkills: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -255,7 +291,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
 
 function makeHarness(session = makeSession(), overrides: Record<string, unknown> = {}) {
   const interactiveAgentScope = new AsyncLocalStorage<string>();
-  return {
+  const harness = {
     getConfig: vi.fn(async () => ({
       models: {
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
@@ -272,6 +308,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       sessionDir: '/tmp/session-a',
       manifest: {},
     })),
+    deleteFile: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
@@ -283,7 +320,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     }),
     getExperimentalFeatures: vi.fn(async () => []),
     auth: {
-      status: vi.fn(),
+      // /feedback gates on the OAuth token rather than the active model, so
+      // the default mock is a signed-in user; signed-out cases override this.
+      status: vi.fn(async () => ({
+        providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+      })),
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
@@ -298,18 +339,36 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     },
     ...overrides,
   };
+  // The TUI lists sessions through keyset pages; derive the page mock from
+  // the (possibly overridden) full-list mock unless a test overrides paging.
+  if (!('listSessionsPage' in harness)) {
+    const listSessions = harness.listSessions as (input?: {
+      workDir?: string;
+      sessionId?: string;
+    }) => Promise<unknown[]>;
+    Object.assign(harness, {
+      listSessionsPage: vi.fn(
+        async (input: { workDir?: string; sessionId?: string } = {}) => ({
+          items: await listSessions({ workDir: input.workDir, sessionId: input.sessionId }),
+          nextCursor: undefined,
+        }),
+      ),
+    });
+  }
+  return harness;
 }
 
 async function makeDriver(
   session = makeSession(),
   harnessOverrides: Record<string, unknown> = {},
+  startupInput: KimiTUIStartupInput = makeStartupInput(),
 ): Promise<{
   driver: MessageDriver;
   session: ReturnType<typeof makeSession>;
   harness: ReturnType<typeof makeHarness>;
 }> {
   const harness = makeHarness(session, harnessOverrides);
-  const driver = new KimiTUI(harness as never, makeStartupInput()) as unknown as MessageDriver;
+  const driver = new KimiTUI(harness as never, startupInput) as unknown as MessageDriver;
   vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
   vi.spyOn(driver.state.terminal, 'setProgress').mockImplementation(() => {});
   driver.persistInputHistory = vi.fn(async () => {});
@@ -409,6 +468,26 @@ async function makeTempHome(): Promise<string> {
   return dir;
 }
 
+function stagedImage(imageStore: ImageAttachmentStore, fileId: string) {
+  return imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1, undefined, fileId);
+}
+
+/**
+ * Emits the turn.started/turn.ended pair that claims and then releases a
+ * staged-media lease; `between` runs assertions after the claim.
+ */
+function emitTurn(driver: MessageDriver, turnId: number, between?: () => void): void {
+  driver.sessionEventHandler.handleEvent(
+    { type: 'turn.started', agentId: 'main', turnId, origin: { kind: 'user' } } as Event,
+    () => {},
+  );
+  between?.();
+  driver.sessionEventHandler.handleEvent(
+    { type: 'turn.ended', agentId: 'main', turnId, reason: 'completed' } as Event,
+    () => {},
+  );
+}
+
 async function makeExportedSessionZip(content = 'session zip'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-code-feedback-export-'));
   tempDirs.push(dir);
@@ -460,6 +539,1509 @@ describe('KimiTUI message flow', () => {
     expect(harness.track).toHaveBeenCalledWith('shortcut_editor', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_expand', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_paste', { kind: 'text' });
+  });
+
+  it('lazily creates the session on the first message (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    // Startup stays session-less on the v2 engine.
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.sessionId).toBe('');
+    expect(driver.state.appState.model).toBe('k2');
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(harness.createSession).toHaveBeenCalledWith({
+      workDir: '/tmp/proj-a',
+      model: 'k2',
+      thinking: undefined,
+      permission: 'manual',
+      planMode: undefined,
+    });
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('lazily creates the session for session-requiring slash commands (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+
+    driver.handleUserInput('/compact');
+
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({ instruction: undefined });
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('lazily creates the session for skill commands (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy', activateSkill: vi.fn(async () => {}) });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          {
+            name: 'my-skill',
+            description: 'A test skill',
+            path: '/tmp/my-skill',
+            source: 'user',
+          },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    // `makeDriver` stops after init(); the skill command list is refreshed in
+    // finishStartup, so resolve it here to exercise the workspace-level path.
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    // Startup resolves skill commands from the workspace, no session needed.
+    expect(harness.createSession).not.toHaveBeenCalled();
+
+    driver.handleUserInput('/skill:my-skill');
+
+    await vi.waitFor(() => {
+      expect(session.activateSkill).toHaveBeenCalledWith('my-skill', '');
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('submits inline skill tokens with the prompt as one grouped submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('please /skill:review and /skill:security this change');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        'please /skill:review and /skill:security this change',
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review check this /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review check this /skill:security',
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('bundles a repeated leading skill as one bundled submission (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review check /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review check /skill:review', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('passes no args in a bundle while media rides the prompt parts (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+
+    driver.handleUserInput(`/skill:review inspect ${attachment.placeholder} /skill:security`);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: '/skill:review inspect ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+          { type: 'text', text: ' /skill:security' },
+        ],
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+  });
+
+  it('bundles newline-separated skills with the leading one included (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/skill:review\ncheck this /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/skill:review\ncheck this /skill:security',
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/dance please use /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        '/dance please use /skill:review',
+        [{ name: 'review' }],
+      );
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('keeps inline skill tokens as plain text on the legacy engine', async () => {
+    const session = makeSession({ id: 'ses-1' });
+    const { driver } = await makeDriver(session, {
+      listSkills: undefined,
+      listPluginCommands: vi.fn(async () => []),
+    });
+    (
+      driver as unknown as { skillCommandMap: Map<string, string> }
+    ).skillCommandMap.set('skill:review', 'review');
+
+    driver.handleUserInput('please /skill:review this');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('please /skill:review this', { promptId: undefined });
+    });
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+  });
+
+  it('queues an inline-skill prompt while a goal is active (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    // Materialize the lazy session first: an active goal only exists inside a
+    // live session, and lazy creation would refresh (and clear) the goal
+    // snapshot set up below.
+    await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('check /skill:review');
+
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({
+        text: 'check /skill:review',
+        inlineSkillActivations: [{ skillName: 'review' }],
+      }),
+    ]);
+  });
+
+  it('queues a leading-combo bundle while busy instead of rejecting it (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession();
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+
+    driver.handleUserInput('/skill:review check this /skill:security');
+
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({
+        text: '/skill:review check this /skill:security',
+        inlineSkillActivations: [{ skillName: 'review' }, { skillName: 'security' }],
+      }),
+    ]);
+  });
+
+  it('does not append a user entry when the grouped submission is rejected (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+      promptWithSkills: vi.fn(async () => {
+        throw new Error('Skill "review" was not found');
+      }),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('please /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    // A rejected group leaves no local undo anchor the engine never recorded.
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toHaveLength(0);
+  });
+
+  it('renders a bundled replay submission as a single turn', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay: [
+            {
+              type: 'message',
+              time: 1,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'earlier question' }],
+                toolCalls: [],
+                origin: { kind: 'user' },
+              },
+            },
+            {
+              type: 'message',
+              time: 2,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'earlier answer' }],
+                toolCalls: [],
+              },
+            },
+            {
+              type: 'message',
+              time: 3,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'hook note' }],
+                toolCalls: [],
+                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+              },
+            },
+            {
+              type: 'message',
+              time: 4,
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'skill card A body' },
+                  { type: 'text', text: 'skill card B body' },
+                  { type: 'text', text: 'please /skill:review and /skill:security' },
+                ],
+                toolCalls: [],
+                origin: {
+                  kind: 'user',
+                  skillActivations: [
+                    { activationId: 'act-1', skillName: 'review' },
+                    { activationId: 'act-2', skillName: 'security' },
+                  ],
+                },
+              },
+            },
+            {
+              type: 'message',
+              time: 5,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'bundled answer' }],
+                toolCalls: [],
+              },
+            },
+            {
+              type: 'message',
+              time: 6,
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'skill card C body' },
+                  { type: 'text', text: 'please /commit' },
+                ],
+                toolCalls: [],
+                origin: {
+                  kind: 'user',
+                  skillActivations: [{ activationId: 'act-3', skillName: 'commit' }],
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    expect(replayed).toBe(true);
+
+    const turns = groupTurns(driver.state.transcriptEntries);
+    expect(turns).toHaveLength(3);
+    // The hook result is projected inside the bundle's window (after the
+    // skill cards, before the prompt), matching the live event order.
+    expect(turns[1]!.entries.map((entry) => entry.kind)).toEqual([
+      'skill_activation',
+      'skill_activation',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(turns[1]!.entries[2]!.hookResult).toBe(true);
+    // The user entry shows only the caller's own text — the rendered skill
+    // blocks the engine prepended to the content are stripped.
+    expect(turns[1]!.entries[3]!.content).toBe('please /skill:review and /skill:security');
+    expect(
+      turns[1]!.entries.slice(0, 2).map((entry) => entry.bundledWithPrompt),
+    ).toEqual([true, true]);
+    expect(turns[2]!.entries.map((entry) => entry.kind)).toEqual(['skill_activation', 'user']);
+    expect(turns[2]!.entries[1]!.content).toBe('please /commit');
+  });
+
+  it('keeps hook results recorded before the oldest retained bundle within the replay limit', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+    const plainTurn = (index: number) => [
+      {
+        type: 'message',
+        time: index * 2,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: `question ${index}` }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'message',
+        time: index * 2 + 1,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: `answer ${index}` }],
+          toolCalls: [],
+        },
+      },
+    ];
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay: [
+            ...plainTurn(0),
+            {
+              type: 'message',
+              time: 1,
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: 'hook note' }],
+                toolCalls: [],
+                origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
+              },
+            },
+            {
+              type: 'message',
+              time: 2,
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'review body' },
+                  { type: 'text', text: 'bundled question' },
+                ],
+                toolCalls: [],
+                origin: {
+                  kind: 'user',
+                  skillActivations: [{ activationId: 'act-1', skillName: 'review' }],
+                },
+              },
+            },
+            {
+              type: 'message',
+              time: 3,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'bundled answer' }],
+                toolCalls: [],
+              },
+            },
+            ...Array.from({ length: 9 }, (_, i) => plainTurn(i + 10)).flat(),
+          ],
+        },
+      },
+    });
+
+    const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
+    expect(replayed).toBe(true);
+
+    const entries = driver.state.transcriptEntries;
+    const hookIndex = entries.findIndex((entry) => entry.hookResult === true);
+    expect(hookIndex).toBeGreaterThan(-1);
+    expect(entries[hookIndex]!.content).toContain('hook note');
+    const contents = entries.map((entry) => entry.content);
+    expect(contents.indexOf('Activated skill: review')).toBeLessThan(hookIndex);
+    expect(contents.indexOf('bundled question')).toBeGreaterThan(hookIndex);
+    expect(contents).not.toContain('question 0');
+  });
+
+  it('appends the user entry after the skill cards for a bundled submission (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    // Hold the RPC open so the skill.activated event can land mid-flight,
+    // exactly how the in-process wiring delivers it during the call.
+    let release!: () => void;
+    const heldPrompt = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (session.promptWithSkills as ReturnType<typeof vi.fn>).mockReturnValue(heldPrompt);
+
+    driver.handleUserInput('please /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalled();
+    });
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        sessionId: 'ses-lazy',
+        agentId: 'main',
+        activationId: 'act-1',
+        skillName: 'review',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+    release();
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries.map((entry) => entry.kind)).toEqual([
+        'skill_activation',
+        'user',
+      ]);
+    });
+    expect(driver.state.transcriptEntries[0]!.bundledWithPrompt).toBe(true);
+  });
+
+  it('serializes concurrent lazy session creation (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    // Hold the first createSession open so both triggers land inside the
+    // in-flight window.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const first = ensure.call(driver);
+    const second = ensure.call(driver);
+    resolveCreate(session);
+    await Promise.all([first, second]);
+
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('waits out the in-flight lazy creation before /new (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const newSession = makeSession({ id: 'ses-new' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    // Hold the lazy createSession open so it is still in flight when /new
+    // arrives (triggered directly, without a prompt starting a turn).
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession
+      .mockImplementationOnce(
+        () => new Promise((resolve) => { resolveCreate = resolve; }),
+      )
+      .mockResolvedValueOnce(newSession);
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const pending = ensure.call(driver);
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    driver.handleUserInput('/new');
+    // /new must not race a second createSession while the lazy one is held.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+
+    resolveCreate(lazySession);
+    await pending;
+    // No turn started, so /new proceeds after the wait.
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(2);
+      expect(driver.getCurrentSessionId()).toBe('ses-new');
+    });
+  });
+
+  it('blocks /new while the waited-out first prompt starts a turn (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when /new arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/new');
+
+    resolveCreate(lazySession);
+    // The prompt continuation starts its turn first; /new (idle-only) must
+    // then be blocked instead of switching away from the active session.
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+      expect(stripSgr(renderTranscript(driver))).toContain('Cannot /new while streaming');
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  const thinkingModelsConfig = () => ({
+    models: {
+      k2: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-k2',
+        maxContextSize: 100,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      },
+    },
+    defaultModel: 'k2',
+    thinking: { enabled: true },
+  });
+
+  it('blocks an effort switch once the waited-out first prompt starts a turn (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      lazySession,
+      { getConfig: vi.fn(async () => thinkingModelsConfig()) },
+      startupInput,
+    );
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when the effort switch arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/effort low');
+
+    resolveCreate(lazySession);
+    // The prompt starts its turn first; the switch must then be rejected
+    // instead of being silently overwritten by the session assembly.
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+      expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch models while streaming');
+    });
+    expect(lazySession.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('applies an effort switch after waiting out an in-flight lazy creation (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      lazySession,
+      {
+        getConfig: vi.fn(async () => thinkingModelsConfig()),
+        setConfig: vi.fn(async () => ({ providers: {} })),
+      },
+      startupInput,
+    );
+
+    // Trigger the lazy creation directly, without a prompt starting a turn.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const pending = ensure.call(driver);
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    driver.handleUserInput('/effort low');
+    // While the creation is held the switch must wait, not write pending
+    // state that the assembly would overwrite.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(driver.state.appState.thinkingEffort).toBe('high');
+
+    resolveCreate(lazySession);
+    await pending;
+    await vi.waitFor(() => {
+      expect(lazySession.setThinking).toHaveBeenCalledWith('low');
+    });
+  });
+
+  it('blocks a session-picker switch once the waited-out first prompt starts a turn (v2 engine)', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      lazySession,
+      {
+        listSessions: vi.fn(async () => [
+          { id: 'ses-old', title: 'Old session', workDir: '/tmp/proj-a', updatedAt: Date.now() },
+        ]),
+      },
+      startupInput,
+    );
+
+    // Hold the lazy createSession open so the first prompt is still pending
+    // when the picker selection arrives.
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+
+    resolveCreate(lazySession);
+    // The prompt starts its turn first; the switch must then be rejected
+    // instead of being overwritten when the lazy creation completes.
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+      expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch sessions while streaming');
+    });
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+    expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+  });
+
+  it('carries a session-only thinking choice into the lazy-created session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    // Alt+S session-only thinking before any session exists.
+    await (
+      driver as unknown as {
+        authFlow: { activateModelAfterLogin(model: string, effort?: string): Promise<void> };
+      }
+    ).authFlow.activateModelAfterLogin('k2', 'high');
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'k2', thinking: 'high' }),
+    );
+    expect(driver.state.appState.lazySessionThinking).toBeUndefined();
+  });
+
+  it('does not pass the config default plan mode into the lazy-created session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+          defaultModel: 'k2',
+          defaultPlanMode: true,
+        })),
+      },
+      startupInput,
+    );
+
+    // The footer shows the config default…
+    expect(driver.state.appState.planMode).toBe(true);
+
+    // …but the create call must not repeat it: the v2 engine applies
+    // defaultPlanMode at create time, and re-entering plan mode throws.
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ planMode: undefined }),
+    );
+  });
+
+  it('passes the explicit --plan flag into the lazy-created session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', plan: true },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ planMode: true }),
+    );
+  });
+
+  it('queues a bash command submitted while the lazy session is being created (v2 engine)', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ id: 'ses-lazy', runShellCommand });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+
+    // A prompt and a bash command both trigger the same in-flight creation.
+    driver.handleUserInput('hello');
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+    driver.handleUserInput('ls');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    // The shell command must be queued, not run concurrently with the prompt.
+    expect(runShellCommand).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('opens /settings without creating a session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      // No model configured: /settings must still open so the user can fix
+      // local editor/theme/update settings before picking a model.
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/settings');
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('blocks a skill command submitted while the lazy session is being created (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy', activateSkill: vi.fn(async () => {}) });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          {
+            name: 'my-skill',
+            description: 'A test skill',
+            path: '/tmp/my-skill',
+            source: 'user',
+          },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    // A prompt and a skill command both trigger the same in-flight creation.
+    driver.handleUserInput('hello');
+    driver.handleUserInput('/skill:my-skill');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    // The skill activation must be blocked, not run concurrently with the
+    // prompt's turn.
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('manages plugins without creating a session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const listPlugins = vi.fn(async () => []);
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      // No model configured: /plugins must still work via the app-global API.
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, { listPlugins }, startupInput);
+
+    driver.handleUserInput('/plugins list');
+
+    await vi.waitFor(() => {
+      expect(listPlugins).toHaveBeenCalled();
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('lists additional directories without creating a session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      // No model configured: the read-only form must still work.
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/add-dir list');
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('lazily creates the session when adding a directory (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/add-dir /tmp/extra');
+
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-lazy');
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows pending startup directories in /add-dir list before the lazy session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      additionalDirs: ['/tmp/extra'],
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+    const showStatus = vi.spyOn(
+      driver as unknown as { showStatus: (msg: string) => void },
+      'showStatus',
+    );
+
+    driver.handleUserInput('/add-dir list');
+
+    await vi.waitFor(() => {
+      expect(showStatus).toHaveBeenCalledWith(expect.stringContaining('/tmp/extra'));
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('refreshes plugin slash commands after a sessionless /plugins reload (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const listPluginCommands = vi.fn(async () => [
+      {
+        pluginId: 'my-plugin',
+        name: 'my-command',
+        body: 'do things',
+        description: 'A plugin command',
+      },
+    ]);
+    const reloadPlugins = vi.fn(async () => ({ added: [], removed: [], errors: [] }));
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      { listPluginCommands, reloadPlugins },
+      startupInput,
+    );
+
+    driver.handleUserInput('/plugins reload');
+
+    await vi.waitFor(() => {
+      expect(reloadPlugins).toHaveBeenCalled();
+      expect(listPluginCommands).toHaveBeenCalled();
+      expect(driver.pluginCommandMap.get('my-plugin:my-command')).toBe('do things');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('hydrates lazy config defaults on a sessionless /reload (v2 engine)', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    const session = makeSession({ id: 'ses-lazy' });
+    const getConfig = vi.fn(
+      async (): Promise<{ models: Record<string, unknown>; defaultModel?: string }> => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        // Initially no default model configured.
+      }),
+    );
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, { getConfig }, startupInput);
+    expect(driver.state.appState.model).toBe('');
+
+    // A default model is added externally, then /reload runs before the first
+    // prompt — the lazy defaults must be refreshed, not left stale.
+    getConfig.mockResolvedValue({
+      models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+      defaultModel: 'k2',
+    });
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.model).toBe('k2');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
+  it('clears stale lazy defaults when the default model is removed (v2 engine)', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    const session = makeSession({ id: 'ses-lazy' });
+    const getConfig = vi.fn(
+      async (): Promise<{ models: Record<string, unknown>; defaultModel?: string }> => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+      }),
+    );
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver } = await makeDriver(session, { getConfig }, startupInput);
+    expect(driver.state.appState.model).toBe('k2');
+    expect(driver.state.appState.maxContextTokens).toBe(100);
+
+    // The default model is removed externally, then /reload runs — the
+    // hydrated value must not survive as a stale explicit model.
+    getConfig.mockResolvedValue({
+      models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+    });
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.model).toBe('');
+    });
+    expect(driver.state.appState.maxContextTokens).toBe(0);
+  });
+
+  it('does not re-enter plan mode on /plan on when config already applied it (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: true,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+          defaultModel: 'k2',
+          defaultPlanMode: true,
+        })),
+      },
+      startupInput,
+    );
+
+    driver.handleUserInput('/plan on');
+
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    // The engine already applied defaultPlanMode at create; the command must
+    // notice the active plan mode instead of re-entering (which would throw).
+    expect(session.setPlanMode).not.toHaveBeenCalled();
+    expect(driver.state.appState.planMode).toBe(true);
+  });
+
+  it('clears the stale permission default when it is removed from config (v2 engine)', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    const session = makeSession({ id: 'ses-lazy' });
+    const getConfig = vi.fn(
+      async (): Promise<{
+        models: Record<string, unknown>;
+        defaultModel?: string;
+        defaultPermissionMode?: string;
+      }> => ({
+        models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+        defaultModel: 'k2',
+        defaultPermissionMode: 'auto',
+      }),
+    );
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver } = await makeDriver(session, { getConfig }, startupInput);
+    expect(driver.state.appState.permissionMode).toBe('auto');
+
+    // The elevated default is removed externally, then /reload runs — a stale
+    // elevated mode must not reach the first lazy-created session.
+    getConfig.mockResolvedValue({
+      models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+      defaultModel: 'k2',
+    });
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.permissionMode).toBe('manual');
+    });
+  });
+
+  it('does not pass --plan when config already applies default plan mode (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      // The engine applied the config default at create.
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'off',
+        permission: 'manual',
+        planMode: true,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', plan: true },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        getConfig: vi.fn(async () => ({
+          models: { k2: { model: 'moonshot-v1', maxContextSize: 100 } },
+          defaultModel: 'k2',
+          defaultPlanMode: true,
+        })),
+      },
+      startupInput,
+    );
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    // The engine applies the config default at create; repeating --plan would
+    // re-enter plan mode and throw, so it must not be passed again.
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ planMode: undefined }),
+    );
+    expect(driver.state.appState.planMode).toBe(true);
+  });
+
+  it('opens read-only status commands without creating a session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      // No model configured: read-only views must still open.
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/status');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Status');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('applies /yolo on session-less and passes the mode to the lazy session (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput('/yolo on');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.permissionMode).toBe('yolo');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(session.setPermission).not.toHaveBeenCalled();
+
+    driver.handleUserInput('hello');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(harness.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'yolo' }),
+    );
+  });
+
+  it('waits for lazy session assembly before dispatching further input (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+
+    // Hold the post-create assembly open inside setPermission: the session is
+    // assigned but setup is not finished yet.
+    let resolvePermission!: () => void;
+    session.setPermission.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolvePermission = resolve; }),
+    );
+
+    const ensure = (driver as unknown as { ensureSession(): Promise<unknown> }).ensureSession;
+    const first = ensure.call(driver);
+    await vi.waitFor(() => {
+      expect(session.setPermission).toHaveBeenCalled();
+    });
+
+    // A second trigger must wait for the assembly instead of dispatching
+    // against the half-initialized session.
+    const second = ensure.call(driver);
+    let secondResolved = false;
+    void second.then(() => {
+      secondResolved = true;
+    });
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+
+    resolvePermission();
+    await Promise.all([first, second]);
+    expect(secondResolved).toBe(true);
+    expect(harness.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists MCP servers before the lazy session via the workspace view (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const listWorkspaceMcpServers = vi.fn(async () => [
+      { name: 'my-mcp', status: 'connected', transport: 'stdio', tools: [] },
+    ]);
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      { listWorkspaceMcpServers },
+      startupInput,
+    );
+
+    driver.handleUserInput('/mcp');
+
+    await vi.waitFor(() => {
+      expect(listWorkspaceMcpServers).toHaveBeenCalledWith('/tmp/proj-a');
+    });
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(session.listMcpServers).not.toHaveBeenCalled();
   });
 
   it('tracks /clear as the clear alias for /new', async () => {
@@ -542,21 +2124,68 @@ command = "vim"
     expect(transcript).toContain('Session reloaded.');
   });
 
-  it('tracks successful feedback submissions only after the request succeeds', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
+  it('prints the sign-up page and GitHub Issues links when not signed in', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    harness.auth.status.mockResolvedValueOnce({
+      providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
+    });
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(openUrl).mockClear();
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(promptFeedbackInput).not.toHaveBeenCalled();
+    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain("You're not signed in");
+    expect(transcript).toContain('https://www.kimi.com/code');
+    expect(transcript).toContain('https://github.com/MoonshotAI/kimi-code/issues');
+  });
+
+  it('falls back to GitHub Issues when the sign-in status cannot be read', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    harness.auth.status.mockRejectedValueOnce(new Error('token storage unavailable'));
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockClear();
+    vi.mocked(openUrl).mockClear();
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
+    expect(promptFeedbackInput).not.toHaveBeenCalled();
+    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Opening GitHub Issues as fallback');
+  });
+
+  it('submits feedback via OAuth for a signed-in user on an API-key model', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    driver.state.appState.availableModels = {
+      k2: {
+        provider: 'openai',
+        model: 'gpt-x',
+        maxContextSize: 100,
+        displayName: 'GPT X',
+        capabilities: [],
       },
-    );
+    };
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 7 });
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 7');
+  });
+
+  it('tracks successful feedback submissions only after the request succeeds', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
@@ -579,20 +2208,7 @@ command = "vim"
   });
 
   it('submits text feedback before preparing requested attachments', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
@@ -645,20 +2261,7 @@ command = "vim"
   });
 
   it('waits for the codebase upload to finish before returning', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
@@ -732,20 +2335,7 @@ command = "vim"
   });
 
   it('uploads session logs when codebase scanning fails but the session directory is available', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
@@ -781,21 +2371,27 @@ command = "vim"
     expect(transcript).toContain('attachment upload failed');
   });
 
+  it('keeps archive-path creation failures as partial failures without the GitHub fallback', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    vi.mocked(createFeedbackArchivePath).mockRejectedValueOnce(new Error('cache dir not writable'));
+    vi.mocked(openUrl).mockClear();
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(openUrl).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback submitted, thank you!');
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
   it('tells the user when feedback is sent but codebase packaging fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     vi.mocked(packageCodebase).mockReset();
@@ -837,20 +2433,7 @@ command = "vim"
   });
 
   it('tells the user when the codebase upload fails', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
@@ -880,20 +2463,7 @@ command = "vim"
   });
 
   it('shows feedback API error messages without replacing them with HTTP status text', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
@@ -911,21 +2481,23 @@ command = "vim"
     expect(transcript).not.toContain('Failed to submit feedback (HTTP 500).');
   });
 
+  it('falls back to GitHub Issues when the submission request rejects', async () => {
+    const { driver, harness } = await makeDriver(makeSession());
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockRejectedValueOnce(new Error('socket hangup'));
+    vi.mocked(openUrl).mockClear();
+
+    await expect(handleFeedbackCommand(feedbackDriver as any)).rejects.toThrow('socket hangup');
+
+    expect(openUrl).toHaveBeenCalledWith('https://github.com/MoonshotAI/kimi-code/issues');
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Opening GitHub Issues as fallback');
+  });
+
   it('does not track feedback when the dialog is cancelled', async () => {
-    const { driver, harness } = await makeDriver(
-      makeSession(),
-      {
-        getConfig: vi.fn(async () => ({
-          models: {
-            k2: {
-              model: 'moonshot-v1',
-              maxContextSize: 100,
-              provider: 'managed:kimi-code',
-            },
-          },
-        })),
-      },
-    );
+    const { driver, harness } = await makeDriver(makeSession());
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(promptFeedbackInput).mockImplementation(async () => undefined);
     harness.track.mockClear();
@@ -1190,7 +2762,7 @@ command = "vim"
 
     driver.handleUserInput('hello');
 
-    expect(session.prompt).toHaveBeenCalledWith('hello');
+    expect(session.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
     expect(driver.state.appState.streamingPhase).not.toBe('idle');
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     expect(driver.state.livePane.mode).toBe('waiting');
@@ -1584,62 +3156,87 @@ command = "vim"
     expect(transcript).not.toContain('review');
   });
 
-  it('sends a pasted video as a file:// video_url part', async () => {
-    const { driver, session } = await makeDriver();
+  it('deletes a pasted video’s daemon upload when the consuming turn ends', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
 
-      // Submission is fully synchronous: the paste is copied to the cache and
-      // referenced by a `file://` video_url the engine resolves in-turn.
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
+    // The paste was uploaded to the daemon file store, so the submission
+    // carries a bare `kimi-file://` reference — no local cache copy.
+    driver.handleUserInput(`watch ${attachment.placeholder}`);
 
-      const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
-        | Array<{
-            type: string;
-            text?: string;
-            videoUrl?: { url: string };
-          }>
-        | undefined;
-      expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
-      expect(parts?.[1]?.type).toBe('video_url');
-      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
+      | Array<{
+          type: string;
+          text?: string;
+          videoUrl?: { url: string };
+        }>
+      | undefined;
+    expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
+    expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    emitTurn(driver, 1);
+
+    // The engine materialized its own session copy at intake, so the staged
+    // upload is garbage once the consuming turn ends.
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-v1');
+    });
+    expect(attachment.fileId).toBeUndefined();
   });
 
-  it('queues a pasted video (file:// part) while a turn is streaming', async () => {
+  it('queues a pasted video (kimi-file part) while a turn is streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-      driver.state.appState.streamingPhase = 'waiting';
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
+    driver.state.appState.streamingPhase = 'waiting';
 
-      driver.handleUserInput(`describe ${attachment.placeholder}`);
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
 
-      expect(session.prompt).not.toHaveBeenCalled();
-      expect(driver.state.queuedMessages).toHaveLength(1);
-      const queued = driver.state.queuedMessages[0];
-      const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
-      expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
-      expect(parts?.[1]?.type).toBe('video_url');
-      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toHaveLength(1);
+    const queued = driver.state.queuedMessages[0];
+    const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+    expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
+    expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    expect(queued?.videoAttachmentIds).toEqual([attachment.id]);
 
-      driver.sendQueuedMessage(session, queued!);
-      expect(session.prompt).toHaveBeenCalledWith(parts);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    driver.sendQueuedMessage(session, queued!);
+    expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toEqual(parts);
   });
 
+  it('falls back to retained bytes when a queued image upload expires before dispatch', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(
+      new Uint8Array([0xaa, 0xbb]),
+      'image/png',
+      1,
+      1,
+      undefined,
+      'file-expired',
+      1,
+    );
+
+    driver.sendQueuedMessage(session, {
+      text: `describe ${attachment.placeholder}`,
+      parts: [
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file-expired' } },
+      ],
+      imageAttachmentIds: [attachment.id],
+    });
+
+    expect(session.prompt).toHaveBeenCalledWith(
+      [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } }],
+      { promptId: expect.any(String) },
+    );
+  });
 
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
@@ -1648,10 +3245,15 @@ command = "vim"
 
     driver.handleUserInput(`describe ${attachment.placeholder}`);
 
-    expect(session.prompt).toHaveBeenCalledWith([
-      { type: 'text', text: 'describe ' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
-    ]);
+    expect(session.prompt).toHaveBeenCalledWith(
+      [
+        { type: 'text', text: 'describe ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      ],
+      // Staged media rides with a client-chosen prompt id so the consuming
+      // turn's `turn.started` can bind the lease exactly.
+      { promptId: expect.any(String) },
+    );
     expect(driver.state.transcriptEntries).toEqual([
       expect.objectContaining({
         kind: 'user',
@@ -1659,6 +3261,218 @@ command = "vim"
         imageAttachmentIds: [attachment.id],
       }),
     ]);
+  });
+
+  it('keeps an image staging upload until the consuming turn ends', async () => {
+    const { driver, session, harness } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-1');
+
+    driver.handleUserInput(attachment.placeholder);
+
+    expect(session.prompt).toHaveBeenCalledOnce();
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-1');
+    });
+    expect(attachment.fileId).toBeUndefined();
+    expect(attachment.bytes).toEqual(new Uint8Array([0xaa, 0xbb]));
+  });
+
+  it('keeps an image staging upload across lazy session creation (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(session, {}, startupInput);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-lazy');
+
+    driver.handleUserInput(attachment.placeholder);
+
+    // The lease is created at extraction, before the session exists: lazy
+    // creation runs setSession mid-dispatch, and the first prompt's lease
+    // must survive it — the engine's intake only reads the upload once the
+    // prompt lands.
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith(
+        [{ type: 'image_url', imageUrl: { url: 'kimi-file://file-lazy' } }],
+        { promptId: expect.any(String) },
+      );
+    });
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-lazy');
+    });
+  });
+
+  it('still deletes the staging upload when a cache-hint dismissal precedes the resend', async () => {
+    const { driver, session, harness } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-dismissed');
+    const text = `describe ${attachment.placeholder}`;
+
+    // Simulate a cache-hint interception dismissed back into the editor: the
+    // submit's extraction is stashed, then restored with recall semantics
+    // (retain consumed, staged upload kept for the restored draft).
+    const extraction = extractMediaAttachments(text, imageStore);
+    driver.recallStashedMedia(extraction);
+
+    // The restored draft resubmits and re-retains; the consuming turn must
+    // still delete the daemon upload — a retain leaked by the dismissal would
+    // keep the count above zero and pin the upload until its TTL.
+    driver.handleUserInput(text);
+
+    expect(session.prompt).toHaveBeenCalledOnce();
+    emitTurn(driver, 1, () => {
+      expect(harness.deleteFile).not.toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-dismissed');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits briefly for a pending paste ingestion so the submit uses the daemon-ref form', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    // Simulate a paste whose background ingestion is still uploading when the
+    // user hits Enter: the send path waits for it instead of dispatching the
+    // inline fallback.
+    let finishIngestion!: () => void;
+    attachment.pending = new Promise<void>((resolve) => {
+      finishIngestion = () => {
+        attachment.fileId = 'file-late';
+        attachment.fileExpiresAt = Date.now() + 60 * 60 * 1000;
+        attachment.pending = undefined;
+        resolve();
+      };
+    });
+
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+    expect(session.prompt).not.toHaveBeenCalled();
+
+    finishIngestion();
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith(
+        [
+          { type: 'text', text: 'describe ' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://file-late' } },
+        ],
+        { promptId: expect.any(String) },
+      );
+    });
+  });
+
+  it('releases staged media exactly once when the prompt dispatch rejects', async () => {
+    const session = makeSession({
+      prompt: vi.fn(async () => {
+        throw new Error('session closed');
+      }),
+    });
+    const { driver, harness } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-reject');
+
+    driver.handleUserInput(attachment.placeholder);
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to send: session closed');
+    expect(harness.deleteFile).toHaveBeenCalledWith('file-reject');
+
+    // The released lease must not be claimed or deleted again by later turn
+    // events or by session close.
+    emitTurn(driver, 1);
+    await driver.closeSession('test');
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases goal-steered staging media when the running goal turn ends', async () => {
+    const { driver, session, harness } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-goal');
+    // The goal driver's continuation turn (origin system_trigger — it never
+    // claims leases through handleTurnStarted) is streaming when the queued
+    // steer dispatch lands.
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('7');
+
+    driver.sendQueuedMessage(session, {
+      text: attachment.placeholder,
+      agentId: 'main',
+      parts: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } }],
+      imageAttachmentIds: [attachment.id],
+    });
+
+    expect(session.steer).toHaveBeenCalledOnce();
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 7, reason: 'completed' } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-goal');
+    });
+    expect(attachment.fileId).toBeUndefined();
+  });
+
+  it('releases every queued use of shared media when the queue is discarded', async () => {
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    const { driver, harness } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-queued');
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput(`first ${attachment.placeholder}`);
+    driver.handleUserInput(`second ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(2);
+
+    driver.clearQueuedMessages();
+
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-queued');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+    expect(attachment.fileId).toBeUndefined();
+  });
+
+  it('does not delete shared daemon media while another turn still uses it', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-shared-turn');
+
+    driver.handleUserInput(`first ${attachment.placeholder}`);
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput(`second ${attachment.placeholder}`);
+    driver.clearQueuedMessages();
+
+    await Promise.resolve();
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-shared-turn');
+    });
   });
 
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
@@ -1672,6 +3486,90 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([{ text: 'queued message', agentId: 'main' }]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+  });
+
+  it('queues a slash-skill activation while a turn is streaming (like any other input) and activates on drain', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        {
+          name: 'demo',
+          description: 'demo skill',
+          path: 'builtin://demo',
+          source: 'builtin',
+          type: 'inline',
+        },
+      ]),
+    });
+    const { driver, harness } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    harness.track.mockClear();
+
+    driver.handleUserInput('/demo refactor auth and ui');
+
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      {
+        text: '/demo refactor auth and ui',
+        agentId: 'main',
+        mode: 'skill',
+        skillName: 'demo',
+        skillArgs: 'refactor auth and ui',
+      },
+    ]);
+    expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+
+    // Turn ends: the drain re-enters sendSkillActivation, which now fires.
+    driver.state.appState.streamingPhase = 'idle';
+    const queued = driver.state.queuedMessages[0]!;
+    driver.state.queuedMessages = [];
+    driver.sendQueuedMessage(session, queued);
+
+    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
+  });
+
+  it('queues a slash-skill activation while compacting and activates it on drain', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        {
+          name: 'demo',
+          description: 'demo skill',
+          path: 'builtin://demo',
+          source: 'builtin',
+          type: 'inline',
+        },
+      ]),
+    });
+    const { driver, harness } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.state.appState.isCompacting = true;
+    harness.track.mockClear();
+
+    driver.handleUserInput('/demo refactor auth and ui');
+
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      {
+        text: '/demo refactor auth and ui',
+        agentId: 'main',
+        mode: 'skill',
+        skillName: 'demo',
+        skillArgs: 'refactor auth and ui',
+      },
+    ]);
+    expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
+    expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+
+    driver.state.appState.isCompacting = false;
+    const queued = driver.state.queuedMessages[0]!;
+    driver.state.queuedMessages = [];
+    driver.sendQueuedMessage(session, queued);
+
+    expect(session.activateSkill).toHaveBeenCalledWith('demo', 'refactor auth and ui');
   });
 
   it('steers fresh input while a goal is active even when the streaming phase is idle', async () => {
@@ -1754,7 +3652,7 @@ command = "vim"
     );
 
     await vi.waitFor(() => {
-      expect(session.prompt).toHaveBeenCalledWith('after the turn');
+      expect(session.prompt).toHaveBeenCalledWith('after the turn', { promptId: undefined });
     });
     expect(session.steer).not.toHaveBeenCalled();
   });
@@ -1937,10 +3835,15 @@ command = "vim"
 
     driver.sendQueuedMessage(session, queued!);
 
-    expect(session.prompt).toHaveBeenCalledWith([
-      { type: 'text', text: 'describe ' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
-    ]);
+    expect(session.prompt).toHaveBeenCalledWith(
+      [
+        { type: 'text', text: 'describe ' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      ],
+      // Staged media rides with a client-chosen prompt id so the consuming
+      // turn's `turn.started` can bind the lease exactly.
+      { promptId: expect.any(String) },
+    );
   });
 
   it('steers editor image input as media parts', async () => {
@@ -1988,6 +3891,124 @@ command = "vim"
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
     ]);
     expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('releases every queued use of shared media after a batched steer', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-batched');
+    driver.handleUserInput(`first ${attachment.placeholder}`);
+    driver.handleUserInput(`second ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(2);
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledOnce();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      () => {},
+    );
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-batched');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+    expect(attachment.fileId).toBeUndefined();
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('keeps a shared staged upload alive while another submission still holds it', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-shared');
+
+    // One message referencing the same image twice retains it once; a second
+    // queued message retains it again — two retains total.
+    driver.handleUserInput(`compare ${attachment.placeholder} with ${attachment.placeholder}`);
+    driver.handleUserInput(`and ${attachment.placeholder}`);
+    const [first, second] = driver.state.queuedMessages;
+
+    driver.sendQueuedMessage(session, first!);
+    emitTurn(driver, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The first turn consumed the only retain its submission held; the second
+    // queued message's retain keeps the upload alive.
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.sendQueuedMessage(session, second!);
+    emitTurn(driver, 2);
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-shared');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps staged media when a queued message is recalled into the editor', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = stagedImage(imageStore, 'file-recall');
+
+    driver.handleUserInput(`look ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(1);
+
+    const recalled = driver.recallLastQueued();
+    expect(recalled?.text).toContain(attachment.placeholder);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Recalled, not discarded: the daemon upload stays staged for the
+    // restored draft.
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+    expect(attachment.fileId).toBe('file-recall');
+
+    // Re-queueing the restored draft reuses the daemon-ref form, and the
+    // consuming turn's end releases the upload exactly once.
+    driver.handleUserInput(recalled!.text);
+    const requeued = driver.state.queuedMessages[0]!;
+    expect(requeued.parts).toContainEqual({
+      type: 'image_url',
+      imageUrl: { url: 'kimi-file://file-recall' },
+    });
+
+    driver.sendQueuedMessage(session, requeued);
+    emitTurn(driver, 1);
+    await vi.waitFor(() => {
+      expect(harness.deleteFile).toHaveBeenCalledWith('file-recall');
+    });
+    expect(harness.deleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a recalled video’s daemon upload alive for the restored draft', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addVideo('video/mp4', '/tmp/clip.mp4');
+    imageStore.completeVideo(attachment, { fileId: 'file-v1' });
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+    expect(driver.state.queuedMessages).toHaveLength(1);
+
+    const recalled = driver.recallLastQueued();
+    expect(recalled?.text).toContain(attachment.placeholder);
+    // The recall consumed the retain but kept the upload, so resubmitting
+    // the restored draft re-extracts the same daemon reference — a vanished
+    // original source cannot lose the media.
+    expect(attachment.fileId).toBe('file-v1');
+    expect(harness.deleteFile).not.toHaveBeenCalled();
+
+    driver.handleUserInput(recalled!.text);
+    const queued = driver.state.queuedMessages[0];
+    const parts = queued?.parts as Array<{ type: string; videoUrl?: { url: string } }>;
+    expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
+    expect(queued?.videoAttachmentIds).toEqual([attachment.id]);
   });
 
   it('steers consecutive image-only messages without a whitespace-only separator part', async () => {
@@ -2188,6 +4209,83 @@ command = "vim"
     expect(transcript).not.toContain('! ls');
   });
 
+  it('collapses long ! output to its first 10 rows and expands it with ctrl+o', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    const runShellCommand = vi.fn(async () => ({ stdout, stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('seq 30');
+    await vi.waitFor(() => {
+      const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    });
+
+    let transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('row-11');
+
+    driver.state.editor.onToggleToolExpand?.();
+    transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-30');
+    expect(transcript).not.toContain('more lines');
+
+    driver.state.editor.onToggleToolExpand?.();
+    transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(transcript).not.toContain('row-11');
+  });
+
+  it('a new ! card inherits an already-on ctrl+o expand state', async () => {
+    const stdout = Array.from({ length: 30 }, (_, i) => `row-${String(i + 1).padStart(2, '0')}`).join(
+      '\n',
+    );
+    let resolveCmd!: (value: { stdout: string; stderr: string; isError: boolean }) => void;
+    const runShellCommand = vi.fn(
+      () =>
+        new Promise<{ stdout: string; stderr: string; isError: boolean }>((resolve) => {
+          resolveCmd = resolve;
+        }),
+    );
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.toolOutputExpanded = true;
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('seq 30');
+    await Promise.resolve();
+    const outputEntry = driver.state.transcriptEntries.at(-1);
+    expect(outputEntry).toBeDefined();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'shell.output',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        commandId: outputEntry!.id,
+        update: { kind: 'stdout', text: stdout },
+      } as Event,
+      vi.fn(),
+    );
+    let transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('+25 lines');
+
+    resolveCmd({ stdout, stderr: '', isError: false });
+    await vi.waitFor(() => {
+      const finished = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(finished).toContain('row-30');
+    });
+    transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('row-01');
+    expect(transcript).not.toContain('more lines');
+  });
+
   it('renders cron fired events as distinct transcript entries', async () => {
     const { driver } = await makeDriver();
 
@@ -2226,6 +4324,85 @@ command = "vim"
     expect(transcript).toContain('* * * * *');
     expect(transcript).toContain('Remind the user: this is a once-per-minute reminder');
     expect(transcript).not.toContain('<cron-fire');
+  });
+
+  it('keeps the previous turn’s final answer mounted when a cron turn completes', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `cron-fold-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'working on it', '1');
+    entry('assistant', 'FINAL-ANSWER', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
+
+    const cronOrigin = {
+      kind: 'cron_job',
+      jobId: 'job-42',
+      cron: '*/5 * * * *',
+      recurring: true,
+      coalescedCount: 1,
+      stale: false,
+    };
+    emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: cronOrigin } as Event);
+    emit({ type: 'cron.fired', agentId: 'main', origin: cronOrigin, prompt: 'inspect the fleet' } as Event);
+    entry('assistant', 'cron report part one', '2');
+    entry('assistant', 'cron report final', '2');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('cron report final');
+    expect(transcript).toContain('FINAL-ANSWER');
+  });
+
+  it('keeps the in-flight answer mounted when a cron fires mid-turn', async () => {
+    const { driver } = await makeDriver();
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, () => {});
+    let entrySeq = 0;
+    const entry = (kind: 'user' | 'assistant', content: string, turnId?: string) => {
+      entrySeq += 1;
+      driver.appendTranscriptEntry({
+        id: `cron-buffered-${entrySeq}`,
+        kind,
+        turnId,
+        renderMode: kind === 'assistant' ? 'markdown' : 'plain',
+        content,
+      });
+    };
+
+    entry('user', 'what is the answer?');
+    emit({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } } as Event);
+    entry('assistant', 'FINAL-ANSWER', '1');
+
+    const cronOrigin = {
+      kind: 'cron_job',
+      jobId: 'job-42',
+      cron: '*/5 * * * *',
+      recurring: true,
+      coalescedCount: 1,
+      stale: false,
+    };
+    emit({ type: 'cron.fired', agentId: 'main', origin: cronOrigin, prompt: 'inspect the fleet' } as Event);
+    entry('assistant', 'cron report part one', '1');
+    entry('assistant', 'cron report final', '1');
+    emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('FINAL-ANSWER');
+    expect(transcript).toContain('cron report final');
   });
 
   it('coalesces assistant delta component updates', async () => {
@@ -2590,6 +4767,162 @@ command = "vim"
     });
     expect(session.steer).not.toHaveBeenCalled();
     expect(stripSgr(renderBtwPanel(driver))).toContain('Q: What are you working on right now?');
+  });
+
+  it('sends /btw panel input with inline skills via promptWithSkills (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw');
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+
+    driver.handleUserInput('check /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check /skill:review', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('activates inline skills in the initial /btw prompt (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw check this /skill:review');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('activates a leading skill token in the initial /btw prompt (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw /skill:review check this');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review check this', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('keeps /btw as the leading command when its prompt mentions multiple skills (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+        { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+      ]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      engineV2: true,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => [
+          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
+          { name: 'security', description: 'Security skill', path: '/tmp/security', source: 'user' },
+        ]),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+
+    driver.handleUserInput('/btw check /skill:review /skill:security');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check /skill:review /skill:security', [
+        { name: 'review' },
+        { name: 'security' },
+      ]);
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it('cancels an unused /btw side agent when closing an empty panel', async () => {
@@ -3195,6 +5528,32 @@ command = "vim"
     expect(driver.state.appState.thinkingEffort).toBe('mid');
   });
 
+  it('applies tower mode from status updates', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: true,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.towerMode).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        towerMode: false,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.towerMode).toBe(false);
+  });
+
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
     const { driver } = await makeDriver();
 
@@ -3296,7 +5655,7 @@ command = "vim"
     resolveInit?.();
 
     await vi.waitFor(() => {
-      expect(session.prompt).toHaveBeenCalledWith('apply after init');
+      expect(session.prompt).toHaveBeenCalledWith('apply after init', { promptId: undefined });
     });
     expect(driver.state.queuedMessages).toEqual([]);
   });
@@ -3744,6 +6103,206 @@ command = "vim"
     const transcript = stripSgr(driver.state.transcriptContainer.render(200).join('\n'));
     expect(transcript).toContain('⊘ Cancelled.');
     expect(transcript).toContain('✗ The user manually interrupted this subagent x.');
+  });
+
+  it('shows the spawned model on the subagent card at spawn, mapped through the model catalog', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.availableModels = {
+      'k2-cheap': {
+        provider: 'managed:kimi-code',
+        model: 'kimi-k2-cheap',
+        maxContextSize: 100_000,
+        displayName: 'Kimi K2 Cheap',
+        capabilities: [],
+      },
+    };
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('Kimi K2 Cheap');
+  });
+
+  it('falls back to the raw alias when the spawned model is missing from the catalog', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
+  });
+
+  it('shows any concrete spawned effort, same as the session or not', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    driver.state.appState.thinkingEffort = 'high';
+
+    // Same level as the main session — still shown (level info is level info).
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+        model: 'k2-cheap',
+        thinkingEffort: 'high',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('· high');
+  });
+
+  it('hides the boolean effort states on and off', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    for (const effort of ['on', 'off']) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'subagent.spawned',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          parentToolCallId: `call_agent_${effort}`,
+          subagentId: `agent-${effort}`,
+          subagentName: 'explore',
+          description: `explore ${effort}`,
+          runInBackground: false,
+          model: 'k2-cheap',
+          thinkingEffort: effort,
+        } as Event,
+        sendQueued,
+      );
+    }
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('· on');
+    expect(transcript).not.toContain('· off');
+  });
+
+  it('keeps the child status update as the model fallback when spawned omits it', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('k2-cheap');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
+  });
+
+  it('shows the spawned model in the swarm panel header at spawn', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm',
+        subagentId: 'agent-1',
+        subagentName: 'coder',
+        description: 'Review changed files #1 (coder)',
+        swarmIndex: 1,
+        runInBackground: false,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    const progress = driver.state.transcriptContainer.children.find(
+      (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
+    );
+    if (progress === undefined) throw new Error('expected AgentSwarm progress');
+    expect(stripSgr(progress.render(118).join('\n'))).toContain('k2-cheap');
+  });
+
+  it('includes the spawned model in the background-agent transcript entry', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_agent',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        description: 'explore project',
+        runInBackground: true,
+        model: 'k2-cheap',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderTranscript(driver))).toContain('k2-cheap');
   });
 
   it('does not let later transcript entries reduce the AgentSwarm grid height', async () => {
@@ -4536,7 +7095,7 @@ command = "vim"
           'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
         );
       });
-      expect(globalThis.fetch).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+      expect(globalThis.fetch).toHaveBeenCalledWith(kimiCodePluginMarketplaceUrl());
     } finally {
       vi.stubGlobal('fetch', originalFetch);
     }
@@ -5244,7 +7803,7 @@ command = "vim"
     }
   });
 
-  it('forks the active session and switches to the returned session', async () => {
+  it('forks the active session and stays in the source session', async () => {
     const originalTitle = process.title;
     const source = makeSession({
       id: 'ses-source',
@@ -5267,18 +7826,91 @@ command = "vim"
           id: 'ses-source',
           title: 'Fork: Source title',
         });
-        expect(driver.getCurrentSessionId()).toBe('ses-fork');
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'Session forked (ses-fork). Still in the original session; switch to the fork via /sessions.',
+        );
       });
-      expect(setTitle).toHaveBeenCalledWith('Fork: Source title');
-      expect(process.title).toBe('kimi-test-runner');
-      expect(source.close).toHaveBeenCalledOnce();
-      expect(forked.onEvent).toHaveBeenCalledOnce();
-      expect(harness.resumeSession).not.toHaveBeenCalled();
-      expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-        'Session forked (ses-fork). To return to the original session: kimi -r ses-source',
+      expect(copyTextToClipboard).toHaveBeenCalledWith(
+        "cd '/tmp/proj-a' && kimi --resume 'ses-fork'",
       );
+      const transcript = driver.state.transcriptContainer.render(120).join('\n');
+      expect(transcript).toContain(
+        "To enter the fork in a new process, run: cd '/tmp/proj-a' && kimi --resume 'ses-fork'",
+      );
+      expect(transcript).toContain('Command copied to clipboard');
+      expect(driver.getCurrentSessionId()).toBe('ses-source');
+      expect(source.close).not.toHaveBeenCalled();
+      expect(forked.close).toHaveBeenCalledOnce();
+      expect(forked.onEvent).not.toHaveBeenCalled();
+      expect(setTitle).not.toHaveBeenCalled();
+      expect(process.title).toBe('kimi-test-runner');
+      expect(harness.resumeSession).not.toHaveBeenCalled();
     } finally {
       process.title = originalTitle;
+    }
+  });
+
+  it('still prints the fork resume command when the clipboard copy fails', async () => {
+    vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error('no clipboard'));
+    const source = makeSession({ id: 'ses-source' });
+    const forked = makeSession({ id: 'ses-fork' });
+    const forkSession = vi.fn(async () => forked);
+    const { driver } = await makeDriver(source, { forkSession });
+
+    driver.handleUserInput('/fork');
+
+    await vi.waitFor(() => {
+      const transcript = driver.state.transcriptContainer.render(120).join('\n');
+      expect(transcript).toContain(
+        "To enter the fork in a new process, run: cd '/tmp/proj-a' && kimi --resume 'ses-fork'",
+      );
+      expect(transcript).toContain('Failed to copy command to clipboard');
+    });
+    expect(driver.getCurrentSessionId()).toBe('ses-source');
+  });
+
+  it('labels OSC 52 clipboard delivery as unverified after a fork', async () => {
+    vi.mocked(copyTextToClipboard).mockResolvedValueOnce('osc52');
+    const source = makeSession({ id: 'ses-source' });
+    const forked = makeSession({ id: 'ses-fork' });
+    const forkSession = vi.fn(async () => forked);
+    const { driver } = await makeDriver(source, { forkSession });
+
+    driver.handleUserInput('/fork');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+        'Command copied via terminal escape sequence (unverified)',
+      );
+    });
+    expect(driver.getCurrentSessionId()).toBe('ses-source');
+  });
+
+  it('prints a pushd-based fork resume command on Windows', async () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      const source = makeSession({ id: 'ses-source' });
+      const forked = makeSession({ id: 'ses-fork' });
+      const forkSession = vi.fn(async () => forked);
+      const { driver } = await makeDriver(source, { forkSession }, {
+        ...makeStartupInput(),
+        workDir: 'D:\\proj',
+      });
+
+      driver.handleUserInput('/fork');
+
+      // cmd.exe's `cd` does not switch drives; pushd works in cmd + PowerShell.
+      await vi.waitFor(() => {
+        expect(copyTextToClipboard).toHaveBeenCalledWith(
+          'pushd "D:\\proj" && kimi --resume "ses-fork"',
+        );
+      });
+      expect(driver.getCurrentSessionId()).toBe('ses-source');
+    } finally {
+      if (platformDescriptor !== undefined) {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
     }
   });
 
@@ -5300,6 +7932,25 @@ command = "vim"
         'Failed to fork session: fork unavailable',
       );
     });
+  });
+
+  it('reports when the forked runtime cannot be released', async () => {
+    const source = makeSession({ id: 'ses-source' });
+    const forked = makeSession({ id: 'ses-fork' });
+    forked.close.mockRejectedValueOnce(new Error('close unavailable'));
+    const forkSession = vi.fn(async () => forked);
+    const { driver } = await makeDriver(source, { forkSession });
+
+    driver.handleUserInput('/fork');
+
+    await vi.waitFor(() => {
+      expect(forked.close).toHaveBeenCalledOnce();
+      expect(driver.getCurrentSessionId()).toBe('ses-source');
+      expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+        'Session forked (ses-fork), but failed to release its runtime: close unavailable',
+      );
+    });
+    expect(source.close).not.toHaveBeenCalled();
   });
 
   it('does not create a thinking component for empty thinking deltas', async () => {

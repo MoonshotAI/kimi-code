@@ -516,8 +516,6 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain('[paste #1');
     expect(editor.getText()).toContain('[paste #2');
 
-    editor.setText('[paste #1 +15 lines] [paste #2 +15 lines]');
-
     simulateLargePaste(editor, 'anything');
 
     expect(editor.getText()).toContain('[paste #1');
@@ -550,7 +548,9 @@ describe('CustomEditor paste marker expansion', () => {
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).toContain(longText);
 
-    editor.setText(markerText);
+    // Undo (Ctrl+-) restores both the marker text and its paste-registry entry.
+    editor.handleInput('\x1b[45;5u');
+    expect(editor.getText()).toContain('[paste #1');
 
     simulateLargePaste(editor, 'anything');
     expect(editor.getText()).not.toContain('[paste #');
@@ -614,6 +614,33 @@ describe('CustomEditor paste marker expansion', () => {
     } finally {
       process.off('unhandledRejection', onRejection);
     }
+  });
+
+  it('queues Enter and typing until an asynchronous image paste inserts its placeholder', async () => {
+    const editor = makeEditor();
+    const submit = vi.fn();
+    editor.onSubmit = submit;
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = (handled) => {
+          editor.insertTextAtCursor?.('[image #1 (1×1)] ');
+          resolve(handled);
+        };
+      });
+
+    const pasteKey = process.platform === 'win32' ? '\u001Bv' : '\u0016';
+    editor.handleInput(pasteKey);
+    editor.handleInput('hello');
+    editor.handleInput('\r');
+
+    expect(editor.getText()).toBe('');
+    expect(submit).not.toHaveBeenCalled();
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(submit).toHaveBeenCalledWith('[image #1 (1×1)] hello');
   });
 });
 

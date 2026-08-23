@@ -1,6 +1,8 @@
 import type { Readable } from 'node:stream';
 
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
+
+type ProcessHandle = Omit<IHostProcess, '_serviceBrand'>;
 
 import type {
   AgentTask,
@@ -37,10 +39,11 @@ export class ProcessTask implements AgentTask {
   private exitCode: number | null = null;
 
   constructor(
-    readonly proc: IProcess,
+    readonly proc: ProcessHandle,
     readonly command: string,
     readonly description: string,
     private readonly onOutput?: ProcessTaskOutputCallback,
+    private release?: () => void,
   ) {}
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -105,6 +108,9 @@ export class ProcessTask implements AgentTask {
     try {
       await this.proc.dispose();
     } catch {
+    } finally {
+      this.release?.();
+      this.release = undefined;
     }
   }
 }
@@ -194,7 +200,7 @@ export interface ProcessTaskResult {
 }
 
 export function createProcessExecutor(
-  proc: IProcess,
+  proc: ProcessHandle,
   onOutput?: ProcessTaskOutputCallback,
 ): (signal: AbortSignal, output: (data: string) => void) => Promise<ProcessTaskResult> {
   return async (signal, output) => {
@@ -283,7 +289,7 @@ function observeProcessStreamRaw(
   });
 }
 
-async function disposeProcess(proc: IProcess): Promise<void> {
+async function disposeProcess(proc: ProcessHandle): Promise<void> {
   try { await proc.dispose(); } catch {   }
 }
 

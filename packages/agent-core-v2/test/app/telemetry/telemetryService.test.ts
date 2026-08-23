@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
-import { LifecycleScope, ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
   resetUnexpectedErrorHandler,

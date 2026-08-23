@@ -1,11 +1,8 @@
-/**
- * `approval` domain — `ISessionApprovalService` implementation.
- *
- * Typed facade over the `interaction` kernel for approval requests; owns no
- * pending state of its own (the kernel holds it). Bound at Session scope.
- */
+import { randomUUID } from 'node:crypto';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import {
@@ -46,12 +43,12 @@ export class SessionApprovalService implements ISessionApprovalService {
   listPending(): readonly ApprovalRequest[] {
     return this.interaction
       .listPending('approval')
-      .map((i) => i.payload as ApprovalRequest);
+      .map((i) => ({ ...(i.payload as ApprovalRequest), id: i.id }));
   }
 }
 
 function requestId(req: ApprovalRequest): string {
-  return req.id ?? req.toolCallId ?? `${req.toolName}:${String(Date.now())}`;
+  return req.id ?? `approval_${randomUUID()}`;
 }
 
 registerScopedService(LifecycleScope.Session, ISessionApprovalService, SessionApprovalService, ScopeActivation.OnScopeCreated, 'approval');

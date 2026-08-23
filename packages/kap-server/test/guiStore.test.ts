@@ -170,7 +170,6 @@ describe('server-v2 gui store routes', () => {
 
   it('treats Object.prototype keys as ordinary keys', async () => {
     const api = appOf(server as RunningServer);
-    // On an empty store, prototype keys must not resolve to inherited members.
     expect(
       envelopeOf<{ value: string | null }>((await getItem(api, 'toString')).json()).data?.value,
     ).toBeNull();

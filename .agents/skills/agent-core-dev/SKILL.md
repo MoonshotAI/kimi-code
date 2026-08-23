@@ -33,7 +33,7 @@ End-to-end procedures that span the stages. Reach for these before reading the s
 
 ## Stages
 
-- [Stage 1 — Orient](orient.md): the DI black box (identity / dependencies / lifetime), the four `LifecycleScope` tiers and visibility, and the file-header comment convention. Read before touching business code.
+- [Stage 1 — Orient](orient.md): the DI black box (identity / dependencies / lifetime), the four `LifecycleScope` tiers and visibility, and the no-comment convention. Read before touching business code.
 - [Stage 2 — Design a service](design.md): pick a scope, split a domain across scopes, choose a calling style (direct call vs event vs hook), and direct dependencies. Decide *where things live and who knows whom* before coding.
   - Topic: [Domain boundaries vs Scope](domain-boundaries.md) — keep `session` / `agent` / `turn` from becoming god objects; data-ownership test and their split conclusions.
   - Topic: [Persistence layering](persistence.md) — the three-layer `Store → Storage → backend` model, naming Stores by access pattern, and which layer business code should depend on.
@@ -67,4 +67,4 @@ Invariants that hold across every stage. Each is expanded in the stage file note
 9. Throw coded errors; register codes centrally; branch on `code` across the wire, never `instanceof`. (errors.md)
 10. Gate unreleased behavior behind a flag contributed via `registerFlagDefinition` and resolved through `IFlagService.enabled(id)`; no ad-hoc env toggles. (flags.md)
 11. Tests resolve the SUT by interface; shared stubs live under `test/`, never `src/`. (test.md)
-12. Config is the preference registry: only preferences that are persistable, schema'd, and user/operator-facing go in `IConfigService`. Domain-specific config (including env-only operational toggles) goes through `registerSection` + `envOverlay`. Facts → `IBootstrapService`, and host invocation arguments (CLI flags, host identity headers, prompt identity) → `BootstrapInput.args` / `IBootstrapService.args` — never new per-domain runtime-options services; domain runtime state (cron/flags/model) never goes onto `IBootstrapService`; session state → Session scope; constants → code. Business domains never call `IBootstrapService.getEnv()` directly. (config.md)
+12. Config is the preference registry: only preferences that are persistable, schema'd, and user/operator-facing go in `IConfigService`. Domain-specific config (including env-only operational toggles) goes through `registerConfigSection` + `envOverlay`. Facts → `IBootstrapService`, and host invocation arguments (CLI flags, host identity headers, prompt identity) → `BootstrapInput.args` / `IBootstrapService.args` — never new per-domain runtime-options services; domain runtime state (cron/flags/model) never goes onto `IBootstrapService`; session state → Session scope; constants → code. Business domains never call `IBootstrapService.getEnv()` directly. (config.md)

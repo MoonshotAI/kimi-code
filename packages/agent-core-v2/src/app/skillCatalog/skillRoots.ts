@@ -1,15 +1,7 @@
-/**
- * `skillCatalog` domain — skill-root resolution primitives.
- *
- * Resolves the ordered `SkillRoot` list a discovery backend should scan for the
- * user (home) and project (workspace) skill locations. Brand directories are
- * preferred over generic ones (`.kimi-code/skills` before `.agents/skills`),
- * and the project root is found by walking up to `.git`. Pure path/fs probes;
- * no scoped state.
- */
-
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
+
+import { findUpwardRoot } from '#/_base/utils/paths';
 
 import type { SkillRoot, SkillSource } from './types';
 
@@ -54,7 +46,7 @@ export interface ProjectSkillRootCandidates {
 export async function projectSkillRootCandidates(
   workDir: string,
 ): Promise<ProjectSkillRootCandidates> {
-  const projectRoot = await findProjectRoot(workDir);
+  const projectRoot = await realpathOrSelf(await findProjectRoot(workDir));
   return {
     projectRoot,
     candidates: [...PROJECT_BRAND_DIRS, ...PROJECT_GENERIC_DIRS].map((dir) =>
@@ -78,14 +70,7 @@ export async function configuredRoots(
 }
 
 async function findProjectRoot(workDir: string): Promise<string> {
-  const start = path.resolve(workDir);
-  let current = start;
-  while (true) {
-    if (await exists(path.join(current, '.git'))) return current;
-    const parent = path.dirname(current);
-    if (parent === current) return start;
-    current = parent;
-  }
+  return findUpwardRoot(workDir, '.git', exists);
 }
 
 async function pushFirstExisting(
@@ -143,6 +128,14 @@ async function isDir(p: string): Promise<boolean> {
 
 async function realpath(p: string): Promise<string> {
   return (await fs.realpath(p)).replaceAll('\\', '/');
+}
+
+async function realpathOrSelf(p: string): Promise<string> {
+  try {
+    return await realpath(p);
+  } catch {
+    return p.replaceAll('\\', '/');
+  }
 }
 
 async function exists(p: string): Promise<boolean> {

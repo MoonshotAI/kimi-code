@@ -11,11 +11,16 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { dirname, join, win32 as pathWin32 } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, win32 as pathWin32 } from 'node:path';
 import { join as joinPosix } from 'pathe';
 
 import { KIMI_BUILD_INFO } from '#/cli/build-info';
-import { NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION, buildManifestKey } from '../../scripts/native/manifest.mjs';
+import {
+  KAP_SEARCH_WORKER_ASSET,
+  MINIDB_TEXT_BUILD_WORKER_ASSET,
+  NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION,
+  buildManifestKey,
+} from '../../scripts/native/manifest.mjs';
 
 export const NATIVE_ASSET_MANIFEST_VERSION = MANIFEST_VERSION;
 
@@ -32,10 +37,15 @@ export interface NativeAssetPackage {
   readonly files: readonly NativeAssetFile[];
 }
 
+export interface NativeRuntimeAssetFile extends NativeAssetFile {
+  readonly key: string;
+}
+
 export interface NativeAssetManifest {
   readonly version: typeof NATIVE_ASSET_MANIFEST_VERSION;
   readonly target: string;
   readonly packages: readonly NativeAssetPackage[];
+  readonly runtimeFiles: readonly NativeRuntimeAssetFile[];
 }
 
 export interface NativeAssetSource {
@@ -52,10 +62,6 @@ export interface NativeAssetOptions {
   readonly homeDir?: string;
   readonly version?: string;
 }
-
-type RawNativeAssetManifest = Omit<NativeAssetManifest, 'version'> & {
-  readonly version: number;
-};
 
 interface NodeSeaModule {
   isSea(): boolean;
@@ -97,6 +103,149 @@ function sha256(bytes: Buffer | Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function manifestObject(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid native asset manifest: ${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function manifestString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Invalid native asset manifest: ${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validateRelativePath(value: unknown, label: string): string {
+  const path = manifestString(value, label);
+  const segments = path.split(/[\\/]/);
+  if (
+    isAbsolute(path) ||
+    /^[a-zA-Z]:/.test(path) ||
+    path.startsWith('\\\\') ||
+    segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+  ) {
+    throw new Error(`Invalid native asset manifest: ${label} must be a safe relative path`);
+  }
+  return path;
+}
+
+function validateAssetFile(
+  value: unknown,
+  label: string,
+  assetKeys: Set<string>,
+  relativePaths: Set<string>,
+): NativeAssetFile {
+  const file = manifestObject(value, label);
+  const assetKey = manifestString(file['assetKey'], `${label}.assetKey`);
+  if (assetKeys.has(assetKey)) {
+    throw new Error(`Invalid native asset manifest: duplicate assetKey ${assetKey}`);
+  }
+  assetKeys.add(assetKey);
+  const relativePath = validateRelativePath(file['relativePath'], `${label}.relativePath`);
+  const portableRelativePath = relativePath.replaceAll('\\', '/');
+  if (relativePaths.has(portableRelativePath)) {
+    throw new Error(`Invalid native asset manifest: duplicate relativePath ${relativePath}`);
+  }
+  relativePaths.add(portableRelativePath);
+  const fileSha256 = file['sha256'];
+  if (typeof fileSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(fileSha256)) {
+    throw new Error(`Invalid native asset manifest: ${label}.sha256 must be 64 lowercase hex characters`);
+  }
+  const mode = file['mode'];
+  if (
+    mode !== undefined &&
+    (!Number.isInteger(mode) || (mode as number) < 0 || (mode as number) > 0o777)
+  ) {
+    throw new Error(`Invalid native asset manifest: ${label}.mode must be an integer between 0 and 0777`);
+  }
+  return {
+    assetKey,
+    relativePath,
+    sha256: fileSha256,
+    mode: mode as number | undefined,
+  };
+}
+
+export function validateNativeAssetManifest(
+  value: unknown,
+  expectedTarget?: string,
+): NativeAssetManifest {
+  const manifest = manifestObject(value, 'root');
+  if (manifest['version'] !== NATIVE_ASSET_MANIFEST_VERSION) {
+    throw new Error(`Unsupported native asset manifest version: ${String(manifest['version'])}`);
+  }
+  const target = manifestString(manifest['target'], 'target');
+  if (expectedTarget !== undefined && target !== expectedTarget) {
+    throw new Error(`Native asset manifest target mismatch: ${target} !== ${expectedTarget}`);
+  }
+  const manifestPackages = manifest['packages'];
+  if (!Array.isArray(manifestPackages)) {
+    throw new TypeError('Invalid native asset manifest: packages must be an array');
+  }
+  const manifestRuntimeFiles = manifest['runtimeFiles'];
+  if (!Array.isArray(manifestRuntimeFiles)) {
+    throw new TypeError('Invalid native asset manifest: runtimeFiles must be an array');
+  }
+
+  const assetKeys = new Set<string>();
+  const relativePaths = new Set<string>();
+  const packageNames = new Set<string>();
+  const packages = manifestPackages.map((value, packageIndex): NativeAssetPackage => {
+    const label = `packages[${packageIndex}]`;
+    const pkg = manifestObject(value, label);
+    const name = manifestString(pkg['name'], `${label}.name`);
+    if (packageNames.has(name)) {
+      throw new Error(`Invalid native asset manifest: duplicate package name ${name}`);
+    }
+    packageNames.add(name);
+    const root = validateRelativePath(pkg['root'], `${label}.root`);
+    const packageFiles = pkg['files'];
+    if (!Array.isArray(packageFiles)) {
+      throw new TypeError(`Invalid native asset manifest: ${label}.files must be an array`);
+    }
+    return {
+      name,
+      root,
+      files: packageFiles.map((file, fileIndex) =>
+        validateAssetFile(file, `${label}.files[${fileIndex}]`, assetKeys, relativePaths),
+      ),
+    };
+  });
+
+  const runtimeKeys = new Set<string>();
+  const runtimeFiles = manifestRuntimeFiles.map((value, index): NativeRuntimeAssetFile => {
+    const label = `runtimeFiles[${index}]`;
+    const raw = manifestObject(value, label);
+    const key = manifestString(raw['key'], `${label}.key`);
+    if (runtimeKeys.has(key)) {
+      throw new Error(`Invalid native asset manifest: duplicate runtime key ${key}`);
+    }
+    runtimeKeys.add(key);
+    return {
+      ...validateAssetFile(raw, label, assetKeys, relativePaths),
+      key,
+    };
+  });
+
+  return {
+    version: NATIVE_ASSET_MANIFEST_VERSION,
+    target,
+    packages,
+    runtimeFiles,
+  };
+}
+
+function resolveAssetPath(cacheRoot: string, relativePath: string): string {
+  const path = resolve(cacheRoot, ...relativePath.split(/[\\/]/));
+  const fromRoot = relative(cacheRoot, path);
+  if (fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\') || isAbsolute(fromRoot)) {
+    throw new Error(`Native asset path escapes cache root: ${relativePath}`);
+  }
+  return path;
+}
+
 function optionalEnvValue(env: NodeJS.ProcessEnv, key: string): string | null {
   const value = env[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
@@ -124,14 +273,9 @@ export function getEmbeddedNativeAssetManifest(
   const key = nativeAssetManifestKey(target);
   if (!source.getAssetKeys().includes(key)) return null;
   const raw = source.getRawAsset(key);
-  const manifest = JSON.parse(toBuffer(raw).toString('utf-8')) as RawNativeAssetManifest;
-  if (manifest.version !== NATIVE_ASSET_MANIFEST_VERSION) {
-    throw new Error(`Unsupported native asset manifest version: ${manifest.version}`);
-  }
-  if (manifest.target !== target) {
-    throw new Error(`Native asset manifest target mismatch: ${manifest.target} !== ${target}`);
-  }
-  return manifest as NativeAssetManifest;
+  const parsed: unknown = JSON.parse(toBuffer(raw).toString('utf-8'));
+  validateNativeAssetManifest(parsed, target);
+  return parsed as NativeAssetManifest;
 }
 
 export function getNativeCacheBase(options: NativeAssetOptions = {}): string {
@@ -159,13 +303,14 @@ export function getNativeAssetCacheRoot(
   manifest: NativeAssetManifest,
   options: NativeAssetOptions = {},
 ): string {
+  const validated = validateNativeAssetManifest(manifest);
   const version = sanitizeSegment(options.version ?? KIMI_BUILD_INFO.version ?? 'dev');
   const manifestHash = sha256(JSON.stringify(manifest));
   return join(
     getNativeCacheBase(options),
     'native',
     version,
-    sanitizeSegment(manifest.target),
+    sanitizeSegment(validated.target),
     manifestHash,
   );
 }
@@ -219,25 +364,61 @@ export function ensureNativeAssetTree(options: NativeAssetOptions = {}): string 
   const source = options.source ?? getSeaAssetSource();
   if (source === null) return null;
 
-  const manifest =
+  const rawManifest =
     options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
-  if (manifest === null) return null;
+  if (rawManifest === null) return null;
+  const manifest = validateNativeAssetManifest(rawManifest);
 
-  const cacheRoot = getNativeAssetCacheRoot(manifest, options);
-  for (const pkg of manifest.packages) {
-    for (const file of pkg.files) {
-      const bytes = toBuffer(source.getRawAsset(file.assetKey));
-      const actualSha256 = sha256(bytes);
-      if (actualSha256 !== file.sha256) {
-        throw new Error(
-          `Native asset checksum mismatch for ${file.assetKey}: ${actualSha256} !== ${file.sha256}`,
-        );
-      }
-      ensureFile(join(cacheRoot, file.relativePath), bytes, file.sha256, file.mode);
+  const cacheRoot = getNativeAssetCacheRoot(rawManifest, options);
+  const sourceKeys = new Set(source.getAssetKeys());
+  const files = [
+    ...manifest.packages.flatMap((pkg) => pkg.files),
+    ...manifest.runtimeFiles,
+  ];
+  for (const file of files) {
+    if (!sourceKeys.has(file.assetKey)) {
+      throw new Error(`Native asset is missing: ${file.assetKey}`);
     }
+    const bytes = toBuffer(source.getRawAsset(file.assetKey));
+    const actualSha256 = sha256(bytes);
+    if (actualSha256 !== file.sha256) {
+      throw new Error(
+        `Native asset checksum mismatch for ${file.assetKey}: ${actualSha256} !== ${file.sha256}`,
+      );
+    }
+    ensureFile(resolveAssetPath(cacheRoot, file.relativePath), bytes, file.sha256, file.mode);
   }
   ensureEntryFile(cacheRoot);
   return cacheRoot;
+}
+
+export function getNativeRuntimeFile(
+  key: string,
+  options: NativeAssetOptions = {},
+): string | null {
+  const source = options.source ?? getSeaAssetSource();
+  if (source === null) return null;
+
+  const rawManifest =
+    options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
+  if (rawManifest === null) return null;
+  const manifest = validateNativeAssetManifest(rawManifest);
+
+  const file = manifest.runtimeFiles.find((entry) => entry.key === key);
+  if (file === undefined) return null;
+
+  const cacheRoot = ensureNativeAssetTree({ ...options, source, manifest: rawManifest });
+  return cacheRoot === null ? null : resolveAssetPath(cacheRoot, file.relativePath);
+}
+
+export function getMinidbTextBuildWorkerFile(
+  options: NativeAssetOptions = {},
+): string | null {
+  return getNativeRuntimeFile(MINIDB_TEXT_BUILD_WORKER_ASSET.key, options);
+}
+
+export function getKapSearchWorkerFile(options: NativeAssetOptions = {}): string | null {
+  return getNativeRuntimeFile(KAP_SEARCH_WORKER_ASSET.key, options);
 }
 
 export function getNativePackageRoot(
@@ -247,15 +428,16 @@ export function getNativePackageRoot(
   const source = options.source ?? getSeaAssetSource();
   if (source === null) return null;
 
-  const manifest =
+  const rawManifest =
     options.manifest ?? getEmbeddedNativeAssetManifest(source, currentTarget());
-  if (manifest === null) return null;
+  if (rawManifest === null) return null;
+  const manifest = validateNativeAssetManifest(rawManifest);
 
   const pkg = manifest.packages.find((entry) => entry.name === packageName);
   if (pkg === undefined) return null;
 
-  const cacheRoot = ensureNativeAssetTree({ ...options, source, manifest });
-  return cacheRoot === null ? null : join(cacheRoot, pkg.root);
+  const cacheRoot = ensureNativeAssetTree({ ...options, source, manifest: rawManifest });
+  return cacheRoot === null ? null : resolveAssetPath(cacheRoot, pkg.root);
 }
 
 export function hasNativePackage(packageName: string, manifest: NativeAssetManifest): boolean {
