@@ -1227,8 +1227,6 @@ export function createAgentProjector(deps: { t: Translator }): AgentProjectorIns
         }
 
         s.turnCount++;
-        const usageSnapshot = buildUsageSnapshot(s);
-        out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
 
         // No busy projection here — see turn.started. The daemon's
         // `event.session.work_changed` flips the session busy fact.
