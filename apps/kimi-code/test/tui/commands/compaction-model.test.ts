@@ -1,7 +1,7 @@
 /**
  * Scenario: /compaction-model command behavior in the interactive TUI.
- * Responsibilities: picker filtering, persistence of `[compaction_model] default_model`,
- * and error paths.
+ * Responsibilities: picker filtering, persistence of `[compaction_model] model` plus
+ * enabling the `compaction-model` experiment flag, and error paths.
  * Wiring: real command and selector with the SDK/session boundaries stubbed by a small host rig.
  * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/compaction-model.test.ts
  */
@@ -86,8 +86,8 @@ function mountedPicker(host: { mountEditorReplacement: ReturnType<typeof vi.fn> 
 }
 
 describe('handleCompactionModelCommand', () => {
-  it('opens the picker filtered to user models, with the configured default as current', async () => {
-    const { host } = makeHost({ compactionModel: { defaultModel: 'cheap' } });
+  it('opens the picker filtered to user models, with the configured model as current', async () => {
+    const { host } = makeHost({ compactionModel: { model: 'cheap' } });
 
     await handleCompactionModelCommand(host, '');
 
@@ -98,8 +98,8 @@ describe('handleCompactionModelCommand', () => {
     expect(opts.thinkingControl).toBe(false);
   });
 
-  it('falls back to the legacy model key when no default_model is set', async () => {
-    const { host } = makeHost({ compactionModel: { model: 'k2' } });
+  it('falls back to the legacy default_model key when no model is set', async () => {
+    const { host } = makeHost({ compactionModel: { defaultModel: 'k2' } });
 
     await handleCompactionModelCommand(host, '');
 
@@ -107,7 +107,7 @@ describe('handleCompactionModelCommand', () => {
     expect(opts.currentValue).toBe('k2');
   });
 
-  it('persists only default_model on selection', async () => {
+  it('persists the engine-contract model pointer and enables the experiment flag', async () => {
     const { host } = makeHost();
 
     await handleCompactionModelCommand(host, '');
@@ -117,7 +117,8 @@ describe('handleCompactionModelCommand', () => {
       expect(host.showStatus).toHaveBeenCalled();
     });
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      compactionModel: { defaultModel: 'k2' },
+      compactionModel: { model: 'k2' },
+      experimental: { 'compaction-model': true },
     });
     expect(host.showError).not.toHaveBeenCalled();
   });

@@ -320,6 +320,9 @@ export const VISUAL_MODEL_EFFORT_ENV = 'KIMI_VISUAL_EFFORT';
 
 export const VisualModelConfigSchema = ModelOverrideSchema.extend({
   model: z.string().min(1).optional(),
+  /** Legacy pointer written by an older TUI; honored as a fallback by the
+   * resolver so those configs start working instead of staying dead. */
+  defaultModel: z.string().min(1).optional(),
 });
 
 export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
@@ -342,6 +345,9 @@ export const COMPACTION_MODEL_EFFORT_ENV = 'KIMI_COMPACTION_EFFORT';
 
 export const CompactionModelConfigSchema = ModelOverrideSchema.extend({
   model: z.string().min(1).optional(),
+  /** Legacy pointer written by an older TUI; honored as a fallback by the
+   * resolver so those configs start working instead of staying dead. */
+  defaultModel: z.string().min(1).optional(),
 });
 
 export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;

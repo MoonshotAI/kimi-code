@@ -97,6 +97,26 @@ describe('resolveVisualBinding', () => {
     expect(binding.displayModel).toBe('kimi/vision');
   });
 
+  it('binds the legacy default_model pointer when model is unset', () => {
+    // An older TUI wrote default_model; the resolver honors it as a fallback
+    // so those configs start working instead of staying dead.
+    const { config, flags } = makeServices({
+      [VISUAL_MODEL_SECTION]: { defaultModel: 'kimi/vision' },
+    });
+    expect(resolveVisualBinding(config, flags, own)).toEqual({
+      model: 'kimi/vision',
+      thinking: undefined,
+      displayModel: 'kimi/vision',
+    });
+  });
+
+  it('prefers model over the legacy default_model when both are set', () => {
+    const { config, flags } = makeServices({
+      [VISUAL_MODEL_SECTION]: { model: 'kimi/new', defaultModel: 'kimi/legacy' },
+    });
+    expect(resolveVisualBinding(config, flags, own).model).toBe('kimi/new');
+  });
+
   it('forces the caller model on explicit "primary" even when a visual model is configured', () => {
     const { config, flags } = makeServices({
       [VISUAL_MODEL_SECTION]: { model: 'kimi/vision' },

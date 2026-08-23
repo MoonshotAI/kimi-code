@@ -586,7 +586,7 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
 }
 
 // ---------------------------------------------------------------------------
-// Visual model (`/visual-model`) — persists `[visual_model] default_model`
+// Visual model (`/visual-model`) — persists `[visual_model] model` and enables the `visual-model` experiment flag
 // ---------------------------------------------------------------------------
 
 function showVisualModelPicker(
@@ -617,11 +617,14 @@ function showVisualModelPicker(
 async function performVisualModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
-    const config = await host.harness.getConfig({ reload: true });
-    const patch: { defaultModel: string } = {
-      defaultModel: alias,
-    };
-    await host.harness.setConfig({ visualModel: patch });
+    // Same contract as /compaction-model: the engine pointer field is `model`
+    // (`[visual_model] model`, resolved by `resolveVisualBinding`), and the
+    // `visual-model` experiment flag gates the resolver — enable it on save
+    // so the pick actually takes effect.
+    await host.harness.setConfig({
+      visualModel: { model: alias },
+      experimental: { 'visual-model': true },
+    });
   } catch (error) {
     host.showError(`Failed to save visual model: ${formatErrorMessage(error)}`);
     return;
@@ -648,12 +651,15 @@ export async function handleVisualModelCommand(host: SlashCommandHost, args: str
     return;
   }
   const visual = (await host.harness.getConfig()).visualModel;
-  const current = visual?.defaultModel ?? visual?.model ?? '';
+  // `model` is the engine-contract pointer; `defaultModel` is the legacy
+  // field an older TUI wrote (honored as a resolver fallback).
+  const current = visual?.model ?? visual?.defaultModel ?? '';
   showVisualModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
 // ---------------------------------------------------------------------------
-// Compaction model (`/compaction-model`) — persists `[compaction_model] default_model`
+// Compaction model (`/compaction-model`) — persists `[compaction_model] model`
+// and enables the `compaction-model` experiment flag
 // ---------------------------------------------------------------------------
 
 function showCompactionModelPicker(
@@ -684,11 +690,16 @@ function showCompactionModelPicker(
 async function performCompactionModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
-    const config = await host.harness.getConfig({ reload: true });
-    const patch: { defaultModel: string } = {
-      defaultModel: alias,
-    };
-    await host.harness.setConfig({ compactionModel: patch });
+    // The engine contract pointer field is `model` (`[compaction_model] model`,
+    // resolved by `resolveCompactionBinding`); `default_model` is a legacy
+    // write from an older TUI that the resolver only treats as a fallback.
+    // Saving also enables the `compaction-model` experiment — the resolver
+    // short-circuits to the session model while the flag is off, so without
+    // this the pick would stay inert on a default build.
+    await host.harness.setConfig({
+      compactionModel: { model: alias },
+      experimental: { 'compaction-model': true },
+    });
   } catch (error) {
     host.showError(`Failed to save compaction model: ${formatErrorMessage(error)}`);
     return;
@@ -715,7 +726,10 @@ export async function handleCompactionModelCommand(host: SlashCommandHost, args:
     return;
   }
   const compaction = (await host.harness.getConfig()).compactionModel;
-  const current = compaction?.defaultModel ?? compaction?.model ?? '';
+  // `model` is the engine-contract pointer; `defaultModel` is the legacy
+  // field an older TUI wrote (inert until the resolver fallback) — shown as
+  // the current value so the picker reflects what compaction will use.
+  const current = compaction?.model ?? compaction?.defaultModel ?? '';
   showCompactionModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
 
