@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   IConfigService,
   IEventService,
+  IMcpOAuthService,
   IOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
@@ -313,6 +314,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     disableRequestLogging: true,
     genReqId: (req) => resolveRequestId(req.headers),
   }) as unknown as FastifyInstance;
+  app.server.requestTimeout = 0;
   registerRequestLogging(app);
   app.setValidatorCompiler(() => () => true);
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
@@ -358,6 +360,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     try {
       await drainSessionMetadataWrites();
       await core.accessor.get(ISessionIndexMirror).drain();
+      await core.accessor.get(IMcpOAuthService).shutdown();
       fsWatchBridge.dispose();
       const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();

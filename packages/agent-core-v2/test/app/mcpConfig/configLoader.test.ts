@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ErrorCodes, Error2 } from '#/errors';
-import { loadMcpServers, resolveMcpJsonPaths } from '#/workspace/workspaceMcpConfig/internal/config-loader';
+import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 const fs = new HostFileSystem();
@@ -58,6 +58,16 @@ describe('loadMcpServers', () => {
     await writeFile(join(home, 'mcp.json'), '   \n');
     const servers = await loadMcpServers({ fs, cwd, homeDir: home });
     expect(servers).toEqual({});
+  });
+
+  it('rejects a null mcpServers field', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), { mcpServers: null });
+
+    await expect(loadMcpServers({ fs, cwd, homeDir: home })).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
   });
 
   it('merges project-local mcp.json with user-global, project overriding on conflict', async () => {
@@ -215,6 +225,28 @@ describe('loadMcpServers', () => {
       transport: 'http',
       url: 'https://mcp.example.com',
     });
+  });
+
+  it('keeps Windows drive-letter and UNC stdio cwd values resolved on any host', async () => {
+    const home = makeTempDir();
+    const repoRoot = makeTempDir();
+    const cwd = join(repoRoot, 'packages', 'agent-core');
+    await mkdir(join(repoRoot, '.git'), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+
+    await writeJson(join(repoRoot, '.mcp.json'), {
+      mcpServers: {
+        drive: { command: 'node', cwd: 'C:/tools' },
+        driveBackslash: { command: 'node', cwd: 'C:\\tools\\bin' },
+        unc: { command: 'node', cwd: '//server/share/tools' },
+      },
+    });
+
+    const servers = await loadMcpServers({ fs, cwd, homeDir: home });
+
+    expect(servers['drive']).toMatchObject({ cwd: 'C:/tools' });
+    expect(servers['driveBackslash']).toMatchObject({ cwd: 'C:/tools/bin' });
+    expect(servers['unc']).toMatchObject({ cwd: '//server/share/tools' });
   });
 
   it('throws Error2(config.invalid) on invalid JSON', async () => {

@@ -35,6 +35,26 @@ import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
 import type { McpServerEntry } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
+import type {
+  GlobalMcpServerConfig,
+  McpAuthStatusQuery,
+  McpManagedServer,
+  McpServerAuthBeginResult,
+  McpServerAuthFlowHandle,
+  McpServerAuthState,
+  McpServerAuthStatus,
+  McpServerInspection,
+  McpServerLocator,
+  McpServerTestResult,
+  McpServerTestTarget,
+} from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
+import type {
+  McpRegistryPluginOrigin,
+  McpRegistryQuery,
+  McpServerSource,
+} from '@moonshot-ai/agent-core-v2/app/mcpRegistry/mcpRegistry';
+import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+import type { McpServerConfigView } from '@moonshot-ai/agent-core-v2/mcpCore/configView';
 import type { FullCompactionInput } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/fullCompaction';
 import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import type {
@@ -274,6 +294,23 @@ import {
 } from '../src/contract/global/hostFs.js';
 import { modelConfigSchema } from '../src/contract/global/models.js';
 import {
+  globalMcpServerConfigSchema,
+  mcpAuthStatusQuerySchema,
+  mcpManagedServerSchema,
+  mcpRegistryPluginOriginSchema,
+  mcpRegistryQuerySchema,
+  mcpServerAuthBeginResultSchema,
+  mcpServerAuthFlowHandleSchema,
+  mcpServerAuthStateSchema,
+  mcpServerAuthStatusSchema,
+  mcpServerConfigDataSchema,
+  mcpServerInspectionSchema,
+  mcpServerLocatorSchema,
+  mcpServerSourceSchema,
+  mcpServerTestResultSchema,
+  mcpServerTestTargetSchema,
+} from '../src/contract/global/mcpManagement.js';
+import {
   getPluginInfoInputSchema,
   installPluginInputSchema,
   pluginCommandDefSchema,
@@ -440,6 +477,50 @@ const _setPluginMcpServerEnabledInput: AssertWire<
 > = true;
 const _removePluginInput: AssertWire<typeof removePluginInputSchema, RemovePluginInput> = true;
 const _getPluginInfoInput: AssertWire<typeof getPluginInfoInputSchema, GetPluginInfoInput> = true;
+
+// global/mcpManagement.ts — the `McpServerConfig | McpServerConfigView` union
+// a managed server's `config` carries (full for mutable entries, redacted for
+// read-only ones) is mirrored by one schema covering both shapes; the
+// inspection's `config` is always the redacted view, and both assignability
+// directions hold against either engine type.
+const _mcpServerSource: AssertWire<typeof mcpServerSourceSchema, McpServerSource> = true;
+const _mcpRegistryPluginOrigin: AssertWire<
+  typeof mcpRegistryPluginOriginSchema,
+  McpRegistryPluginOrigin
+> = true;
+const _mcpRegistryQuery: AssertWire<typeof mcpRegistryQuerySchema, McpRegistryQuery> = true;
+const _mcpAuthStatusQuery: AssertWire<typeof mcpAuthStatusQuerySchema, McpAuthStatusQuery> = true;
+const _globalMcpServerConfig: AssertWire<
+  typeof globalMcpServerConfigSchema,
+  GlobalMcpServerConfig
+> = true;
+const _mcpServerConfigData: AssertWire<
+  typeof mcpServerConfigDataSchema,
+  McpServerConfig | McpServerConfigView
+> = true;
+const _mcpServerConfigViewData: AssertWire<
+  typeof mcpServerConfigDataSchema,
+  McpServerConfigView
+> = true;
+const _mcpManagedServer: AssertWire<typeof mcpManagedServerSchema, McpManagedServer> = true;
+const _mcpServerTestTarget: AssertWire<typeof mcpServerTestTargetSchema, McpServerTestTarget> =
+  true;
+const _mcpServerTestResult: AssertWire<typeof mcpServerTestResultSchema, McpServerTestResult> =
+  true;
+const _mcpServerLocator: AssertWire<typeof mcpServerLocatorSchema, McpServerLocator> = true;
+const _mcpServerAuthState: AssertWire<typeof mcpServerAuthStateSchema, McpServerAuthState> = true;
+const _mcpServerInspection: AssertWire<typeof mcpServerInspectionSchema, McpServerInspection> =
+  true;
+const _mcpServerAuthStatus: AssertWire<typeof mcpServerAuthStatusSchema, McpServerAuthStatus> =
+  true;
+const _mcpServerAuthBeginResult: AssertWire<
+  typeof mcpServerAuthBeginResultSchema,
+  McpServerAuthBeginResult
+> = true;
+const _mcpServerAuthFlowHandle: AssertWire<
+  typeof mcpServerAuthFlowHandleSchema,
+  McpServerAuthFlowHandle
+> = true;
 
 // env.ts has no named schemas; `platform` narrows to `NodeJS.Platform` in the
 // engine — assert the bootstrap properties are all strings instead. The

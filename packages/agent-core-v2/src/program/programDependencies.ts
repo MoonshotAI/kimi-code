@@ -6,7 +6,8 @@ import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfi
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IGitService } from '#/app/git/git';
-import type { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import type { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import type { IPluginService } from '#/app/plugin/plugin';
 import type { ISessionManager } from '#/app/sessionManager/sessionManager';
 import type { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
@@ -48,7 +49,8 @@ export interface ProgramDependencies {
   readonly git: LiveRef<IGitService>;
   readonly identity: IAgentIdentity;
   readonly log: ILogService;
-  readonly oauthStore: IMcpOAuthStore;
+  readonly oauth: McpOAuthService;
+  readonly configStore: IMcpConfigStore;
   readonly plugins: IPluginService;
   readonly sessionManager: LiveRef<ISessionManager>;
   readonly agentProfiles: IAgentProfileRegistry;

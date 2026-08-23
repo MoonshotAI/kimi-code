@@ -30,6 +30,7 @@ import {
   createKimiHarness,
   createKimiHarnessV2,
   ErrorCodes,
+  isKimiError,
   SDKRpcClient,
   SDKRpcClientV2,
   type ApprovalRequest,
@@ -3732,8 +3733,9 @@ async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 /**
- * Both engines must reject with the same code and the same message (home
- * prefixes scrubbed — the file-store errors embed the mcp.json path).
+ * Both engines must reject with the same class, code, and message (home
+ * prefixes scrubbed — the file-store errors embed the mcp.json path). The
+ * class is pinned because SDK consumers branch on `isKimiError`.
  */
 async function expectSameMcpRejection(
   pair: GlobalMcpParityPair,
@@ -3745,8 +3747,12 @@ async function expectSameMcpRejection(
     captureRejection(v2Call(pair.v2)),
   ]);
   const payload = (error: unknown): unknown => {
-    const err = error as { code?: unknown; message?: unknown };
-    return { code: err.code ?? null, message: String(err.message ?? error) };
+    const err = error as { name?: unknown; code?: unknown; message?: unknown };
+    return {
+      name: err.name ?? null,
+      code: err.code ?? null,
+      message: String(err.message ?? error),
+    };
   };
   expect(scrubHomePrefixes(payload(v2Error), pair.v2Home)).toEqual(
     scrubHomePrefixes(payload(v1Error), pair.v1Home),
@@ -3769,7 +3775,7 @@ function expectSameManagedServers(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('classifies global MCP authorization identically from persisted credentials', async () => {
+  it('detects implicit OAuth requirements identically by default', async () => {
     const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const pair = await makeGlobalMcpParityPair({
@@ -3817,7 +3823,6 @@ describe('v1↔v2 global MCP parity', () => {
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
       ]);
-      expect(v2Statuses).toEqual(v1Statuses);
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
@@ -3829,6 +3834,7 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'disabled-oauth', authStatus: 'not-applicable' },
       ]);
+      expect(v2Statuses).toEqual(v1Statuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
@@ -3919,14 +3925,12 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-required', authStatus: 'oauth-required' },
       ]);
 
-      // The legacy name-based list stays offline (verify is opt-in): a
-      // stored grant is `oauth-authorized` even when the server would reject
-      // it — the deliberate offline false positive.
+      // The name-based list preserves implicit no-grant detection when verify
+      // is omitted, while stored grants are classified from disk.
       const [v1LegacyStatuses, v2LegacyStatuses] = await Promise.all([
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
       ]);
-      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
       expect(v1LegacyStatuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
@@ -3938,6 +3942,27 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'unavailable-explicit', authStatus: 'oauth-required' },
         { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
       ]);
+      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
+
+      // verify: false stays fully offline — the challenging `detected` server
+      // is no longer probed (it flips to `not-applicable`), while pinned and
+      // stored-grant entries keep their offline classification.
+      const [v1OfflineStatuses, v2OfflineStatuses] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses({ verify: false }),
+        pair.v2.listGlobalMcpServerAuthStatuses({ verify: false }),
+      ]);
+      expect(v1OfflineStatuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-authorized' },
+        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
+        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
+      ]);
+      expect(v2OfflineStatuses).toEqual(v1OfflineStatuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
@@ -4170,6 +4195,100 @@ describe('v1↔v2 global MCP parity', () => {
         (client) => client.getGlobalMcpServer('missing'),
         (client) => client.getGlobalMcpServer('missing'),
       );
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
+  it.each([
+    [
+      'add',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.addGlobalMcpServer(
+          { name: 'project', transport: 'stdio', command: 'replacement' },
+          { cwd },
+        ),
+    ],
+    [
+      'update',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.updateGlobalMcpServer(
+          { name: 'project', transport: 'stdio', command: 'replacement' },
+          { cwd },
+        ),
+    ],
+    [
+      'remove',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.removeGlobalMcpServer('project', { cwd }),
+    ],
+  ])('%s rejects a trusted project-layer entry as read-only on both engines', async (_operation, mutate) => {
+    const pair = await makeGlobalMcpParityPair();
+    const project = await makeTempDir('kimi-sdk-parity-mcp-project-');
+    await mkdir(join(project, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(project, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { project: { command: 'project-command' } } }),
+      'utf-8',
+    );
+    try {
+      await pair.v2.trustWorkspace(project);
+
+      await expectSameMcpRejection(
+        pair,
+        (client) => mutate(client, project),
+        (client) => mutate(client, project),
+      );
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
+  it('threads cwd through project-layer inspection and authorization on both engines', async () => {
+    const pair = await makeGlobalMcpParityPair();
+    const project = await makeTempDir('kimi-sdk-parity-mcp-auth-project-');
+    await mkdir(join(project, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(project, '.kimi-code', 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'project-stdio': { command: 'project-command' },
+          'project-oauth': {
+            transport: 'http',
+            url: 'https://project.example.test/mcp',
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf-8',
+    );
+    try {
+      await pair.v2.trustWorkspace(project);
+
+      const [v1Inspections, v2Inspections] = await Promise.all([
+        pair.v1.inspectAppMcpServers([{ source: 'global', name: 'project-stdio' }], {
+          cwd: project,
+        }),
+        pair.v2.inspectAppMcpServers([{ source: 'global', name: 'project-stdio' }], {
+          cwd: project,
+        }),
+      ]);
+      const summarize = (inspections: typeof v1Inspections) =>
+        inspections.map(({ runtimeName, authStatus }) => ({ runtimeName, authStatus }));
+      expect(summarize(v2Inspections)).toEqual(summarize(v1Inspections));
+      expect(summarize(v1Inspections)).toEqual([
+        { runtimeName: 'project-stdio', authStatus: 'not-applicable' },
+      ]);
+
+      await expectSameMcpRejection(
+        pair,
+        (client) => client.beginGlobalMcpServerAuth('project-stdio', { cwd: project }),
+        (client) => client.beginGlobalMcpServerAuth('project-stdio', { cwd: project }),
+      );
+      await Promise.all([
+        pair.v1.resetGlobalMcpServerAuth('project-oauth', { cwd: project }),
+        pair.v2.resetGlobalMcpServerAuth('project-oauth', { cwd: project }),
+      ]);
     } finally {
       await closeGlobalMcpPair(pair);
     }
@@ -4661,6 +4780,50 @@ describe('v1↔v2 session MCP parity', () => {
       ]);
       expect(v1File).not.toContain('project-owned');
       expect(v2File).not.toContain('project-owned');
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  }, 20_000);
+
+  it('a persisted session add over an enabled plugin entry follows each engine\'s precedence', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionMcpPair();
+    const pluginSource = await makeTempDir('kimi-sdk-parity-mcp-plugin-src-');
+    await writeFixturePlugin(pluginSource);
+    try {
+      await Promise.all([
+        pair.v1.installPlugin(pluginSource),
+        pair.v2.installPlugin(pluginSource),
+      ]);
+      await createOnBoth(pair, { id: 'session_parity_mcp_plugin_shadow' });
+      const input = { sessionId: 'session_parity_mcp_plugin_shadow' } as const;
+      const server: McpServerConfig = {
+        name: 'plugin-parity-plugin:parity-stdio',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [MCP_STDIO_FIXTURE],
+      };
+
+      // Deliberate divergence: v1 ranks an enabled plugin above the file
+      // layers, so a persisted add could never take effect and rejects
+      // (`isKimiError` is the SDK's public error class on both engines). v2
+      // keeps the file layers above plugins, so the same add is a real
+      // override: the user-level write lands and shadows the plugin.
+      const [v1Error, v2Info] = await Promise.all([
+        captureRejection(pair.v1.addSessionMcpServer({ ...input, server, persist: true })),
+        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
+      ]);
+      expect(isKimiError(v1Error)).toBe(true);
+      expect(v1Error).toMatchObject({ code: 'request.invalid' });
+      expect(v2Info.name).toBe('plugin-parity-plugin:parity-stdio');
+
+      const [v1File, v2File] = await Promise.all([
+        readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+        readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+      ]);
+      expect(v1File).not.toContain('plugin-parity-plugin:parity-stdio');
+      expect(v2File).toContain('plugin-parity-plugin:parity-stdio');
     } finally {
       await closeSessionPair(pair);
       restoreEnv();

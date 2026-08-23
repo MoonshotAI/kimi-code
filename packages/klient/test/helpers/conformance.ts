@@ -322,6 +322,171 @@ export function defineKlientConformance(
       expect(typeof status.loggedIn).toBe('boolean');
     });
 
+    it('global mcp round-trips user-level server CRUD', async () => {
+      const mcp = target.klient.global.mcp;
+      const cwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-crud-'));
+      try {
+        expect(await mcp.list({ cwd })).toEqual([]);
+
+        const added = await mcp.add({
+          cwd,
+          server: {
+            name: 'conf-mcp',
+            transport: 'stdio',
+            command: 'conf-command',
+            env: { TOKEN: 'secret' },
+          },
+        });
+        const entry = added.find((server) => server.name === 'conf-mcp');
+        // Mutable (user-level) entries carry the full config for edit prefill.
+        expect(entry).toMatchObject({
+          name: 'conf-mcp',
+          source: 'global',
+          mutable: true,
+          config: { transport: 'stdio', command: 'conf-command', env: { TOKEN: 'secret' } },
+        });
+
+        await mcp.update({
+          cwd,
+          server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command-2' },
+        });
+        expect((await mcp.get({ name: 'conf-mcp', cwd })).config).toMatchObject({
+          command: 'conf-command-2',
+        });
+
+        await mcp.remove({ name: 'conf-mcp', cwd });
+        expect(await mcp.list({ cwd })).toEqual([]);
+        await expect(mcp.get({ name: 'conf-mcp', cwd })).rejects.toMatchObject({
+          name: 'RPCError',
+          code: 40408,
+        });
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('global mcp probes an inline server config without persisting it', async () => {
+      const mcp = target.klient.global.mcp;
+      // Inline probe against a scratch cwd: the binary runs but never
+      // speaks MCP, so the connection test reports a clean failure.
+      const probeCwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-probe-'));
+      try {
+        const probe = await mcp.test({
+          server: {
+            name: 'conf-probe',
+            transport: 'stdio',
+            command: process.execPath,
+            args: ['--version'],
+            startupTimeoutMs: 10_000,
+          },
+          cwd: probeCwd,
+        });
+        expect(probe.success).toBe(false);
+        expect(typeof probe.output).toBe('string');
+      } finally {
+        await rm(probeCwd, { recursive: true, force: true });
+      }
+      expect(await mcp.list()).toEqual([]);
+    });
+
+    it('global mcp resolves locators and classifies auth offline', async () => {
+      const mcp = target.klient.global.mcp;
+      await mcp.add({
+        server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command' },
+      });
+      try {
+        // The locator surface: resolve a legacy name, inspect nothing/all.
+        expect(await mcp.resolveByName({ name: 'conf-mcp' })).toEqual({
+          source: 'global',
+          name: 'conf-mcp',
+        });
+        expect(await mcp.inspect({ targets: [] })).toEqual([]);
+        // An omitted `targets` ahead of a present options arg must mean "the
+        // whole catalog" on every transport (ipc encodes it as `null`).
+        expect((await mcp.inspect({})).map((i) => i.runtimeName)).toContain('conf-mcp');
+        await expect(
+          mcp.inspect({ targets: [{ source: 'global', name: 'conf-missing' }] }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40408 });
+
+        // Offline auth classification of a stdio server needs no probe, and
+        // an OAuth flow against a stdio target is request.invalid → 40001.
+        expect(await mcp.authStatuses()).toEqual([
+          { name: 'conf-mcp', authStatus: 'not-applicable' },
+        ]);
+        await expect(
+          mcp.beginAuth({ locator: { source: 'global', name: 'conf-mcp' } }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40001 });
+      } finally {
+        await mcp.remove({ name: 'conf-mcp' });
+      }
+    });
+
+    it('global mcp completeAuth rejects an unknown flowId with 40001', async () => {
+      const mcp = target.klient.global.mcp;
+      await expect(mcp.completeAuth({ flowId: 'conf-unknown-flow' })).rejects.toMatchObject({
+        name: 'RPCError',
+        code: 40001,
+      });
+    });
+
+    it('global mcp OAuth failures map to the 40929 wire code on every transport', async () => {
+      const mcp = target.klient.global.mcp;
+      await mcp.add({
+        server: {
+          name: 'conf-oauth-failure',
+          transport: 'http',
+          url: 'http://127.0.0.1:1/mcp',
+          auth: 'oauth',
+        },
+      });
+      try {
+        await expect(
+          mcp.beginAuth({ locator: { source: 'global', name: 'conf-oauth-failure' } }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40929 });
+      } finally {
+        await mcp.remove({ name: 'conf-oauth-failure' });
+      }
+    });
+
+    it('global mcp cancelAuth ignores an unknown flowId', async () => {
+      const mcp = target.klient.global.mcp;
+      await expect(mcp.cancelAuth({ flowId: 'conf-unknown-flow' })).resolves.toBeUndefined();
+    });
+
+    it('global mcp resetAuth clears a remote oauth server through the transport', async () => {
+      const mcp = target.klient.global.mcp;
+      await mcp.add({
+        server: {
+          name: 'conf-oauth',
+          transport: 'http',
+          url: 'https://example.com/mcp',
+          auth: 'oauth',
+        },
+      });
+      try {
+        // Invalidate is offline: no stored grant and no network needed.
+        await expect(
+          mcp.resetAuth({ locator: { source: 'global', name: 'conf-oauth' } }),
+        ).resolves.toBeUndefined();
+      } finally {
+        await mcp.remove({ name: 'conf-oauth' });
+      }
+    });
+
+    it('global mcp resetAuth rejects a stdio locator with 40001', async () => {
+      const mcp = target.klient.global.mcp;
+      await mcp.add({
+        server: { name: 'conf-stdio', transport: 'stdio', command: 'conf-command' },
+      });
+      try {
+        await expect(
+          mcp.resetAuth({ locator: { source: 'global', name: 'conf-stdio' } }),
+        ).rejects.toMatchObject({ name: 'RPCError', code: 40001 });
+      } finally {
+        await mcp.remove({ name: 'conf-stdio' });
+      }
+    });
+
     it('agent runtime binding is available through every transport', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
