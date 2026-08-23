@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -63,6 +63,7 @@ export class PluginManager {
   }
 
   async install(source: string): Promise<PluginRecord> {
+    await discardStaleManagedRoots(this.kimiHomeDir);
     const resolved = resolveInstallSource(source);
 
     let managedCopy: ManagedPluginCopy | undefined;
@@ -461,6 +462,18 @@ async function discardPreviousManagedRoot(previousRoot: string | undefined): Pro
   // MCP children (or Windows AV) may still hold the old tree; never fail the
   // install because deferred cleanup could not finish immediately.
   await rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
+}
+
+async function discardStaleManagedRoots(kimiHomeDir: string): Promise<void> {
+  const managedDir = path.join(kimiHomeDir, 'plugins', 'managed');
+  const entries = await readdir(managedDir).catch(() => []);
+  await Promise.all(
+    entries
+      .filter((name) => name.endsWith('-previous'))
+      .map((name) =>
+        rm(path.join(managedDir, name), { recursive: true, force: true }).catch(() => undefined),
+      ),
+  );
 }
 
 async function recordFrom(input: {

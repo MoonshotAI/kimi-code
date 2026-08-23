@@ -366,6 +366,22 @@ describe('PluginManager', () => {
     expect(manager.list()).toHaveLength(1);
   });
 
+  it('install() removes stale previous managed roots left by an earlier locked process', async () => {
+    const home = await makeKimiHome();
+    const managedDir = path.join(home, 'plugins', 'managed');
+    const staleRoot = path.join(managedDir, 'demo-stale-previous');
+    await mkdir(staleRoot, { recursive: true });
+    await writeFile(path.join(staleRoot, 'old.txt'), 'old', 'utf8');
+
+    const root = await makePlugin('demo', { version: '1.0.0' });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+
+    const leftovers = (await readdir(managedDir)).filter((name) => name.endsWith('-previous'));
+    expect(leftovers).toEqual([]);
+  });
+
   it('keeps a plugin in error state instead of losing it on a broken manifest', async () => {
     const home = await makeKimiHome();
     const root = await makePlugin('demo');
