@@ -133,6 +133,7 @@ function show(el: HTMLElement): void {
     // TooltipBubble's positioned flag).
     bubble.style.top = '-9999px';
     bubble.style.left = '0px';
+    bubble.setAttribute('aria-hidden', 'false');
     bubble.classList.add(VISIBLE_CLASS);
     position();
     visible = true;
@@ -145,6 +146,9 @@ function hide(): void {
   anchor = null;
   if (!bubble) return;
   bubble.classList.remove(VISIBLE_CLASS);
+  // opacity:0 + pointer-events:none does NOT leave the a11y tree — a stale
+  // tooltip with role="tooltip" would still be reachable in browse mode.
+  bubble.setAttribute('aria-hidden', 'true');
   visible = false;
 }
 
@@ -170,12 +174,19 @@ export function hideCodeTooltipIfAnchorWithin(root: HTMLElement | null): void {
 function onMouseover(event: MouseEvent): void {
   const owner = ownerOf(event.target);
   if (owner === anchor && (visible || showTimer !== undefined)) return;
-  if (owner !== anchor) hide();
-  if (owner) show(owner);
+  // Only react to events on tip owners. An UNRELATED target must not close
+  // the current tip — least of all one shown via keyboard focus while the
+  // pointer roams elsewhere (leaving the anchor is mouseout's job).
+  if (owner) {
+    hide();
+    show(owner);
+  }
 }
 
 function onMouseout(event: MouseEvent): void {
-  if (!anchor) return;
+  // Only the anchor's own departure hides: every mouseout in the document
+  // bubbles here, and an unrelated one must not close the tip.
+  if (!anchor || !(event.target instanceof Element) || !anchor.contains(event.target)) return;
   const to = event.relatedTarget;
   if (to instanceof Element && anchor.contains(to)) return;
   hide();
@@ -186,7 +197,9 @@ function onFocusin(event: FocusEvent): void {
   if (owner) show(owner);
 }
 
-function onFocusout(): void {
+function onFocusout(event: FocusEvent): void {
+  // Same scoping: some other element losing focus is not our anchor leaving.
+  if (event.target !== anchor) return;
   hide();
 }
 
@@ -211,6 +224,7 @@ export function ensureCodeTooltip(): void {
   bubble = document.createElement('div');
   bubble.className = BUBBLE_CLASS;
   bubble.setAttribute('role', 'tooltip');
+  bubble.setAttribute('aria-hidden', 'true');
   document.body.appendChild(bubble);
 
   document.addEventListener('mouseover', onMouseover);

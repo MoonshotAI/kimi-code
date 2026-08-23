@@ -69,6 +69,19 @@ class StubElement {
   htmlSetCount = 0;
   /** Number of setAttribute calls — stands in for attribute mutations. */
   attrSetCount = 0;
+  /** Minimal CSSStyleDeclaration stub (custom properties only). */
+  style = {
+    props: new Map<string, string>(),
+    setProperty(name: string, value: string): void {
+      this.props.set(name, value);
+    },
+    getPropertyValue(name: string): string {
+      return this.props.get(name) ?? '';
+    },
+    removeProperty(name: string): void {
+      this.props.delete(name);
+    },
+  };
   private html = '';
   private attrs = new Map<string, string>();
   private listeners = new Map<string, Array<(event: StubEvent) => void>>();
@@ -174,6 +187,22 @@ class StubElement {
       return this.findByClass(selector.slice('button.'.length), false);
     }
     return this.findByClass(selector.replace(/^\./, ''), false);
+  }
+  /** Only the selectors the production code uses: '[data-line]' and
+      '.cls[:not(.other)]' (the :not() part is honoured). */
+  querySelectorAll(selector: string): StubElement[] {
+    const out: StubElement[] = [];
+    const m = selector.match(/^\.([\w-]+)(?::not\(\.([\w-]+)\))?$/);
+    const wantAttr = selector === '[data-line]';
+    const walk = (el: StubElement): void => {
+      for (const child of el.children) {
+        if (wantAttr && child.attrs.has('data-line')) out.push(child);
+        else if (m && child.classList.contains(m[1]!) && !(m[2] && child.classList.contains(m[2]!))) out.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return out;
   }
 }
 
@@ -436,6 +465,32 @@ describe('applyCodeBlockState', () => {
     expect(() => applyCodeBlockState(container)).not.toThrow();
     expect(stubOf(container).classList.contains(CODE_WRAP_CLASS)).toBe(true);
   });
+
+  it('sizes --md-nums-gutter from the digit count and clears it when numbers go off', () => {
+    const { container } = makeContainer({ withPierre: true });
+    const host = pierreHostOf(container);
+    // 12 code lines → 2 digits → clamped to the 4ch minimum (no shrink).
+    for (let i = 0; i < 12; i++) {
+      const line = new StubElement();
+      line.setAttribute('data-line', '');
+      host.appendChild(line);
+    }
+    ensureCodeBlockToggles(container, LABELS);
+    numsToggleOf(container).click(); // numbers on
+    expect(host.shadowPre!.style.getPropertyValue('--md-nums-gutter')).toBe('4ch'); // clamped: never shrinks below 4ch
+
+    // 1002 lines → 4 digits → gutter 5ch (a fixed 4ch box would clip).
+    for (let i = 0; i < 990; i++) {
+      const line = new StubElement();
+      line.setAttribute('data-line', '');
+      host.appendChild(line);
+    }
+    applyCodeBlockState(container);
+    expect(host.shadowPre!.style.getPropertyValue('--md-nums-gutter')).toBe('5ch');
+
+    numsToggleOf(container).click(); // numbers off → property removed
+    expect(host.shadowPre!.style.getPropertyValue('--md-nums-gutter')).toBe('');
+  });
 });
 
 describe('locale switch (re-ensure with new labels)', () => {
@@ -686,7 +741,8 @@ describe('ensureCodeCopyTooltip (streaming-phase copy tooltip)', () => {
 
 describe('CODE_BLOCK_UNSAFE_CSS (pierre host styles)', () => {
   it('gates the line-number counter on the numbers toggle attribute, in both modes', () => {
-    expect(CODE_BLOCK_UNSAFE_CSS).toContain('pre[data-md-nums="on"] { counter-reset:');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('pre[data-md-nums="on"] {');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('counter-reset:');
     expect(CODE_BLOCK_UNSAFE_CSS).toContain('pre[data-md-nums="on"] [data-line] {');
     expect(CODE_BLOCK_UNSAFE_CSS).toContain('counter-increment:');
     expect(CODE_BLOCK_UNSAFE_CSS).toContain('content: counter(');
@@ -700,10 +756,28 @@ describe('CODE_BLOCK_UNSAFE_CSS (pierre host styles)', () => {
     expect(CODE_BLOCK_UNSAFE_CSS).toContain('padding-inline: var(--space-3);');
   });
 
-  it('pins the counter box at 3ch so 4+-digit numbers overflow left instead of widening the gutter', () => {
-    expect(CODE_BLOCK_UNSAFE_CSS).toContain('width: 3ch;');
+  it('tracks the counter gutter off --md-nums-gutter (digit-count driven, 4ch fallback)', () => {
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('width: calc(var(--md-nums-gutter, 4ch) - 1ch);');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('margin-left: calc(-1 * var(--md-nums-gutter, 4ch));');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('padding-left: calc(var(--space-3) + var(--md-nums-gutter, 4ch));');
     expect(CODE_BLOCK_UNSAFE_CSS).toContain('overflow: visible;');
     expect(CODE_BLOCK_UNSAFE_CSS).toContain('text-align: right;');
+    // No fixed box: a hardcoded 3ch width clipped 5+-digit numbers.
+    expect(CODE_BLOCK_UNSAFE_CSS).not.toContain('width: 3ch;');
+  });
+
+  it('paints the gutter band and separator as a solid pseudo block from tokens (no gradients — §06)', () => {
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('pre[data-md-nums="on"]::after {');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('background: var(--color-selected);');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('border-right: var(--p-hairline) solid var(--color-line);');
+    // Band above in-flow row backgrounds (z-index:1), number ink above the
+    // band (position:relative + z-index:2) — scoped by isolation: isolate.
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('z-index: 1;');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('position: relative;');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('z-index: 2;');
+    expect(CODE_BLOCK_UNSAFE_CSS).toContain('isolation: isolate;');
+    const withoutComments = CODE_BLOCK_UNSAFE_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(withoutComments).not.toContain('gradient');
   });
 });
 
@@ -741,6 +815,7 @@ class TipStubEl {
     return child;
   }
   contains(el: TipStubEl): boolean {
+    if (el === this) return true; // DOM spec: el.contains(el) === true
     return this.children.some((c) => c === el || c.contains(el));
   }
   closest(selector: string): TipStubEl | null {
@@ -783,14 +858,16 @@ describe('codeTooltip singleton (ensureCodeTooltip)', () => {
   function visibleNow(): boolean {
     return bubble().classList.contains('md-code-tip--visible');
   }
+  let lastAnchor: TipStubEl | null = null;
   function hoverAnchor(text: string): TipStubEl {
     const el = new TipStubEl();
     el.setAttribute(CODE_TIP_ATTR, text);
+    lastAnchor = el;
     docListeners.get('mouseover')![0]!({ target: el });
     return el;
   }
   function leave(): void {
-    docListeners.get('mouseout')![0]!({ relatedTarget: null });
+    docListeners.get('mouseout')![0]!({ target: lastAnchor, relatedTarget: null });
   }
 
   beforeAll(() => {
@@ -914,6 +991,33 @@ describe('codeTooltip singleton (ensureCodeTooltip)', () => {
     hideCodeTooltipIfAnchorWithin(owningRoot);
     expect(visibleNow()).toBe(false);
   });
+
+  it('ignores unrelated pointer/focus traffic while a tip is shown', () => {
+    hoverAnchor('Copy code'); // immediate timer → visible
+    expect(visibleNow()).toBe(true);
+    const stray = new TipStubEl();
+    // A mouseover somewhere unrelated must not close it (keyboard-shown tips
+    // would otherwise die as soon as the pointer roams).
+    docListeners.get('mouseover')![0]!({ target: stray });
+    expect(visibleNow()).toBe(true);
+    // Nor a mouseout from an unrelated element.
+    docListeners.get('mouseout')![0]!({ target: stray, relatedTarget: null });
+    expect(visibleNow()).toBe(true);
+    // Nor a focusout on an unrelated element.
+    docListeners.get('focusout')![0]!({ target: stray });
+    expect(visibleNow()).toBe(true);
+    // …but leaving the anchor itself still hides.
+    leave();
+    expect(visibleNow()).toBe(false);
+  });
+
+  it('keeps the hidden bubble out of the a11y tree (aria-hidden flips with visibility)', () => {
+    expect(bubble().getAttribute('aria-hidden')).toBe('true');
+    hoverAnchor('Enable word wrap'); // immediate timer → visible
+    expect(bubble().getAttribute('aria-hidden')).toBe('false');
+    leave();
+    expect(bubble().getAttribute('aria-hidden')).toBe('true');
+  });
 });
 
 describe('pressed-state CSS hooks (Markdown.vue style block)', () => {
@@ -979,7 +1083,7 @@ describe('pressed-state CSS hooks (Markdown.vue style block)', () => {
     expect(signRule).toContain('width: var(--diff-sign-col);');
     expect(signRule).not.toContain('width: 14px');
     // The counter gutter derives its reservation from the same token.
-    const counterRow = ruleBody('.diff-wrap.md-code-nums .diff-line:not(.diff-hunk) {');
+    const counterRow = ruleBody('.diff-wrap.md-code-nums .diff-line {');
     expect(counterRow).toContain('var(--diff-sign-col)');
     const counterBefore = ruleBody('.diff-wrap.md-code-nums .diff-line:not(.diff-hunk)::before {');
     expect(counterBefore).toContain('var(--diff-sign-col)');
@@ -989,9 +1093,50 @@ describe('pressed-state CSS hooks (Markdown.vue style block)', () => {
     expect(withoutComments).not.toMatch(/\.diff[^{]*\{[^}]*\b14px\b/);
   });
 
-  it('diff counter box is pinned at 3ch with left overflow for 4+-digit numbers', () => {
+  it('diff counter gutter tracks --md-nums-gutter (no fixed box to clip 5+-digit numbers)', () => {
     const beforeRule = ruleBody('.diff-wrap.md-code-nums .diff-line:not(.diff-hunk)::before {');
-    expect(beforeRule).toContain('width: 3ch;');
+    expect(beforeRule).toContain('width: calc(var(--md-nums-gutter, 4ch) - 1ch);');
     expect(beforeRule).toContain('overflow: visible;');
+    expect(beforeRule).not.toContain('width: 3ch;');
+  });
+
+  it('every diff row reserves the gutter — hunk headers included (band never covers their text)', () => {
+    const lineRule = ruleBody('.diff-wrap.md-code-nums .diff-line {');
+    expect(lineRule).toContain('var(--md-nums-gutter, 4ch)');
+    expect(lineRule).toContain('padding-left:');
+    // The counter itself stays on numbered rows only.
+    const counterRule = ruleBody('.diff-wrap.md-code-nums .diff-line:not(.diff-hunk) {');
+    expect(counterRule).toContain('counter-increment:');
+    expect(counterRule).not.toContain('padding-left');
+  });
+
+  it('diff-bar IconButton icons render at the 14px action-icon scale, not the primitive 16px default', () => {
+    const rule = ruleBody('.diff-bar :deep(.ui-icon-button svg) {');
+    expect(rule).toContain('width: var(--p-ic-sm);');
+    expect(rule).toContain('height: var(--p-ic-sm);');
+  });
+
+  it('diff numbers paint the same token-driven gutter band and separator', () => {
+    expect(ruleBody('.diff-wrap.md-code-nums .diff-pre {')).toContain('isolation: isolate;');
+    const rule = ruleBody('.diff-wrap.md-code-nums .diff-pre::after {');
+    expect(rule).toContain('background: var(--color-selected);');
+    expect(rule).toContain('border-right: var(--p-hairline) solid var(--color-line);');
+    expect(rule).toContain('z-index: 1;');
+    const inkRule = ruleBody('.diff-wrap.md-code-nums .diff-line:not(.diff-hunk)::before {');
+    expect(inkRule).toContain('position: relative;');
+    expect(inkRule).toContain('z-index: 2;');
+    expect(rule.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('gradient');
+  });
+
+  it('code block vertical padding comes from the --code-pad-block token on every path', () => {
+    const tokenSheet = readFileSync(new URL('../../../app-ui/src/style.css', import.meta.url), 'utf8');
+    expect(tokenSheet).toContain('--code-pad-block:');
+    expect(ruleBody('.md :deep(.code-block-container .code-pre-fallback) {')).toContain('padding: var(--code-pad-block) var(--space-3);');
+    expect(ruleBody('\n.diff-pre {')).toContain('padding: var(--code-pad-block) 0;');
+    expect(ruleBody('.md :deep(.code-editor-container) {')).toContain('--diffs-gap-block: var(--code-pad-block);');
+    // No path may keep the old --space-2 block padding.
+    const withoutComments = vue.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(withoutComments).not.toContain('padding: var(--space-2) var(--space-3);');
+    expect(withoutComments).not.toContain('padding: var(--space-2) 0;');
   });
 });

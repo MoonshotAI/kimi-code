@@ -699,6 +699,25 @@ function toggleDiffNums(i: number): void {
   const key = diffKeys.value[i];
   if (key !== undefined) toggleWrapIndex(numberedDiffs, key);
 }
+// Size every numbered diff's number gutter to its digit count (same contract
+// as the pierre path in codeWrap.ts): a fixed gutter lets 5+-digit numbers
+// overflow the --space-3 inset and clip at the scroll boundary. Re-measured
+// whenever the toggles or the content change; un-numbered blocks drop the
+// property so the 4ch fallback applies.
+watch([() => numberedDiffs.size, segments], async () => {
+  await nextTick();
+  mdRef.value
+    ?.querySelectorAll<HTMLElement>('.diff-wrap .diff-pre')
+    .forEach((pre) => {
+      if (!pre.closest('.diff-wrap')?.classList.contains('md-code-nums')) {
+        pre.style.removeProperty('--md-nums-gutter');
+        return;
+      }
+      const rows = pre.querySelectorAll('.diff-line:not(.diff-hunk)').length;
+      // Clamp at 4: only widen for 4+ digits, never shrink the short block.
+      pre.style.setProperty('--md-nums-gutter', `${Math.max(String(rows).length + 1, 4)}ch`);
+    });
+});
 </script>
 
 <template>
@@ -1139,13 +1158,13 @@ function toggleDiffNums(i: number): void {
 }
 /* Pierre renders the highlighted code inside a shadow root. Its native gap
    variable inherits through that boundary; the loading fallback (light DOM)
-   gets the same --space-2 block padding from its own rule below, so both
-   layers track the token. Line height uses the shared --leading-normal
+   gets the same --code-pad-block block padding from its own rule below, so
+   both layers track the token. Line height uses the shared --leading-normal
    token (1.5, same as HighlightedCode in the file preview / diff detail) so
    every rendering path tracks it without pinning a px value anywhere. */
 .md :deep(.code-editor-container) {
   line-height: var(--leading-normal);
-  --diffs-gap-block: var(--space-2);
+  --diffs-gap-block: var(--code-pad-block);
 }
 .md :deep(.code-editor-container diffs-container) {
   --diffs-line-height: var(--leading-normal);
@@ -1154,21 +1173,21 @@ function toggleDiffNums(i: number): void {
    it while the settled stream-diffs block honors lineNumbers:false — the
    gutter (and its reserved padding) popping in and out on every load is a
    visible flash. Hide the fallback gutter, and give the fallback the exact
-   settled padding (block --space-2, inline --space-3 aligned with the header
-   icon) plus the shared --leading-normal line height over the inline
+   settled padding (block --code-pad-block, inline --space-3 aligned with the
+   header icon) plus the shared --leading-normal line height over the inline
    1.5×-font-size default upstream stamps on the pre, so the fallback →
    highlighted swap is layout-stable. */
 .md :deep(.code-pre-fallback > .markstream-pre__line-numbers) {
   display: none;
 }
 .md :deep(.code-block-container .code-pre-fallback) {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--code-pad-block) var(--space-3);
   line-height: var(--leading-normal) !important;
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(.markstream-pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
   margin: 0;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--code-pad-block) var(--space-3);
   overflow-x: auto;
   font: var(--text-sm)/var(--leading-normal) var(--font-mono);
 }
@@ -1536,6 +1555,12 @@ function toggleDiffNums(i: number): void {
 .diff-bar :deep(.ui-icon-button[aria-pressed='true']:hover) {
   background: var(--color-selected-hover);
 }
+/* IconButton sm force-sizes its svg to --p-ic-md (IconButton.vue); the diff
+   bar follows the markstream header's 14px action-icon scale (--p-ic-sm). */
+.diff-bar :deep(.ui-icon-button svg) {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+}
 /* Diff wrap on (.md-code-wrap on .diff-wrap): the pre wraps; the code
    column's max-content width — what keeps long lines on one line in scroll
    mode — relaxes to the container so lines actually fold. */
@@ -1562,26 +1587,61 @@ function toggleDiffNums(i: number): void {
    (codeWrap.ts CODE_BLOCK_UNSAFE_CSS): the toggle is independent of wrap and
    shows numbers in BOTH modes; a wrapped continuation gets none and aligns
    with the code column. Real diff rows are numbered with a pure-CSS counter
-   (hunk headers are not file lines and are skipped). The 4ch number gutter
-   (3ch digits + 1ch gap) plus the sign column (--diff-sign-col) are carved out of the
+   (hunk headers are not file lines and are skipped). The number gutter
+   (--md-nums-gutter, sized to the block's digit count with a 4ch fallback)
+   plus the sign column (--diff-sign-col) are carved out of the
    row's left padding, so the gutter's left edge stays at --space-3 and
    continuations land exactly under the text. Generated content never enters
    copy. */
 .diff-wrap.md-code-nums .diff-pre {
   counter-reset: md-diff-line;
+  position: relative;
+  /* Local stacking context: keeps the band and the number ink's z-index
+     layers scoped to this pre instead of leaking into the page-level
+     stacking context. Inside it the order is row backgrounds < band (1) <
+     number ink (2). */
+  isolation: isolate;
+}
+.diff-wrap.md-code-nums .diff-pre::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--space-3) + var(--md-nums-gutter, 4ch));
+  background: var(--color-selected);
+  border-right: var(--p-hairline) solid var(--color-line);
+  pointer-events: none;
+  user-select: none;
+  /* Same solid pseudo block as the markstream path: travels with the numbers
+     on horizontal scroll and runs unbroken across wrapped rows. z-index:1
+     lifts it above the add/del/hunk ROW backgrounds (in-flow), which would
+     otherwise cover the band on colored rows; the number ink sits at
+     z-index:2 above it. */
+  z-index: 1;
+}
+.diff-wrap.md-code-nums .diff-line {
+  /* Hunk rows are not numbered, but they reserve the SAME gutter + sign
+     column so the band never paints over their text. */
+  padding-left: calc(var(--space-3) + var(--md-nums-gutter, 4ch) + var(--diff-sign-col));
 }
 .diff-wrap.md-code-nums .diff-line:not(.diff-hunk) {
   counter-increment: md-diff-line;
-  padding-left: calc(var(--space-3) + 4ch + var(--diff-sign-col));
 }
 .diff-wrap.md-code-nums .diff-line:not(.diff-hunk)::before {
   content: counter(md-diff-line);
   display: inline-block;
-  /* Fixed 3ch box, digits right-aligned: 4+-digit numbers overflow left
-     (into the --space-3 inset) rather than widening the gutter mid-block. */
-  width: 3ch;
+  /* The gutter tracks --md-nums-gutter (set from the block's digit count by
+     the watcher in the script; 4ch covers ≤999 lines by default): the number
+     box keeps its right edge 1ch off the code column and grows LEFT for
+     wider numbers, so 5+-digit numbers never overflow the --space-3 inset
+     and clip at the scroll boundary. position:relative + z-index:2 lifts the
+     ink above the gutter band (z-index:1) and the row backgrounds. */
+  position: relative;
+  z-index: 2;
+  width: calc(var(--md-nums-gutter, 4ch) - 1ch);
   overflow: visible;
-  margin-left: calc(-1 * (4ch + var(--diff-sign-col)));
+  margin-left: calc(-1 * (var(--md-nums-gutter, 4ch) + var(--diff-sign-col)));
   margin-right: 1ch;
   text-align: right;
   color: var(--color-text-faint);
@@ -1589,7 +1649,7 @@ function toggleDiffNums(i: number): void {
 }
 .diff-pre {
   margin: 0;
-  padding: var(--space-2) 0;
+  padding: var(--code-pad-block) 0;
   overflow-x: auto;
   background: var(--color-surface-sunken);
 }

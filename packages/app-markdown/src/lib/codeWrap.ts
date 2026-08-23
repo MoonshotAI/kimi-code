@@ -140,23 +140,58 @@ pre::selection, pre ::selection {
   background: var(--color-code-selection);
   color: var(--color-code-selection-text);
 }
-pre[data-md-nums="on"] { counter-reset: md-code-line; }
+pre[data-md-nums="on"] {
+  counter-reset: md-code-line;
+  position: relative;
+  /* Local stacking context: keeps the band and the number ink's z-index
+     layers scoped to this pre instead of leaking into the page-level
+     stacking context. Inside it the order is row backgrounds < band (1) <
+     number ink (2). */
+  isolation: isolate;
+}
+pre[data-md-nums="on"]::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--space-3) + var(--md-nums-gutter, 4ch));
+  background: var(--color-selected);
+  border-right: var(--p-hairline) solid var(--color-line);
+  pointer-events: none;
+  user-select: none;
+  /* Gutter band + separator as one solid pseudo block (the design system
+     forbids gradient backgrounds, so no gradient strip): absolutely
+     positioned inside the scroller, so it travels with the numbers on
+     horizontal scroll and runs unbroken across wrapped lines. Inside the
+     pre's isolated stacking context it sits at z-index:1 — above any
+     in-flow row backgrounds, while the number ink is lifted to z-index:2
+     above it. The fills wash (--color-selected) is the only rung that
+     separates from the code well in BOTH themes — the surface tokens alias
+     the well in light mode. */
+  z-index: 1;
+}
 pre[data-md-nums="on"] [data-line] {
   counter-increment: md-code-line;
-  padding-left: calc(var(--space-3) + 4ch);
+  padding-left: calc(var(--space-3) + var(--md-nums-gutter, 4ch));
 }
 pre[data-md-nums="on"] [data-no-newline] {
-  padding-left: calc(var(--space-3) + 4ch);
+  padding-left: calc(var(--space-3) + var(--md-nums-gutter, 4ch));
 }
 pre[data-md-nums="on"] [data-line]::before {
   content: counter(md-code-line);
   display: inline-block;
-  /* Fixed 3ch box with right-aligned digits: 4+-digit numbers overflow to
-     the LEFT into the --space-3 inset instead of growing the box and
-     shoving the code column sideways at line 1000. */
-  width: 3ch;
+  /* The gutter tracks --md-nums-gutter (applyCodeBlockState sets it from the
+     block's digit count; the 4ch fallback covers ≤999 lines): the number box
+     keeps its right edge 1ch off the code column and grows LEFT for wider
+     numbers, so 5+-digit numbers never overflow the --space-3 inset and
+     clip at the scroll boundary. position:relative + z-index:2 lifts the
+     ink above the gutter band (z-index:1). */
+  position: relative;
+  z-index: 2;
+  width: calc(var(--md-nums-gutter, 4ch) - 1ch);
   overflow: visible;
-  margin-left: -4ch;
+  margin-left: calc(-1 * var(--md-nums-gutter, 4ch));
   margin-right: 1ch;
   text-align: right;
   color: var(--color-text-faint);
@@ -216,7 +251,7 @@ export function applyCodeBlockState(container: HTMLElement): void {
     });
     shadowPreWatchers.set(host, observer);
   }
-  const pre = root.querySelector('pre[data-overflow]');
+  const pre = root.querySelector<HTMLElement>('pre[data-overflow]');
   if (!pre) return;
   const wantedOverflow = container.classList.contains(CODE_WRAP_CLASS) ? 'wrap' : 'scroll';
   if (pre.getAttribute('data-overflow') !== wantedOverflow) {
@@ -225,6 +260,21 @@ export function applyCodeBlockState(container: HTMLElement): void {
   const wantedNums = container.classList.contains(CODE_NUMS_CLASS) ? 'on' : 'off';
   if (pre.getAttribute('data-md-nums') !== wantedNums) {
     pre.setAttribute('data-md-nums', wantedNums);
+  }
+  // Size the number gutter to the block's digit count: a fixed 4ch gutter
+  // lets 5+-digit numbers overflow the --space-3 inset and clip at the
+  // scroll boundary. Recomputed on every replay (shadow rebuilds swap in a
+  // fresh pre) — the CSS falls back to 4ch without this property.
+  if (wantedNums === 'on') {
+    const digits = String(root.querySelectorAll('[data-line]').length).length;
+    // Clamp at 4: only widen for 4+ digits — never shrink the common short
+    // block's gutter below the 4ch it already had.
+    const gutter = `${Math.max(digits + 1, 4)}ch`;
+    if (pre.style.getPropertyValue('--md-nums-gutter') !== gutter) {
+      pre.style.setProperty('--md-nums-gutter', gutter);
+    }
+  } else if (pre.style.getPropertyValue('--md-nums-gutter')) {
+    pre.style.removeProperty('--md-nums-gutter');
   }
 }
 

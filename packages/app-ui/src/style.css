@@ -574,6 +574,10 @@ html[data-color-scheme="dark"] {
      the page keeps --p-selection. */
   --color-code-selection: rgba(23, 131, 255, 0.346);
   --color-code-selection-text: currentColor;
+  /* Code block vertical padding = half the inter-line gap ((leading − 1) / 2
+     × font size ≈ 3.25px at 13px/1.5), so the space above the first line
+     reads exactly like half the spacing between two lines. */
+  --code-pad-block: calc(var(--text-sm) * (var(--leading-normal) - 1) / 2);
   /* Diff sign-column width (rendered ```diff blocks): the sign cell, the
      wrap hanging indent, and the line-number counter gutter all derive from
      here, so a rescale can never strand a hardcoded value. */
