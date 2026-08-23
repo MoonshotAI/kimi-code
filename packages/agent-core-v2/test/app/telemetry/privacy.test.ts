@@ -60,6 +60,7 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('\\\\fileserver\\alice')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\fileserver\\alice\\')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\server\\C$\\Users\\alice\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\server\\team#1\\alice\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\Secret \\file.txt')).toBe(REDACTED);
   });
 
@@ -73,6 +74,9 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
     expect(cleanTelemetryString('C:\\Users\\alice\\app\\node_modules\\pkg\\index.js')).toBe(
       'node_modules/pkg/index.js',
+    );
+    expect(cleanTelemetryString('/home/alice/NODE_MODULES/private-project/secret.js')).toBe(
+      REDACTED,
     );
   });
 

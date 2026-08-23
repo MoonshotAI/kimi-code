@@ -20,9 +20,10 @@ const WINDOWS_TAIL = String.raw`(?:(?:[\\/]${SEGMENT_DIR})+[\\/]|(?:[\\/]${SEGME
 const SEGMENT_DIR_EXTENDED = String.raw`${SEGMENT_DIR} *`;
 const WINDOWS_TAIL_EXTENDED = String.raw`(?:(?:[\\/]${SEGMENT_DIR_EXTENDED})+[\\/]|(?:[\\/]${SEGMENT_DIR_EXTENDED})*[\\/]${FINAL_SEGMENT})`;
 const PATH_BOUNDARY = String.raw`(?![\p{L}\p{M}\p{N}.$_~+\\/-])`;
+const WINDOWS_SHARE = String.raw`[^\\/:*?"<>|\u0000-\u001F]+`;
 
-const WINDOWS_LONG_BASE = String.raw`\\\\\?\\(?:UNC\\[^\s\\/]+\\${SEGMENT_DIR}|[A-Za-z]:)`;
-const WINDOWS_UNC_BASE = String.raw`\\\\[^\s\\/]+\\${SEGMENT_DIR}`;
+const WINDOWS_LONG_BASE = String.raw`\\\\\?\\(?:UNC\\[^\s\\/]+\\${WINDOWS_SHARE}|[A-Za-z]:)`;
+const WINDOWS_UNC_BASE = String.raw`\\\\[^\s\\/]+\\${WINDOWS_SHARE}`;
 const WINDOWS_UNC_OR_LONG = String.raw`(?:${WINDOWS_LONG_BASE}(?:${WINDOWS_TAIL_EXTENDED}|[\\/]?)|${WINDOWS_UNC_BASE}(?:${WINDOWS_TAIL}|[\\/]?))${PATH_BOUNDARY}`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const POSIX_PATH = String.raw`(?:(?:\/${SEGMENT_DIR}){2,}\/|(?:\/${SEGMENT_DIR})+\/${FINAL_SEGMENT})${PATH_BOUNDARY}`;
@@ -30,7 +31,10 @@ const ABSOLUTE_PATH = new RegExp(`${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}|${POSI
 
 function redactAbsolutePath(match: string): string {
   const normalized = match.replaceAll('\\', '/');
-  const index = normalized.toLowerCase().indexOf(NODE_MODULES_MARKER);
+  const windowsPath = /^[A-Za-z]:[\\/]|^\\\\/.test(match);
+  const index = windowsPath
+    ? normalized.toLowerCase().indexOf(NODE_MODULES_MARKER)
+    : normalized.indexOf(NODE_MODULES_MARKER);
   return index === -1 ? REDACTED_PATH : normalized.slice(index);
 }
 
