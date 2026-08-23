@@ -4,8 +4,8 @@ import { literalRulePattern } from '#/tool/rule-match';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
-import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/features/cron/cron-expr';
-import { formatLocalIsoWithOffset } from '#/features/cron/format';
+import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/features/cron/internal/cron-expr';
+import { formatLocalIsoWithOffset } from '#/features/cron/internal/format';
 
 import {
   ICronCreateTool,

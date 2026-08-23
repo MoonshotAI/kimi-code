@@ -14,12 +14,12 @@ import { type CronRuntime } from '#/features/cron/cronAgentRuntime';
 import {
   computeNextCronRun,
   parseCronExpression,
-} from '#/features/cron/cron-expr';
-import { renderCronFireXml } from '#/features/cron/format';
+} from '#/features/cron/internal/cron-expr';
+import { renderCronFireXml } from '#/features/cron/internal/format';
 import {
   jitteredNextCronRunMs,
   oneShotJitteredNextCronRunMs,
-} from '#/features/cron/jitter';
+} from '#/features/cron/internal/jitter';
 import {
   MAX_CRON_JOBS_PER_SESSION,
   type CronCreateInput,
