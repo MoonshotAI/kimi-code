@@ -147,6 +147,24 @@ describe('partitionDroppedItems', () => {
     expect(folderPaths).toEqual(['/work/dir']);
   });
 
+  it('keeps the drag item order interleaved across folders and files (both are document pills now)', () => {
+    const a = new File(['x'], 'a.txt');
+    const dirFile = new File(['x'], 'dir');
+    const b = new File(['y'], 'b.txt');
+    const event = fakeDragEvent([
+      fakeItem({ isDirectory: false, type: 'text/plain', file: a }),
+      fakeItem({ isDirectory: true, file: dirFile }),
+      fakeItem({ isDirectory: false, type: 'text/plain', file: b }),
+    ]);
+    const { items } = partitionDroppedItems(event, () => '/work/dir');
+    // "a.txt, dir/, b.txt" must not collapse into the folder-first grouping.
+    expect(items).toEqual([
+      { kind: 'file', file: a },
+      { kind: 'folder', path: '/work/dir' },
+      { kind: 'file', file: b },
+    ]);
+  });
+
   it('drops unresolvable folders entirely instead of uploading them', () => {
     // No bridge (web): the folder yields no path AND must not land in files.
     const dir = fakeItem({ isDirectory: true });
@@ -248,6 +266,24 @@ describe('partitionPastedItems', () => {
     const { files, folderPaths } = partitionPastedItems(fakeClipboard([noFile]), () => '/x');
     expect(files).toEqual([]);
     expect(folderPaths).toEqual([]);
+  });
+
+  it('keeps the clipboard item order interleaved across folders and files (both are document pills now)', () => {
+    const a = new File(['x'], 'a.txt');
+    const dirFile = new File([], 'dir');
+    const b = new File(['y'], 'b.txt');
+    const cd = fakeClipboard([
+      fakeItem({ isDirectory: false, type: 'text/plain', file: a }),
+      fakeItem({ isDirectory: true, file: dirFile }),
+      fakeItem({ isDirectory: false, type: 'text/plain', file: b }),
+    ]);
+    const { items } = partitionPastedItems(cd, () => '/work/dir');
+    // "a.txt, dir/, b.txt" must not collapse into the folder-first grouping.
+    expect(items).toEqual([
+      { kind: 'file', file: a },
+      { kind: 'folder', path: '/work/dir' },
+      { kind: 'file', file: b },
+    ]);
   });
 
   it('de-duplicates folders resolving to the same path', () => {

@@ -1,7 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/MediaThumb.vue -->
 <!-- One image/video attachment rendered as a rounded-rect thumbnail — the
      SAME component for the composer's pending-attachment strip and for media
-     in sent messages (files keep the AttachmentChip pill); composer-only
+     in sent messages (files render as attachment pills); composer-only
      states (uploading / error / remove) arrive as props. File-store videos
      render a static play tile instead of a fetched first frame. -->
 <script setup lang="ts">

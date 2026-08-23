@@ -13,6 +13,9 @@ import {
   saveWorkspaceRecencyFloor,
   saveWorkspaceSort,
   STORAGE_KEYS,
+  NEW_SESSION_SCOPE,
+  attachmentDraftStorageKey,
+  draftAttachmentsStorageKey,
   draftStorageKey,
   safeGetJson,
   safeGetString,
@@ -136,6 +139,15 @@ describe('draftStorageKey', () => {
   it('falls back to __new__ when sid is empty/undefined', () => {
     expect(draftStorageKey(undefined)).toBe('kimi-web.draft.__new__');
     expect(draftStorageKey('')).toBe('kimi-web.draft.__new__');
+  });
+
+  it('scopes every no-session draft key family to the shared NEW_SESSION_SCOPE token', () => {
+    // The empty-session composer's live-delivery registry registers under
+    // this same token (see registerLiveComposerEditor), so the key functions
+    // and the delivery must never drift apart.
+    expect(draftStorageKey(undefined)).toBe(`kimi-web.draft.${NEW_SESSION_SCOPE}`);
+    expect(attachmentDraftStorageKey(undefined)).toBe(`kimi-web.attachment-draft.${NEW_SESSION_SCOPE}`);
+    expect(draftAttachmentsStorageKey(undefined)).toBe(`kimi-web.draft-atts.${NEW_SESSION_SCOPE}`);
   });
 });
 

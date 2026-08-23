@@ -5,7 +5,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } f
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import { buildSlashItems, matchSlashItem, parseSlash, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
@@ -26,15 +25,41 @@ import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, type Attachment } from '@moonshot-ai/app-client/composables';
-import { toPromptAttachment } from '@moonshot-ai/app-client/client';
+import { toPromptAttachment, useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { matchBinding } from '../../lib/keymap';
 import { resolvedBinding } from '../../composables/useShortcuts';
-import { openFileAttachment } from '@moonshot-ai/app-client/lib';
-import { createComposerEditor, startMentionSelectionSync, type ComposerEditorApi } from '@moonshot-ai/app-composer';
+import {
+  attachmentKeyFor,
+  createComposerEditor,
+  deliverPillEntryPatch,
+  newAttId,
+  nextAttachmentSeq,
+  parseAttachmentLinks,
+  registerLiveComposerEditor,
+  removeAttachmentLinks,
+  serializeAttachment,
+  startMentionSelectionSync,
+  rewriteAttachmentLinksForSubmit,
+  stripAttachmentLinks,
+  type AttachmentEntry,
+  type ComposerEditorApi,
+} from '@moonshot-ai/app-composer';
+import {
+  applyEntryPatch,
+  buildFileSubmitPayload,
+  interleaveSubmitAttachments,
+  pillSubmitBlockers,
+  decideComposerSubmit,
+  planFileAttachment,
+  planFolderAttachment,
+  restampRefillByOrderHint,
+  seedEntriesForTurnAttachments,
+  unreferencedSeedFiles,
+  type SubmitDecision,
+} from '@moonshot-ai/app-client/lib';
 import { getKimiWebApi } from '../../api';
-import { openUpgrade } from '@moonshot-ai/app-core/lib';
+import { openUpgrade, NEW_SESSION_SCOPE } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
-import AttachmentChip from './AttachmentChip.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
 import { ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip, trackMenuSurface } from '@moonshot-ai/app-ui';
@@ -122,16 +147,22 @@ const placeholder = computed(() =>
 );
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  /** `restoreText` + `restoreEntries` are the gate-failure restore's draft
+      (the PRE-REWRITE text, attId links intact, with the original registry
+      entries) — see the command emit's contract. */
+  submit: [payload: { text: string; restoreText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[] }];
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
-  /** Slash command. Only skill commands carry the composer's attachments;
-      built-in commands leave the chips untouched (attachments stay pending).
-      `restoreText` is the original composer text a synthesized command was
-      built from (the single-skill-pill activation) — gate-failure restores
-      load it back instead of the synthesized command line. */
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string }];
+  /** Slash command. Only skill commands carry the composer's attachments
+      (the pills/chips are consumed with the command); built-in commands
+      carry none — their pills are re-seeded into the cleared composer so the
+      attachments stay pending. `restoreText` is the PRE-REWRITE draft a
+      gate-failure restore loads back (every pill's attId link intact — the
+      rewrite would have degraded a folder pill into a plain path mention);
+      `restoreEntries` pairs it with the original registry entries (folder
+      paths included), or the revived pills would come back dead. */
+  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; restoreEntries?: AttachmentEntry[] }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -149,13 +180,83 @@ const emit = defineEmits<{
 }>();
 
 const { t, locale } = useI18n();
+// The client facade's `notify` surfaces the invalid-command notice locally
+// (WarningToasts) — no daemon round-trip for a command usage error.
+const client = useKimiWebClient();
 
 // ---------------------------------------------------------------------------
-// Text state + per-session draft persistence — see useComposerDraft.
+// Text state + per-session draft persistence — see useComposerDraft. The
+// attachment-entry sidecar (loadDraftAttachments/saveDraftAttachments) backs
+// the file/folder pill registry below.
 // ---------------------------------------------------------------------------
-const { text, editorRef, loadForEdit, clearDraft } = useComposerDraft({
+const { text, editorRef, loadForEdit, clearDraft, loadDraftAttachments, saveDraftAttachments, saveDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
+  onBeforeSessionSave: (sid) => {
+    // A mid-browse switch must not persist the RECALL text and the wiped
+    // registry as the outgoing session's draft — restore before the save.
+    restoreBrowsingDraftForDeparture(sid);
+  },
 });
+
+// ---------------------------------------------------------------------------
+// Attachment pill registry bridge: the editor's registry plugin is the source
+// of truth for file/folder pill metadata (path/size/upload state/fileId).
+// This ref mirrors it for the reactive UI (canSend, the send gate), and every
+// movement is persisted to the session's draft sidecar, so a restart re-seeds
+// the entries behind the revived draft's pills.
+// ---------------------------------------------------------------------------
+const attachmentEntries = ref<AttachmentEntry[]>([]);
+
+/** The draft's attachment entries snapshotted when history browsing starts
+ *  (see the ArrowUp/ArrowDown branch in handleKeydown) — the recall
+ *  rebuilds drop them from the registry and the sidecar, and this is what
+ *  re-seeds them on the walk back to the live draft (or on a mid-browse
+ *  session switch). Cleared when the browse is ABANDONED without a walk
+ *  home — see resetHistoryBrowse. */
+let historyEntrySnapshot: AttachmentEntry[] | null = null;
+
+/** Leave history browsing WITHOUT walking home (typing, a drop/adoption, or
+ *  a submit of the recalled text): the pre-browse draft is deliberately
+ *  abandoned, so its entry snapshot must go with it — a stale snapshot
+ *  would otherwise be persisted over the CURRENT draft's sidecar by the
+ *  session-switch restore (onBeforeSessionSave), replacing the entries of
+ *  pills added since and blocking the send gate with missing entries after
+ *  a refresh. */
+function resetHistoryBrowse(): void {
+  history.resetBrowsing();
+  historyEntrySnapshot = null;
+}
+
+/** Restore a mid-browse draft for a DEPARTURE (a session switch's
+ *  onBeforeSessionSave, or the component unmount): walk the browse home
+ *  (useInputHistory's own session watcher may already have — the loop is
+ *  the backstop for either watcher order), then persist the restored text
+ *  and the browse-time entry snapshot, and sync the EDITOR now — its
+ *  text-watcher rebuild would come too late (a departure stashes the
+ *  editor state in this same flush, and on unmount the watchers are
+ *  already dead), so without the sync the departure captures the recall
+ *  doc and the wiped registry, masking the whole restore on the way back. */
+function restoreBrowsingDraftForDeparture(sid: string | undefined): void {
+  while (history.isBrowsing()) history.recallNewer();
+  if (historyEntrySnapshot !== null) {
+    saveDraft(sid, text.value);
+    saveDraftAttachments(sid, historyEntrySnapshot);
+    editor?.setText(text.value, { entries: historyEntrySnapshot });
+    historyEntrySnapshot = null;
+  }
+}
+
+function handleRegistryChange(entries: AttachmentEntry[]): void {
+  attachmentEntries.value = entries;
+  saveDraftAttachments(props.sessionId, entries);
+}
+
+/** Synchronously clear the persisted attachment sidecar — same unmount race
+ *  as clearDraft (the composer may unmount before the post-clear registry
+ *  notification flushes), so send/steer call this alongside clearDraft. */
+function clearDraftAttachments(): void {
+  saveDraftAttachments(props.sessionId, []);
+}
 
 // ---------------------------------------------------------------------------
 // ProseMirror editing surface — see app-client's composerEditor. The host div
@@ -167,6 +268,9 @@ const { text, editorRef, loadForEdit, clearDraft } = useComposerDraft({
 const editorHostRef = ref<HTMLElement | null>(null);
 let editor: ComposerEditorApi | null = null;
 let stopMentionSelectionSync: (() => void) | null = null;
+/** Release for this editor's live-delivery registration (see
+ *  registerLiveComposerEditor) — re-armed on every session restore. */
+let releaseLiveRegistration: (() => void) | null = null;
 
 onMounted(() => {
   const host = editorHostRef.value;
@@ -182,6 +286,10 @@ onMounted(() => {
     onWorkModeDismiss: clearWorkMode,
     onCompositionStart: handleCompositionStart,
     onCompositionEnd: handleCompositionEnd,
+    attachments: {
+      initialEntries: loadDraftAttachments(props.sessionId),
+      onRegistryChange: handleRegistryChange,
+    },
   });
   editor.setEditable(!props.starting);
   editorRef.value = editor;
@@ -222,15 +330,44 @@ onMounted(() => {
       if (restored !== text.value) text.value = restored;
     } else {
       // Nothing stashed for this session — plain text load (fresh stack),
-      // exactly what the text watcher would do anyway.
-      editor.setText(text.value);
+      // exactly what the text watcher would do anyway. setText re-inits the
+      // registry from the PASSED entries (never the mount session's), so the
+      // rebuild lands THIS session's sidecar atomically.
+      editor.setText(text.value, { entries: loadDraftAttachments(sid) });
     }
+    // Keep the reactive mirror in sync even when nothing fired (a restore
+    // whose registry is identity-equal to the previous one doesn't notify).
+    attachmentEntries.value = editor.getAttachmentEntries();
+    // This editor now OWNS the session: register it as the live delivery
+    // target for async upload outcomes (see registerLiveComposerEditor) — a
+    // completion callback whose own composer instance is gone (unmounted by
+    // a question/approval, then remounted) must still reach it.
+    releaseLiveRegistration?.();
+    releaseLiveRegistration = registerLiveComposerEditor(sid, editor);
   }
 
   // A remount for the same session (empty-session ↔ docked composer swap)
   // gets its stashed state back, undo stack included; first-ever mount finds
   // nothing and keeps the draft text.
   if (props.sessionId) restoreSessionState(props.sessionId);
+  else {
+    // The empty-session (landing page) composer registers under the shared
+    // '__new__' scope too: an upload outcome must reach THIS editor live —
+    // a sidecar-only delivery would leave its entry stuck on `uploading`,
+    // the first message blocked by the send gate until a remount.
+    releaseLiveRegistration = registerLiveComposerEditor(NEW_SESSION_SCOPE, editor);
+  }
+  // The registry may already hold entries from initialEntries (a restored
+  // draft's sidecar) — onRegistryChange only fires on later CHANGES, and the
+  // landing composer (no sessionId) never reaches restoreSessionState, so
+  // without this the mirror stays empty and a restored draft would submit
+  // with its pills silently degraded (empty payload, bare-name links).
+  attachmentEntries.value = editor.getAttachmentEntries();
+  // File drafts hydrated before the editor existed adopt as pills now.
+  if (pendingFileAdoptions.length > 0) {
+    for (const att of pendingFileAdoptions) adoptFileAttachment(att);
+    pendingFileAdoptions.length = 0;
+  }
 
   // Session switching swaps the WHOLE editor state: stash the old session's
   // state (doc + selection + undo stack) and adopt the new one's. Registered
@@ -246,7 +383,22 @@ onMounted(() => {
       // prompt becomes a brand-new session with no undo carry-over.
       if (oldSid) editor.stashState(oldSid);
       if (newSid) restoreSessionState(newSid);
-      else editor.setText(text.value);
+      else {
+        // The empty-session composer (its draft lives under the '__new__'
+        // keys) is never stashed — same setText-with-entries rebuild as the
+        // no-stash path of restoreSessionState. It registers under the same
+        // '__new__' scope as the landing-page composer (token handoff), so
+        // upload outcomes keep landing live.
+        releaseLiveRegistration?.();
+        releaseLiveRegistration = registerLiveComposerEditor(NEW_SESSION_SCOPE, editor);
+        editor.setText(text.value, { entries: loadDraftAttachments(undefined) });
+        attachmentEntries.value = editor.getAttachmentEntries();
+      }
+      // Chip-era FILE drafts of the new session adopt as pills only NOW: the
+      // upload composable's session watcher (registered earlier, in setup)
+      // defers them for exactly this point — adopting any earlier would
+      // insert the pills into the OLD session's still-live editor.
+      adoptStoredFileDrafts();
     },
   );
 
@@ -254,7 +406,17 @@ onMounted(() => {
   // in setup) so it can see the editor handle; flush order guarantees this
   // runs before the nextTick caret placement in the composables.
   watch(text, (value) => {
-    if (editor && value !== editor.getText()) editor.setText(value);
+    // External writes within THIS session (history recall, queue/edit
+    // refills, the mobile mention sheet's token rewriting): the rebuild
+    // must carry the CURRENT registry entries — a bare setText resets the
+    // registry to EMPTY (its cross-session default), and the change-notify
+    // would persist the wipe to this session's sidecar, silently stripping
+    // every revived pill's fileId (they degrade to bare names on submit).
+    // The rebuild's init reconcile still drops anything the new text no
+    // longer references (a submit clear empties it as before).
+    if (editor && value !== editor.getText()) {
+      editor.setText(value, { entries: editor.getAttachmentEntries() });
+    }
   });
 
   // `starting` disables the field while the first prompt is being submitted.
@@ -283,6 +445,11 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  // A mid-browse unmount (e.g. a question/approval card swaps this composer
+  // out) restores the pre-browse draft FIRST — otherwise the stash below
+  // captures the recall doc and the wiped registry, the in-memory snapshot
+  // dies with the component, and the next mount resurrects the wrong state.
+  restoreBrowsingDraftForDeparture(props.sessionId);
   // Keep the session's state (undo stack included) across composer remounts —
   // the empty-session and docked composers are separate instances. Sync the
   // text ref into the editor FIRST: an optimistic send clears `text` and
@@ -290,9 +457,16 @@ onUnmounted(() => {
   // watcher may never run — without the sync we'd stash a state still
   // holding the just-sent prompt and resurrect it on the next mount.
   if (editor && props.sessionId) {
-    if (text.value !== editor.getText()) editor.setText(text.value);
+    // Same-session rebuild (see the text watcher above): carry the current
+    // entries so the registry survives — the init reconcile drops what the
+    // cleared text no longer references anyway.
+    if (text.value !== editor.getText()) {
+      editor.setText(text.value, { entries: editor.getAttachmentEntries() });
+    }
     editor.stashState(props.sessionId);
   }
+  releaseLiveRegistration?.();
+  releaseLiveRegistration = null;
   stopMentionSelectionSync?.();
   editor?.destroy();
   editor = null;
@@ -518,7 +692,7 @@ function handleEditorBlur(): void {
 
 function handleInput(): void {
   // Manual typing leaves history-browsing mode — the text is now a fresh draft.
-  history.resetBrowsing();
+  resetHistoryBrowse();
   updateSlashMenu();
   updateMentionMenu();
   // Popups are exclusive: a freshly opened slash/mention menu displaces the
@@ -530,45 +704,193 @@ function handleInput(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Dropped folders → draft text (folders are never uploaded — the upload
-// endpoint rejects them; useAttachmentUpload routes their paths here).
+// Dropped/pasted folders → in-document folder pills (folders are never
+// uploaded — the upload endpoint rejects them; useAttachmentUpload routes
+// their bridge-resolved paths here).
 // ---------------------------------------------------------------------------
 function insertFolderPaths(paths: string[]): void {
-  // Quote paths containing whitespace so the draft tokenizes like typed input.
-  const insertion = paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ');
   const ed = editor;
-  const val = text.value;
-  // A drop usually lands while the editor is unfocused and its selection is
-  // stale — append at the end unless the caret is genuinely live.
-  const pos = ed && document.activeElement === ed.dom ? (ed.selectionStart ?? val.length) : val.length;
-  // Keep the inserted paths separated from the surrounding text.
-  const prefix = pos > 0 && !/\s/.test(val[pos - 1]!) ? ' ' : '';
-  const suffix = pos < val.length && !/\s/.test(val[pos]!) ? ' ' : '';
   // The draft changed without typing — leave history-browsing mode like
   // handleInput does, or the next ↑ would replace it with a history entry.
-  history.resetBrowsing();
-  if (ed) {
-    // One undoable transaction at the caret offset — a text.value splice
-    // would make the text watcher rebuild the whole document via setText(),
-    // resetting the undo stack. The caret lands after the inserted paths.
-    // reviveMentions: false — a dropped path is LITERAL text; a dirname that
-    // merely looks like a mention link ('[archive](old)') must not become a
-    // pill pointing somewhere else.
-    // The drop is not typing, so close any popup the onChange-derived menu
-    // update may have opened (an absolute dropped path reads as a `/token`).
-    ed.insertTextAt(pos, prefix + insertion + suffix, { reviveMentions: false });
-    slashOpen.value = false;
-    closeMentionMenu();
-    ed.focus();
-    return;
+  resetHistoryBrowse();
+  if (!ed) return; // The editor mounts with the card, so drops always find it.
+  // A drop/paste usually lands while the editor is unfocused and its selection
+  // is stale — append at the end unless the caret is genuinely live.
+  let firstPos: number | undefined =
+    document.activeElement === ed.dom ? (ed.selectionStart ?? undefined) : ed.getText().length;
+  for (const path of paths) {
+    const plan = planFolderAttachment(attachmentEntries.value, path);
+    // Pill BEFORE entry — the registry is doc-reconciled, so an entry whose
+    // pill isn't in the doc yet would be dropped by the insert's reconcile.
+    // Only the first pill uses the computed position; each later one lands at
+    // the caret the previous insert left behind (keeping the paths' order).
+    ed.insertAttachment({ attId: plan.attId, name: plan.name, kind: 'folder' }, firstPos);
+    firstPos = undefined;
+    if (plan.entry) ed.upsertAttachmentEntry(plan.entry);
   }
-  text.value = val.slice(0, pos) + prefix + insertion + suffix + val.slice(pos);
+  // The drop is not typing, so close any popup the onChange-derived menu
+  // update may have opened (an absolute dropped path reads as a `/token`).
+  slashOpen.value = false;
+  closeMentionMenu();
 }
 
 // ---------------------------------------------------------------------------
-// Attachments — see useAttachmentUpload. The composer keeps handleSubmit /
-// handleSteer (which read the attachments to build the payload) and the
-// `hasUpload` toolbar flag.
+// File pill entry (drop/paste/picker, routed in by the useAttachmentUpload
+// seam): a non-media file becomes an in-document attachment pill; the upload
+// still runs in the background and backfills the entry's fileId. Returns
+// false to fall back to the old chip path (defensive — the seam is wired
+// only when the editor and an uploader both exist). `seq` is the batch's
+// pre-assigned add-order stamp (see routeFiles), forwarded to the plan so
+// one batch's files and media interleave by selection order.
+// ---------------------------------------------------------------------------
+function insertFileAttachment(file: File, path: string | null, at?: { clientX: number; clientY: number }, seq?: number): boolean {
+  const ed = editor;
+  const upload = props.uploadImage;
+  if (!ed || !upload) return false;
+  // Drop → the pill lands at the drop point (a window-level drop that misses
+  // the editor falls back to the end of the text); picker/paste → a POINT
+  // insertion at the live caret (same rule as insertFolderPaths — the current
+  // selection is never replaced, so pasting a file can't silently delete
+  // selected text), or the end when the editor isn't focused.
+  let pos: number | undefined;
+  if (at) pos = ed.textOffsetAtCoords({ left: at.clientX, top: at.clientY }) ?? ed.getText().length;
+  else pos = document.activeElement === ed.dom ? (ed.selectionStart ?? undefined) : ed.getText().length;
+  const plan = planFileAttachment(attachmentEntries.value, { name: file.name, size: file.size, path, mediaType: file.type || undefined, lastModified: file.lastModified || undefined, seq });
+  if (plan.entry) {
+    // Pill BEFORE entry (same doc-reconcile invariant as the folder path).
+    ed.insertAttachment({ attId: plan.attId, name: file.name, kind: 'file' }, pos);
+    ed.upsertAttachmentEntry(plan.entry);
+  } else if (plan.startUpload) {
+    // Restarting a dead upload (failed/interrupted) or a changed file's
+    // re-upload on an entry the doc ALREADY references: the existing pill IS
+    // the attachment — do NOT insert another node, or every retry appends a
+    // duplicate inline reference (and repeated failures would pile them up).
+    // Just revive the entry with the new version; its pill clears the error
+    // state via the registry-driven decoration.
+    ed.updateAttachmentEntry(plan.attId, { uploading: true, error: undefined, size: file.size, mediaType: file.type || undefined, lastModified: file.lastModified || undefined });
+  } else {
+    // A same-version reuse (ready, or still in flight): a deliberate SECOND
+    // reference — many pills may share one entry's file on purpose (the
+    // plan's startUpload stays false, so nothing re-uploads).
+    ed.insertAttachment({ attId: plan.attId, name: file.name, kind: 'file' }, pos);
+  }
+  if (plan.startUpload) {
+    // Capture the session at upload time; the async completion must patch
+    // THAT session's registry even if the user has since switched away (the
+    // chip path keys its pending list by session for the same reason).
+    const sid = props.sessionId;
+    void upload(file, file.name).then((result) => {
+      // The server's mediaType wins over File.type on the backfill. The
+      // success patch also CLEARS any error: a pill cut and pasted back
+      // mid-upload comes back normalized to 'upload-interrupted' (the
+      // clipboard flavor's recovery default), but the original upload still
+      // completes against the same sid+attId — its backfill must retire
+      // that marker too, or the revived pill would block the send gate
+      // forever. (Accepted gap: an upload that completes BETWEEN cut and
+      // paste patches a dropped entry and is lost — the pill keeps the
+      // interrupted marker and the user re-drops to retry.)
+      patchPillEntry(sid, plan.attId, result ? { fileId: result.fileId, mediaType: result.mediaType, uploading: false, error: undefined } : { uploading: false, error: 'upload-failed' });
+    }).catch(() => {
+      patchPillEntry(sid, plan.attId, { uploading: false, error: 'upload-failed' });
+    });
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// LEGACY (transitional, safe to delete later) — chip-era file adoption:
+// a rehydrated chip-era file draft (useAttachmentUpload's hydrateDraft seam)
+// or an edit&resend refill the revived doc doesn't reference becomes an
+// in-document pill — its fileId is reused, no re-upload. The strip renders
+// media only, so a file that came back as a chip would be invisible (and
+// would keep re-persisting as one). Delete this function, the buffer below,
+// its flush in onMounted, the hydrateDraft partition in useAttachmentUpload,
+// and the adopt fallback in loadAttachmentsForEdit once chip-era
+// drafts/history no longer matter (see the LEGACY note on
+// AttachmentUploadDeps.adoptFileAttachment).
+// ---------------------------------------------------------------------------
+const pendingFileAdoptions: TurnAttachment[] = [];
+
+function adoptFileAttachment(att: TurnAttachment, seq?: number, at?: number): void {
+  const ed = editor;
+  if (!att.fileId) return;
+  if (!ed) {
+    // useAttachmentUpload hydrates drafts during its own setup — BEFORE the
+    // editor exists (first mount only). Buffer and flush right after mount.
+    pendingFileAdoptions.push(att);
+    return;
+  }
+  // The draft changed without typing — leave history-browsing mode (same as
+  // insertFolderPaths).
+  resetHistoryBrowse();
+  const attId = newAttId();
+  let pos: number;
+  if (at !== undefined) {
+    // Ordinal-anchored insert (the edit&resend refill): land BEFORE the
+    // anchor pill, space-separated. Insert the separator first so the pill
+    // takes the anchor's offset — the text before the anchor already
+    // separates the pair on the left (see loadAttachmentsForEdit).
+    ed.insertTextAt(at, ' ');
+    pos = at;
+  } else {
+    // Append at the end of the draft (a restore has no live caret), separated
+    // from preceding text that isn't whitespace-terminated.
+    const text = ed.getText();
+    pos = text.length;
+    if (pos > 0 && !/\s/.test(text.charAt(pos - 1))) {
+      ed.insertTextAt(pos, ' ');
+      pos += 1;
+    }
+  }
+  // Pill BEFORE entry — the registry is doc-reconciled.
+  ed.insertAttachment({ attId, name: att.name ?? 'file', kind: 'file' }, pos);
+  ed.upsertAttachmentEntry({
+    attId,
+    key: attachmentKeyFor({ kind: 'file', attId }),
+    kind: 'file',
+    name: att.name ?? 'file',
+    size: att.size,
+    mediaType: att.mediaType,
+    seq: seq ?? nextAttachmentSeq(),
+    refCount: 0,
+    uploading: false,
+    fileId: att.fileId,
+  });
+}
+
+/** Apply an upload-outcome patch to a pill entry, session-switch and
+ *  remount safe — every session routes through deliverPillEntryPatch: the
+ *  LIVE editor registered for the session (this composer, or a remount that
+ *  adopted the session after an unmount consumed the stash), else the
+ *  session's stashed editor state (mirrored to the sidecar), else the
+ *  sidecar itself. The empty session joins the same delivery under the
+ *  shared NEW_SESSION_SCOPE key — its live editor (the landing-page
+ *  composer, or a docked one switched to it) takes the outcome when
+ *  mounted, the sidecar otherwise. */
+function patchPillEntry(
+  sid: string | undefined,
+  attId: string,
+  patch: Parameters<ComposerEditorApi['updateAttachmentEntry']>[1],
+): void {
+  deliverPillEntryPatch(sid ?? NEW_SESSION_SCOPE, attId, patch, {
+    loadEntries: () => loadDraftAttachments(sid),
+    saveEntries: (entries) => saveDraftAttachments(sid, entries),
+  });
+  // An upload completing mid history-browse: the walk-back restores from
+  // historyEntrySnapshot, so patch it too — otherwise the draft comes back
+  // stuck on the pre-completion state (uploading forever, blocked from
+  // sending), the completed fileId lost.
+  if (historyEntrySnapshot !== null) {
+    historyEntrySnapshot = applyEntryPatch(historyEntrySnapshot, attId, patch);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Attachments — see useAttachmentUpload. Media (image/video) keeps the chip
+// strip below; non-media files route through the insertFileAttachment seam
+// into in-document pills (and folders through insertFolderPaths). The
+// composer keeps handleSubmit / handleSteer (which read the attachments to
+// build the payload) and the `hasUpload` toolbar flag.
 // ---------------------------------------------------------------------------
 const {
   attachments,
@@ -586,22 +908,23 @@ const {
   clearAfterSubmit,
   clearAttachments,
   loadAttachments,
+  adoptStoredFileDrafts,
 } = useAttachmentUpload({
   api: getKimiWebApi(),
   uploadImage: () => props.uploadImage,
   sessionId: () => props.sessionId,
   insertFolderPaths,
+  insertFileAttachment,
+  adoptFileAttachment,
 });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
 
-// The strip mirrors the sent bubble's two rows: media drafts as thumbnails,
-// everything else as file chips.
+// The strip is media-only: files live in the document as pills now.
 type MediaDraft = Attachment & { kind: 'image' | 'video' };
 const isMediaDraft = (att: Attachment): att is MediaDraft => att.kind === 'image' || att.kind === 'video';
 const mediaDrafts = computed(() => attachments.value.filter(isMediaDraft));
-const fileDrafts = computed(() => attachments.value.filter((att) => !isMediaDraft(att)));
 
 // Overflow handling for the capped strip: a count badge while the rows
 // scroll, and new attachments auto-scroll into view (removals keep position).
@@ -635,22 +958,15 @@ watch(
 watch(attachments, () => void nextTick(updateAttOverflow), { deep: true });
 onUnmounted(() => attOverflowObserver?.disconnect());
 
-// Reveal the NEWEST attachment on add: media thumbs group above file chips,
-// so scroll to the end of whichever group grew — a media add would stay
-// hidden above a long file row if we only ever scrolled to the bottom.
-const attMediaRowRef = ref<HTMLElement | null>(null);
+// Reveal the NEWEST attachment on add: scroll the strip to the bottom when
+// the media row grows (removals keep position).
 watch(
-  () => [mediaDrafts.value.length, fileDrafts.value.length] as const,
-  ([media, files], [prevMedia, prevFiles]) => {
-    if (media <= prevMedia && files <= prevFiles) return;
+  () => mediaDrafts.value.length,
+  (media, prevMedia) => {
+    if (media <= prevMedia) return;
     void nextTick(() => {
       const el = attScrollRef.value;
-      if (!el) return;
-      if (media > prevMedia && attMediaRowRef.value) {
-        el.scrollTop = attMediaRowRef.value.offsetHeight - el.clientHeight;
-      } else {
-        el.scrollTop = el.scrollHeight;
-      }
+      if (el) el.scrollTop = el.scrollHeight;
     });
   },
 );
@@ -679,22 +995,81 @@ function focus(): void {
   editor?.focus({ preventScroll: true });
 }
 function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
-  loadAttachments(atts);
+  const fileSources = atts.filter((att) => att.kind === 'file' && att.fileId !== undefined);
+  const seedEntries = seedEntriesForTurnAttachments(atts);
+  // Media refills the chip strip; BOTH families are re-stamped from the
+  // message's own appearance order (restampRefillByOrderHint), so the
+  // resent payload keeps the original media/file interleave instead of
+  // collapsing to media-first.
+  const mediaReady = restampRefillByOrderHint(
+    atts.filter((att) => att.kind !== 'file'),
+    seedEntries,
+    fileSources,
+  );
+  loadAttachments(mediaReady);
+  // Files are in-document pills now: the refilled text's attachment links
+  // (rewritten to 1..N at submit) revive into pills, and the registry is
+  // seeded from the message's file attachments — the fileId rides along, so
+  // nothing re-uploads. The text watcher's setText rebuilds the editor state
+  // (resetting the registry) on the next flush — seed AFTER it lands, and
+  // only entries the revived doc actually references.
+  void nextTick(() => {
+    const ed = editor;
+    if (!ed) return;
+    const referenced = new Set(ed.getOrderedAttachmentIds());
+    for (const entry of seedEntries) {
+      if (referenced.has(entry.attId)) ed.upsertAttachmentEntry(entry);
+    }
+    // LEGACY (see the note on AttachmentUploadDeps.adoptFileAttachment): a
+    // chip-era message (pre-pill) carries no attachment links, so its file
+    // attachments reference nothing in the revived doc — adopt them as
+    // in-document pills (fileId reused, no re-upload) or edit&resending an
+    // old message would silently drop its files. The adoption rides the seed
+    // entry's restamped seq for that ordinal, so an adopted legacy file
+    // keeps its original position in the media/file interleave instead of
+    // landing after every media chip.
+    for (const { att, ordinal } of unreferencedSeedFiles(atts, referenced)) {
+      // Insert at the file's ORIGINAL ordinal, not blindly at the end: the
+      // submit payload follows doc pill order, so appending an unreferenced
+      // file behind the revived pills would reorder the resend (A,B → B,A).
+      // The revived links carry their 1..N ordinals as attIds — the first
+      // one past this ordinal is the anchor to insert before. A freshly
+      // adopted pill gets a base36 attId, so it never anchors a later
+      // insert (Number() → NaN) and the walk stays ordinal-anchored.
+      const anchor = parseAttachmentLinks(ed.getText()).find((link) => {
+        const attIndex = Number(link.attrs.attId);
+        return Number.isInteger(attIndex) && attIndex > ordinal;
+      });
+      adoptFileAttachment(att, seedEntries.find((entry) => entry.attId === String(ordinal))?.seq, anchor?.start);
+    }
+  });
+}
+
+/** Re-seed the registry from a command emit's restoreEntries (the
+ *  gate-failure restore of a skill command): the restored text carries the
+ *  PRE-REWRITE draft whose links are attId-form, so the payload's ordinal
+ *  seeding (loadAttachmentsForEdit) can't revive them — the ORIGINAL
+ *  attId-keyed entries can, folder paths included. Same timing rule as the
+ *  seed flow: upsert after the text watcher's rebuild lands, and only what
+ *  the revived doc actually references. */
+function restoreDraftEntries(entries: AttachmentEntry[]): void {
+  void nextTick(() => {
+    const ed = editor;
+    if (!ed) return;
+    const referenced = new Set(ed.getOrderedAttachmentIds());
+    for (const entry of entries) {
+      if (referenced.has(entry.attId)) ed.upsertAttachmentEntry(entry);
+    }
+  });
 }
 
 // defineExpose lives below the toolbar dropdown refs (see anyPopupOpen).
 
-// Chip primary action: media opens the lightbox preview; a generic file opens
-// in a new tab (browser-renderable types) or downloads, once its upload has
-// completed and produced a daemon file id. MediaThumb passes its <img> along
-// as the image preview's zoom origin.
+// Chip primary action: media opens the lightbox preview. MediaThumb passes
+// its <img> along as the image preview's zoom origin.
 const previewThumbImg = ref<HTMLImageElement | null>(null);
 
 function onAttachmentActivate(att: Attachment, img?: HTMLImageElement | null): void {
-  if (att.kind === 'file') {
-    if (att.fileId !== undefined) void openFileAttachment(getKimiWebApi(), att.fileId, att.name, att.mediaType);
-    return;
-  }
   previewThumbImg.value = img ?? null;
   openAttachmentPreview(att);
 }
@@ -714,192 +1089,272 @@ const previewMedia = computed<ToolMedia | null>(() => {
   };
 });
 
-/** True when a submit would do something — mirrors handleSubmit's guard so
- *  the button can show a real disabled state. */
-const canSend = computed(
-  () =>
-    !attachments.value.some((a) => a.uploading) &&
-    (text.value.trim() !== '' || attachments.value.some((a) => !a.error && a.fileId)),
-);
+/** The send gate's pill verdict (uploading / errored / missing) — see
+ *  pillSubmitBlockers: an errored entry blocks like an in-flight upload,
+ *  because the submit payload would silently drop it and its pill would
+ *  degrade to a bare name, sending a message that's missing its attachment
+ *  without any sign. A MISSING entry (an undo-resurrected pill whose
+ *  registry entry the delete's reconcile dropped for good) blocks the same
+ *  way. The pill shows the state (.attachment-error / .attachment-missing,
+ *  the tooltip names the reason); the user deletes the pill or re-drops
+ *  the file to retry (planFileAttachment restarts a dead upload on key
+ *  reuse). */
+const pillGate = computed(() => {
+  // text.value is the reactive trigger for the doc side: an undo-resurrected
+  // pill changes the doc WITHOUT touching the registry (the entry is gone
+  // for good — the reconcile never invents it, so no onRegistryChange
+  // fires), and only a text-driven recompute catches the dead pill.
+  void text.value;
+  return pillSubmitBlockers(attachmentEntries.value, editor?.getOrderedAttachmentIds() ?? []);
+});
+
+/** The submit-time attachment assembly shared by handleSubmit/handleSteer:
+ *  ready media chips plus the doc's ready file pills, interleaved by the
+ *  shared add-order stamp (interleaveSubmitAttachments) so the payload
+ *  reflects the user's real add order across the two families. The payload's
+ *  FILE entries keep their doc first-mention order among themselves — the
+ *  text's rewritten 1..N link indices count only files and line up with
+ *  those positions (and the server's trailing attachments notice). */
+function submitAssembly(): { promptAttachments: PromptAttachment[]; rewriteAttIds: string[] } {
+  const mediaReady = attachments.value.filter((a) => !a.uploading && !a.error && a.fileId);
+  const fileSubmit = buildFileSubmitPayload(editor?.getOrderedAttachmentIds() ?? [], attachmentEntries.value);
+  const seqByAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry.seq] as const));
+  return {
+    promptAttachments: interleaveSubmitAttachments(
+      fileSubmit.promptAttachments.map((item, index) => ({ item, seq: seqByAttId.get(fileSubmit.rewriteAttIds[index]!) })),
+      mediaReady.map((chip) => ({ item: toPromptAttachment(chip), seq: chip.seq })),
+    ),
+    rewriteAttIds: fileSubmit.rewriteAttIds,
+  };
+}
+
+/** Rewrite the attachment links of a submit-bound text copy: file pills →
+ *  1..N index links (payload order), folder pills → real-path mention links.
+ *  The composer doc and the persisted draft keep the attId form (the
+ *  transcript stores this rewritten output); links without a ready entry
+ *  degrade to bare names inside the rewrite. */
+function rewriteForSubmit(trimmed: string, rewriteAttIds: readonly string[]): string {
+  return rewriteAttachmentLinksForSubmit(trimmed, rewriteAttIds, {
+    resolveFolder: (attId) => attachmentEntries.value.find((e) => e.attId === attId)?.path,
+  });
+}
+
+/** Snapshot the doc's attachment pills for re-seeding after the text clear
+ *  of a flow that consumes the text but NOT the attachments (built-in slash
+ *  commands — see handleSubmit): the pills live IN the text now, so clearing
+ *  it would silently destroy attachments the chip era kept pending. Returns
+ *  the restore function — invoke it AFTER `text.value = ''`. The ordering is
+ *  load-bearing: Vue's scheduler runs jobs by id, so a nextTick registered
+ *  BEFORE the assignment would fire before the text watcher's setText('') and
+ *  the restored pills would be wiped by it; registering after the assignment
+ *  puts the watcher's rebuild first. The re-insert then lands on the fresh
+ *  empty doc (registry already reset), pill BEFORE entry per the doc-reconcile
+ *  invariant. Entry-less (dead) pills are skipped. */
+function preserveAttachmentPills(): () => void {
+  const ed = editor;
+  if (!ed) return () => {};
+  const byAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry] as const));
+  // Snapshot the FULL attId sequence in document order (duplicates kept):
+  // several pills can share one attId (the same file dropped twice, or a
+  // pill copied in the composer), and an interleaved pair (A, B, A) must
+  // come back in that exact order — grouping by id would restore A, A, B.
+  // Only the registry upserts dedupe.
+  const sequence = parseAttachmentLinks(ed.getText()).map((match) => match.attrs.attId);
+  if (sequence.length === 0) return () => {};
+  return () => {
+    void nextTick(() => {
+      const target = editor;
+      if (!target) return;
+      const upserted = new Set<string>();
+      for (const attId of sequence) {
+        const entry = byAttId.get(attId);
+        if (entry === undefined) continue;
+        target.insertAttachment({ attId: entry.attId, name: entry.name, kind: entry.kind });
+        if (!upserted.has(attId)) {
+          target.upsertAttachmentEntry(entry);
+          upserted.add(attId);
+        }
+      }
+    });
+  };
+}
+
+/** The /new and /clear case of the built-in command branch: the App leaves
+ *  this session on emit (workspace draft / cleared session) and this
+ *  composer unmounts in the SAME flush — preserveAttachmentPills' nextTick
+ *  restore would run against a null editor, and the unmount stash would
+ *  write the wiped registry back over everything. Persist the kept pills
+ *  SYNCHRONOUSLY instead: the sidecar gets the entries now, and the draft
+ *  text is re-assigned to the pills' link forms — the earlier clear and
+ *  this assignment collapse into ONE watcher flush, so the text watcher's
+ *  same-session rebuild lands the links on the INTACT registry (the clear
+ *  never lands as its own rebuild) and re-persists it, and the unmount
+ *  stash (text already matches) stores the healthy state. A later restore
+ *  revives the pills like any other draft. */
+function persistPillsForDeparture(): void {
+  const ed = editor;
+  if (!ed) return;
+  const byAttId = new Map(attachmentEntries.value.map((entry) => [entry.attId, entry] as const));
+  // The FULL attId sequence in document order (duplicates kept) — several
+  // pills can share one attId (the same file dropped twice, or a copied
+  // pill), and an interleaved pair (A, B, A) must persist in that exact
+  // order: grouping by id would drop both the extra references AND their
+  // position. The sidecar entries dedupe; the link text doesn't.
+  const sequence = parseAttachmentLinks(ed.getText()).map((match) => match.attrs.attId);
+  const kept: AttachmentEntry[] = [];
+  const seen = new Set<string>();
+  const links: string[] = [];
+  for (const attId of sequence) {
+    const entry = byAttId.get(attId);
+    if (entry === undefined) continue;
+    if (!seen.has(attId)) {
+      kept.push(entry);
+      seen.add(attId);
+    }
+    links.push(serializeAttachment({ attId: entry.attId, name: entry.name, kind: entry.kind }));
+  }
+  if (links.length === 0) return;
+  saveDraftAttachments(props.sessionId, kept);
+  text.value = links.join(' ');
+}
+
+/** The submit decision for the CURRENT draft — the single source for both
+ *  the send button's disabled state and handleSubmit's executor, so the two
+ *  can never disagree (the button must allow exactly what handleSubmit
+ *  would run, including a non-consuming command under a closed gate). The
+ *  assembly is a pure read, so computing it unconditionally (even when the
+ *  gate blocks) changes nothing. */
+function currentSubmitDecision(): SubmitDecision {
+  const trimmed = text.value.trim();
+  const assembly = submitAssembly();
+  return decideComposerSubmit({
+    text: trimmed,
+    rewritten: rewriteForSubmit(trimmed, assembly.rewriteAttIds),
+    blocked:
+      attachments.value.some((a) => a.uploading) ||
+      pillGate.value.uploading ||
+      pillGate.value.errored ||
+      pillGate.value.missing,
+    assembly,
+    skillMentions: editor?.getSkillMentions() ?? [],
+    skills: props.skills,
+    skillsLoaded: props.skillsLoaded,
+    working: props.working,
+    running: props.running,
+    queueLength: props.queued.length,
+    goalMode: props.goalMode,
+  });
+}
+
+/** True when a submit would do something — the button's disabled state IS
+ *  the decision's noop verdict (an empty draft or a closed gate on an
+ *  attachment-carrying branch). */
+const canSend = computed(() => currentSubmitDecision().kind !== 'noop');
 
 function handleSubmit(): void {
-  const trimmed = text.value.trim();
-
-  // An upload is still in flight — submitting now would silently send the
-  // message WITHOUT the image. Keep the text + chips (the chip shows its
-  // uploading spinner); the user submits again in a moment.
-  if (attachments.value.some((a) => a.uploading)) return;
-
-  // Allow submission with images even when text is empty
-  const readyAttachments = attachments.value.filter((a) => !a.uploading && !a.error && a.fileId);
-
-  if (!trimmed && readyAttachments.length === 0) return;
-
-  // Record for ↑/↓ recall before the slash branch so commands (with or without
-  // args) are recallable too, not just plain messages. `push` ignores empty /
-  // whitespace, so an image-only send adds nothing.
-  history.push(trimmed);
-
-  // Bare work-mode commands are consumed locally — they toggle the composer's
-  // mode pill instead of traveling as a slash command. `/plan` and `/goal`
-  // swap each other out; with a live goal, `/goal` just focuses its panel.
-  if (trimmed === '/plan') {
-    text.value = '';
-    clearDraft();
-    slashOpen.value = false;
-    collapseAndRefit();
-    armPlanMode();
+  // Every branch DECISION (the send gate, the work-mode match, the slash
+  // resolution order, the skill-pill activation vetoes, per-branch
+  // cmd/attachments/history semantics) lives in the pure, unit-tested
+  // decideComposerSubmit — this function is only its executor: ref mutations,
+  // editor calls, emits.
+  const decision = currentSubmitDecision();
+  if (decision.kind === 'noop') return;
+  if (decision.kind === 'invalid-command') {
+    // A no-arg command with junk after it — refuse LOCALLY (the command is
+    // NOT a skill, so falling through to the app's skill-activation default
+    // would send it to the daemon for a pointless skill.not_found). The
+    // draft — text AND pills — stays untouched; no history entry either.
+    client.notify({ severity: 'warning', title: t('composer.noArgCommand', { cmd: decision.cmd }) });
     return;
   }
-  if (trimmed === '/goal') {
-    text.value = '';
-    clearDraft();
-    slashOpen.value = false;
-    collapseAndRefit();
-    armGoalMode();
-    return;
-  }
-  if (trimmed === '/swarm') {
-    // Same enable-only consumption as the menu pick — the chip's × is the
-    // off switch, so a click-send must not toggle the mode off (the App's
-    // bare-/swarm handler would). `/swarm off` still travels as a command.
-    text.value = '';
-    clearDraft();
-    slashOpen.value = false;
-    collapseAndRefit();
-    if (!swarmOn.value) emit('toggleSwarm');
-    return;
-  }
+  // ↑/↓ recall — recorded for commands AND plain messages alike (the push
+  // ignores empty/whitespace, so an attachment-only send adds nothing). The
+  // decision carries the stripped text: a recalled entry must not revive dead
+  // pills out of the submit-time 1..N index links.
+  history.push(decision.historyText);
+  // A send abandons any pre-browse draft — drop its entry snapshot with it
+  // (push already reset the browse cursor).
+  historyEntrySnapshot = null;
 
-  // If it's a known slash command, keep the optional tail as command input
-  // instead of submitting it as normal chat text. This covers `/goal <task>`,
-  // `/swarm <task>`, `/btw <question>`, slash skills with args, and bare
-  // commands such as `/model`. A hand-typed bare skill name (`/deploy`) also
-  // resolves to its prefixed menu entry (`/skill:deploy`), mirroring the TUI.
-  //
-  // A message carrying exactly ONE skill pill takes the same activation path:
-  // the pill stands for `/skill:<name>` and the WHOLE text becomes the args —
-  // the pill travels in its serialized mention-link form, so the sent bubble
-  // shows the original message verbatim (the link revives into a pill there).
-  // With TWO or more skill pills the message stays a plain prompt with link
-  // references — each activation is its own turn, so multi-activation from
-  // one message would be a mess. And while the session is BUSY the command
-  // path would lose the message to a busy refusal, so the branch is skipped
-  // and the normal submit queues the text like any other send.
-  //
-  // Skill commands take the composer's attachments along (the daemon appends
-  // them to the activation's user message); built-in commands don't consume
-  // attachments, so the chips stay pending for the next send.
-  if (trimmed) {
-    // An explicit known slash command always wins over the single-skill-pill
-    // auto-activation: '/compact [deploy](kimi-code://skill/deploy)' must run
-    // compact (the pill is a plain reference in its args), not hijack into a
-    // skill activation. Resolve the command FIRST.
-    const parsed = parseSlash(trimmed);
-    const matched = parsed ? matchSlashItem(buildSlashItems(props.skills), parsed.cmd) : undefined;
-    const skillMentions = editor?.getSkillMentions() ?? [];
-    // A pill revived from a draft/history/edit-resend may name a skill GONE
-    // from the workspace: the daemon would refuse the activation, the failure
-    // restore would load the same text back, and every retry would loop the
-    // same refusal — the message could never go out as a plain prompt. Once
-    // the list is loaded, an unresolvable name degrades to a plain reference
-    // (the same rule as multi-pill messages); while it is still loading the
-    // name can't be verified, so the old attempt path stays.
-    const staleSkillPill =
-      skillMentions.length === 1 && props.skillsLoaded && !props.skills.some((s) => s.name === skillMentions[0]!.name);
-    // Only activate when the session is FULLY idle with an empty queue.
-    // A busy session makes the command path fire activateSkill immediately
-    // into a running turn — and the composer has already cleared by the time
-    // a busy refusal comes back, losing the message and its attachments. A
-    // non-empty queue would let the later skill jump the FIFO order the
-    // normal submit path preserves (sendPrompt enqueues + flushes), and a
-    // running-but-not-working state (approval/question pending) is the same
-    // bypass. An armed GOAL intent also vetoes the shortcut: its objective
-    // IS this message's text, and only the normal submit path writes
-    // goalObjective and cashes the intent — activating here would drop the
-    // goal entirely and leave the intent armed for the next message. Let
-    // the normal submit path run instead: it queues the full serialized
-    // text like any other busy send; on replay it goes out as a plain
-    // prompt, matching the multi-pill degradation.
-    if (skillMentions.length === 1 && !staleSkillPill && !props.working && !props.running && props.queued.length === 0 && !matched && !props.goalMode) {
-      const mention = skillMentions[0]!;
-      const cmd = `/${SKILL_COMMAND_PREFIX}${mention.name} ${trimmed}`;
+  switch (decision.kind) {
+    case 'mode': {
+      // A bare work-mode command is consumed locally — the doc's pills stay
+      // pending for the next message, re-seeded after the text clear.
+      const restorePills = preserveAttachmentPills();
       text.value = '';
       clearDraft();
       slashOpen.value = false;
       collapseAndRefit();
-      // The chips leave with the command — same as the slash-menu skill path.
+      if (decision.mode === 'plan') armPlanMode();
+      else if (decision.mode === 'goal') armGoalMode();
+      // `/swarm`: enable-only consumption — the chip's × is the off switch,
+      // so a click-send must not toggle the mode off (the App's bare-/swarm
+      // handler would).
+      else if (!swarmOn.value) emit('toggleSwarm');
+      restorePills();
+      return;
+    }
+
+    case 'skill-activation':
+    case 'skill-command':
+    case 'unresolved-skill-command': {
+      text.value = '';
+      clearDraft();
+      clearDraftAttachments();
+      slashOpen.value = false;
+      collapseAndRefit();
+      // The attachments leave with the command — mirror the plain-submit
+      // cleanup so they don't linger (and their object URLs are revoked).
       previewAttachment.value = null;
       previewThumbImg.value = null;
       clearAfterSubmit();
       closeMentionMenu();
-      // restoreText: the gate-failure restore loads the ORIGINAL message back
-      // (pill intact) — restoring the synthesized cmd would prefix another
-      // `/skill:<name>` on every gate retry. skillName rides structured: a
-      // name with SPACES can't survive the space-delimited cmd string.
-      emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)), restoreText: trimmed, skillName: mention.name });
-      return;
-    }
-
-    if (parsed && matched) {
-      const cmd = parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd;
-      const isSkill = matched.isSkill === true;
-      text.value = '';
-      clearDraft();
-      slashOpen.value = false;
-      collapseAndRefit();
-      if (isSkill) {
-        // The chips leave with the command — mirror the plain-submit cleanup
-        // so they don't linger (and their object URLs are revoked).
-        previewAttachment.value = null;
-        previewThumbImg.value = null;
-        clearAfterSubmit();
-        closeMentionMenu();
-        emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)), skillName: stripSkillPrefix(matched.name) });
+      if (decision.kind === 'skill-activation') {
+        emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, skillName: decision.skillName, restoreEntries: attachmentEntries.value });
+      } else if (decision.kind === 'skill-command') {
+        emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, skillName: decision.skillName, restoreEntries: attachmentEntries.value });
       } else {
-        emit('command', { cmd, attachments: [] });
+        emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries: attachmentEntries.value });
       }
       return;
     }
 
-    // An explicit `/skill:<name>` line that resolves against NOTHING in the
-    // current catalog (list still loading, listSkills failed, or the skill
-    // was removed — e.g. an undo refill for a since-deleted skill) must not
-    // fall through to a plain prompt: the user plainly asked for an
-    // activation, so send it down the command path anyway and let the
-    // daemon's skill.not_found surface (with the composer restore) instead
-    // of silently dropping the activation.
-    if (parsed && !matched && parsed.cmd.startsWith(`/${SKILL_COMMAND_PREFIX}`)) {
-      const cmd = parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd;
+    case 'builtin-command': {
+      // No attachment payload — the doc's pills survive the text clear
+      // (restorePills is invoked AFTER the clear, landing on the fresh doc).
       text.value = '';
       clearDraft();
       slashOpen.value = false;
       collapseAndRefit();
+      if (decision.leave) {
+        // The App leaves this session on /new and /clear and unmounts this
+        // composer in the same flush — persist the kept pills synchronously
+        // instead of the nextTick restore (see persistPillsForDeparture).
+        persistPillsForDeparture();
+        emit('command', { cmd: decision.cmd, attachments: [] });
+        return;
+      }
+      const restorePills = preserveAttachmentPills();
+      restorePills();
+      emit('command', { cmd: decision.cmd, attachments: [] });
+      return;
+    }
+
+    case 'submit': {
+      // Revoke object URLs and drop the submitted attachments.
       previewAttachment.value = null;
       previewThumbImg.value = null;
       clearAfterSubmit();
+      text.value = '';
+      clearDraft();
+      clearDraftAttachments();
+      slashOpen.value = false;
       closeMentionMenu();
-      emit('command', { cmd, attachments: readyAttachments.map((a) => toPromptAttachment(a)) });
+      collapseAndRefit();
+      emit('submit', { text: decision.text, restoreText: decision.restoreText, attachments: decision.attachments, restoreEntries: attachmentEntries.value });
       return;
     }
   }
-
-  const payload = {
-    text: trimmed,
-    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
-  };
-
-  // Revoke object URLs and drop the submitted attachments.
-  previewAttachment.value = null;
-  previewThumbImg.value = null;
-  clearAfterSubmit();
-
-  text.value = '';
-  clearDraft();
-  slashOpen.value = false;
-  closeMentionMenu();
-  collapseAndRefit();
-  emit('submit', payload);
 }
 
 /**
@@ -909,20 +1364,29 @@ function handleSubmit(): void {
  */
 function handleSteer(): void {
   if (!props.running) return;
-  if (attachments.value.some((a) => a.uploading)) return;
+  // Same gate as handleSubmit: an in-flight upload would be sent without its
+  // file; an errored or missing pill would be silently dropped from the payload.
+  if (attachments.value.some((a) => a.uploading) || pillGate.value.uploading || pillGate.value.errored || pillGate.value.missing) return;
 
   const trimmed = text.value.trim();
-  const readyAttachments = attachments.value.filter((a) => !a.uploading && !a.error && a.fileId);
-  if (!trimmed && readyAttachments.length === 0 && props.queued.length === 0) return;
+  const assembly = submitAssembly();
+  if (!trimmed && assembly.promptAttachments.length === 0 && props.queued.length === 0) return;
 
   const payload = {
-    text: trimmed,
-    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
+    text: rewriteForSubmit(trimmed, assembly.rewriteAttIds),
+    attachments: assembly.promptAttachments,
   };
   clearAfterSubmit();
-  history.push(trimmed);
+  // Same strip as handleSubmit: history recall must not revive dead pills —
+  // and a pill-ONLY steer records nothing (a bare name is not a draft — its
+  // recall would come back registry-less and resend just the filename).
+  history.push(trimmed !== '' && removeAttachmentLinks(trimmed).trim() === '' ? '' : stripAttachmentLinks(payload.text));
+  // Same abandonment as handleSubmit: the pre-browse draft's snapshot dies
+  // with the send.
+  historyEntrySnapshot = null;
   text.value = '';
   clearDraft();
+  clearDraftAttachments();
   slashOpen.value = false;
   closeMentionMenu();
   collapseAndRefit();
@@ -1094,6 +1558,15 @@ function handleKeydown(e: KeyboardEvent): boolean {
     const browsing = history.isBrowsing();
     if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtTextStart())) {
       e.preventDefault();
+      if (!browsing) {
+        // Entering history: snapshot the draft's attachment entries (entry
+        // objects are never mutated in place — a per-entry spread is a true
+        // snapshot). The recall rebuilds (the text watcher's same-session
+        // setText) drop them via the init reconcile — history text carries
+        // no attachment links — and the sidecar follows, so without the
+        // snapshot the draft's pills come back dead on the walk home.
+        historyEntrySnapshot = attachmentEntries.value.map((entry) => ({ ...entry }));
+      }
       history.recallOlder();
       // Recall rewrites `text` directly, bypassing handleInput. Close the
       // slash menu outright rather than recompute it — recomputing would
@@ -1107,6 +1580,26 @@ function handleKeydown(e: KeyboardEvent): boolean {
       e.preventDefault();
       history.recallNewer();
       slashOpen.value = false;
+      if (!history.isBrowsing()) {
+        // Back at the live draft: its text (with attachment links) returns
+        // via the text watcher's setText — but the history walk's rebuilds
+        // dropped the registry entries those links point at (and persisted
+        // the wipe to the sidecar). Re-seed the browse-start snapshot once
+        // the rebuild has landed, filtered to what the restored doc
+        // actually references.
+        const snapshot = historyEntrySnapshot;
+        historyEntrySnapshot = null;
+        if (snapshot !== null && snapshot.length > 0) {
+          void nextTick(() => {
+            const ed = editor;
+            if (!ed) return;
+            const referenced = new Set(ed.getOrderedAttachmentIds());
+            for (const entry of snapshot) {
+              if (referenced.has(entry.attId)) ed.upsertAttachmentEntry(entry);
+            }
+          });
+        }
+      }
       return true;
     }
   }
@@ -1256,9 +1749,9 @@ const anyPopupOpen = computed(
   () => dropdownOpen.value || permDropdownOpen.value || addMenuOpen.value || slashOpen.value || mentionOpen.value,
 );
 
-const isEmpty = () => text.value.trim().length === 0 && attachments.value.length === 0;
+const isEmpty = () => text.value.trim().length === 0 && attachments.value.length === 0 && attachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty });
 
 function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;
@@ -1974,15 +2467,16 @@ function selectModel(modelId: string): void {
 
     <!-- Main composer card -->
     <div class="composer-card" :class="{ 'labels-collapsed': toolbarLabelsCollapsed }">
-      <!-- Attachment previews (inside the card, above the input row): media
-           renders as MediaThumb thumbnails, files as AttachmentChip pills —
-           the same two rows the sent bubble uses. The strip caps at two
-           thumbnail rows and scrolls beyond that; clear-all stays pinned to
-           the top corner so it never scrolls away. -->
+      <!-- Attachment previews (inside the card, above the input row): the
+           strip is MEDIA-ONLY (image/video thumbnails) — files and folders
+           are in-document pills now, rendered by the editor itself. The
+           strip caps at two thumbnail rows and scrolls beyond that;
+           clear-all stays pinned to the top corner so it never scrolls
+           away. -->
       <div v-if="attachments.length > 0" class="att-strip">
         <div ref="attScrollRef" class="att-scroll" :class="{ 'is-overflowing': attOverflowing }">
           <div ref="attScrollContentRef" class="att-scroll-content">
-            <div v-if="mediaDrafts.length > 0" ref="attMediaRowRef" class="att-row att-row-media">
+            <div v-if="mediaDrafts.length > 0" class="att-row att-row-media">
               <MediaThumb
                 v-for="att in mediaDrafts"
                 :key="att.localId"
@@ -1996,22 +2490,6 @@ function selectModel(modelId: string): void {
                 removable
                 :remove-label="t('composer.removeNamed', { name: att.name })"
                 @activate="onAttachmentActivate(att, $event)"
-                @remove="removeAttachment(att.localId)"
-              />
-            </div>
-            <div v-if="fileDrafts.length > 0" class="att-row">
-              <AttachmentChip
-                v-for="att in fileDrafts"
-                :key="att.localId"
-                kind="file"
-                :name="att.name"
-                :media-type="att.mediaType"
-                :size="att.size"
-                :uploading="att.uploading"
-                :error="att.error"
-                removable
-                :remove-label="t('composer.removeNamed', { name: att.name })"
-                @activate="onAttachmentActivate(att)"
                 @remove="removeAttachment(att.localId)"
               />
             </div>
@@ -2496,11 +2974,11 @@ function selectModel(modelId: string): void {
 
 
 
-/* Attachment strip — media thumbs are shared MediaThumb, file chips the
-   shared AttachmentChip; this is only the layout inside the card. Capped at
-   two thumbnail rows: beyond that the strip scrolls instead of pushing the
-   input down. The right margin shifts the scrollbar off the corner, so the
-   pinned clear-all button never overlaps it. */
+/* Attachment strip — media-only now (files/folders are in-document pills);
+   thumbs are the shared MediaThumb, this is only the layout inside the card.
+   Capped at two thumbnail rows: beyond that the strip scrolls instead of
+   pushing the input down. The right margin shifts the scrollbar off the
+   corner, so the pinned clear-all button never overlaps it. */
 .att-strip {
   position: relative;
   /* Top/left --space-4 + --space-05: the chip's corner lands exactly
@@ -2549,17 +3027,6 @@ function selectModel(modelId: string): void {
 }
 .att-row-media {
   gap: var(--space-2);
-}
-/* Concentric attachment chips (composer only — the same component stays a
-   plain stadium in message bubbles): the chip's top-left corner shares the
-   card's superellipse shape, and the icon tile bleeds 2px (--space-05) past
-   the chip's left edge so the icon lands on the 16px text column — the pull
-   is the chip's own left padding plus that bleed, never a frozen sum. */
-.att-scroll-content :deep(.att-chip) {
-  corner-shape: superellipse(1.5);
-}
-.att-scroll-content :deep(.att-tile) {
-  margin-left: calc(-1 * (var(--att-chip-pad-left, 5px) + var(--space-05)));
 }
 /* Clear-all: the shared IconButton, pinned to the strip's top corner. */
 .att-clear {

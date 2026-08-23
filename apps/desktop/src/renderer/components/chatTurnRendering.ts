@@ -5,6 +5,7 @@
 import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock, TurnFileChange } from '../types';
 import { diffStats } from '@moonshot-ai/app-core/client';
 import { buildEditDiffLines, toolFilePath } from '@moonshot-ai/app-core/client';
+import { stripAttachmentLinks } from '@moonshot-ai/app-composer';
 import { normalizeToolName } from '../lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
@@ -294,14 +295,36 @@ export function turnVisibleFinalText(turn: ChatTurn): string {
     .join('\n\n');
 }
 
-/** Convert a single turn to Markdown. */
+/** Escape a degraded attachment name for the Markdown export: a filename can
+ *  itself carry Markdown syntax (`# notes.md`, `---`, `[spec](draft)`), and
+ *  an unescaped bare name would be re-parsed as a heading, a thematic
+ *  break, or a link instead of the literal name the bubble shows — even
+ *  reshaping whatever follows it. Inline-structural chars get a backslash;
+ *  a line-start list/quote/ordered-list marker gets one too; ordinary names
+ *  (report.pdf, src/) pass through clean. */
+const escapeMarkdownText = (value: string): string =>
+  value
+    .replace(/([\\`*_[\]<!#])/g, '\\$1')
+    .replace(/^([-+>])/, '\\$1')
+    .replace(/^(\d+)([.)])/, '$1\\$2');
+
+/** Convert a single turn to Markdown. Text blocks are stripped of
+    composer-private attachment links first: a pill-flow user turn keeps its
+    `kimi-code-composer://attachments/<index>` links for the bubble's inline
+    pills, but a Markdown export is a plain-text surface where attIds are
+    meaningless (and the private scheme must never leak) — same degradation
+    as the message copy button's text/plain half, with the bare names
+    escaped (escapeMarkdownText) so a Markdown-active filename survives
+    literally. The strip lives HERE, in the app layer: app-core (where turns
+    are projected) must not import app-composer — the same constraint pinned
+    atop messagesToTurns. */
 export function turnToMarkdown(turn: ChatTurn): string {
   const parts: string[] = [];
   for (const blk of turnBlocks(turn)) {
     if (blk.kind === 'thinking' && blk.thinking) {
       parts.push(`> **Thinking**\n> ${blk.thinking.split('\n').join('\n> ')}`);
     } else if (blk.kind === 'text' && blk.text) {
-      parts.push(blk.text);
+      parts.push(stripAttachmentLinks(blk.text, escapeMarkdownText));
     } else if (blk.kind === 'tool' && blk.tool.output && blk.tool.output.length > 0) {
       const output = blk.tool.output.join('\n');
       parts.push(`\`\`\`\n[${blk.tool.name}]\n${output}\n\`\`\``);
@@ -322,6 +345,24 @@ export function turnToMarkdown(turn: ChatTurn): string {
     }
   }
   return parts.join('\n\n');
+}
+
+/** The TOC rail's one-line title for a turn. A user turn carrying
+ *  attachment pills shows BARE names — the composer-private link form never
+ *  leaks into the rail (the same degradation as the copy/export paths);
+ *  mention links keep their link text untouched. */
+export function turnTocTitle(turn: ChatTurn, t: (key: string) => string): string {
+  if (turn.role === 'compaction') return t('conversation.compactedPlain');
+  if (turn.role === 'user') {
+    if (turn.skillActivation) return `/${turn.skillActivation.name}`;
+    if (turn.pluginCommand) return `/${turn.pluginCommand.pluginId}:${turn.pluginCommand.commandName}`;
+    const text = stripAttachmentLinks(turn.text).trim().replaceAll(/\s+/g, ' ');
+    return text.length > 0 ? text : 'user';
+  }
+  const text = (turn.text || turn.thinking || '').trim().replaceAll(/\s+/g, ' ');
+  if (text.length > 0) return text;
+  if ((turn.tools?.length ?? 0) > 0) return `${turn.tools!.length} tools`;
+  return 'kimi';
 }
 
 export function toolStackKey(item: ToolStackItem): string {

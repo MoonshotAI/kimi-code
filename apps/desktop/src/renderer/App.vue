@@ -36,7 +36,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient, promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { runComposerMenuEdit, startMentionTooltip } from '@moonshot-ai/app-composer';
+import { runComposerMenuEdit, startMentionTooltip, type AttachmentEntry } from '@moonshot-ai/app-composer';
 import type { ColorScheme, FontScale, PromptAttachment } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -44,7 +44,7 @@ import { useSidebarLayout } from '@moonshot-ai/app-client/composables';
 import { useFilePreview, type DetailTarget } from '@moonshot-ai/app-client/composables';
 import { useDetailPanel } from '@moonshot-ai/app-client/composables';
 import { useIsMobile } from '@moonshot-ai/app-client/composables';
-import { installImeCompositionLatch, isImeKeyEvent } from '@moonshot-ai/app-client/lib';
+import { installImeCompositionLatch, isImeKeyEvent, openFileAttachment } from '@moonshot-ai/app-client/lib';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
@@ -682,15 +682,24 @@ const {
 // panel is hidden.
 const previewOpen = computed(() => detailTarget.value !== null);
 
-// Mention-pill hover tooltip + skill-pill click routing — one document-level
+// Mention-pill hover tooltip + pill click routing — one document-level
 // singleton covering the composer, message bubbles, and Markdown alike (see
-// mentionTooltip.ts). Skill pills/cards open the skill's SKILL.md here.
+// mentionTooltip.ts). Skill pills/cards open the skill's SKILL.md here;
+// attachment pills (inline bubble pills and the legacy row alike) open their
+// file through onAttachmentOpen.
 onMounted(() => {
   const stop = startMentionTooltip({
     resolveSkill: (name) => client.skills.value.find((s) => s.name === name) ?? null,
     openPath: (target) => void openFilePreview(target),
+    openAttachment: (target) => onAttachmentOpen(target),
     openSkillLabel: () => t('mention.openSkill'),
     copyPathLabel: () => t('mention.copyPath'),
+    attachmentErrorLabel: (error) =>
+      error === 'upload-failed'
+        ? t('mention.attachmentUploadFailed')
+        : error === 'upload-interrupted'
+          ? t('mention.attachmentUploadInterrupted')
+          : undefined,
     probePath: (path, kind) => client.probeWorkspacePath(path, kind),
     skillsLoaded: () => client.skillsLoaded.value,
     // No-session onboarding probes are workspace-rooted, so scope by the
@@ -899,6 +908,10 @@ const { sidebarTabs } = useSidebarTabs();
 type SubmitPayload = {
   text: string;
   attachments: PromptAttachment[];
+  /** The gate-failure restore's draft (the PRE-REWRITE text, attId links
+      intact) plus the original registry entries — see the Composer emit. */
+  restoreText?: string;
+  restoreEntries?: AttachmentEntry[];
 };
 const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
 // Inline error shown inside the add-workspace picker after the daemon rejects
@@ -1028,12 +1041,29 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
 // The adminBatch toast is the session admin page's batch variant: undo runs
 // the same (succeeded) id set through the inverse batch endpoint and swaps
 // the direction — the complete⇄reopen two-way flow, batched.
+// The attachmentOpen toast is the transient "can't open this file type"
+// feedback for attachment-pill clicks (no actions, short auto-dismiss).
 type AppActionToast =
   | { kind: 'archive'; id: string; reopen?: boolean; key: number }
   | { kind: 'export'; state: 'running' | 'done'; key: number }
+  | { kind: 'attachmentOpen'; name: string; key: number }
   | { kind: 'adminBatch'; plan: AdminBatchToastPlan; key: number };
 const actionToast = ref<AppActionToast | null>(null);
 let actionToastKey = 0;
+
+/** Attachment-pill activation routed by the mentionTooltip singleton (inline
+ *  bubble pills and ChatPane's legacy row alike — the pill carries its
+ *  resolved target in data attributes). The same new-tab preview chain the
+ *  retired AttachmentChip used; a type the chain won't preview surfaces on
+ *  the shared ActionToast channel instead of failing silently. */
+function onAttachmentOpen(target: { url: string; fileId?: string; name: string; mediaType?: string }): void {
+  const fileId = target.fileId;
+  if (fileId === undefined) return;
+  void openFileAttachment(getKimiWebApi(), fileId, target.name, target.mediaType).then((result) => {
+    if (result !== 'unsupported') return;
+    actionToast.value = { kind: 'attachmentOpen', name: target.name || fileId, key: ++actionToastKey };
+  });
+}
 
 /** Direction of the in-flight admin batch (null = idle). A large selected set
  *  keeps the request open for seconds — this drives the batch bar's spinner +
@@ -1298,7 +1328,9 @@ async function handleInterrupt(): Promise<void> {
 // included) — the same mechanism as edit-and-resend for history messages.
 function toEditableAttachments(atts: PromptAttachment[]): TurnAttachment[] {
   const api = getKimiWebApi();
-  return atts.map((a) => promptAttachmentToTurnAttachment(api, a));
+  // The payload array IS the submit-time interleave — its index is the
+  // add-order hint the edit reload restamps from.
+  return atts.map((a, index) => promptAttachmentToTurnAttachment(api, a, index));
 }
 
 // Sign-in gate, shared by every path that submits work (plain sends and
@@ -1308,7 +1340,7 @@ function toEditableAttachments(atts: PromptAttachment[]): TurnAttachment[] {
 // draft. `restoreText` overrides what goes back into the composer (a
 // synthesized command restores its original composer text, not the command
 // line). Resolves true when the caller may proceed.
-async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string): Promise<boolean> {
+async function passAuthGate(text: string, attachments: PromptAttachment[], restoreText?: string, restoreEntries?: AttachmentEntry[]): Promise<boolean> {
   if (client.authReady.value) return true;
   // The cached flag can predate a readiness change that never re-ran
   // checkAuth through this client — a provider added in settings, a default
@@ -1341,7 +1373,7 @@ async function passAuthGate(text: string, attachments: PromptAttachment[], resto
           variant: 'primary',
         },
   );
-  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments));
+  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries);
   if (confirmed) {
     if (isFreeAccount) openUpgrade();
     else openLogin();
@@ -1358,7 +1390,7 @@ async function passAuthGate(text: string, attachments: PromptAttachment[], resto
 // gated first-skill send would lose the chips. `restoreText` is the
 // gate-failure composer content when it differs from the command line (see
 // passAuthGate).
-async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string): Promise<boolean> {
+async function passWorkspaceGateForCommand(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[]): Promise<boolean> {
   if (client.activeSessionId.value || client.activeWorkspaceId.value) return true;
   const pick = await confirm({
     title: t('workspace.requiredTitle'),
@@ -1366,7 +1398,7 @@ async function passWorkspaceGateForCommand(text: string, attachments: PromptAtta
     confirmLabel: t('conversation.pickFolder'),
     variant: 'primary',
   });
-  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments));
+  conversationPaneRef.value?.loadComposerForEdit(restoreText ?? text, toEditableAttachments(attachments), restoreEntries);
   if (pick) void requestAddWorkspace();
   return false;
 }
@@ -1375,9 +1407,9 @@ async function passWorkspaceGateForCommand(text: string, attachments: PromptAtta
 // line, handed back to the composer when gated (unless `restoreText` carries
 // the original composer text of a synthesized command); `attachments` are the
 // composer's pending uploads (skill commands only — other commands pass none).
-async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string): Promise<boolean> {
-  if (!(await passAuthGate(text, attachments, restoreText))) return false;
-  return passWorkspaceGateForCommand(text, attachments, restoreText);
+async function passCommandGates(text: string, attachments: PromptAttachment[] = [], restoreText?: string, restoreEntries?: AttachmentEntry[]): Promise<boolean> {
+  if (!(await passAuthGate(text, attachments, restoreText, restoreEntries))) return false;
+  return passWorkspaceGateForCommand(text, attachments, restoreText, restoreEntries);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
@@ -1388,8 +1420,8 @@ async function passCommandGates(text: string, attachments: PromptAttachment[] = 
 // and a late restore would re-fill the old command for an easy duplicate.
 let sendGeneration = 0;
 
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string }): Promise<void> {
-  const { cmd, attachments, restoreText } = payload;
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; restoreEntries?: AttachmentEntry[] }): Promise<void> {
+  const { cmd, attachments, restoreText, restoreEntries } = payload;
   // `/compact <text>` carries an optional free-text instruction steering what
   // the summary should focus on (TUI parity).
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
@@ -1520,7 +1552,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
       // synthesized `/skill:<name> <original text>` line): a failed gate
       // restores the original message, so the re-fire synthesizes the prefix
       // once instead of stacking it.
-      if (!(await passCommandGates(cmd, attachments, restoreText))) return;
+      if (!(await passCommandGates(cmd, attachments, restoreText, restoreEntries))) return;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
         const workspaceId = client.activeWorkspaceId.value;
         const draftKey = terminalBucketKey('', workspaceId);
@@ -1545,7 +1577,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
             ? client.activeWorkspaceId.value === workspaceId
             : client.activeSessionId.value === createdId)
         ) {
-          conversationPaneRef.value.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments));
+          conversationPaneRef.value.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries);
         }
       } else {
         // A failed activation (busy refusal, daemon error) must not lose the
@@ -1559,7 +1591,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
         void client.activateSkill(name, args, attachments).then((ok) => {
           if (ok) return;
           if (client.activeSessionId.value === sid && generation === sendGeneration && conversationPaneRef.value?.isComposerEmpty()) {
-            conversationPaneRef.value.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments));
+            conversationPaneRef.value.loadComposerForEdit(restoreText ?? cmd, toEditableAttachments(attachments), restoreEntries);
           }
         });
       }
@@ -1592,7 +1624,7 @@ function handleSteerQueued(index: number): void {
 }
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
-  if (!(await passAuthGate(payload.text, payload.attachments))) return;
+  if (!(await passAuthGate(payload.text, payload.attachments, payload.restoreText, payload.restoreEntries))) return;
   // Count every user-initiated send: an in-flight skill activation's failure
   // restore checks this generation before re-filling the composer.
   sendGeneration++;
@@ -1628,13 +1660,16 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
 
 // Drops a queued first-message submission and hands its content back to the
 // composer, so cancelling the workspace gate/picker never eats the draft.
+// The restore uses the PRE-REWRITE draft + original entries when the payload
+// carries them — folder pills keep their attId form and paths.
 function dropPendingWorkspaceSubmit(): void {
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
   if (pending) {
     conversationPaneRef.value?.loadComposerForEdit(
-      pending.text,
+      pending.restoreText ?? pending.text,
       toEditableAttachments(pending.attachments),
+      pending.restoreEntries,
     );
   }
 }
@@ -2258,14 +2293,15 @@ function openPr(url: string): void {
     <Teleport to="body">
       <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
       <!-- Action toast (top-center, design-system §03): one shared channel —
-           the archive undo toast and the export result toast replace each
-           other so two fixed pills never overlap. The export 'running' state
-           only appears for genuinely slow exports (>=400ms). -->
+           the archive undo toast, the export result toast and the
+           attachment-open hint replace each other so two fixed pills never
+           overlap. The export 'running' state only appears for genuinely
+           slow exports (>=400ms). -->
       <Transition name="action-toast">
         <ActionToast
           v-if="actionToast"
           :key="actionToast.key"
-          :duration="actionToast.kind === 'export' ? (actionToast.state === 'running' ? 60000 : 4000) : 8000"
+          :duration="actionToast.kind === 'export' ? (actionToast.state === 'running' ? 60000 : 4000) : actionToast.kind === 'attachmentOpen' ? 4000 : 8000"
           :dismiss-token="actionToast.key"
           @dismiss="dismissActionToast"
         >
@@ -2301,6 +2337,9 @@ function openPr(url: string): void {
               t('admin.batchFailedSuffix', { n: actionToast.plan.failed })
             }}</template>
             <button type="button" @click="undoSessionAdminBatch">{{ t('admin.undo') }}</button>
+          </template>
+          <template v-else-if="actionToast.kind === 'attachmentOpen'">
+            {{ t('composer.attachmentOpenUnsupported', { name: actionToast.name }) }}
           </template>
           <template v-else>
             {{ actionToast.state === 'running' ? t('commands.export.started') : t('commands.export.done') }}

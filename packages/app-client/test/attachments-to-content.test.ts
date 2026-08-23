@@ -83,4 +83,25 @@ describe('prompt attachment mapping', () => {
       { type: 'image', source: { kind: 'sessionMedia', fileId: 'f_img' } },
     ]);
   });
+
+  it('carries the caller-supplied orderHint (the queue payload index is the interleave)', () => {
+    const api = {
+      getFileUrl: vi.fn((fileId: string) => `file://${fileId}`),
+      getSessionMediaUrl: vi.fn(),
+    };
+    // A queued prompt submitted as [file, image]: the array index IS the
+    // submit-time interleave, and mapping with it keeps the reload's
+    // restamp from collapsing to media-first.
+    const mapped = [
+      { fileId: 'f_a', kind: 'file' as const, name: 'a.pdf' },
+      { fileId: 'f_img', kind: 'image' as const, name: 'shot.png' },
+    ].map((a, index) => promptAttachmentToTurnAttachment(api, a, index));
+
+    expect(mapped.map((a) => [a.kind, a.orderHint])).toEqual([
+      ['file', 0],
+      ['image', 1],
+    ]);
+    // Without the argument no hint is stamped (legacy callers).
+    expect(promptAttachmentToTurnAttachment(api, { fileId: 'f_a', kind: 'file' }).orderHint).toBeUndefined();
+  });
 });

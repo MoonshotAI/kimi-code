@@ -117,6 +117,116 @@ function attachedFileNotice(
   };
 }
 
+/** The submit-time 1..N index form of a composer attachment link. The scheme
+ *  literal is the app-composer wire contract (ATTACHMENT_LINK_BASE,
+ *  app-composer/docs/wire-format.md §6); app-core must not import
+ *  app-composer, so the link shape is pinned here by comment (the same
+ *  constraint the pill-flow block below repeats). Only NUMERIC ids are
+ *  extracted — a submit-bound text's links are all index form, and a
+ *  composer-private attId never maps to a payload position. Two prefixes
+ *  exclude the match, mirroring the parser: a leading `!` makes `![alt](src)`
+ *  ONE image construct the micromark pipeline rejects wholesale, and a
+ *  leading `\` escapes the `[` into a literal (characterEscape is ON in the
+ *  wire config) — neither revives a pill, so neither counts as an inline
+ *  reference. (The doubled-prefix edges `\\[` and `\![` fall back to keeping
+ *  the file in the chip row — a duplicate display beats an inaccessible
+ *  file.) */
+const INLINE_ATTACHMENT_INDEX_RE = /(?<![!\\])\[(?:\\.|[^\]\n])+\]\(kimi-code-composer:\/\/attachments\/([1-9]\d*)\)/g;
+
+/** True when the char at `pos` is backslash-escaped (an ODD run of `\`
+ *  immediately before it) — `\\!` (an escaped backslash, then a bang) is NOT
+ *  escaped. */
+function backslashEscaped(text: string, pos: number): boolean {
+  let run = 0;
+  let i = pos - 1;
+  while (i >= 0 && text[i] === '\\') {
+    run += 1;
+    i -= 1;
+  }
+  return run % 2 === 1;
+}
+
+/** Mask image constructs (`![alt](src)`) out of a text — replaced with spaces
+ *  so offsets are preserved for the attachment-link scan. The real parser
+ *  (micromark → mdast) flattens the WHOLE image into one node with no parsed
+ *  children: a link nested in its description (`![caption [report](…/1)](preview.png)`)
+ *  never revives a pill, so the pill-flow scan must not count it either —
+ *  counting it would hide the file from the legacy row and make it
+ *  completely inaccessible. Bracket/paren depth matching with
+ *  backslash-escape awareness; an unterminated `![` masks nothing. */
+function maskImageSpans(text: string): string {
+  let out = '';
+  let cursor = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === '!' && text[i + 1] === '[' && !backslashEscaped(text, i)) {
+      // The alt text's closing `]` (depth starts at 1 for the opening `[`).
+      let depth = 1;
+      let altClose = -1;
+      let j = i + 2;
+      while (j < text.length) {
+        const ch = text[j];
+        if (ch === '\\') {
+          j += 2;
+          continue;
+        }
+        if (ch === '[') depth += 1;
+        else if (ch === ']') {
+          depth -= 1;
+          if (depth === 0) {
+            altClose = j;
+            break;
+          }
+        }
+        j += 1;
+      }
+      if (altClose !== -1 && text[altClose + 1] === '(') {
+        // The destination's closing `)`.
+        let destDepth = 1;
+        let destClose = -1;
+        let k = altClose + 2;
+        while (k < text.length) {
+          const ch = text[k];
+          if (ch === '\\') {
+            k += 2;
+            continue;
+          }
+          if (ch === '(') destDepth += 1;
+          else if (ch === ')') {
+            destDepth -= 1;
+            if (destDepth === 0) {
+              destClose = k;
+              break;
+            }
+          }
+          k += 1;
+        }
+        if (destClose !== -1) {
+          out += text.slice(cursor, i) + ' '.repeat(destClose + 1 - i);
+          cursor = destClose + 1;
+          i = cursor;
+          continue;
+        }
+      }
+    }
+    i += 1;
+  }
+  return cursor === 0 ? text : out + text.slice(cursor);
+}
+
+/** The 1-based indexes of the attachment links a message's display text
+ *  carries (revivable pill positions — mirrors the positional mapping of
+ *  app-composer's attachmentTargetFor: the N-th FILE attachment of the
+ *  payload is index N). Image spans are masked first: a link nested in an
+ *  image description is invisible to the parser (see maskImageSpans). */
+function inlineReferencedFileIndexes(text: string): Set<number> {
+  const indexes = new Set<number>();
+  for (const match of maskImageSpans(text).matchAll(INLINE_ATTACHMENT_INDEX_RE)) {
+    indexes.add(Number(match[1]));
+  }
+  return indexes;
+}
+
 function bytesFromBase64(b64: string): number {
   if (b64.length === 0) return 0;
   const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
@@ -1000,6 +1110,18 @@ export function messagesToTurns(
 
       const textParts: string[] = [];
       const attachments: TurnAttachment[] = [];
+      // Add-order hints for the edit&resend refill (see
+      // TurnAttachment.orderHint): the attachment's position in the
+      // CONTENT-PART sequence. The persisted user message is
+      // [text part, then the attachment-derived parts in the SUBMIT
+      // payload's own order] (kap-server's resolvePromptMediaFiles
+      // replaces each attachment part in place — a file becomes its
+      // trailing notice, media stays a tag/structured part), so the part
+      // order IS the user's original interleave. The text part always sits
+      // first and holds every attachment link regardless, so a link's
+      // offset inside it says nothing about cross-type order — the parts
+      // are the only truthful clock.
+      let orderHintCounter = 0;
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
@@ -1014,7 +1136,7 @@ export function messagesToTurns(
             if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
               const fileId = fileIdFromCachePath(tag.path);
               if (fileId) {
-                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId, orderHint: orderHintCounter++ });
                 continue;
               }
             }
@@ -1029,6 +1151,7 @@ export function messagesToTurns(
                 name: attached.name,
                 mediaType: attached.mediaType,
                 size: attached.size,
+                orderHint: orderHintCounter++,
               });
             }
           } else if (isPluginCommand) {
@@ -1045,7 +1168,7 @@ export function messagesToTurns(
             if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
               const fileId = fileIdFromCachePath(tag.path);
               if (fileId) {
-                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId, orderHint: orderHintCounter++ });
                 continue;
               }
             }
@@ -1062,6 +1185,7 @@ export function messagesToTurns(
                 name: attached.name,
                 mediaType: attached.mediaType,
                 size: attached.size,
+                orderHint: orderHintCounter++,
               });
               continue;
             }
@@ -1078,6 +1202,7 @@ export function messagesToTurns(
             name: c.type === 'file' ? c.name : undefined,
             fileId: media.fileId,
             sessionId: media.sessionId,
+            orderHint: orderHintCounter++,
           });
           continue;
         }
@@ -1091,18 +1216,48 @@ export function messagesToTurns(
             name: c.name,
             mediaType: c.mediaType || undefined,
             size: c.size,
+            orderHint: orderHintCounter++,
           });
         }
       }
+      // The bubble's display text: skill activations surface only the args
+      // (the skill-prompt XML text parts are dropped above); everything else
+      // joins its kept text parts.
+      const displayText = isSkillActivation ? (origin?.skillArgs ?? '') : textParts.join('\n');
+      // A pill-flow message references its files INLINE by submit-time 1..N
+      // index links — but ONLY files an in-range link actually targets leave
+      // the chip row. A message that merely mentions the scheme literally
+      // (a quote, history, a foreign client) or whose links point past the
+      // file count keeps its whole legacy row, so those files never become
+      // inaccessible. The detection runs on the display text, not textParts:
+      // a skill activation's links live in its args (textParts holds the
+      // dropped XML), and its files ride inline the same way — the notices
+      // arrive in payload order, matching the args' 1..N links. The scheme
+      // literal and the positional mapping (the N-th FILE attachment is
+      // index N, app-composer's attachmentTargetFor) are the app-composer
+      // wire contract (ATTACHMENT_LINK_BASE, wire-format.md §6); app-core
+      // must not import app-composer, so both are pinned here by comment.
+      const inlineIndexes = inlineReferencedFileIndexes(displayText);
+      const fileAttachments = attachments.filter((a) => a.kind === 'file');
+      const isPillFlow = [...inlineIndexes].some((index) => index <= fileAttachments.length);
+      // The inline pills still need their open targets: the file attachments
+      // ride along as the bubble's POSITIONAL lookup list (ComposerText's
+      // attachments prop resolves a pill's index by counting FILE entries),
+      // in payload/notice order — the rewrite's 1..N index order.
+      const inlineAttachments = isPillFlow ? fileAttachments : [];
+      let filePosition = 0;
+      const keptAttachments = attachments.filter((a) => {
+        if (a.kind !== 'file') return true;
+        filePosition += 1;
+        return !(isPillFlow && inlineIndexes.has(filePosition));
+      });
       const userTurn: ChatTurn = {
         id: msg.id,
         role: 'user',
         no: no++,
-        // Skill activations surface only the args as the bubble text (the
-        // skill-prompt XML text parts are dropped above); everything else
-        // joins its kept text parts.
-        text: isSkillActivation ? (origin?.skillArgs ?? '') : textParts.join('\n'),
-        attachments: attachments.length > 0 ? attachments : undefined,
+        text: displayText,
+        attachments: keptAttachments.length > 0 ? keptAttachments : undefined,
+        inlineAttachments: inlineAttachments.length > 0 ? inlineAttachments : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }
           : undefined,

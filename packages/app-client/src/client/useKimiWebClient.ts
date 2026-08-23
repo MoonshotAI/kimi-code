@@ -2812,7 +2812,12 @@ const queued = computed<QueuedPromptView[]>(() => {
     id: q.id ?? q.text,
     text: q.text,
     attachmentCount: q.attachments?.length ?? 0,
-    attachments: q.attachments?.map((a) => promptAttachmentToTurnAttachment(api, a)),
+    attachments: q.attachments?.map((a, index) =>
+      // The queued payload array IS the submit-time interleave — its index
+      // is the add-order hint the queue edit reload restamps from (without
+      // it the reload would collapse to media-first).
+      promptAttachmentToTurnAttachment(api, a, index),
+    ),
   }));
 });
 

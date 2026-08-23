@@ -20,10 +20,16 @@ export function toPromptAttachment(att: Attachment): PromptAttachment {
 }
 
 /** Rebuild a prompt attachment for Composer/queue display without losing which
- *  daemon store owns the file id. */
+ *  daemon store owns the file id. An add-order stamp (seq) rides along when
+ *  present — the chip draft round-trips it so a remount keeps the payload
+ *  interleave instead of re-stamping. `orderHint` carries the source
+ *  position (a queued prompt's attachment array IS the submit payload
+ *  order, so callers pass the array index) for the refill's interleave
+ *  restore — see restampRefillByOrderHint. */
 export function promptAttachmentToTurnAttachment(
   api: Pick<KimiWebApi, 'getFileUrl' | 'getSessionMediaUrl'>,
-  att: PromptAttachment,
+  att: PromptAttachment & { seq?: number },
+  orderHint?: number,
 ): TurnAttachment {
   const sessionId = att.kind === 'file' ? undefined : att.sessionId;
   return {
@@ -36,6 +42,8 @@ export function promptAttachmentToTurnAttachment(
     name: att.name,
     mediaType: att.mediaType,
     size: att.size,
+    seq: att.seq,
+    orderHint,
   };
 }
 

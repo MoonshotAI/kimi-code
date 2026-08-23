@@ -1,7 +1,8 @@
 // packages/app-composer/src/composerTextDoc.ts
 // ProseMirror document model for the composer. The doc is a flat list of
-// paragraphs holding plain text plus `mention` inline atoms (file / folder /
-// skill pills). This module is DOM-free (prosemirror-model only) so it stays
+// paragraphs holding plain text plus inline atoms: `mention` nodes (file /
+// folder / skill pills) and `attachment` nodes (file / folder attachment
+// pills). This module is DOM-free (prosemirror-model only) so it stays
 // importable from node-env tests; the EditorView factory lives in
 // composerEditor.ts.
 //
@@ -10,8 +11,10 @@
 //   - text ↔ doc: lines split/join on '\n'
 //   - mention node ↔ text: a Markdown link — [name](path) for files,
 //     [name](path/) for folders, [name](kimi-code://skill/<name>) for skills
+//   - attachment node ↔ text: a Markdown link with a composer-private
+//     scheme — [name](kimi-code-composer://attachments/<attId>)
 //   - char offsets ↔ PM positions: the '\n' between two paragraphs counts as
-//     one character and a mention counts as its serialized length, so offset
+//     one character and an atom counts as its serialized length, so offset
 //     math is the same as `string` indexing into the serialized text.
 import { parse, postprocess, preprocess } from 'micromark';
 import { Schema, Slice, type Node as PMNode, type ResolvedPos } from 'prosemirror-model';
@@ -234,11 +237,50 @@ export function serializeMention(attrs: MentionAttrs): string {
   return `[${text}](${escapeLinkDest(path)})`;
 }
 
-/** Serialized length of an inline node — text nodes are their length, a
- *  mention is its link form's length. The offset mapping relies on this. */
+/** Serialized length of an inline node — text nodes are their length, an atom
+ *  is its link form's length. The offset mapping relies on this. */
 function inlineSerializedLength(node: PMNode): number {
   if (node.isText) return node.text!.length;
+  if (node.type === composerSchema.nodes.attachment) return serializeAttachment(node.attrs as AttachmentAttrs).length;
   return serializeMention(node.attrs as MentionAttrs).length;
+}
+
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+/** Link-destination marker for an attachment pill. Unlike a mention, an
+ *  attachment carries NO path in the doc: the attId is an opaque registry
+ *  handle and the real metadata (path, size, fileId, upload state) lives in
+ *  the attachmentRegistry plugin state — the wire text never exposes a local
+ *  path, and a pill can be re-serialized without touching upload state. The
+ *  scheme is composer-private and never leaves the app: classifyMentionHref
+ *  rejects schemed hrefs, so an attachment link is plain literal text to
+ *  every mention consumer (parseMentionLinks, splitMentionSegments, the
+ *  message-side classifier) — the two link families are disjoint by
+ *  construction. */
+export const ATTACHMENT_LINK_BASE = 'kimi-code-composer://attachments/';
+
+export type AttachmentKind = 'file' | 'folder';
+
+export interface AttachmentAttrs {
+  /** Registry identity (see newAttId in attachmentRegistry.ts). Serialized
+   *  VERBATIM into the link destination — the generator only emits
+   *  bare-destination-safe base36, so unlike a mention path the id needs no
+   *  percent-encoding layer. */
+  attId: string;
+  /** Display + link text: the file name. A folder's name keeps its trailing
+   *  '/', which doubles as the kind marker on revive (neither POSIX nor
+   *  Windows file names can contain '/'). */
+  name: string;
+  kind: AttachmentKind;
+}
+
+/** An attachment node → its plain-text (Markdown link) form: the label is the
+ *  name (escaped like any link label), the destination is the marker plus the
+ *  verbatim attId. */
+export function serializeAttachment(attrs: AttachmentAttrs): string {
+  return `[${escapeLinkText(attrs.name)}](${ATTACHMENT_LINK_BASE}${attrs.attId})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +321,37 @@ export const composerSchema = new Schema({
         ];
       },
     },
+    attachment: {
+      group: 'inline',
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        attId: {},
+        name: {},
+        kind: {},
+      },
+      // Same leafText contract as the mention: textBetween consults it, so
+      // docToText and the clipboard serializer emit the link form.
+      leafText: (node: PMNode) => serializeAttachment(node.attrs as AttachmentAttrs),
+      // Rendered by a NodeView (icon + label); this toDOM only feeds PM's
+      // clipboard HTML serializer and DOM fallbacks — the data attributes let
+      // the message side / tooltip / copy paths recognize the pill without
+      // the NodeView.
+      toDOM: (node: PMNode) => {
+        const attrs = node.attrs as AttachmentAttrs;
+        return [
+          'span',
+          {
+            class: `attachment-pill attachment-${attrs.kind}`,
+            'data-attachment-id': attrs.attId,
+            'data-attachment-kind': attrs.kind,
+            'data-attachment-name': attrs.name,
+          },
+          attrs.name,
+        ];
+      },
+    },
   },
 });
 
@@ -301,8 +374,52 @@ export function buildMentionInsertion(
 ): Transaction {
   const from = textOffsetToPos(state.doc, range.start);
   const to = textOffsetToPos(state.doc, range.end);
-  const afterChar = docToText(state.doc).charAt(range.end);
-  const nodes: PMNode[] = [mentionNode(attrs)];
+  const text = docToText(state.doc);
+  const beforeChar = range.start > 0 ? text.charAt(range.start - 1) : '';
+  const afterChar = text.charAt(range.end);
+  const nodes: PMNode[] = [];
+  // A pill inserted right after `!` serializes as the IMAGE construct
+  // `![…](…)` — the wire parser rejects images wholesale, so the link
+  // would never revive (the editor's own product would leak as literal
+  // text). A pill right after `\` has its `[` escaped into a literal.
+  // Break the prefix with a space.
+  if (beforeChar === '!' || beforeChar === '\\') nodes.push(composerSchema.text(' '));
+  nodes.push(mentionNode(attrs));
+  if (afterChar === '' || !/\s/.test(afterChar)) nodes.push(composerSchema.text(' '));
+  const tr = state.tr.replaceWith(from, to, nodes);
+  tr.setSelection(TextSelection.create(tr.doc, from + nodes.reduce((size, node) => size + node.nodeSize, 0)));
+  return tr.scrollIntoView();
+}
+
+/** Build an attachment node. */
+export function attachmentNode(attrs: AttachmentAttrs): PMNode {
+  return composerSchema.nodes.attachment!.create(attrs);
+}
+
+/** Transaction that inserts an attachment pill, either replacing a
+ *  char-offset range or — with no range — the current selection. Same
+ *  trailing-space and caret-placement contract as buildMentionInsertion. */
+export function buildAttachmentInsertion(
+  state: EditorState,
+  attrs: AttachmentAttrs,
+  range?: { start: number; end: number },
+): Transaction {
+  const start = range ? range.start : posToTextOffset(state.doc, state.selection.from);
+  const end = range ? range.end : posToTextOffset(state.doc, state.selection.to);
+  const from = textOffsetToPos(state.doc, start);
+  const to = textOffsetToPos(state.doc, end);
+  const text = docToText(state.doc);
+  const beforeChar = start > 0 ? text.charAt(start - 1) : '';
+  const afterChar = text.charAt(end);
+  const nodes: PMNode[] = [];
+  // A pill inserted right after `!` serializes as the IMAGE construct
+  // `![…](…)` — the wire parser rejects images wholesale, so the link
+  // would never revive (nor be rewritten at submit: the editor's own
+  // product would leak the private attId into the transcript and the file
+  // would silently misalign with the payload). A pill right after `\` has
+  // its `[` escaped into a literal. Break the prefix with a space.
+  if (beforeChar === '!' || beforeChar === '\\') nodes.push(composerSchema.text(' '));
+  nodes.push(attachmentNode(attrs));
   if (afterChar === '' || !/\s/.test(afterChar)) nodes.push(composerSchema.text(' '));
   const tr = state.tr.replaceWith(from, to, nodes);
   tr.setSelection(TextSelection.create(tr.doc, from + nodes.reduce((size, node) => size + node.nodeSize, 0)));
@@ -360,33 +477,6 @@ const mentionLinkMicromarkOptions = {
   ],
 };
 
-/** All serialized mention links in a text, in order. The public entry point
- *  for reviving pills from their link form (used by textToDoc and by the
- *  message-side pillify pass).
- *
- *  Link candidates come from micromark's event stream (see the options
- *  above). Token offsets are UTF-16 indices into the ORIGINAL string —
- *  verified on emoji/CJK/CRLF input — so ranges slice `text` directly and
- *  the offset math everywhere else in this file is unchanged.
- *
- *  Label and destination are cut out of the original text at token offsets
- *  and decoded with the serializer's long-standing inverse
- *  (unescapeLinkText / unescapeLinkDest: the backslash escapes plus
- *  '%25' → '%'). micromark's own decoding is bypassed on purpose: it never
- *  knew about our '%25' layer, and percent sequences pass through untouched.
- *
- *  Deliberate differences from the retired hand-rolled scanner, all confined
- *  to hand-typed text the serializer can never produce (round-trip fidelity
- *  for serialized docs is unaffected):
- *  - a link with a title (`[a](b "t")`) stays literal instead of reviving
- *    with the title glued onto the path;
- *  - balanced brackets in a label (`[a [b] c](x)`) and balanced parens in a
- *    bare destination (`[a](b(c)d)`) now follow CommonMark;
- *  - a bare destination with stray whitespace (`[a]( b )`, `[a](b c)`) is
- *    trimmed or rejected per CommonMark instead of being revived verbatim;
- *  - skill names containing UNBALANCED parens now serialize with
- *    percent-encoded parens (see serializeMention); the old wire form of
- *    those (e.g. `[x(1](kimi-code://skill/x(1)`) no longer revives. */
 export interface MentionLinkMatch {
   start: number;
   end: number;
@@ -398,29 +488,63 @@ export interface MentionLinkMatch {
   rawDest: string;
 }
 
-export function parseMentionLinks(text: string): MentionLinkMatch[] {
-  // The wire format serializes one paragraph per line (docToText) and a
-  // mention atom lives inside one paragraph, so a mention link NEVER spans a
-  // line boundary — while micromark would accept a single '\n' inside a
-  // label, textToDoc (which splits paragraphs first) revives no such link,
-  // and the message surface must not pillify a mention the editor never
-  // submitted. Parse line by line so every consumer shares textToDoc's exact
+export interface AttachmentLinkMatch {
+  start: number;
+  end: number;
+  attrs: AttachmentAttrs;
+  /** Same contract as MentionLinkMatch.rawDest: the destination exactly as
+   *  written (angle brackets stripped). */
+  rawDest: string;
+}
+
+/** One label+resource candidate out of the micromark walk, still
+ *  unclassified. The structural rejects are already applied (image label,
+ *  link title, empty label/destination — see the walk), so what remains is a
+ *  well-formed inline link; classification decides mention / attachment /
+ *  literal text. */
+interface LinkCandidate {
+  start: number;
+  end: number;
+  rawText: string;
+  rawDest: string;
+  angle: boolean;
+}
+
+/** All well-formed inline links in a text, in order — the shared candidate
+ *  scan behind parseMentionLinks / parseAttachmentLinks / the segmenters, so
+ *  every consumer sees the exact same link boundaries.
+ *
+ *  Candidates come from micromark's event stream (see the options above).
+ *  Token offsets are UTF-16 indices into the ORIGINAL string — verified on
+ *  emoji/CJK/CRLF input — so ranges slice `text` directly and the offset math
+ *  everywhere else in this file is unchanged.
+ *
+ *  Label and destination are cut out of the original text at token offsets;
+ *  micromark's own decoding is bypassed on purpose: it never knew about our
+ *  '%25' layer, and percent sequences pass through untouched. */
+function walkLinkCandidates(text: string): LinkCandidate[] {
+  // The wire format serializes one paragraph per line (docToText) and an
+  // inline atom lives inside one paragraph, so a pill link NEVER spans a line
+  // boundary — while micromark would accept a single '\n' inside a label,
+  // textToDoc (which splits paragraphs first) revives no such link, and the
+  // message surface must not pillify a mention the editor never submitted.
+  // Parse line by line so every consumer shares textToDoc's exact
   // boundaries; offsets are rebased onto the original text.
   if (text.includes('\n')) {
-    const matches: MentionLinkMatch[] = [];
+    const candidates: LinkCandidate[] = [];
     let lineOffset = 0;
     for (const line of text.split('\n')) {
-      for (const match of parseMentionLinks(line)) {
-        matches.push({ ...match, start: match.start + lineOffset, end: match.end + lineOffset });
+      for (const candidate of walkLinkCandidates(line)) {
+        candidates.push({ ...candidate, start: candidate.start + lineOffset, end: candidate.end + lineOffset });
       }
       lineOffset += line.length + 1;
     }
-    return matches;
+    return candidates;
   }
   const events = postprocess(
     parse(mentionLinkMicromarkOptions).document().write(preprocess()(text, undefined, true)),
   );
-  const matches: MentionLinkMatch[] = [];
+  const candidates: LinkCandidate[] = [];
   // With `definition` disabled, a top-level `label` token only survives when
   // an inline `resource` follows it immediately — so link assembly is just
   // pairing a label with the resource that starts where the label ends.
@@ -469,46 +593,118 @@ export function parseMentionLinks(text: string): MentionLinkMatch[] {
       rawDest = rawDest.slice(1, -1);
     }
     if (!rawText || !rawDest) continue;
-    // Classify on the RAW, still-encoded destination: a dest the serializer
-    // percent-escaped (a leading '#'-filename as '%23notes.md') must be
-    // recognized BEFORE decoding restores the '#', or the anchor guard would
-    // reject our own wire form. The trailing-slash folder check and the
-    // scheme/drive guards are all encoding-insensitive.
-    const kind = classifyMentionHref(rawDest);
-    if (kind === null) continue;
-    if (kind === 'skill') {
-      // The skill's identity is the link TARGET's tail, not the link text —
-      // reviving normalizes the pill to the real skill name, so the submit
-      // path activates that skill even when the label said something else.
-      // decodeSkillName gets the RAW dest: its single decodeURIComponent IS
-      // the decode (running unescapeLinkDest first would decode a literal
-      // '%20' in a skill name TWICE — once to '%20', again to a space).
-      matches.push({ start, end, attrs: { kind, name: decodeSkillName(rawDest), path: '' }, rawDest });
-    } else {
-      const dest = unescapeLinkDest(rawDest, angle);
-      matches.push({ start, end, attrs: { kind, name: unescapeLinkText(rawText), path: dest }, rawDest });
-    }
+    candidates.push({ start, end, rawText, rawDest, angle });
+  }
+  return candidates;
+}
+
+type InlineLinkMatch =
+  | { type: 'mention'; start: number; end: number; attrs: MentionAttrs; rawDest: string }
+  | { type: 'attachment'; start: number; end: number; attrs: AttachmentAttrs; rawDest: string };
+
+/** Classify one link candidate: attachment, mention, or null (stays literal
+ *  text). The attachment check runs FIRST — an attachment dest is a schemed
+ *  href, which classifyMentionHref rejects on sight, so the two families can
+ *  never both claim a candidate and the order is documentation, not defense. */
+function classifyLinkCandidate(candidate: LinkCandidate): InlineLinkMatch | null {
+  const { start, end, rawText, rawDest, angle } = candidate;
+  if (rawDest.startsWith(ATTACHMENT_LINK_BASE) && rawDest.length > ATTACHMENT_LINK_BASE.length) {
+    // The attId is taken VERBATIM (the serializer writes it verbatim — an
+    // opaque app-generated id, not a path). The label decodes like any link
+    // label; its trailing '/' marks the folder kind (serializeAttachment
+    // keeps it in the name, and a file name can't contain '/').
+    const name = unescapeLinkText(rawText);
+    return {
+      type: 'attachment',
+      start,
+      end,
+      attrs: { attId: rawDest.slice(ATTACHMENT_LINK_BASE.length), name, kind: name.endsWith('/') ? 'folder' : 'file' },
+      rawDest,
+    };
+  }
+  // Classify on the RAW, still-encoded destination: a dest the serializer
+  // percent-escaped (a leading '#'-filename as '%23notes.md') must be
+  // recognized BEFORE decoding restores the '#', or the anchor guard would
+  // reject our own wire form. The trailing-slash folder check and the
+  // scheme/drive guards are all encoding-insensitive.
+  const kind = classifyMentionHref(rawDest);
+  if (kind === null) return null;
+  if (kind === 'skill') {
+    // The skill's identity is the link TARGET's tail, not the link text —
+    // reviving normalizes the pill to the real skill name, so the submit
+    // path activates that skill even when the label said something else.
+    // decodeSkillName gets the RAW dest: its single decodeURIComponent IS
+    // the decode (running unescapeLinkDest first would decode a literal
+    // '%20' in a skill name TWICE — once to '%20', again to a space).
+    return { type: 'mention', start, end, attrs: { kind, name: decodeSkillName(rawDest), path: '' }, rawDest };
+  }
+  return {
+    type: 'mention',
+    start,
+    end,
+    attrs: { kind, name: unescapeLinkText(rawText), path: unescapeLinkDest(rawDest, angle) },
+    rawDest,
+  };
+}
+
+/** Every classified pill link in a text, in document order — the single scan
+ *  behind parseMentionLinks, parseAttachmentLinks and splitInlineSegments. */
+function collectInlineLinkMatches(text: string): InlineLinkMatch[] {
+  const matches: InlineLinkMatch[] = [];
+  for (const candidate of walkLinkCandidates(text)) {
+    const match = classifyLinkCandidate(candidate);
+    if (match) matches.push(match);
   }
   return matches;
 }
 
-/** One line of serialized text → inline nodes, reviving mention links into
- *  atoms. Anything that doesn't parse as our link form stays literal text.
- *  Segmentation is single-sourced in splitMentionSegments (the message-side
- *  renderer uses it too) — this only maps segments to PM nodes. */
+/** All serialized mention links in a text, in order. The public entry point
+ *  for reviving mention pills from their link form (used by the message-side
+ *  pillify pass). Deliberate differences from the retired hand-rolled
+ *  scanner, all confined to hand-typed text the serializer can never produce
+ *  (round-trip fidelity for serialized docs is unaffected):
+ *  - a link with a title (`[a](b "t")`) stays literal instead of reviving
+ *    with the title glued onto the path;
+ *  - balanced brackets in a label (`[a [b] c](x)`) and balanced parens in a
+ *    bare destination (`[a](b(c)d)`) now follow CommonMark;
+ *  - a bare destination with stray whitespace (`[a]( b )`, `[a](b c)`) is
+ *    trimmed or rejected per CommonMark instead of being revived verbatim;
+ *  - skill names containing UNBALANCED parens now serialize with
+ *    percent-encoded parens (see serializeMention); the old wire form of
+ *    those (e.g. `[x(1](kimi-code://skill/x(1)`) no longer revives. */
+export function parseMentionLinks(text: string): MentionLinkMatch[] {
+  return collectInlineLinkMatches(text)
+    .filter((match): match is Extract<InlineLinkMatch, { type: 'mention' }> => match.type === 'mention')
+    .map(({ start, end, attrs, rawDest }) => ({ start, end, attrs, rawDest }));
+}
+
+/** All serialized attachment links in a text, in order — the attachment twin
+ *  of parseMentionLinks. Same micromark pipeline, same per-line boundaries. */
+export function parseAttachmentLinks(text: string): AttachmentLinkMatch[] {
+  return collectInlineLinkMatches(text)
+    .filter((match): match is Extract<InlineLinkMatch, { type: 'attachment' }> => match.type === 'attachment')
+    .map(({ start, end, attrs, rawDest }) => ({ start, end, attrs, rawDest }));
+}
+
+/** One line of serialized text → inline nodes, reviving mention AND
+ *  attachment links into atoms. Anything that doesn't parse as our link form
+ *  stays literal text. Segmentation is single-sourced in splitInlineSegments
+ *  (the dual-class scan) — this only maps segments to PM nodes. */
 function lineToInlineNodes(line: string): PMNode[] {
   if (!line) return [];
-  return splitMentionSegments(line).map((segment) =>
-    segment.type === 'mention' ? mentionNode(segment.attrs) : composerSchema.text(segment.value),
-  );
+  return splitInlineSegments(line).map((segment) => {
+    if (segment.type === 'mention') return mentionNode(segment.attrs);
+    if (segment.type === 'attachment') return attachmentNode(segment.attrs);
+    return composerSchema.text(segment.value);
+  });
 }
 
 /** Plain text → doc. Every '\n' starts a new paragraph; an empty string is a
  *  single empty paragraph (the schema requires at least one block). With
  *  `reviveMentions` (the editor's load paths — draft restore, history recall,
  *  session/queue reload), our serialized link forms parse back into mention
- *  atoms, so pills survive persistence; clipboard paste leaves it off (pasted
- *  text never produces pills). */
+ *  and attachment atoms, so pills survive persistence; clipboard paste leaves
+ *  it off (pasted text never produces pills). */
 export function textToDoc(text: string, opts?: { reviveMentions?: boolean }): PMNode {
   const lines = text.split('\n');
   return composerSchema.node(
@@ -662,6 +858,21 @@ export function collectSkillMentions(doc: PMNode): SkillMentionRef[] {
   return refs;
 }
 
+/** Extend the selection to the textblock's start/end (macOS Cmd-Shift-Arrow
+ *  line selection). prosemirror-commands only ships the collapsing
+ *  selectTextblockStart/End, so the anchor-preserving variant lives here.
+ *  One paragraph is one line in this doc model, so textblock start/end IS
+ *  the line boundary. */
+export function extendToTextblock(start: boolean) {
+  return (state: EditorState, dispatch?: (tr: Transaction) => void): boolean => {
+    const $head = state.selection.$head;
+    const pos = start ? $head.start() : $head.end();
+    if (!dispatch) return true;
+    dispatch(state.tr.setSelection(TextSelection.create(state.doc, state.selection.$anchor.pos, pos)).scrollIntoView());
+    return true;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Clipboard single-newline contract
 // ---------------------------------------------------------------------------
@@ -680,14 +891,30 @@ export function parseClipboardText(text: string, opts?: { reviveMentions?: boole
  *  would double every line break on copy. Mentions serialize via leafText.
  *  A NodeSelection copy puts the pill ITSELF at the slice's top level, and
  *  textBetween only walks a node's content — a top-level leaf would come out
- *  as '', so its link form is emitted directly. */
+ *  as '', so its form is emitted directly. Paragraphs are walked per child
+ *  for the same reason: text goes verbatim, a mention keeps its link form,
+ *  and an attachment degrades to its bare name (the folder name carries its
+ *  trailing '/') — NEVER the leafText link form, which would leak the
+ *  composer-private attId scheme into plaintext (the custom clipboard flavor
+ *  carries the structured form, see attachmentRegistry.ts). leafText itself
+ *  is untouched: docToText and the offset math rely on it. */
 export function serializeClipboardSlice(slice: Slice): string {
+  const serializeInline = (node: PMNode): string => {
+    if (node.isText) return node.text ?? '';
+    if (node.type === composerSchema.nodes.mention) return serializeMention(node.attrs as MentionAttrs);
+    if (node.type === composerSchema.nodes.attachment) return (node.attrs as AttachmentAttrs).name;
+    return node.textBetween(0, node.content.size, '');
+  };
   const lines: string[] = [];
   slice.content.forEach((node) => {
-    if (node.type === composerSchema.nodes.mention) {
-      lines.push(serializeMention(node.attrs as MentionAttrs));
+    if (node.type === composerSchema.nodes.mention || node.type === composerSchema.nodes.attachment) {
+      lines.push(serializeInline(node));
     } else {
-      lines.push(node.textBetween(0, node.content.size, ''));
+      let line = '';
+      node.forEach((child) => {
+        line += serializeInline(child);
+      });
+      lines.push(line);
     }
   });
   return lines.join('\n');
@@ -709,7 +936,9 @@ export type MentionSegment =
  *  element tree — one parse per text change, no DOM post-processing. Mention
  *  segments carry the raw (still-encoded) destination alongside the decoded
  *  attrs, so action paths (mentionActionPath) and display paths stay
- *  distinct. */
+ *  distinct. Attachment links are NOT this function's concern: they classify
+ *  as non-mentions and stay inside the text runs (legacy consumers see them
+ *  as literal text) — splitInlineSegments is the dual-class version. */
 export function splitMentionSegments(text: string): MentionSegment[] {
   const matches = parseMentionLinks(text);
   if (matches.length === 0) return [{ type: 'text', value: text }];
@@ -722,4 +951,190 @@ export function splitMentionSegments(text: string): MentionSegment[] {
   }
   if (cursor < text.length) segments.push({ type: 'text', value: text.slice(cursor) });
   return segments;
+}
+
+/** One piece of a wire text after dual-class segmentation: a verbatim text
+ *  run, a mention, or an attachment. */
+export type InlineSegment =
+  | { type: 'text'; value: string }
+  | { type: 'mention'; attrs: MentionAttrs; rawDest: string }
+  | { type: 'attachment'; attrs: AttachmentAttrs; rawDest: string };
+
+/** The dual-class twin of splitMentionSegments: ONE scan segments both
+ *  mention and attachment links (collectInlineLinkMatches). textToDoc revives
+ *  from this, so a reload brings back both pill kinds. */
+export function splitInlineSegments(text: string): InlineSegment[] {
+  const matches = collectInlineLinkMatches(text);
+  if (matches.length === 0) return [{ type: 'text', value: text }];
+  const segments: InlineSegment[] = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.start > cursor) segments.push({ type: 'text', value: text.slice(cursor, match.start) });
+    if (match.type === 'mention') segments.push({ type: 'mention', attrs: match.attrs, rawDest: match.rawDest });
+    else segments.push({ type: 'attachment', attrs: match.attrs, rawDest: match.rawDest });
+    cursor = match.end;
+  }
+  if (cursor < text.length) segments.push({ type: 'text', value: text.slice(cursor) });
+  return segments;
+}
+
+// ---------------------------------------------------------------------------
+// Submit-time attachment link rewriting
+// ---------------------------------------------------------------------------
+
+export interface RewriteAttachmentLinksOptions {
+  /** The real path of a folder attachment — the registry is the only place
+   *  that knows it (the pill attrs carry no path). Return undefined to leave
+   *  the folder link on the index rule, like a file. */
+  resolveFolder?: (attId: string) => string | undefined;
+}
+
+/** Rewrite the attachment links of a SUBMIT-BOUND text copy (the composer doc
+ *  and the persisted draft keep the attId form; the transcript stores this
+ *  rewritten output — this runs on the outgoing text only):
+ *  - a file attachment's attId becomes its 1-based index in orderedAttIds
+ *    (document first-mention order), so the model and the trailing
+ *    attachments notice can correlate by position;
+ *  - a folder attachment (folders are never uploaded) becomes a plain folder
+ *    MENTION link — [name](path/) — carrying the real path from
+ *    resolveFolder;
+ *  - an attId missing from orderedAttIds (a dead pill, an errored/uploading
+ *    pill excluded from the payload, or a stale index link from a history
+ *    recall) DEGRADES TO THE BARE NAME — the link syntax is dropped entirely:
+ *    keeping the bytes would leak the composer-private scheme to the model,
+ *    let a stale NUMERIC attId alias a rewritten 1..N index it doesn't refer
+ *    to, and revive as a fake pill on the message surface;
+ *  - mention links are never touched (a disjoint link family), and anything
+ *    that is not an attachment link survives byte-identical. */
+export function rewriteAttachmentLinksForSubmit(
+  text: string,
+  orderedAttIds: readonly string[],
+  opts?: RewriteAttachmentLinksOptions,
+): string {
+  const matches = parseAttachmentLinks(text);
+  if (matches.length === 0) return text;
+  const indexByAttId = new Map(orderedAttIds.map((attId, index) => [attId, index + 1] as const));
+  let out = '';
+  let cursor = 0;
+  for (const match of matches) {
+    out += text.slice(cursor, match.start);
+    cursor = match.end;
+    const { attId, name, kind } = match.attrs;
+    const folderPath = kind === 'folder' ? opts?.resolveFolder?.(attId) : undefined;
+    if (folderPath !== undefined) {
+      // The folder's name carries its trailing '/', but a mention link marks
+      // the folder kind on the DEST — the label is the bare basename. A ROOT
+      // path ('/', 'C:/') has no basename: stripping the trailing '/' would
+      // leave an EMPTY label (an unparseable `[](…)` the bubble renders as a
+      // Markdown literal), so the label keeps the root display — '/' itself,
+      // or the drive letter for a drive root.
+      const isRootPath = folderPath === '/' || /^[a-zA-Z]:\/$/.test(folderPath);
+      const label = isRootPath ? folderPath.slice(0, -1) || '/' : name.endsWith('/') ? name.slice(0, -1) : name;
+      out += serializeMention({ kind: 'folder', name: label, path: folderPath });
+      continue;
+    }
+    const index = indexByAttId.get(attId);
+    if (index === undefined) {
+      // No ready entry behind this link — degrade to the bare name (a
+      // folder's keeps its trailing '/'), same as stripAttachmentLinks.
+      out += name;
+      continue;
+    }
+    out += serializeAttachment({ attId: String(index), name, kind });
+  }
+  out += text.slice(cursor);
+  return out;
+}
+
+/** Shift every INDEX-form attachment link in a submit-bound text by `offset`
+ *  — the steer merge (app-client's steerPromptNow) concatenates queued
+ *  texts and the live draft, each carrying its own 1..N link indices from
+ *  rewriteAttachmentLinksForSubmit, plus their attachments in the same
+ *  order. Without renumbering, every segment's `attachments/1` would point
+ *  at the FIRST segment's files. The offset is the count of FILE
+ *  attachments in the preceding segments (media never carries a link).
+ *  Only 1-based numeric attIds shift — a composer-private attId is not an
+ *  index and must not be renumbered. Mention links and all other text
+ *  survive byte-identical. */
+export function offsetAttachmentLinkIndices(text: string, offset: number): string {
+  if (offset <= 0) return text;
+  const matches = parseAttachmentLinks(text);
+  if (matches.length === 0) return text;
+  let out = '';
+  let cursor = 0;
+  for (const match of matches) {
+    const { attId, name, kind } = match.attrs;
+    if (!/^[1-9]\d*$/.test(attId)) continue;
+    out += text.slice(cursor, match.start);
+    cursor = match.end;
+    out += serializeAttachment({ attId: String(Number(attId) + offset), name, kind });
+  }
+  out += text.slice(cursor);
+  return out;
+}
+
+/** Degrade EVERY attachment link in a text to its bare name (a folder's name
+ *  keeps its trailing '/') — the pill strip for surfaces where attIds are
+ *  meaningless: history recall (a recalled entry must not revive dead pills
+ *  out of submit-time 1..N index links) and built-in slash commands (whose
+ *  args never travel with an attachment payload). Mention links and all
+ *  other text survive byte-identical. `escapeName` transforms the bare name
+ *  for the target surface — e.g. a Markdown export escapes it as a Markdown
+ *  text node, because a filename can itself carry Markdown syntax
+ *  (`# notes.md`, `---`, `[spec](draft)`) that would otherwise be re-parsed
+ *  as structure instead of the literal name the bubble shows. */
+export function stripAttachmentLinks(text: string, escapeName?: (name: string) => string): string {
+  const matches = parseAttachmentLinks(text);
+  if (matches.length === 0) return text;
+  let out = '';
+  let cursor = 0;
+  for (const match of matches) {
+    out += text.slice(cursor, match.start) + (escapeName?.(match.attrs.name) ?? match.attrs.name);
+    cursor = match.end;
+  }
+  out += text.slice(cursor);
+  return out;
+}
+
+/** Degrade only the attachment links whose attId is NOT in `knownAttIds` to
+ *  bare names — the plain-text paste filter. A pasted attachment link is
+ *  only ever revived when the current registry actually holds its entry
+ *  (composer-internal cut/paste of a LIVE pill); any other id — a copied
+ *  message's submit-time index, a hand-typed link, a foreign draft's id —
+ *  would revive as a dead pill, so it degrades to the bare name instead.
+ *  Mention links and all other text survive byte-identical. */
+export function degradeForeignAttachmentLinks(text: string, knownAttIds: ReadonlySet<string>): string {
+  const matches = parseAttachmentLinks(text);
+  if (matches.length === 0) return text;
+  let out = '';
+  let cursor = 0;
+  for (const match of matches) {
+    if (knownAttIds.has(match.attrs.attId)) continue;
+    out += text.slice(cursor, match.start) + match.attrs.name;
+    cursor = match.end;
+  }
+  out += text.slice(cursor);
+  return out;
+}
+
+/** Remove every attachment link from a text ENTIRELY — unlike
+ *  stripAttachmentLinks, which degrades them to bare names that would still
+ *  read as arguments. The use is the bare work-mode command match
+ *  (`/plan` / `/goal` / `/swarm`): a draft carrying the command plus ONLY
+ *  attachment pills must still be the bare command (the pills stay pending
+ *  for the next message), not a `/plan file.pdf` args command. The removed
+ *  link's surrounding whitespace is left in place — callers trim/compare,
+ *  so only the ends matter. Mention links and all other text survive
+ *  byte-identical. */
+export function removeAttachmentLinks(text: string): string {
+  const matches = parseAttachmentLinks(text);
+  if (matches.length === 0) return text;
+  let out = '';
+  let cursor = 0;
+  for (const match of matches) {
+    out += text.slice(cursor, match.start);
+    cursor = match.end;
+  }
+  out += text.slice(cursor);
+  return out;
 }

@@ -309,6 +309,17 @@ export interface TurnAttachment {
   name?: string;
   mediaType?: string;
   size?: number;
+  /** The attachment's position in the SUBMIT payload (the persisted
+      message's content-part order — kap-server replaces attachment parts in
+      place) — the edit&resend refill re-stamps the composer's add-order
+      clock from it, so the resent payload keeps the original media/file
+      interleave instead of collapsing to media-first. */
+  orderHint?: number;
+  /** Add-order stamp in the composer's shared clock (see
+      interleaveSubmitAttachments in app-client's composerAttachments) —
+      round-tripped through the chip draft so a restored attachment keeps
+      its payload position across remounts. */
+  seq?: number;
 }
 
 export interface ChatTurn {
@@ -327,6 +338,13 @@ export interface ChatTurn {
   /** Attachments sent by the user — files, images and videos, rendered as a
       chip row above the text bubble. */
   attachments?: TurnAttachment[];
+  /** File attachments referenced by the bubble text's INLINE attachment pills
+      (pill-flow messages only), in the pills' 1..N index order — the
+      recovered "Attached file …" notices, which stay out of `attachments` so
+      the legacy pill row doesn't double them. The message renderer maps a
+      pill's attId (the submit-time 1-based rewrite index) onto this list to
+      revive the pill's open target. */
+  inlineAttachments?: TurnAttachment[];
   /** Compaction divider data (role 'compaction'): the transcript keeps all
       prior turns and renders this as a separator line; `text` holds the
       LLM-generated summary, opened in the right-side panel on click. */

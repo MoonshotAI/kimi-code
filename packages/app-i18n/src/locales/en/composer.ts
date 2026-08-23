@@ -13,7 +13,6 @@ export default {
   queuedHasImage: 'Contains {n} image(s) — remove only, not editable',
   attachmentImage: 'Image',
   attachmentVideo: 'Video',
-  attachmentFile: 'File',
   attachmentOpenUnsupported: 'Can’t open {name} — this file type isn’t supported',
   dropToAttach: 'Drop files to attach',
   remove: 'Remove',
@@ -49,5 +48,6 @@ export default {
   quickStartPlaceholder: 'Type a message to start a new conversation…',
   thinkingSuffix: ' · thinking',
   thinkingSuffixEffort: ' · {level}',
+  noArgCommand: '{cmd} takes no arguments',
 
 } as const;

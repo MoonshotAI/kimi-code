@@ -2,11 +2,13 @@
 // Attachment handling for the composer: file picker, paste, drag & drop, the
 // upload machinery, the chip strip, and the preview lightbox. Images and
 // videos get media chips with thumbnails; any other file type attaches as a
-// generic file chip (an icon + name, no thumbnail) and is sent as a file part.
-// Dropped or pasted folders are the exception: they are never uploaded (the
-// endpoint rejects them) — the desktop bridge resolves their absolute paths
-// and they are inserted into the draft text instead (see
-// nativeWorkspaceDrop.ts).
+// generic file chip (an icon + name, no thumbnail) and is sent as a file part
+// — UNLESS the caller injects the `insertFileAttachment` seam (both apps'
+// composers do), which routes non-media files to in-document attachment pills
+// instead (see routeFiles). Dropped or pasted folders are the exception: they
+// are never uploaded (the endpoint rejects them) — the desktop bridge resolves
+// their absolute paths and they are inserted as in-document folder pills
+// instead (see nativeWorkspaceDrop.ts).
 //
 // Pending attachments are scoped per session (keyed by session id) so switching
 // sessions can't leak one session's unsent attachments into another session's
@@ -27,11 +29,14 @@ import {
   attachmentDraftStorageKey,
   partitionDroppedItems,
   partitionPastedItems,
+  resolveFilePath,
   safeGetJson,
   safeRemove,
   safeSetJson,
+  type DroppedItem,
 } from '@moonshot-ai/app-core/lib';
 import { promptAttachmentToTurnAttachment } from '../client/attachmentsToContent';
+import { nextAttachmentSeq, noteAttachmentSeq } from '@moonshot-ai/app-composer';
 import type { PromptAttachment } from '../client/types';
 
 export interface Attachment {
@@ -47,6 +52,10 @@ export interface Attachment {
   mediaType?: string;
   /** Local byte size of the picked file — echoed into the wire file part. */
   size?: number;
+  /** Add-order stamp from the shared clock (app-composer's
+   *  nextAttachmentSeq) — the submit payload's media/file interleave key
+   *  (see interleaveSubmitAttachments in app-client's composerAttachments). */
+  seq?: number;
   /** True while uploading */
   uploading: boolean;
   /** Resolved daemon file id (set after upload completes) */
@@ -75,13 +84,44 @@ export interface AttachmentUploadDeps {
   sessionId: () => string | undefined;
   /** Dropped or pasted folders are never uploaded (the endpoint rejects
       them) — the desktop bridge resolves their absolute paths and the
-      composer inserts them into the draft text instead. Without the bridge
-      (web) a folder resolves to no path and is simply ignored. */
+      composer inserts them as in-document folder pills. Without the bridge
+      a folder resolves to no path and is simply ignored. */
   insertFolderPaths?: (paths: string[]) => void;
+  /** Attachment-pill seam (a caller without it keeps exactly the old chip
+      flow): a NON-MEDIA file (kind 'file') is offered to the composer's
+      in-document attachment pills BEFORE the chip/upload-strip path. Return
+      true = handled as a pill (skip addFiles for it). Media (image/video)
+      never routes here. `path` is the file's absolute path resolved through
+      the desktop bridge (null when the bridge is absent or can't resolve it
+      — the pill then keys on its own id). `at` carries drop coordinates so
+      the pill can land at the drop point; picker/paste leave it undefined
+      (insert at the caret). `seq` is the batch's pre-assigned add-order
+      stamp (routeFiles assigns in batch order) — the pill's registry entry
+      takes it so files and media of one batch interleave correctly. */
+  insertFileAttachment?: (
+    file: File,
+    path: string | null,
+    at?: { clientX: number; clientY: number },
+    seq?: number,
+  ) => boolean;
+  /** LEGACY (transitional, safe to delete later): adoption of CHIP-ERA file
+      attachment drafts as in-document pills. Only needed while (a) chip-era
+      persisted drafts (written by pre-pill clients) can still be rehydrated,
+      and (b) pre-pill history messages can still be edit&resent. Once stale
+      chip drafts / chip-era history no longer matter, delete this dep, the
+      hydrateDraft partition below, and the composer implementations
+      (Composer.vue's adoptFileAttachment + pendingFileAdoptions). A caller
+      without it rehydrates file drafts as chips as before. Media always
+      rehydrates as chips. Two drives exist: setup/mount adopts immediately
+      (the composer's pendingFileAdoptions buffer covers the not-yet-mounted
+      editor); the SESSION-SWITCH hydrate leaves files stored, and the
+      composer drives the returned adoptStoredFileDrafts at the end of its
+      own session watcher, after the editor holds the new session again. */
+  adoptFileAttachment?: (att: TurnAttachment) => void;
 }
 
 export function useAttachmentUpload(deps: AttachmentUploadDeps) {
-  const { api, uploadImage, sessionId, insertFolderPaths } = deps;
+  const { api, uploadImage, sessionId, insertFolderPaths, insertFileAttachment, adoptFileAttachment } = deps;
 
   const attachmentsBySession = ref<Record<string, Attachment[]>>({});
   const attachments = computed(() => attachmentsBySession.value[sessionId() ?? ''] ?? []);
@@ -107,7 +147,12 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   // -------------------------------------------------------------------------
 
   /** localStorage shape of one persisted attachment — mirrors PromptAttachment. */
-  type PersistedAttachmentDraft = Pick<PromptAttachment, 'fileId' | 'kind' | 'name' | 'mediaType' | 'size' | 'sessionId'>;
+  type PersistedAttachmentDraft = Pick<PromptAttachment, 'fileId' | 'kind' | 'name' | 'mediaType' | 'size' | 'sessionId'> & {
+    /** The chip's add-order stamp — round-tripped so a remount keeps the
+     *  payload's media/file interleave instead of re-stamping (a restored
+     *  stamp is adopted as-is; only a missing one gets re-stamped at load). */
+    seq?: number;
+  };
 
   function persistForSession(sid: string, atts: readonly Attachment[]): void {
     const key = attachmentDraftStorageKey(sid);
@@ -121,6 +166,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         mediaType: att.mediaType,
         size: att.size,
         sessionId: att.sessionId,
+        seq: att.seq,
       });
     }
     if (ready.length === 0) safeRemove(key);
@@ -146,14 +192,11 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     persistForSession(sid, next);
   }
 
-  /** Rehydrate a session's persisted attachment draft into the strip. Skipped
-      when the in-memory map already holds the session — live state (with its
-      object-URL thumbnails) always wins over storage. Invalid entries are
-      dropped; a malformed payload hydrates nothing. */
-  function hydrateDraft(sid: string): void {
-    if (attachmentsBySession.value[sid] !== undefined) return;
+  /** The validated persisted draft (original order in `valid`, plus the
+      kind partitions), or null when nothing usable is stored. */
+  function readStoredDraft(sid: string): { valid: PersistedAttachmentDraft[]; media: PersistedAttachmentDraft[]; files: PersistedAttachmentDraft[] } | null {
     const stored = safeGetJson<unknown>(attachmentDraftStorageKey(sid));
-    if (!Array.isArray(stored) || stored.length === 0) return;
+    if (!Array.isArray(stored) || stored.length === 0) return null;
     const valid: PersistedAttachmentDraft[] = [];
     for (const entry of stored as Array<Partial<PersistedAttachmentDraft> | null>) {
       if (!entry || typeof entry.fileId !== 'string' || entry.fileId === '') continue;
@@ -165,18 +208,86 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         mediaType: typeof entry.mediaType === 'string' ? entry.mediaType : undefined,
         size: typeof entry.size === 'number' ? entry.size : undefined,
         sessionId: typeof entry.sessionId === 'string' ? entry.sessionId : undefined,
+        seq: typeof entry.seq === 'number' ? entry.seq : undefined,
       });
     }
-    if (valid.length === 0) return;
+    if (valid.length === 0) return null;
+    return {
+      valid,
+      media: valid.filter((att) => att.kind !== 'file'),
+      files: valid.filter((att) => att.kind === 'file'),
+    };
+  }
+
+  /** Rehydrate a session's persisted attachment draft into the strip. Skipped
+      when the in-memory map already holds the session — live state (with its
+      object-URL thumbnails) always wins over storage. Invalid entries are
+      dropped; a malformed payload hydrates nothing. With `deferFiles` (and
+      the adopt seam injected) file-kind drafts are NOT adopted here — they
+      move to the in-memory deferredFileDrafts slot for the caller's
+      adoptStoredFileDrafts drive (see the session watcher below). */
+  function hydrateDraft(sid: string, opts?: { deferFiles?: boolean }): void {
+    if (attachmentsBySession.value[sid] !== undefined) return;
+    const stored = readStoredDraft(sid);
+    if (!stored) return;
+    const { media, files } = stored;
+    // LEGACY (see the note on AttachmentUploadDeps.adoptFileAttachment):
+    // file-kind drafts are adopted as in-document pills when the seam is
+    // injected (both composers inject it — their strips render media only).
+    // Media always rehydrates as chips; without the seam files keep the chip
+    // path too.
+    const deferFiles = opts?.deferFiles === true && adoptFileAttachment !== undefined;
+    if (deferFiles && files.length > 0) deferredFileDrafts = { sid, files };
+    const chipBound = adoptFileAttachment ? media : stored.valid;
     // loadAttachments rebuilds the chips without re-uploading (fileIds are
     // reused), restores the protected preview URL, and re-fetches authed
     // thumbnails for images — exactly the edit/queue refill path. Append is
     // moot (the slot is empty) but keeps it from touching live state.
-    loadAttachments(
-      valid.map((att) => promptAttachmentToTurnAttachment(api, att)),
-      sid,
-      { append: true },
-    );
+    if (chipBound.length > 0) {
+      loadAttachments(
+        chipBound.map((att) => promptAttachmentToTurnAttachment(api, att)),
+        sid,
+        { append: true },
+      );
+    }
+    if (adoptFileAttachment && files.length > 0 && !deferFiles) {
+      for (const att of files) adoptFileAttachment(promptAttachmentToTurnAttachment(api, att));
+      // Adopted into pills, so drop them from the persisted chip draft — the
+      // pill sidecar carries them now, and leaving them here would adopt them
+      // AGAIN on the next mount (a duplicate pill).
+      if (media.length === 0) safeRemove(attachmentDraftStorageKey(sid));
+      else safeSetJson(attachmentDraftStorageKey(sid), media);
+    }
+  }
+
+  /** The file drafts the session watcher deferred (sid-tagged, one
+      outstanding at a time). Memory, not storage, because hydrating the
+      media half rewrites the persisted draft from the live chips — the files
+      can't ride storage across the same interval. */
+  let deferredFileDrafts: { sid: string; files: PersistedAttachmentDraft[] } | null = null;
+
+  /** Consume the current session's DEFERRED chip-era file drafts as
+      in-document pills — the deferred half of hydrateDraft. The composable's
+      session watcher (registered in setup, so it fires BEFORE the caller
+      composer's own stash/restore watcher) hydrates media but defers files,
+      because at that point the editor still shows the PREVIOUS session:
+      adopting there would insert the pills into that session's document —
+      and then drop the draft anyway, losing the files for the new session
+      while polluting the old one. The caller (both composers) drives this at
+      the end of its own session watcher, once the editor holds the new
+      session again; the adopted files drop out of the persisted draft
+      (rewritten from the live chips — media only, or nothing). No-op without
+      the adopt seam or when nothing is deferred for the current session. */
+  function adoptStoredFileDrafts(): void {
+    const deferred = deferredFileDrafts;
+    deferredFileDrafts = null;
+    if (!adoptFileAttachment || !deferred || deferred.sid !== (sessionId() ?? '')) return;
+    for (const att of deferred.files) adoptFileAttachment(promptAttachmentToTurnAttachment(api, att));
+    // The files live as pills now (their sidecar carries them) — rewrite the
+    // persisted chip draft from the live chips so a later mount can't adopt
+    // them again. With a media half this is what the media hydrate already
+    // wrote; with a files-only draft (nothing rehydrated) the key drops.
+    persistForSession(deferred.sid, attachmentsBySession.value[deferred.sid] ?? []);
   }
 
   function revokeAttachment(att: Attachment): void {
@@ -198,7 +309,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     return '50mb+';
   }
 
-  async function addFiles(files: File[], via: 'drop' | 'click' | 'paste'): Promise<void> {
+  async function addFiles(files: File[], via: 'drop' | 'click' | 'paste', seqs?: readonly number[]): Promise<void> {
     const upload = uploadImage();
     if (!upload) return;
     // Capture the session at upload time; async completion must update the same
@@ -206,7 +317,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     const sid = sessionId() ?? '';
     if (files.length === 0) return;
 
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
       const kind = attachmentKind(file.type);
       track('attachment_added', {
         via,
@@ -228,6 +339,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         // the wire file part's required non-empty media_type never sees ''.
         mediaType: file.type || 'application/octet-stream',
         size: file.size,
+        // A batch-assigned stamp (routeFiles pre-assigns in batch order) wins
+        // over a fresh one, so files and media of one batch interleave by the
+        // user's selection order.
+        seq: seqs?.[index] ?? nextAttachmentSeq(),
         uploading: true,
       };
       setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), att]);
@@ -261,6 +376,58 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     }
   }
 
+  /** Route a batch of incoming files to the right attachment surface: with
+   *  the pill seam, non-media files are offered to the composer's attachment
+   *  pills first (the callback resolves each file's path through the bridge
+   *  and returns true when it took the file); everything else — media always,
+   *  all files when no seam is injected, and files the seam declined — goes
+   *  down the old chip/upload path unchanged. Every item's add-order stamp
+   *  is assigned HERE, in batch order, BEFORE any of them lands: a file's
+   *  pill gets its stamp from the seam while the media chips' stamps wait
+   *  for the addFiles call after the loop — stamping at the stamp site
+   *  would put every file ahead of every medium in the same batch and
+   *  invert the user's selection order in the submit payload. */
+  function routeFiles(files: File[], via: 'drop' | 'click' | 'paste', at?: { clientX: number; clientY: number }): void {
+    // No uploader means attaching is disabled entirely — same early-out as
+    // addFiles, so the seam is never offered files it couldn't upload.
+    if (!insertFileAttachment || !uploadImage() || files.length === 0) {
+      void addFiles(files, via);
+      return;
+    }
+    const rest: File[] = [];
+    const restSeqs: number[] = [];
+    // Only the FIRST seam-taken file lands at the drop point: its insert
+    // already changed the document (and shifted the layout), so re-resolving
+    // the same drop coordinates for the next file would land it BEFORE the
+    // pill(s) just inserted — scrambling the batch's order. Later files get
+    // no coordinates and append at the caret the previous insert left
+    // behind, the same chain insertFolderPaths uses for dropped folders.
+    let seamTaken = false;
+    for (const file of files) {
+      const seq = nextAttachmentSeq();
+      if (attachmentKind(file.type) !== 'file') {
+        rest.push(file);
+        restSeqs.push(seq);
+        continue;
+      }
+      if (insertFileAttachment(file, resolveFilePath(file), seamTaken ? undefined : at, seq)) {
+        seamTaken = true;
+        // Mirror addFiles' per-file event so the pill path stays visible in
+        // the same metric (the chip path tracks inside addFiles).
+        track('attachment_added', {
+          via,
+          kind: 'file',
+          size_bucket: attachmentSizeBucket(file.size),
+          count: Math.min(files.length, 100),
+        });
+        continue;
+      }
+      rest.push(file);
+      restSeqs.push(seq);
+    }
+    void addFiles(rest, via, restSeqs);
+  }
+
   function removeAttachment(localId: string): void {
     const sid = sessionId() ?? '';
     const current = attachmentsBySession.value[sid] ?? [];
@@ -285,7 +452,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   function handleFileInputChange(e: Event): void {
     const input = e.target as HTMLInputElement;
     const files = Array.from(input.files ?? []);
-    void addFiles(files, 'click');
+    routeFiles(files, 'click');
     // Reset so re-selecting the same file fires change again.
     input.value = '';
   }
@@ -301,31 +468,53 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     // instead, exactly like dropped folders; on web (no bridge) the partition
     // has already skipped them. Files come back de-duplicated across the
     // clipboard's items/files lists.
-    const { files: pastedFiles, folderPaths, hasFolders } = partitionPastedItems(cd);
-    if (folderPaths.length > 0) {
-      insertFolderPaths?.(folderPaths);
-      // Keep the default paste from also inserting the folder's name as text.
-      e.preventDefault();
-    } else if (hasFolders) {
-      // Folders were seen but none resolved (web / no bridge): they are meant
-      // to be ignored, so swallow the default paste too — otherwise the
-      // clipboard's text/plain (the folder's name) lands in the draft.
-      e.preventDefault();
+    const { items, folderPaths, hasFolders } = partitionPastedItems(cd);
+    const consumesFiles = items.some((item) => item.kind === 'file') && uploadImage();
+    // Swallow the default paste when anything was consumed: a resolved
+    // folder (its text/plain name must not land in the draft), an
+    // unresolved folder (the same name-swallow), or files the upload path
+    // takes. Without the upload path, files fall back to the default paste.
+    if (folderPaths.length > 0 || hasFolders || consumesFiles) e.preventDefault();
+    // Route in the clipboard's ORIGINAL item order — folders and files are
+    // both in-document pills now, so handling the whole folder group first
+    // would rewrite the user's visible reference order ("a.txt, src/, b.txt"
+    // must not become "src/, a.txt, b.txt"). Consecutive files stay batched
+    // per run so the upload batch semantics (and per-batch tracking) are
+    // unchanged.
+    let fileRun: File[] = [];
+    const flushFileRun = (): void => {
+      if (fileRun.length === 0) return;
+      routeFiles(renamePastedBlobs(fileRun), 'paste');
+      fileRun = [];
+    };
+    for (const item of items) {
+      if (item.kind === 'folder') {
+        flushFileRun();
+        insertFolderPaths?.([item.path]);
+      } else if (consumesFiles) {
+        fileRun.push(item.file);
+      }
     }
+    flushFileRun();
+  }
 
-    if (!uploadImage()) return;
-    if (pastedFiles.length === 0) return; // No files — let normal text paste proceed unmodified.
-
-    // A pasted blob with a dot-less name (e.g. a screenshot) gets a
-    // paste-<timestamp>.<ext> name so the chip and wire part stay readable.
-    const files = pastedFiles.map((file) => {
+  /** A pasted blob with a dot-less name (e.g. a screenshot) gets a
+   *  paste-<timestamp>.<ext> name so the chip and wire part stay readable.
+   *  A REAL file with a dot-less name (README, LICENSE) keeps its original
+   *  File object: wrapping it in a synthesized File would cost the desktop
+   *  bridge its native path (webUtils.getPathForFile reads the original
+   *  backing), breaking the path tooltip and same-path dedup — and the next
+   *  paste of the same file would mint a NEW timestamped name that misses
+   *  the name+size pathless retry, leaving the old error pill blocking the
+   *  send gate. Only a genuine clipboard blob (no resolvable path) is
+   *  renamed. */
+  function renamePastedBlobs(files: readonly File[]): File[] {
+    return files.map((file) => {
       if (file.name.includes('.')) return file;
+      if (resolveFilePath(file) !== null) return file;
       const ext = file.type.split('/')[1] ?? 'png';
       return new File([file], `paste-${Date.now()}.${ext}`, { type: file.type });
     });
-
-    e.preventDefault();
-    void addFiles(files, 'paste');
   }
 
   // Drag-drop handlers. WindowDragDepth tracks nested dragenter/dragleave pairs
@@ -347,22 +536,61 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     isDragOver.value = false;
   }
 
+  /** Route a drop in the DataTransfer's ORIGINAL item order — folders and
+   *  files are both in-document pills now, so handling the whole folder
+   *  group first would rewrite the user's visible reference order ("a.txt,
+   *  src/, b.txt" must not become "src/, a.txt, b.txt"). Consecutive files
+   *  stay batched per run (the upload batch semantics and per-batch
+   *  tracking are unchanged); only the FIRST run gets the drop coordinates
+   *  — re-resolving the same point for a later run would land it BEFORE
+   *  the pills and folders just inserted. Files route only when
+   *  `consumesFiles` (the upload path is available); folders go into the
+   *  draft regardless. */
+  function routeDroppedItems(
+    items: readonly DroppedItem[],
+    at: { clientX: number; clientY: number },
+    consumesFiles: boolean,
+  ): void {
+    let fileRun: File[] = [];
+    let coords: { clientX: number; clientY: number } | undefined = at;
+    const flushFileRun = (): void => {
+      if (fileRun.length === 0) return;
+      routeFiles(fileRun, 'drop', coords);
+      coords = undefined;
+      fileRun = [];
+    };
+    for (const item of items) {
+      if (item.kind === 'folder') {
+        flushFileRun();
+        insertFolderPaths?.([item.path]);
+        // A folder insert can't take the drop point (it lands at the caret
+        // chain) — consume the coordinates with it, or a folder-first batch
+        // would let the next file run JUMP the folder and land at the drop
+        // point before it, inverting the order again.
+        coords = undefined;
+      } else if (consumesFiles) {
+        fileRun.push(item.file);
+      }
+    }
+    flushFileRun();
+  }
+
   function handleDrop(e: DragEvent): void {
     windowDragDepth = 0;
     isDragOver.value = false;
-    const { files, folderPaths } = partitionDroppedItems(e);
+    const { items, folderPaths } = partitionDroppedItems(e);
     if (folderPaths.length > 0) {
-      // Folders never hit the upload endpoint — their paths go into the draft.
-      insertFolderPaths?.(folderPaths);
       // Keep the document-level drop handler from re-inserting the same paths.
       e.preventDefault();
       e.stopPropagation();
     }
-    if (!uploadImage()) return;
-    // Stop the document-level drop handler from adding the same files twice.
-    e.preventDefault();
-    e.stopPropagation();
-    void addFiles(files, 'drop');
+    const consumesFiles = uploadImage();
+    if (consumesFiles) {
+      // Stop the document-level drop handler from adding the same files twice.
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    routeDroppedItems(items, { clientX: e.clientX, clientY: e.clientY }, !!consumesFiles);
   }
 
   // Window-level drag & drop. Without a document-wide handler, dropping a file
@@ -395,15 +623,11 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   function handleWindowDrop(e: DragEvent): void {
     windowDragDepth = 0;
     isDragOver.value = false;
-    const { files, folderPaths } = partitionDroppedItems(e);
-    if (folderPaths.length > 0) {
-      // Folders never hit the upload endpoint — their paths go into the draft.
-      insertFolderPaths?.(folderPaths);
-      e.preventDefault();
-    }
-    if (!uploadImage()) return;
-    e.preventDefault();
-    void addFiles(files, 'drop');
+    const { items, folderPaths } = partitionDroppedItems(e);
+    if (folderPaths.length > 0) e.preventDefault();
+    const consumesFiles = uploadImage();
+    if (consumesFiles) e.preventDefault();
+    routeDroppedItems(items, { clientX: e.clientX, clientY: e.clientY }, !!consumesFiles);
   }
 
   /** Revoke every object URL and drop all attachments for the current session
@@ -456,6 +680,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
       const isData = /^data:/i.test(att.url);
       const isBlob = /^blob:/i.test(att.url);
       const name = att.name ?? att.kind;
+      // A carried stamp must also fast-forward the add-order clock — otherwise
+      // the next fresh stamp could tie with the restored one and scramble the
+      // submit payload's media/file interleave.
+      if (att.seq !== undefined) noteAttachmentSeq(att.seq);
 
       if (att.fileId) {
         // Ready as-is; images fetch an authenticated thumbnail for protected
@@ -471,6 +699,9 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           sessionId: att.sessionId,
           mediaType: att.mediaType,
           size: att.size,
+          // Ready at load time — adopt a carried stamp (a restored draft
+          // keeps its payload interleave), or join the add-order clock now.
+          seq: att.seq ?? nextAttachmentSeq(),
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
         if (att.kind === 'image' && !isData && !isBlob) {
@@ -510,6 +741,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           name,
           kind: att.kind,
           previewUrl: att.url,
+          seq: att.seq ?? nextAttachmentSeq(),
           uploading: true,
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
@@ -536,10 +768,15 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
   // Close the preview lightbox when switching sessions — it may reference an
   // attachment that belongs to the previous session. Then rehydrate the new
-  // session's persisted draft if it has no live state yet.
+  // session's persisted draft if it has no live state yet — MEDIA only: the
+  // file-kind adoption is deferred (in memory) to the caller's
+  // adoptStoredFileDrafts drive, because this watcher (registered in setup)
+  // fires before the composer's own stash/restore watcher, while the editor
+  // still shows the previous session (media chips are editor-independent and
+  // hydrate immediately).
   watch(sessionId, () => {
     previewAttachment.value = null;
-    hydrateDraft(sessionId() ?? '');
+    hydrateDraft(sessionId() ?? '', { deferFiles: true });
   });
 
   // First mount: restore the current session's persisted attachment draft.
@@ -584,5 +821,6 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     clearAfterSubmit,
     clearAttachments,
     loadAttachments,
+    adoptStoredFileDrafts,
   };
 }

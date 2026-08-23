@@ -238,7 +238,7 @@ describe('messagesToTurns skill activation', () => {
     expect(turn.text).toBe('fix it');
     expect(turn.skillActivation).toEqual({ name: 'kimi-webbridge', args: 'fix it' });
     expect(turn.attachments).toEqual([
-      { url: `file://${fileId}`, kind: 'video', fileId },
+      { url: `file://${fileId}`, kind: 'video', fileId, orderHint: 0 },
       {
         kind: 'file',
         url: `file://${fileId}`,
@@ -246,8 +246,9 @@ describe('messagesToTurns skill activation', () => {
         name: 'notes.txt',
         mediaType: 'text/plain',
         size: 12,
+        orderHint: 1,
       },
-      { url: `file://${fileId}`, kind: 'image', name: undefined, fileId },
+      { url: `file://${fileId}`, kind: 'image', name: undefined, fileId, orderHint: 2 },
     ]);
   });
 });

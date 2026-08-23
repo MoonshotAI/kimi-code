@@ -76,16 +76,27 @@ export const STORAGE_KEYS = {
   soundOnComplete: 'kimi-web.sound-on-complete',
 } as const;
 
+/** The scope token every no-session ("landing page") draft key shares —
+ *  also the live-delivery registry key for the empty-session composer's
+ *  upload outcomes (see registerLiveComposerEditor in app-composer). */
+export const NEW_SESSION_SCOPE = '__new__';
+
 /** Per-session composer draft key. */
 export function draftStorageKey(sid: string | undefined): string {
-  return `kimi-web.draft.${sid && sid.length > 0 ? sid : '__new__'}`;
+  return `kimi-web.draft.${sid && sid.length > 0 ? sid : NEW_SESSION_SCOPE}`;
 }
 
 /** Per-session composer attachment-draft key (metadata only — the file bytes
     stay on the daemon; see useAttachmentUpload). Mirrors draftStorageKey's
     `__new__` scope for the no-session composer. */
 export function attachmentDraftStorageKey(sid: string | undefined): string {
-  return `kimi-web.attachment-draft.${sid && sid.length > 0 ? sid : '__new__'}`;
+  return `kimi-web.attachment-draft.${sid && sid.length > 0 ? sid : NEW_SESSION_SCOPE}`;
+}
+
+/** Per-session composer draft ATTACHMENT-ENTRY key (the desktop attachment
+ *  pill sidecar — a JSON array of registry entries; web never writes it). */
+export function draftAttachmentsStorageKey(sid: string | undefined): string {
+  return `kimi-web.draft-atts.${sid && sid.length > 0 ? sid : NEW_SESSION_SCOPE}`;
 }
 
 export function safeGetString(key: string): string | null {

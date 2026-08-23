@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { composerSchema, buildMentionInsertion, classifyMentionHref, collectSkillMentions, docToText, inlineRunStartOffset, mentionActionPath, mentionNode, parseClipboardText, parseMentionLinks, posToTextOffset, serializeClipboardSlice, serializeMention, splitMentionSegments, textOffsetToPos, textToDoc, unescapeRenderedLinkText } from '../src/composerTextDoc';
+import { composerSchema, buildMentionInsertion, classifyMentionHref, collectSkillMentions, docToText, extendToTextblock, inlineRunStartOffset, mentionActionPath, mentionNode, parseClipboardText, parseMentionLinks, posToTextOffset, serializeClipboardSlice, serializeMention, splitMentionSegments, textOffsetToPos, textToDoc, unescapeRenderedLinkText } from '../src/composerTextDoc';
 import { mentionHrefToPath } from '../src/mentionLinkPath';
-import { EditorState, NodeSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 
 describe('composerTextDoc — text ↔ doc', () => {
   it('round-trips plain text through the doc model', () => {
@@ -246,6 +246,21 @@ describe('composerTextDoc — buildMentionInsertion', () => {
     const text = docToText(next.doc);
     // The second token is separated from the pill's link form by a space.
     expect(text.endsWith(' @b')).toBe(true);
+  });
+
+  it('breaks `!` and `\\` prefixes with a space so the mention still parses as a link', () => {
+    // `![alt](src)` tokenizes as ONE image construct (rejected wholesale)
+    // and `\[` is an escaped literal — the editor's own product must still
+    // round-trip, so the insertion separates the prefix.
+    const bang = stateOf('!');
+    const afterBang = bang.apply(buildMentionInsertion(bang, FILE, { start: 1, end: 1 }));
+    expect(docToText(afterBang.doc)).toBe('! [a.ts](src/a.ts) ');
+    expect(parseMentionLinks(docToText(afterBang.doc))).toHaveLength(1);
+
+    const backslash = stateOf('\\');
+    const afterBackslash = backslash.apply(buildMentionInsertion(backslash, FILE, { start: 1, end: 1 }));
+    expect(docToText(afterBackslash.doc)).toBe('\\ [a.ts](src/a.ts) ');
+    expect(parseMentionLinks(docToText(afterBackslash.doc))).toHaveLength(1);
   });
 });
 
@@ -785,5 +800,42 @@ describe('composerTextDoc — splitMentionSegments (message-side segmentation)',
     if (canonical.type !== 'mention') throw new Error('expected a mention segment');
     expect(canonical.attrs.path).toBe('docs/#notes.md');
     expect(mentionHrefToPath(mentionActionPath(canonical.rawDest))).toBe('docs/#notes.md');
+  });
+});
+
+describe('composerTextDoc — extendToTextblock (Cmd-Shift-Arrow line selection)', () => {
+  function stateOf(text: string, cursor: number): EditorState {
+    const doc = textToDoc(text, { reviveMentions: true });
+    return EditorState.create({ schema: composerSchema, doc, selection: TextSelection.create(doc, cursor) });
+  }
+
+  it('moves the head to the paragraph end from before an attachment pill', () => {
+    // The native Chromium moveTo*OfLine sticks on non-editable inline atoms —
+    // this command is the explicit replacement (one paragraph == one line).
+    // Caret at the pill's left = position 1 (inside the paragraph, before
+    // its first inline node) — position 0 is outside the textblock and not a
+    // valid caret.
+    const text = '[a.pdf](kimi-code-composer://attachments/ab12cd34) rest';
+    const state = stateOf(text, 1);
+    let applied: EditorState | undefined;
+    const ok = extendToTextblock(false)(state, (tr) => (applied = state.apply(tr)));
+    expect(ok).toBe(true);
+    expect(applied).toBeDefined();
+    expect(applied!.selection.head).toBe(state.doc.child(0).nodeSize - 1);
+    expect(applied!.selection.anchor).toBe(1);
+  });
+
+  it('moves the head to the paragraph start', () => {
+    const state = stateOf('[a.pdf](kimi-code-composer://attachments/ab12cd34) rest', 5);
+    let applied: EditorState | undefined;
+    extendToTextblock(true)(state, (tr) => (applied = state.apply(tr)));
+    expect(applied!.selection.head).toBe(1);
+    expect(applied!.selection.anchor).toBe(5);
+  });
+
+  it('dry-runs (no dispatch) report applicability without touching state', () => {
+    const state = stateOf('plain', 2);
+    expect(extendToTextblock(false)(state)).toBe(true);
+    expect(state.selection.head).toBe(2);
   });
 });

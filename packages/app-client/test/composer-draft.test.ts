@@ -85,6 +85,28 @@ describe('useComposerDraft', () => {
     expect(globalThis.localStorage.getItem(draftStorageKey('s1'))).toBeNull();
   });
 
+  it('runs onBeforeSessionSave BEFORE persisting the outgoing draft (the callback can repair the text being saved)', async () => {
+    const sid = ref('s1');
+    const draft = useComposerDraft({
+      sessionId: () => sid.value,
+      onBeforeSessionSave: () => {
+        // Simulate the history-browse walk-home: repair the recall text back
+        // to the real draft just before it is persisted.
+        draft.text.value = 'real draft';
+      },
+    });
+    draft.text.value = 'recall text';
+    await nextTick();
+
+    sid.value = 's2';
+    await nextTick();
+
+    // The outgoing session must keep the REPAIRED text, not the recall text
+    // that was live when the switch started.
+    expect(globalThis.localStorage.getItem(draftStorageKey('s1'))).toBe('real draft');
+    expect(draft.text.value).toBe('');
+  });
+
   it('saves the old draft and loads the new one on session switch', async () => {
     const { text, setSid } = setup('s1');
     text.value = 'draft-s1';

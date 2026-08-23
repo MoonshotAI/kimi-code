@@ -2593,6 +2593,58 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     );
   });
 
+  it('renumbers every segment’s attachment links when a steer merges queued pill-flow prompts', async () => {
+    // Each queued/live text carries its own 1..N link indices (rewritten at
+    // its own submit). The merge concatenates the attachments in segment
+    // order, so each segment's links must shift by the FILE count of the
+    // preceding segments — otherwise every `attachments/1` aliases the first
+    // segment's file. Media never carries a link and consumes no index.
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [
+        {
+          text: 'use [a.pdf](kimi-code-composer://attachments/1)',
+          attachments: [{ fileId: 'f_a', kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 1 }],
+        },
+        {
+          text: 'and [b.pdf](kimi-code-composer://attachments/1) plus [c.pdf](kimi-code-composer://attachments/2)',
+          attachments: [
+            { fileId: 'f_b', kind: 'file', name: 'b.pdf', mediaType: 'application/pdf', size: 2 },
+            { fileId: 'f_img', kind: 'image' },
+            { fileId: 'f_c', kind: 'file', name: 'c.pdf', mediaType: 'application/pdf', size: 3 },
+          ],
+        },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live [d.pdf](kimi-code-composer://attachments/1)', [
+      { fileId: 'f_d', kind: 'file', name: 'd.pdf', mediaType: 'application/pdf', size: 4 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          {
+            type: 'text',
+            text:
+              'use [a.pdf](kimi-code-composer://attachments/1)\n\n' +
+              'and [b.pdf](kimi-code-composer://attachments/2) plus [c.pdf](kimi-code-composer://attachments/3)\n\n' +
+              'live [d.pdf](kimi-code-composer://attachments/4)',
+          },
+          { type: 'file', fileId: 'f_a', name: 'a.pdf', mediaType: 'application/pdf', size: 1 },
+          { type: 'file', fileId: 'f_b', name: 'b.pdf', mediaType: 'application/pdf', size: 2 },
+          { type: 'image', source: { kind: 'file', fileId: 'f_img' } },
+          { type: 'file', fileId: 'f_c', name: 'c.pdf', mediaType: 'application/pdf', size: 3 },
+          { type: 'file', fileId: 'f_d', name: 'd.pdf', mediaType: 'application/pdf', size: 4 },
+        ],
+      }),
+    );
+    expect(state.queuedBySession.sess_1).toEqual([]);
+  });
+
   it('restores the merged queue entries when a steer submit is definitively rejected', async () => {
     const state = createState();
     state.inFlightBySession = { sess_1: true };

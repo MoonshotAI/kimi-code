@@ -14,6 +14,8 @@ interface DesktopBridge {
 }
 
 function bridge(): DesktopBridge | undefined {
+  // `window` is absent in node (tests) — treat that as "no bridge".
+  if (typeof window === 'undefined') return undefined;
   return (window as { kimiDesktop?: DesktopBridge }).kimiDesktop;
 }
 
@@ -35,6 +37,16 @@ function getPathViaBridge(file: File): string | null {
 }
 
 /**
+ * Resolve any dropped/pasted/picked File's absolute path through the desktop
+ * preload bridge (webUtils.getPathForFile). Null on web (no bridge), for
+ * byte-backed clipboard blobs, or when the bridge itself fails — callers
+ * treat null as "pathless" (an attachment then keys on its id, not a path).
+ */
+export function resolveFilePath(file: File): string | null {
+  return getPathViaBridge(file);
+}
+
+/**
  * dragenter/dragover heuristic: is this drag likely to contain a folder?
  * During a drag the DataTransfer is in protected mode — item data (and
  * `webkitGetAsEntry`) is withheld, only `kind`/`type` are readable. Folders
@@ -48,6 +60,13 @@ export function looksLikeFolderDrag(event: DragEvent): boolean {
   );
 }
 
+/** One kept entry of a drop/paste partition, in the DataTransfer's ORIGINAL
+ *  order (folders and files interleaved, after the same dedup as the grouped
+ *  lists): both kinds are in-document pills now, so routing groups one after
+ *  another would rewrite the user's visible reference order. The handlers
+ *  route item by item instead. */
+export type DroppedItem = { kind: 'folder'; path: string } | { kind: 'file'; file: File };
+
 /**
  * Authoritative drop-time split of the DataTransfer: plain files (safe to
  * upload) vs. dropped folders (their absolute paths, de-duplicated). Folders
@@ -59,13 +78,15 @@ export function looksLikeFolderDrag(event: DragEvent): boolean {
 export function partitionDroppedItems(
   event: DragEvent,
   getPath: (file: File) => string | null = getPathViaBridge,
-): { files: File[]; folderPaths: string[] } {
+): { files: File[]; folderPaths: string[]; items: DroppedItem[] } {
   const items = Array.from(event.dataTransfer?.items ?? []);
   if (items.length === 0) {
-    return { files: Array.from(event.dataTransfer?.files ?? []), folderPaths: [] };
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    return { files, folderPaths: [], items: files.map((file) => ({ kind: 'file', file })) };
   }
   const files: File[] = [];
   const folderPaths: string[] = [];
+  const ordered: DroppedItem[] = [];
   const seen = new Set<string>();
   for (const item of items) {
     if (item.kind !== 'file') continue;
@@ -76,11 +97,13 @@ export function partitionDroppedItems(
       if (!path || seen.has(path)) continue;
       seen.add(path);
       folderPaths.push(path);
+      ordered.push({ kind: 'folder', path });
     } else {
       files.push(file);
+      ordered.push({ kind: 'file', file });
     }
   }
-  return { files, folderPaths };
+  return { files, folderPaths, items: ordered };
 }
 
 /**
@@ -119,13 +142,18 @@ export function extractDroppedFolderPaths(
 export function partitionPastedItems(
   cd: DataTransfer,
   getPath: (file: File) => string | null = getPathViaBridge,
-): { files: File[]; folderPaths: string[]; hasFolders: boolean } {
+): { files: File[]; folderPaths: string[]; hasFolders: boolean; items: DroppedItem[] } {
   const keyOf = (file: File): string => `${file.size}:${file.type}:${file.name}`;
   const files: File[] = [];
   const seenFiles = new Set<string>();
   const folderKeys = new Set<string>();
   const folderPaths: string[] = [];
   const seenPaths = new Set<string>();
+  // The clipboard's ORIGINAL item order (folders and files interleaved, after
+  // the same dedup as the grouped lists): both kinds are in-document pills
+  // now, so routing groups one after another would rewrite the user's
+  // visible reference order. The paste handler routes item by item instead.
+  const items: DroppedItem[] = [];
   let hasFolders = false;
 
   // Pass 1 — items: the only list whose entries still carry the directory
@@ -140,6 +168,7 @@ export function partitionPastedItems(
       if (!path || seenPaths.has(path)) continue;
       seenPaths.add(path);
       folderPaths.push(path);
+      items.push({ kind: 'folder', path });
       continue;
     }
     if (!file) continue;
@@ -147,6 +176,7 @@ export function partitionPastedItems(
     if (seenFiles.has(key)) continue;
     seenFiles.add(key);
     files.push(file);
+    items.push({ kind: 'file', file });
   }
 
   // Pass 2 — files: some browsers/OS put screenshots here directly. Folder
@@ -156,7 +186,8 @@ export function partitionPastedItems(
     if (folderKeys.has(key) || seenFiles.has(key)) continue;
     seenFiles.add(key);
     files.push(file);
+    items.push({ kind: 'file', file });
   }
 
-  return { files, folderPaths, hasFolders };
+  return { files, folderPaths, hasFolders, items };
 }

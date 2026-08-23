@@ -46,6 +46,7 @@ import { readSessionIdFromLocation, sessionUrl, withRcQuery } from '@moonshot-ai
 import { stripRcDevicePrefix } from '@moonshot-ai/app-core/lib';
 import { isSessionAdminLocation, SESSION_ADMIN_PATH } from '@moonshot-ai/app-core/lib';
 import { ackThinkingPending, markThinkingPending } from '@moonshot-ai/app-core/lib';
+import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer';
 import { attachmentsToContent } from './attachmentsToContent';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { track } from '../contracts';
@@ -2600,13 +2601,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const queue = rawState.queuedBySession[sid] ?? [];
     const parts: string[] = [];
     const mergedAttachments: PromptAttachment[] = [];
+    // Every segment's attachment links were index-rewritten (1..N) at ITS OWN
+    // submit, and the payload concatenates in segment order — renumber each
+    // segment's links by the FILE count of the preceding segments, or every
+    // segment's `attachments/1` would alias the first segment's files (media
+    // never carries a link, so it doesn't consume an index).
+    let mergedFileCount = 0;
     for (const q of queue) {
       const trimmed = q.text.trim();
-      if (trimmed) parts.push(trimmed);
-      if (q.attachments?.length) mergedAttachments.push(...q.attachments);
+      if (trimmed) parts.push(offsetAttachmentLinkIndices(trimmed, mergedFileCount));
+      if (q.attachments?.length) {
+        mergedAttachments.push(...q.attachments);
+        mergedFileCount += q.attachments.filter((a) => a.kind === 'file').length;
+      }
     }
     const live = text.trim();
-    if (live) parts.push(live);
+    if (live) parts.push(offsetAttachmentLinkIndices(live, mergedFileCount));
     if (attachments?.length) mergedAttachments.push(...attachments);
     if (parts.length === 0 && mergedAttachments.length === 0) return;
     if (queue.length > 0) {

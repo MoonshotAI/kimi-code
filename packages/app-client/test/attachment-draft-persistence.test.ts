@@ -157,7 +157,7 @@ describe('useAttachmentUpload draft persistence', () => {
     await flushUploads();
 
     expect(storedDraft('sess-1')).toEqual([
-      { fileId: 'f1', kind: 'image', name: 'a.png', mediaType: 'image/png', size: 10 },
+      { fileId: 'f1', kind: 'image', name: 'a.png', mediaType: 'image/png', size: 10, seq: expect.any(Number) },
     ]);
   });
 
@@ -178,7 +178,7 @@ describe('useAttachmentUpload draft persistence', () => {
     await flushUploads();
 
     expect(storedDraft(undefined)).toEqual([
-      { fileId: 'f1', kind: 'image', name: 'a.png', mediaType: 'image/png', size: 10 },
+      { fileId: 'f1', kind: 'image', name: 'a.png', mediaType: 'image/png', size: 10, seq: expect.any(Number) },
     ]);
     expect(storedDraft('sess-1')).toBeNull();
   });
@@ -228,6 +228,21 @@ describe('useAttachmentUpload draft persistence', () => {
     });
     expect(apiMock.getSessionMediaBlob).toHaveBeenCalledWith('sess-1', 'm_img');
     expect(apiMock.getFileBlob).not.toHaveBeenCalled();
+  });
+
+  it('round-trips the chip’s add-order stamp (seq) instead of re-stamping on hydrate', () => {
+    // A remount must keep the persisted stamp verbatim — re-stamping would
+    // scramble the payload's media/file interleave (only a missing stamp
+    // gets a fresh one at load).
+    globalThis.localStorage.setItem(
+      attachmentDraftStorageKey('sess-1'),
+      JSON.stringify([{ fileId: 'f_img', kind: 'image', name: 'shot.png', mediaType: 'image/png', size: 42, seq: 4242 }]),
+    );
+
+    const att = setup(undefined);
+
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({ fileId: 'f_img', seq: 4242 });
   });
 
   it('restores a file draft without fetching a thumbnail', () => {
@@ -386,7 +401,7 @@ describe('useAttachmentUpload draft persistence', () => {
     fresh.handleFileInputChange(inputEvent([imageFile('new.png')]));
     await flushUploads();
     expect(storedDraft('sess-1')).toEqual([
-      { fileId: 'f_new', kind: 'image', name: 'new.png', mediaType: 'image/png', size: 10 },
+      { fileId: 'f_new', kind: 'image', name: 'new.png', mediaType: 'image/png', size: 10, seq: expect.any(Number) },
     ]);
 
     // The dead instance's upload finally resolves — it must not overwrite the
@@ -394,7 +409,7 @@ describe('useAttachmentUpload draft persistence', () => {
     resolveStale({ fileId: 'f_stale', name: 'stale.png', mediaType: 'image/png' });
     await flushUploads();
     expect(storedDraft('sess-1')).toEqual([
-      { fileId: 'f_new', kind: 'image', name: 'new.png', mediaType: 'image/png', size: 10 },
+      { fileId: 'f_new', kind: 'image', name: 'new.png', mediaType: 'image/png', size: 10, seq: expect.any(Number) },
     ]);
   });
 });

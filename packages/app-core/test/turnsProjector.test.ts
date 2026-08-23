@@ -208,7 +208,7 @@ describe('messagesToTurns session-media attachments', () => {
     ]);
     const turns = messagesToTurns([u1], [], undefined, true, {}, {}, { getSessionMediaUrl });
     expect(turns[0]?.attachments).toEqual([
-      { kind: 'image', url: 'media://session-1/f_1', fileId: 'f_1', sessionId: 'session-1' },
+      { kind: 'image', url: 'media://session-1/f_1', fileId: 'f_1', sessionId: 'session-1', orderHint: 0 },
     ]);
   });
 
@@ -226,7 +226,7 @@ describe('messagesToTurns session-media attachments', () => {
       { getSessionMediaUrl },
     );
     expect(turns[0]?.attachments).toEqual([
-      { kind: 'image', url: 'files://f_9', fileId: 'f_9' },
+      { kind: 'image', url: 'files://f_9', fileId: 'f_9', orderHint: 0 },
     ]);
   });
 });

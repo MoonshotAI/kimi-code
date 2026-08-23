@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ref, type Ref } from 'vue';
+import { nextTick, ref, type Ref } from 'vue';
 import { useInputHistory } from '../src/composables';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import type { TextFieldLike } from '@moonshot-ai/app-composer';
@@ -162,6 +162,37 @@ function memoryStorage(): Storage {
     },
   };
 }
+
+describe('useInputHistory — session switch', () => {
+  it('walks home before dropping the cursor: a mid-browse switch restores the pre-browse draft text', async () => {
+    const sid = ref('session-a');
+    const editor: MockEditor = {
+      value: 'original draft',
+      selectionStart: 0,
+      selectionEnd: 0,
+      setSelectionRange(start: number, end: number) {
+        this.selectionStart = start;
+        this.selectionEnd = end;
+      },
+    };
+    const text = ref('original draft');
+    const editorRef = ref(editor as unknown as TextFieldLike) as Ref<TextFieldLike | null>;
+    const history = useInputHistory({ text, editorRef, sessionId: () => sid.value });
+    history.push('older entry');
+    // Enter browsing: the recall replaces the draft, which now lives only in
+    // the composable's pre-browse stash.
+    history.recallOlder();
+    expect(text.value).toBe('older entry');
+    expect(history.isBrowsing()).toBe(true);
+
+    sid.value = 'session-b';
+    await nextTick();
+    // A bare cursor drop would strand the recall as the outgoing session's
+    // text — the watcher must restore the pre-browse draft instead.
+    expect(text.value).toBe('original draft');
+    expect(history.isBrowsing()).toBe(false);
+  });
+});
 
 describe('useInputHistory — persistence', () => {
   let original: Storage | undefined;

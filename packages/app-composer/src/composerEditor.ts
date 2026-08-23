@@ -8,14 +8,19 @@
 // stays "plain text in, plain text out" via onChange / setText.
 import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import type { Node as PMNode } from 'prosemirror-model';
+import { DOMSerializer, type Node as PMNode } from 'prosemirror-model';
 import { history, redo, undo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
-import { baseKeymap, splitBlock } from 'prosemirror-commands';
-import { composerSchema, buildMentionInsertion, collectSkillMentions, docToText, inlineRunStartOffset, parseClipboardText, posToTextOffset, serializeClipboardSlice, textOffsetToPos, textToDoc } from './composerTextDoc';
-import type { MentionAttrs, SkillMentionRef } from './composerTextDoc';
+import { baseKeymap, selectTextblockEnd, selectTextblockStart, splitBlock } from 'prosemirror-commands';
+import { composerSchema, buildAttachmentInsertion, buildMentionInsertion, collectSkillMentions, degradeForeignAttachmentLinks, docToText, extendToTextblock, inlineRunStartOffset, parseClipboardText, posToTextOffset, serializeClipboardSlice, textOffsetToPos, textToDoc } from './composerTextDoc';
+import { takeComposerClipboardFlavor } from './clipboardWrite';
+import type { AttachmentAttrs, MentionAttrs, SkillMentionRef } from './composerTextDoc';
+import { attachmentRegistryKey, buildAttachmentClipboardPaste, buildComposerClipboardCopy, COMPOSER_CLIPBOARD_MIME, createAttachmentRegistryPlugin, orderedDocAttachments, resolveComposerClipboardMime, stashComposerFlavor } from './attachmentRegistry';
+import type { AttachmentEntry } from './attachmentRegistry';
 import { buildMentionPill } from './mentionPill';
 import { buildComposerDecorations, type ComposerDecoState, type WorkModePillSpec } from './workModePill';
+import { buildAttachmentPill } from './attachmentPill';
+import { setAttachmentTooltipResolver } from './mentionTooltip';
 import { stashEditorState, takeEditorState } from './editorStateCache';
 import type { TextFieldLike } from './textField';
 
@@ -42,6 +47,17 @@ export interface ComposerEditorOptions {
    *  the document-level latch sees the same events via capture. */
   onCompositionStart?: () => void;
   onCompositionEnd?: () => void;
+  /** Attachment pill support: the registry plugin (attachmentRegistry.ts)
+   *  holds one entry per attachment identity — path/size/upload state live
+   *  there, the doc only carries { attId, name, kind }. initialEntries seed
+   *  the registry (draft sidecar restore; entries nothing references are
+   *  dropped on init); onRegistryChange fires after any transaction that
+   *  moved the registry (insert/delete reconcile, upsert/patch meta) with
+   *  the entries in first-upsert order. */
+  attachments?: {
+    initialEntries?: AttachmentEntry[];
+    onRegistryChange?: (entries: AttachmentEntry[]) => void;
+  };
 }
 
 export interface ComposerEditorApi extends TextFieldLike {
@@ -50,8 +66,12 @@ export interface ComposerEditorApi extends TextFieldLike {
   getText(): string;
   /** Replace the whole document (draft load, history recall, submit clear).
    *  Matches textarea `.value =` semantics: does not fire onChange, is not
-   *  undoable, and RESETS the undo stack; the caret lands at the end. */
-  setText(text: string): void;
+   *  undoable, and RESETS the undo stack; the caret lands at the end. The
+   *  attachment registry re-inits from `opts.entries` (default empty) —
+   *  never from the editor-creation entries, which belong to the mount
+   *  session (see the implementation note); pass the target session's
+   *  sidecar entries when restoring a session draft. */
+  setText(text: string, opts?: { entries?: AttachmentEntry[] }): void;
   /** Show the armed work-mode pill at the document head (null hides it). The
    *  pill is a widget decoration — NOT document content — so it never enters
    *  the serialized text, the char offsets, or the undo stack, and it can only
@@ -79,6 +99,31 @@ export interface ComposerEditorApi extends TextFieldLike {
   /** Skill pills in the doc, in document order (submit decides between
    *  activation and plain references). */
   getSkillMentions(): SkillMentionRef[];
+  /** Insert an attachment pill at `pos` (a serialized-text char offset, same
+   *  contract as selectionStart/insertTextAt) or — with no pos — at the
+   *  current selection; the caret lands right after the pill and the editor
+   *  takes focus. Fires onChange like any user edit. The caller owns the
+   *  registry side (upsertAttachmentEntry with the entry's metadata) and any
+   *  upload the entry tracks. */
+  insertAttachment(attrs: AttachmentAttrs, pos?: number): void;
+  /** Create or overwrite a registry entry (upload start, metadata backfill).
+   *  Dispatches a meta-only transaction — the doc and the undo stack are
+   *  untouched, and onChange does not fire (onRegistryChange does). */
+  upsertAttachmentEntry(entry: AttachmentEntry): void;
+  /** Merge a partial into an existing entry (fileId backfill, error, size).
+   *  Unknown attIds are no-ops. Same meta-only dispatch contract as
+   *  upsertAttachmentEntry. */
+  updateAttachmentEntry(attId: string, patch: Partial<Omit<AttachmentEntry, 'attId' | 'key' | 'refCount'>>): void;
+  /** The registry's entries in first-upsert order (read-only snapshot). */
+  getAttachmentEntries(): AttachmentEntry[];
+  /** The doc's attachment attIds in first-mention order, deduplicated — the
+   *  ordering source for the submit payload and the link-index rewrite. */
+  getOrderedAttachmentIds(): string[];
+  /** Translate viewport coordinates (a drop's clientX/Y) into a serialized
+   *  -text char offset — the same contract as selectionStart/insertTextAt.
+   *  Null when the point doesn't map onto the document (e.g. a window-level
+   *  drop outside the editor). */
+  textOffsetAtCoords(coords: { left: number; top: number }): number | null;
   setEditable(editable: boolean): void;
   /** Stash the current state (doc + selection + undo stack) under a session
    *  id — call before switching sessions or unmounting. */
@@ -109,7 +154,7 @@ const trailingPillCaretAnchor = new Plugin({
       const decos: Decoration[] = [];
       state.doc.forEach((para, paraStart) => {
         const last = para.lastChild;
-        if (last && last.type === composerSchema.nodes.mention) {
+        if (last && (last.type === composerSchema.nodes.mention || last.type === composerSchema.nodes.attachment)) {
           // The end of the paragraph's content (before its closing tag).
           const pos = paraStart + para.nodeSize - 1;
           decos.push(
@@ -131,10 +176,114 @@ const trailingPillCaretAnchor = new Plugin({
   },
 });
 
+// Registry-driven pill error state: an entry carrying an upload error marks
+// every pill referencing it with .attachment-error (the registry is
+// doc-reconciled, so an errored entry always has a pill). A node decoration
+// is the channel — its attrs merge onto the NodeView's dom, so the static
+// AttachmentNodeView needs no update() handling, and a cleared error (the
+// re-drop retry restarts the upload) unmarks the pill on the same pass.
+// Exported for the node tests: the decorations are a pure function of the
+// editor state (registry entries × doc pills) — no EditorView needed.
+export const attachmentErrorDecorations = new Plugin({
+  props: {
+    decorations(state) {
+      const entries = attachmentRegistryKey.getState(state);
+      if (!entries) return null;
+      const decos: Decoration[] = [];
+      state.doc.descendants((node, pos) => {
+        if (node.type !== composerSchema.nodes.attachment) return true;
+        const entry = entries.get((node.attrs as AttachmentAttrs).attId);
+        // An entry-less pill is DEAD (its upload metadata is gone for good —
+        // e.g. an undo-resurrected pill whose entry the reconcile dropped):
+        // mark it missing immediately, or the send gate would close with no
+        // visible reason (the tooltip resolver only adds the class on hover).
+        if (entry === undefined) {
+          decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'attachment-missing' }));
+        } else if (entry.error !== undefined) {
+          decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'attachment-error' }));
+        }
+        return false;
+      });
+      return decos.length === 0 ? null : DecorationSet.create(state.doc, decos);
+    },
+  },
+});
+
 // Mounted editors by their DOM root. The desktop's native Edit-menu Undo/Redo
 // shadows the keydown chord (like Select All) and is forwarded to the renderer
 // as a menu action — this is how the handler finds the focused editor.
 const viewByDom = new WeakMap<HTMLElement, EditorView>();
+
+// Live composer editors by session — the delivery target for async upload
+// outcomes (the composer's patchPillEntry). An upload's completion callback
+// belongs to the composer INSTANCE that started it; a question/approval
+// unmount destroys that instance, and a remount consumes the stashed state
+// — so the outcome can no longer reach the session's editor through the
+// callback's own instance or the stash (and the entry would stay `uploading`
+// forever, the send gate jammed, the fileId lost). This registry (module-
+// local, like the stash) lets the delivery find the editor that CURRENTLY
+// holds the session. The latest registration wins; releasing clears only
+// the registrant's own token (a newer registration survives).
+const liveEditorBySession = new Map<string, { api: ComposerEditorApi; token: unknown }>();
+
+/** Register the live editor holding a session (after mount/restore and on
+ *  every session switch). Returns the release — clears the registration
+ *  only while this token still owns it. */
+export function registerLiveComposerEditor(sessionId: string, api: ComposerEditorApi): () => void {
+  const token = {};
+  liveEditorBySession.set(sessionId, { api, token });
+  return () => {
+    if (liveEditorBySession.get(sessionId)?.token === token) {
+      liveEditorBySession.delete(sessionId);
+    }
+  };
+}
+
+/** The live editor registered for a session, if any. */
+export function liveComposerEditorFor(sessionId: string): ComposerEditorApi | undefined {
+  return liveEditorBySession.get(sessionId)?.api;
+}
+
+/** Deliver an upload-outcome patch to a pill entry wherever the session's
+ *  editor currently lives:
+ *  1. the LIVE editor registered for the session (a remount after an
+ *     unmount owns it now — the stash is already consumed);
+ *  2. the session's stashed editor state (switched away, or the upload
+ *     completed while unmounted — the next restore adopts it), mirrored to
+ *     the sidecar;
+ *  3. the draft sidecar itself (nothing live, nothing stashed — the next
+ *     sidecar load heals).
+ *  A patch for an attId nobody references anymore is a no-op by
+ *  construction (the registry's patch ignores unknown attIds, and the
+ *  sidecar fallback finds nothing). DOM-free — node tests drive every
+ *  branch. */
+export function deliverPillEntryPatch(
+  sessionId: string,
+  attId: string,
+  patch: Parameters<ComposerEditorApi['updateAttachmentEntry']>[1],
+  deps: {
+    loadEntries: () => AttachmentEntry[];
+    saveEntries: (entries: readonly AttachmentEntry[]) => void;
+  },
+): void {
+  const live = liveComposerEditorFor(sessionId);
+  if (live) {
+    live.updateAttachmentEntry(attId, patch);
+    return;
+  }
+  const stashed = takeEditorState(sessionId);
+  if (stashed) {
+    const patched = stashed.apply(stashed.tr.setMeta(attachmentRegistryKey, { type: 'patch', attId, patch }));
+    stashEditorState(sessionId, patched);
+    deps.saveEntries([...(attachmentRegistryKey.getState(patched)?.values() ?? [])]);
+    return;
+  }
+  const entries = deps.loadEntries();
+  const index = entries.findIndex((entry) => entry.attId === attId);
+  if (index === -1) return;
+  entries[index] = { ...entries[index]!, ...patch };
+  deps.saveEntries(entries);
+}
 
 /** Static renderer for a mention atom: icon + name pill. Purely presentational
  *  (the node is an atom — no editing inside), so no update/select handling. */
@@ -143,6 +292,16 @@ class MentionNodeView {
 
   constructor(node: PMNode) {
     this.dom = buildMentionPill(node.attrs as MentionAttrs);
+  }
+}
+
+/** Static renderer for an attachment atom — same presentational contract as
+ *  the mention NodeView, built through the shared attachment pill builder. */
+class AttachmentNodeView {
+  readonly dom: HTMLElement;
+
+  constructor(node: PMNode) {
+    this.dom = buildAttachmentPill(node.attrs as AttachmentAttrs);
   }
 }
 
@@ -159,6 +318,78 @@ export function runComposerMenuEdit(dom: HTMLElement, command: 'undo' | 'redo'):
 /** The EditorView mounted on a composer DOM root, if any. */
 export function getComposerEditorView(dom: HTMLElement): EditorView | undefined {
   return viewByDom.get(dom);
+}
+
+/** Write the composer's clipboard flavors for a copy OR cut event, owning the
+ *  ENTIRE clipboard when the selection covers attachment pills: the custom
+ *  MIME (only the vault ref of the built flavor — slice JSON + referenced
+ *  registry entries stay in-process, see stashComposerFlavor), text/plain
+ *  (bare names, see serializeClipboardSlice), and text/html (mirroring PM's
+ *  built-in copy: the view's clipboardSerializer on the selection slice).
+ *  Owning the whole event is mandatory — returning false after writing the
+ *  flavor would let PM's built-in copy/cut handler run clearData() and
+ *  re-write only text/html + text/plain, silently dropping the flavor.
+ *  Returns false (event untouched) when the selection is empty, has no
+ *  attachment, or clipboardData is unavailable — the caller falls back to
+ *  PM's built-in copy/cut then. */
+function writeComposerClipboard(view: EditorView, event: ClipboardEvent): boolean {
+  const { selection } = view.state;
+  if (selection.empty || !event.clipboardData) return false;
+  const slice = selection.content();
+  const copy = buildComposerClipboardCopy(
+    slice,
+    (attId) => attachmentRegistryKey.getState(view.state)?.get(attId),
+  );
+  if (!copy) return false;
+  const serializer = view.someProp('clipboardSerializer') ?? DOMSerializer.fromSchema(view.state.schema);
+  const wrap = document.createElement('div');
+  wrap.append(serializer.serializeFragment(slice.content));
+  event.preventDefault();
+  event.clipboardData.clearData();
+  event.clipboardData.setData('text/plain', copy.plain);
+  event.clipboardData.setData('text/html', wrap.innerHTML);
+  event.clipboardData.setData(COMPOSER_CLIPBOARD_MIME, stashComposerFlavor(copy.flavor));
+  return true;
+}
+
+/** The composer editor's plugin set. Exported for the node tests: the
+ *  registry-rebuild semantics of setText are driven through this exact
+ *  factory. The registry plugin is recreated per call so its init seeds
+ *  from the entries the CALLER passes for THIS state — an EditorState
+ *  rebuild can never inherit another (e.g. the mount session's) entry set.
+ *  `chrome` is the instance-specific composer-chrome plugin (work-mode pill
+ *  / placeholder decoration, workModePill.ts): it closes over the owning
+ *  editor's deco state, so it can't be constructed here — the factory slot
+ *  keeps it in its proper position on every rebuild. */
+export function composerPlugins(initialEntries?: AttachmentEntry[], chrome?: Plugin): Plugin[] {
+  return [
+    history(),
+    keymap({
+      'Mod-z': undo,
+      'Mod-y': redo,
+      'Mod-Shift-z': redo,
+      // macOS line navigation. prosemirror-commands' baseKeymap has NO
+      // Cmd-Arrow bindings — it relies on the browser's native
+      // moveTo*OfLine, and Chromium's native version gets STUCK on
+      // non-editable inline atoms (the pills): caret before a pill never
+      // reaches the line end. One paragraph is one line in this doc
+      // model, so textblock start/end IS the line boundary. 'Cmd' (not
+      // 'Mod') so Ctrl-Arrow word-jump on Windows/Linux is untouched.
+      'Cmd-ArrowLeft': selectTextblockStart,
+      'Cmd-ArrowRight': selectTextblockEnd,
+      'Cmd-Shift-ArrowLeft': extendToTextblock(true),
+      'Cmd-Shift-ArrowRight': extendToTextblock(false),
+    }),
+    // baseKeymap gives Enter/Shift+Enter a paragraph split, Backspace at a
+    // paragraph start a join (== deleting the '\n'), etc. The composer's
+    // own handleKeyDown runs first (direct props precede plugin keymaps)
+    // and decides which keys ever reach these.
+    keymap(baseKeymap),
+    trailingPillCaretAnchor,
+    ...(chrome ? [chrome] : []),
+    attachmentErrorDecorations,
+    createAttachmentRegistryPlugin({ initialEntries }),
+  ];
 }
 
 /**
@@ -183,22 +414,24 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     },
   });
 
+  /** Registry diffing for onRegistryChange: the plugin state is an immutable
+   *  Map that keeps its reference when nothing moved, so identity IS the
+   *  change signal. */
+  const registryEntries = (state: EditorState): AttachmentEntry[] => [
+    ...(attachmentRegistryKey.getState(state)?.values() ?? []),
+  ];
+  const notifyRegistryChange = (before: EditorState, after: EditorState): void => {
+    if (attachmentRegistryKey.getState(before) !== attachmentRegistryKey.getState(after)) {
+      options.attachments?.onRegistryChange?.(registryEntries(after));
+    }
+  };
+
   const view = new EditorView(host, {
     state: EditorState.create({
       schema: composerSchema,
       // Draft restore: mention links revive into pills (see textToDoc).
       doc: textToDoc(options.initialText, { reviveMentions: true }),
-      plugins: [
-        history(),
-        keymap({ 'Mod-z': undo, 'Mod-y': redo, 'Mod-Shift-z': redo }),
-        // baseKeymap gives Enter/Shift+Enter a paragraph split, Backspace at a
-        // paragraph start a join (== deleting the '\n'), etc. The composer's
-        // own handleKeyDown runs first (direct props precede plugin keymaps)
-        // and decides which keys ever reach these.
-        keymap(baseKeymap),
-        trailingPillCaretAnchor,
-        composerChrome,
-      ],
+      plugins: composerPlugins(options.attachments?.initialEntries, composerChrome),
     }),
     editable: () => editable,
     attributes: {
@@ -213,12 +446,15 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       autocomplete: 'off',
     },
     dispatchTransaction(tr) {
-      const newState = view.state.apply(tr);
+      const before = view.state;
+      const newState = before.apply(tr);
       view.updateState(newState);
       if (tr.docChanged) options.onChange(docToText(newState.doc));
+      notifyRegistryChange(before, newState);
     },
     nodeViews: {
       mention: (node) => new MentionNodeView(node),
+      attachment: (node) => new AttachmentNodeView(node),
     },
     handleKeyDown: (_view, event) => options.handleKeyDown(event),
     handleDOMEvents: {
@@ -226,12 +462,40 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
         options.onBlur?.(event);
         return false;
       },
+      copy: (view, event) => writeComposerClipboard(view, event),
+      // Cut = the same clipboard write PLUS deleting the selection. PM fires
+      // cut as its own DOM event (it never routes through `copy`), so
+      // without this handler a Cmd+X of a pill selection leaves only PM's
+      // built-in text flavors on the clipboard — and the paste then comes
+      // back as bare text.
+      cut: (view, event) => {
+        if (!writeComposerClipboard(view, event)) return false;
+        view.dispatch(view.state.tr.deleteSelection().scrollIntoView());
+        return true;
+      },
     },
     // Single-newline clipboard contract (see composerTextDoc.ts): pasting
     // keeps consecutive blank lines, copying does not invent extra ones.
     clipboardTextParser: (text) => parseClipboardText(text),
     clipboardTextSerializer: (slice) => serializeClipboardSlice(slice),
     handlePaste: (view, event) => {
+      // Composer-internal flavor (a copy from a composer or a message bubble
+      // that carried attachment pills): restore the pills + registry entries
+      // structurally instead of degrading to the bare names of text/plain.
+      // The MIME carries only the vault ref — resolveComposerClipboardMime
+      // maps it back to the flavor (a v1 full flavor passes through). A
+      // vault miss (cross-process, evicted, restarted) or an
+      // unparseable/absent flavor falls through to the plain-text path.
+      const composerMime = event.clipboardData?.getData(COMPOSER_CLIPBOARD_MIME);
+      const composerPayload = composerMime ? resolveComposerClipboardMime(composerMime) : undefined;
+      if (composerPayload) {
+        const tr = buildAttachmentClipboardPaste(view.state, composerPayload);
+        if (tr) {
+          event.preventDefault();
+          view.dispatch(tr);
+          return true;
+        }
+      }
       // File paste is owned by the document-level upload handler (which still
       // sees the event afterwards via bubbling). Stop PM from inserting
       // anything itself — the schema has no image/file node, so a default
@@ -245,10 +509,26 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       // and with no hard_break/node rules for <div>/<br> the line breaks
       // would be lost. Insert text/plain through the single-newline parser;
       // mention links revive, so a copied pill pastes back as a pill.
+      // Attachment links only revive when the registry HOLDS their attId
+      // (composer-internal cut/paste of a live pill) — a copied message's
+      // submit-time index or any other foreign id degrades to the bare name
+      // instead of reviving as a dead pill. The in-process stash (message
+      // copy button) is checked first: its text/plain match restores the
+      // structured pills instead.
       const plain = event.clipboardData?.getData('text/plain');
       if (plain) {
         event.preventDefault();
-        view.dispatch(view.state.tr.replaceSelection(parseClipboardText(plain, { reviveMentions: true })).scrollIntoView());
+        const stashed = takeComposerClipboardFlavor(plain);
+        if (stashed) {
+          const tr = buildAttachmentClipboardPaste(view.state, stashed);
+          if (tr) {
+            view.dispatch(tr);
+            return true;
+          }
+        }
+        const knownAttIds = new Set(attachmentRegistryKey.getState(view.state)?.keys() ?? []);
+        const filtered = degradeForeignAttachmentLinks(plain, knownAttIds);
+        view.dispatch(view.state.tr.replaceSelection(parseClipboardText(filtered, { reviveMentions: true })).scrollIntoView());
         return true;
       }
       return false;
@@ -274,13 +554,30 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
         const dropPos = view.posAtCoords({ left: event.clientX, top: event.clientY });
         const tr = view.state.tr;
         if (dropPos) tr.setSelection(TextSelection.create(tr.doc, dropPos.pos));
-        view.dispatch(tr.replaceSelection(parseClipboardText(text, { reviveMentions: true })).scrollIntoView());
+        // Same unknown-attachment degrade as plain-text paste: a foreign
+        // attachment link (a copied message's index, a hand-typed link) must
+        // not revive as a dead pill and close the send gate.
+        const knownAttIds = new Set(attachmentRegistryKey.getState(view.state)?.keys() ?? []);
+        const filtered = degradeForeignAttachmentLinks(text, knownAttIds);
+        view.dispatch(tr.replaceSelection(parseClipboardText(filtered, { reviveMentions: true })).scrollIntoView());
         return true;
       }
       return false;
     },
   });
   viewByDom.set(view.dom, view);
+
+  // The attachment tooltip singleton resolves pill metadata through this
+  // editor's registry (path/size/dead-pill detection). Several registry-backed
+  // editors can coexist (the empty-session composer and the docked one): the
+  // LATEST registration wins, and destroy releases only THIS editor's
+  // registration — an older editor going away can't yank a survivor's
+  // resolver.
+  const releaseAttachmentTooltipResolver = setAttachmentTooltipResolver((attId) => {
+    const entry = attachmentRegistryKey.getState(view.state)?.get(attId);
+    if (!entry) return null;
+    return { name: entry.name, path: entry.path, size: entry.size, error: entry.error };
+  });
 
   const onCompositionStart = (): void => options.onCompositionStart?.();
   const onCompositionEnd = (): void => options.onCompositionEnd?.();
@@ -318,23 +615,35 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       return docToText(view.state.doc);
     },
 
-    setText(text: string): void {
+    setText(text: string, opts?: { entries?: AttachmentEntry[] }): void {
       // Whole-text programmatic replacement matches textarea `.value =`
       // semantics: it is not undoable, and it RESETS the undo stack — Chrome
       // clears a textarea's native undo history on a programmatic value set,
       // so a post-send Cmd+Z must not resurrect the just-sent text. A fresh
-      // EditorState (same plugin set) gives the history plugin a clean slate;
-      // going through updateState (no transaction) also means no onChange.
+      // EditorState gives the history plugin a clean slate; going through
+      // updateState (no transaction) also means no onChange.
       // reviveMentions: draft/history text brings its pills back.
+      // The registry re-inits from `opts.entries` (default EMPTY) reconciled
+      // against the new doc — NEVER from the editor-creation entries. Those
+      // belong to the MOUNT session: on a session switch the rebuild runs
+      // under the NEW session id, and a shared attId (edit refills use
+      // stable 1..N ids, so cross-session collisions are common) would let
+      // the old session's fileId into the new session's registry — and the
+      // notify below would persist it to the new session's sidecar before
+      // the caller re-seeded. Passing the target session's sidecar entries
+      // makes the rebuild atomic instead. Callers restoring pill-carrying
+      // text without entries re-seed afterwards via upsertAttachmentEntry.
+      const before = view.state;
       const doc = textToDoc(text, { reviveMentions: true });
       view.updateState(
         EditorState.create({
           schema: composerSchema,
           doc,
-          plugins: view.state.plugins,
+          plugins: composerPlugins(opts?.entries, composerChrome),
           selection: TextSelection.atEnd(doc),
         }),
       );
+      notifyRegistryChange(before, view.state);
     },
 
     insertNewlineAtCaret(): void {
@@ -375,6 +684,33 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       return collectSkillMentions(view.state.doc);
     },
 
+    insertAttachment(attrs: AttachmentAttrs, pos?: number): void {
+      const range = pos === undefined ? undefined : { start: pos, end: pos };
+      view.dispatch(buildAttachmentInsertion(view.state, attrs, range));
+      view.focus();
+    },
+
+    upsertAttachmentEntry(entry: AttachmentEntry): void {
+      view.dispatch(view.state.tr.setMeta(attachmentRegistryKey, { type: 'upsert', entry }));
+    },
+
+    updateAttachmentEntry(attId: string, patch: Partial<Omit<AttachmentEntry, 'attId' | 'key' | 'refCount'>>): void {
+      view.dispatch(view.state.tr.setMeta(attachmentRegistryKey, { type: 'patch', attId, patch }));
+    },
+
+    getAttachmentEntries(): AttachmentEntry[] {
+      return registryEntries(view.state);
+    },
+
+    getOrderedAttachmentIds(): string[] {
+      return orderedDocAttachments(view.state.doc);
+    },
+
+    textOffsetAtCoords(coords: { left: number; top: number }): number | null {
+      const pos = view.posAtCoords(coords);
+      return pos ? posToTextOffset(view.state.doc, pos.pos) : null;
+    },
+
     setEditable(next: boolean): void {
       editable = next;
       // setProps re-syncs the contenteditable attribute on the DOM.
@@ -396,13 +732,19 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       // chrome state (work-mode pill / placeholder deco) and callbacks.
       // Reconfigure onto THIS instance's plugins so the pill keeps working;
       // the undo stack survives because history() shares a fixed plugin key.
+      // The attachment registry plugin state rides the same mechanism (its
+      // PluginKey is fixed too), so session switches need no sidecar
+      // round-trip — notify the mirror after the swap.
+      const before = view.state;
       view.updateState(state.reconfigure({ plugins: view.state.plugins }));
+      notifyRegistryChange(before, view.state);
       return true;
     },
 
     destroy(): void {
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
+      releaseAttachmentTooltipResolver();
       view.destroy();
     },
   };

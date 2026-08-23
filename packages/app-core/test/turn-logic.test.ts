@@ -205,7 +205,7 @@ describe('messagesToTurns', () => {
     expect(turns).toHaveLength(1);
     expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
     expect(turns[0]?.attachments).toEqual([
-      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId, orderHint: 0 },
     ]);
   });
 
@@ -232,6 +232,7 @@ describe('messagesToTurns', () => {
         name: 'api-spec.yaml',
         mediaType: 'application/yaml',
         size: 18432,
+        orderHint: 0,
       },
       {
         kind: 'file',
@@ -240,6 +241,7 @@ describe('messagesToTurns', () => {
         name: '设计文档.pdf',
         mediaType: 'application/pdf',
         size: 2516582,
+        orderHint: 1,
       },
     ]);
   });
@@ -257,7 +259,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]?.attachments).toEqual([
-      { kind: 'file', url: '/api/v1/files/f_make', fileId: 'f_make', name: 'Makefile', mediaType: undefined, size: 512 },
+      { kind: 'file', url: '/api/v1/files/f_make', fileId: 'f_make', name: 'Makefile', mediaType: undefined, size: 512, orderHint: 0 },
     ]);
   });
 
@@ -292,6 +294,7 @@ describe('messagesToTurns', () => {
         name: 'report.pdf',
         mediaType: 'application/pdf',
         size: 24,
+        orderHint: 0,
       },
     ]);
   });
@@ -311,7 +314,7 @@ describe('messagesToTurns', () => {
 
     expect(turns[0]?.text).toBe('');
     expect(turns[0]?.attachments).toEqual([
-      { kind: 'file', url: '', fileId: undefined, name: 'image.avif', mediaType: 'image/avif', size: 100 },
+      { kind: 'file', url: '', fileId: undefined, name: 'image.avif', mediaType: 'image/avif', size: 100, orderHint: 0 },
     ]);
   });
 
@@ -337,6 +340,7 @@ describe('messagesToTurns', () => {
         name: 'api-spec-v2.yaml',
         mediaType: 'application/yaml',
         size: 18,
+        orderHint: 0,
       },
     ]);
   });
@@ -358,7 +362,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]?.attachments).toEqual([
-      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId, orderHint: 0 },
     ]);
   });
 
@@ -373,6 +377,456 @@ describe('messagesToTurns', () => {
 
     expect(turns[0]).toMatchObject({ role: 'user', text });
     expect(turns[0]?.attachments).toBeUndefined();
+  });
+
+  it('drops file chips when the message references them via inline attachment links (pill flow)', () => {
+    // Pill-flow messages carry `kimi-code-composer://attachments/<index>` links
+    // in their text (the bubble revives them as inline pills) — recovering the
+    // trailing notices into chips would show the same files twice. Media parts
+    // (no pill form) must survive the filter. The scheme literal matches the
+    // app-composer wire contract (wire-format.md §6).
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const mediaId = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          {
+            type: 'text',
+            text: 'compare [report.pdf](kimi-code-composer://attachments/1) with the shot',
+          },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+          {
+            type: 'text',
+            text: `<image path="/Users/me/.kimi-code/cache/${mediaId}.png"></image>`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe('compare [report.pdf](kimi-code-composer://attachments/1) with the shot');
+    expect(turns[0]?.attachments).toEqual([{ url: `/api/v1/files/${mediaId}`, kind: 'image', fileId: mediaId, orderHint: 1 }]);
+    // The filtered-out file rides along in pill-index order, so the bubble can
+    // revive the inline pill's open target (attId "1" → the first file).
+    expect(turns[0]?.inlineAttachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        orderHint: 0,
+      },
+    ]);
+  });
+
+  it('detects the pill flow for a skill activation too (links live in skillArgs, not textParts)', () => {
+    // A skill activation's display text is origin.skillArgs — its textParts
+    // hold the dropped skill-prompt XML — so the pill-flow check must read
+    // the args. Without it the same file would render TWICE (a chip row AND
+    // an inline pill in the args) and the pill would have no open target
+    // (inlineAttachments empty). The file order stays the notices' order,
+    // matching the args' 1..N links.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const args = 'deploy with [config.yaml](kimi-code-composer://attachments/1) applied';
+    const turns = messagesToTurns(
+      [
+        message(
+          'u1',
+          'user',
+          [
+            { type: 'text', text: '<skill-prompt>deploy the thing</skill-prompt>' },
+            {
+              type: 'text',
+              text:
+                `Attached file "config.yaml" (application/yaml, 12 bytes): ` +
+                `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-config.yaml — open it with the Read tool`,
+            },
+          ],
+          {
+            metadata: {
+              origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'deploy', skillArgs: args },
+            },
+          },
+        ),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe(args);
+    expect(turns[0]?.skillActivation).toEqual({ name: 'deploy', args });
+    // The file is filtered OUT of the chip row and rides inline instead.
+    expect(turns[0]?.attachments).toBeUndefined();
+    expect(turns[0]?.inlineAttachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'config.yaml',
+        mediaType: 'application/yaml',
+        size: 12,
+        orderHint: 0,
+      },
+    ]);
+  });
+
+  it('keeps the chip row when the text only mentions the scheme literally (no real link)', () => {
+    // A message that quotes the scheme without carrying a parseable
+    // attachment link is NOT a pill flow — hiding its files would make them
+    // completely inaccessible (no pill revives to open them).
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const text = 'the docs say kimi-code-composer://attachments/1 is the wire form';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe(text);
+    expect(turns[0]?.attachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        orderHint: 0,
+      },
+    ]);
+    expect(turns[0]?.inlineAttachments).toBeUndefined();
+  });
+
+  it('keeps the chip row when every attachment link points past the file count', () => {
+    // A forged/stale link with no file at its index: the file stays in the
+    // legacy row (the link itself renders as an inert pill message-side).
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const text = 'see [x.pdf](kimi-code-composer://attachments/5)';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        // The forged link is no file's hint source — the file simply takes
+        // its content-part position.
+        orderHint: 0,
+      },
+    ]);
+    expect(turns[0]?.inlineAttachments).toBeUndefined();
+  });
+
+  it('hides only the files a valid link targets; unreferenced files keep the chip row', () => {
+    // A link to index 2 references the SECOND file only: the first stays in
+    // the chip row, and inlineAttachments keeps the full positional list so
+    // the bubble can resolve index 2 to the second file.
+    const fileA = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const fileB = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const notice = (id: string, name: string, size: number) =>
+      `Attached file "${name}" (application/pdf, ${size} bytes): ` +
+      `/home/u/.kimi-code/sessions/s_1/attachments/${id}-${name} — open it with the Read tool`;
+    const text = 'compare [b.pdf](kimi-code-composer://attachments/2)';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          { type: 'text', text: notice(fileA, 'a.pdf', 11) },
+          { type: 'text', text: notice(fileB, 'b.pdf', 22) },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      {
+        url: `/api/v1/files/${fileA}`,
+        kind: 'file',
+        fileId: fileA,
+        name: 'a.pdf',
+        mediaType: 'application/pdf',
+        size: 11,
+        orderHint: 0,
+      },
+    ]);
+    expect(turns[0]?.inlineAttachments).toEqual([
+      {
+        url: `/api/v1/files/${fileA}`,
+        kind: 'file',
+        fileId: fileA,
+        name: 'a.pdf',
+        mediaType: 'application/pdf',
+        size: 11,
+        orderHint: 0,
+      },
+      {
+        url: `/api/v1/files/${fileB}`,
+        kind: 'file',
+        fileId: fileB,
+        name: 'b.pdf',
+        mediaType: 'application/pdf',
+        size: 22,
+        orderHint: 1,
+      },
+    ]);
+  });
+
+  it('does not count the Markdown IMAGE form as an inline reference (the parser rejects images)', () => {
+    // `![alt](…/1)` tokenizes as ONE image construct in the real parser and
+    // never revives into a pill — counting it as a reference would hide the
+    // file from the legacy row and make it completely inaccessible.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const text = 'look ![preview](kimi-code-composer://attachments/1) here';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe(text);
+    expect(turns[0]?.attachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        orderHint: 0,
+      },
+    ]);
+    expect(turns[0]?.inlineAttachments).toBeUndefined();
+  });
+
+  it('does not count a link nested in an image description as an inline reference (the parser flattens images)', () => {
+    // `![caption [report](…/1)](preview.png)` — the inner link lives inside
+    // the image's alt text. micromark/mdast flattens the whole image into
+    // one node, so no pill revives from it; counting it as a reference would
+    // hide the file from the legacy row and make it completely inaccessible.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const text = 'look ![caption [report](kimi-code-composer://attachments/1)](preview.png) here';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe(text);
+    expect(turns[0]?.attachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        orderHint: 0,
+      },
+    ]);
+    expect(turns[0]?.inlineAttachments).toBeUndefined();
+  });
+
+  it('still counts a real link that CONTAINS an image in its text', () => {
+    // `[see ![x](y)](…/1)` — the outer construct is a genuine link (the image
+    // is its child), so the pill revives and the file rides inline.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const text = '[see ![x](y)](kimi-code-composer://attachments/1)';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.inlineAttachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        orderHint: 0,
+      },
+    ]);
+  });
+
+  it('does not count an escaped `\\[` form as an inline reference (the `[` is a literal)', () => {
+    // `\[file](…/1)` has its bracket escaped — the wire parser treats it as
+    // literal text, no pill revives, so the file must stay in the legacy
+    // row or it becomes completely inaccessible.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const text = 'look \\[report.pdf](kimi-code-composer://attachments/1) here';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text },
+          {
+            type: 'text',
+            text:
+              `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+              `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe(text);
+    expect(turns[0]?.attachments).toEqual([
+      {
+        url: `/api/v1/files/${fileId}`,
+        kind: 'file',
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+        orderHint: 0,
+      },
+    ]);
+    expect(turns[0]?.inlineAttachments).toBeUndefined();
+  });
+
+  it('assigns add-order hints from the content-part sequence (the submit payload’s own order)', () => {
+    // The persisted message is [text part, then attachment-derived parts in
+    // payload order]: the file notices replace their file parts in place,
+    // so here — text (with both links), image, notice A, notice B — the
+    // image was submitted BEFORE the files, and the hints must not reorder
+    // it behind them.
+    const fileA = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const fileB = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const img = 'f_550e8400-e29b-41d4-a716-446655440001';
+    const notice = (id: string, name: string, size: number) =>
+      `Attached file "${name}" (application/pdf, ${size} bytes): ` +
+      `/home/u/.kimi-code/sessions/s_1/attachments/${id}-${name} — open it with the Read tool`;
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'see [a.pdf](kimi-code-composer://attachments/1)' },
+          { type: 'text', text: `<image path="/Users/me/.kimi-code/cache/${img}.png"></image>` },
+          { type: 'text', text: 'and [b.pdf](kimi-code-composer://attachments/2) too' },
+          { type: 'text', text: notice(fileA, 'a.pdf', 11) },
+          { type: 'text', text: notice(fileB, 'b.pdf', 22) },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/${img}`, kind: 'image', fileId: img, orderHint: 0 },
+    ]);
+    expect(turns[0]?.inlineAttachments?.map((a) => [a.name, a.orderHint])).toEqual([
+      ['a.pdf', 1],
+      ['b.pdf', 2],
+    ]);
+  });
+
+  it('falls back to payload order for files without links (legacy message)', () => {
+    // A legacy message has no links — the files' hints follow the media
+    // tag's appearance order in payload/notice order.
+    const fileA = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const fileB = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const img = 'f_550e8400-e29b-41d4-a716-446655440001';
+    const notice = (id: string, name: string, size: number) =>
+      `Attached file "${name}" (application/pdf, ${size} bytes): ` +
+      `/home/u/.kimi-code/sessions/s_1/attachments/${id}-${name} — open it with the Read tool`;
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'look at these' },
+          { type: 'text', text: `<image path="/Users/me/.kimi-code/cache/${img}.png"></image>` },
+          { type: 'text', text: notice(fileA, 'a.pdf', 11) },
+          { type: 'text', text: notice(fileB, 'b.pdf', 22) },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments?.map((a) => [a.name ?? a.kind, a.orderHint])).toEqual([
+      ['image', 0],
+      ['a.pdf', 1],
+      ['b.pdf', 2],
+    ]);
+    expect(turns[0]?.inlineAttachments).toBeUndefined();
   });
 
   it('keeps the video tag as text when no file resolver is provided', () => {

@@ -256,7 +256,7 @@ describe('auxiliaryTranscriptToTurns', () => {
     );
 
     expect(turns[0]?.attachments).toEqual([
-      { kind: 'image', url: 'media://sess-1/f_1', fileId: 'f_1', sessionId: 'sess-1' },
+      { kind: 'image', url: 'media://sess-1/f_1', fileId: 'f_1', sessionId: 'sess-1', orderHint: 0 },
     ]);
   });
 
@@ -281,7 +281,7 @@ describe('auxiliaryTranscriptToTurns', () => {
     );
 
     expect(turns[0]?.attachments).toEqual([
-      { kind: 'image', url: 'files://f_9', fileId: 'f_9' },
+      { kind: 'image', url: 'files://f_9', fileId: 'f_9', orderHint: 0 },
     ]);
   });
 });

@@ -14,6 +14,7 @@ import {
   turnFinalText,
   turnHasOutput,
   turnToMarkdown,
+  turnTocTitle,
   turnVisibleFinalText,
   turnWorkMs,
 } from '../../src/renderer/components/chatTurnRendering';
@@ -314,6 +315,20 @@ describe('turnToMarkdown', () => {
     );
   });
 
+  it('strips composer-private attachment links from text blocks (pill-flow user messages)', () => {
+    // The bubble keeps `kimi-code-composer://attachments/<index>` links for
+    // its inline pills, but the Markdown export is a plain-text surface —
+    // the private scheme must not leak; the pill degrades to its bare name
+    // (a folder's keeps its trailing '/'). Mention links are untouched.
+    const turn = assistantTurn([
+      {
+        kind: 'text',
+        text: 'compare [report.pdf](kimi-code-composer://attachments/1) with [src/](kimi-code-composer://attachments/2) and [m.ts](src/m.ts)',
+      },
+    ]);
+    expect(turnToMarkdown(turn)).toBe('compare report.pdf with src/ and [m.ts](src/m.ts)');
+  });
+
   it('serializes notification blocks so copies keep the visible context', () => {
     const turn = assistantTurn([
       { kind: 'text', text: 'restarting dev' },
@@ -331,6 +346,18 @@ describe('turnToMarkdown', () => {
     expect(turnToMarkdown(turn)).toBe(
       '> **Notification**\n> task n1\n> task.completed\n> line one\n> line two',
     );
+  });
+
+  it('escapes Markdown-active attachment names in the export (the bubble shows them literally)', () => {
+    // `# notes.md` would re-parse as a heading, `---` as a thematic break,
+    // `*em*` as emphasis; ordinary names pass through clean.
+    const turn = assistantTurn([
+      {
+        kind: 'text',
+        text: 'read [# notes.md](kimi-code-composer://attachments/1), [---](kimi-code-composer://attachments/2), [*em*](kimi-code-composer://attachments/3), [report.pdf](kimi-code-composer://attachments/4)',
+      },
+    ]);
+    expect(turnToMarkdown(turn)).toBe('read \\# notes.md, \\---, \\*em\\*, report.pdf');
   });
 
   it('keeps the notification output preview in the copy as a fenced block', () => {
@@ -814,5 +841,29 @@ describe('flattenAssistantFold', () => {
     expect(
       flat.map((b) => (b.kind === 'activity-run' ? (b.items[0]?.sourceIndex ?? -1) : b.sourceIndex)),
     ).toEqual([0, 1, 3]);
+  });
+});
+
+describe('turnTocTitle', () => {
+  const t = (key: string) => key;
+  const userTurn = (text: string): ChatTurn => ({ id: 'u1', role: 'user', no: 1, text });
+
+  it('degrades attachment pills to bare names in the rail title', () => {
+    expect(
+      turnTocTitle(
+        userTurn('fix [report.pdf](kimi-code-composer://attachments/1) and [src/](kimi-code-composer://attachments/2) now'),
+        t,
+      ),
+    ).toBe('fix report.pdf and src/ now');
+  });
+
+  it('keeps mention links untouched', () => {
+    expect(turnTocTitle(userTurn('see [a.ts](src/a.ts) please'), t)).toBe('see [a.ts](src/a.ts) please');
+  });
+
+  it('collapses whitespace, falls back for an empty user text, and labels compaction', () => {
+    expect(turnTocTitle(userTurn('  multi\n line   text  '), t)).toBe('multi line text');
+    expect(turnTocTitle(userTurn(''), t)).toBe('user');
+    expect(turnTocTitle({ id: 'c1', role: 'compaction', no: 2, text: 'summary' }, t)).toBe('conversation.compactedPlain');
   });
 });

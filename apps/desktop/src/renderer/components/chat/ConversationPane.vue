@@ -24,10 +24,11 @@ import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
-import { canUndoSkillActivation, skillActivationEditText } from '@moonshot-ai/app-composer';
+import { canUndoSkillActivation, skillActivationEditText, type AttachmentEntry } from '@moonshot-ai/app-composer';
+import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
-import { turnHasOutput } from '../chatTurnRendering';
+import { turnHasOutput, turnTocTitle } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
 
 const { t } = useI18n();
@@ -304,6 +305,7 @@ let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 function loadComposerForEdit(
   value: string,
   attachments?: TurnAttachment[],
+  restoreEntries?: AttachmentEntry[],
 ): boolean {
   const composer = dockedComposerRef.value ?? emptyComposerRef.value;
   if (!composer) return false;
@@ -311,6 +313,16 @@ function loadComposerForEdit(
   // empty composer's loadForEdit returns void (treat as success).
   const ok = composer.loadForEdit(value);
   if (ok === false) return false;
+  if (restoreEntries !== undefined && composer.restoreDraftEntries) {
+    // A skill command's gate-failure restore: the text carries the
+    // PRE-REWRITE draft (attId-form links), so the pill registry comes back
+    // from the ORIGINAL entries — folder pills keep their paths. The
+    // payload's file-seeding/adoption must not run against it (it would
+    // duplicate the revived file pills); only media chips refill.
+    composer.restoreDraftEntries(restoreEntries);
+    composer.loadAttachmentsForEdit((attachments ?? []).filter((att) => att.kind !== 'file'));
+    return true;
+  }
   composer.loadAttachmentsForEdit(attachments ?? []);
   return true;
 }
@@ -456,17 +468,9 @@ watch(
 );
 
 function tocTitle(turn: ChatTurn): string {
-  if (turn.role === 'compaction') return t('conversation.compactedPlain');
-  if (turn.role === 'user') {
-    if (turn.skillActivation) return `/${turn.skillActivation.name}`;
-    if (turn.pluginCommand) return `/${turn.pluginCommand.pluginId}:${turn.pluginCommand.commandName}`;
-    const text = turn.text.trim().replaceAll(/\s+/g, ' ');
-    return text.length > 0 ? text : 'user';
-  }
-  const text = (turn.text || turn.thinking || '').trim().replaceAll(/\s+/g, ' ');
-  if (text.length > 0) return text;
-  if ((turn.tools?.length ?? 0) > 0) return `${turn.tools!.length} tools`;
-  return 'kimi';
+  // The TOC title degrades composer-private attachment links to bare names
+  // inside turnTocTitle (same treatment as the copy/export paths).
+  return turnTocTitle(turn, t);
 }
 
 // The TOC is keyed by user query: one entry per user turn, not per turn/block.
@@ -703,6 +707,9 @@ const chatLayoutStyle = computed(() => ({
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
+  /** Re-seed the pill registry from a command emit's restoreEntries (the
+   *  gate-failure restore of a skill command) — see Composer. */
+  restoreDraftEntries?: (entries: AttachmentEntry[]) => void;
   focus: () => void;
   /** True while any composer popup (model/permission dropdown, slash/mention
    *  menu) is open — such a popup owns Escape. */
@@ -766,6 +773,10 @@ function bindChatDock(el: RefArg): void {
         'loadAttachmentsForEdit' in el && typeof el.loadAttachmentsForEdit === 'function'
           ? el.loadAttachmentsForEdit.bind(el)
           : () => {},
+      restoreDraftEntries:
+        'restoreDraftEntries' in el && typeof el.restoreDraftEntries === 'function'
+          ? el.restoreDraftEntries.bind(el)
+          : undefined,
       focus: el.focus.bind(el),
       // Read lazily — copying the value at bind time would freeze it.
       get anyPopupOpen(): boolean {
@@ -1918,7 +1929,14 @@ function executeEscUndo(turnId: string): void {
   const text = turn.skillActivation
     ? (skillActivationEditText(turn.skillActivation, { revivePill: true }) ?? turn.text)
     : turn.text;
-  handleEditMessage({ text, attachments: turn.attachments });
+  // Same positional rebuild as ChatPane's hover undo (editRefillAttachments):
+  // a pill-flow turn's complete file list lives in inlineAttachments —
+  // concatenating the overlapping lists would duplicate files and mis-key
+  // the revived pills.
+  handleEditMessage({
+    text,
+    attachments: editRefillAttachments(turn),
+  });
 }
 
 function maybeFireAutoUndo(): void {

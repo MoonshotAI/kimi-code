@@ -16,14 +16,12 @@ import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
-import AttachmentChip from './AttachmentChip.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
-import { openFileAttachment } from '@moonshot-ai/app-client/lib';
-import { startMentionSelectionSync, ComposerText, canUndoSkillActivation, skillActivationEditText, skillActivationHasPill, serializeMention } from '@moonshot-ai/app-composer';
-import { getKimiWebApi } from '../../api';
+import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
+import { startMentionSelectionSync, ComposerText, canUndoSkillActivation, skillActivationEditText, skillActivationHasPill, serializeMention, attachmentIconSvg, attachmentTargetFor, buildMessageCopyFlavor, copyTextWithFlavor, parseAttachmentLinks, stripAttachmentLinks, truncateMentionName } from '@moonshot-ai/app-composer';
 import {
   formatTokens,
   isoMs,
@@ -55,10 +53,6 @@ onUnmounted(() => {
   if (undoFallbackTimer !== null) {
     clearTimeout(undoFallbackTimer);
     undoFallbackTimer = null;
-  }
-  if (unsupportedOpenTimer !== null) {
-    clearTimeout(unsupportedOpenTimer);
-    unsupportedOpenTimer = null;
   }
 });
 
@@ -358,7 +352,36 @@ const dragFrom = ref<number | null>(null);
 const dragOver = ref<{ index: number; position: 'before' | 'after' } | null>(null);
 
 function hasAttachments(item: QueuedPromptView): boolean {
-  return (item.attachments?.length ?? 0) > 0;
+  return queueStripAttachments(item).length > 0;
+}
+
+/** The queue row's attachment strip: a pill-flow prompt (its text carries
+ *  composer attachment links) already renders its files INLINE via
+ *  ComposerText — listing them again in the strip would show them twice, so
+ *  media (no pill form) and UNREFERENCED files stay. A legacy prompt (no
+ *  links) keeps its file chips. The hide rule parses links with
+ *  ComposerText's own rules and hides only the files a numeric index
+ *  actually resolves to — a bare scheme literal, image/escaped forms, or
+ *  out-of-range indices render no pill, so those files must stay visible.
+ *  ComposerText still gets the FULL list (its 1..N pill revival maps by
+ *  payload position). */
+function queueStripAttachments(item: QueuedPromptView): TurnAttachment[] {
+  const atts = item.attachments ?? [];
+  const links = parseAttachmentLinks(item.text);
+  if (links.length === 0) return atts;
+  const files = atts.filter((att) => att.kind === 'file');
+  const hiddenIndexes = new Set<number>();
+  for (const link of links) {
+    if (!/^[1-9]\d*$/.test(link.attrs.attId)) continue;
+    if (attachmentTargetFor(link.attrs.attId, files) !== undefined) hiddenIndexes.add(Number(link.attrs.attId));
+  }
+  if (hiddenIndexes.size === 0) return atts;
+  let position = 0;
+  return atts.filter((att) => {
+    if (att.kind !== 'file') return true;
+    position += 1;
+    return !hiddenIndexes.has(position);
+  });
 }
 
 function onQueueEdit(index: number): void {
@@ -511,7 +534,16 @@ function confirmEditMessage(turn: ChatTurn): void {
   const text = turn.skillActivation
     ? (skillActivationEditText(turn.skillActivation, { revivePill: true }) ?? turn.text)
     : turn.text;
-  emit('editMessage', { text, attachments: turn.attachments });
+  // Pill-flow turns keep the COMPLETE positional file list in
+  // inlineAttachments (only referenced files leave the chip row) — the
+  // refill must rebuild the original ordinal sequence from it, or the
+  // composer's registry re-seed would duplicate the unreferenced files and
+  // re-key later files' revived pills onto the wrong attachments (see
+  // editRefillAttachments). Media stays on the chip-strip path.
+  emit('editMessage', {
+    text,
+    attachments: editRefillAttachments(turn),
+  });
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
   // release the guard so the user can retry.
   undoFallbackTimer = setTimeout(() => {
@@ -645,7 +677,15 @@ function copyAssistantRun(index: number): void {
 function copyUserMessage(turn: ChatTurn): void {
   const text = turn.text;
   if (!text.trim()) return;
-  void copyTextToClipboard(text).then((ok) => {
+  // A pill-flow message's text carries composer-private attachment links:
+  // the plaintext degrades them to bare names (the scheme never leaves the
+  // app as plaintext), and the structured flavor restores LIVE pills (each
+  // entry inherits its fileId from inlineAttachments) when pasted back into
+  // a composer. Messages without attachment links get plain text only.
+  void copyTextWithFlavor(
+    stripAttachmentLinks(text),
+    buildMessageCopyFlavor(text, turn.inlineAttachments),
+  ).then((ok) => {
     if (!ok) return;
     copiedTurn.value = turn.id;
     if (copiedTimer !== null) clearTimeout(copiedTimer);
@@ -768,8 +808,8 @@ function toggleUserText(turnId: string, event: MouseEvent): void {
 }
 
 /** User-bubble attachments split two ways: images/videos render as MediaThumb
-    rounded thumbnails (the same component the composer strip uses); every
-    other kind keeps the AttachmentChip row. */
+    rounded thumbnails (the same component the composer strip uses); files
+    render as the legacy attachment pill row above the text. */
 type MediaTurnAttachment = TurnAttachment & { kind: 'image' | 'video' };
 
 function isMediaAttachment(att: TurnAttachment): att is MediaTurnAttachment {
@@ -792,11 +832,6 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
   return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId, sessionId: att.sessionId };
 }
 
-// Transient "can't open this type" hint after clicking a file chip of a
-// non-previewable type. Mirrors the copiedTurn timer pattern; cleared on unmount.
-const unsupportedOpenName = ref<string | null>(null);
-let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
-
 // Floating media preview for user-bubble media attachments (image/video) —
 // this pane's own MediaLightbox instance; tool-card media (ReadMediaFile) open
 // the App-level one via the openMedia chain instead of the right-side panel.
@@ -804,25 +839,15 @@ const mediaLightbox = ref<ToolMedia | null>(null);
 /** The clicked thumbnail <img> — the image preview's zoom origin (PhotoSwipe). */
 const mediaLightboxImg = ref<HTMLImageElement | null>(null);
 
+// Media thumbnails open the floating preview. FILE attachments open through
+// the mentionTooltip singleton's document-level routing instead (the inline
+// pills and the legacy row below stamp data-attachment-url; the host's
+// openAttachment runs the openFileAttachment chain and owns the
+// unsupported-type feedback), so this handler only ever sees image/video.
 function onAttachmentClick(att: TurnAttachment, img?: HTMLImageElement | null): void {
-  if (att.kind === 'image' || att.kind === 'video') {
-    mediaLightboxImg.value = img ?? null;
-    mediaLightbox.value = userAttachmentMedia(att);
-    return;
-  }
-  // Generic files open in a new tab, but only whitelisted inert types —
-  // anything else gets the unsupported hint instead of an active-document
-  // preview (see openFileAttachment).
-  if (att.fileId === undefined) return;
-  void openFileAttachment(getKimiWebApi(), att.fileId, att.name, att.mediaType).then((result) => {
-    if (result !== 'unsupported') return;
-    unsupportedOpenName.value = att.name ?? att.fileId ?? '';
-    if (unsupportedOpenTimer !== null) clearTimeout(unsupportedOpenTimer);
-    unsupportedOpenTimer = setTimeout(() => {
-      unsupportedOpenTimer = null;
-      unsupportedOpenName.value = null;
-    }, 2400);
-  });
+  if (att.kind !== 'image' && att.kind !== 'video') return;
+  mediaLightboxImg.value = img ?? null;
+  mediaLightbox.value = userAttachmentMedia(att);
 }
 
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number; kind?: string; durationMs?: number }): boolean {
@@ -924,8 +949,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
             <!-- Image/video attachments: MediaThumb rounded thumbnails — the
-                 same component the composer strip shows while drafting; every
-                 other kind keeps the AttachmentChip row. -->
+                 same component the composer strip shows while drafting; files
+                 keep the legacy pill row below. -->
             <div v-if="mediaAttachments(turn).length > 0" class="u-media">
               <MediaThumb
                 v-for="(att, ai) in mediaAttachments(turn)"
@@ -938,19 +963,51 @@ function streamingTailIndex(turn: ChatTurn): number | null {
                 @activate="onAttachmentClick(att, $event)"
               />
             </div>
-            <!-- File attachments keep the chip row -->
+            <!-- LEGACY file attachments (a pre-pill message carries no
+                 attachment links, so messagesToTurns recovers its "Attached
+                 file …" notices into this row): one attachment pill per file
+                 at the very top of the body — the same classes and
+                 data-attachment-* attributes as ComposerText's inline pills,
+                 so the mentionTooltip singleton covers them unwired. A pill
+                 backed by a url is a NATIVE <button> stamped with
+                 data-attachment-url — the actionable-control semantic (a
+                 registered Button-primitive exception, see DesignSystemView
+                 §05: a label-less, variant-less pure interaction layer that
+                 must look identical to the editor's NodeView pill) — and the
+                 singleton's click/keyboard routing opens the file (the same
+                 openFileAttachment chain as the inline pills — the retired
+                 AttachmentChip's behavior carried over); Enter/Space fire the
+                 button natively and the singleton's capture-phase keydown
+                 preventDefault suppresses the native activation it already
+                 handled, so nothing double-fires. A url-less pill
+                 (inline-base64 upload) stays an inert span. -->
             <div v-if="fileAttachments(turn).length > 0" class="u-atts">
-              <AttachmentChip
-                v-for="(att, ai) in fileAttachments(turn)"
-                :key="ai"
-                :kind="att.kind"
-                :name="att.name"
-                :url="att.url"
-                :file-id="att.fileId"
-                :media-type="att.mediaType"
-                :size="att.size"
-                @activate="onAttachmentClick(att)"
-              />
+              <template v-for="(att, ai) in fileAttachments(turn)" :key="ai">
+                <button
+                  v-if="att.url !== ''"
+                  type="button"
+                  class="attachment-pill attachment-file"
+                  :data-attachment-id="att.fileId ?? att.name ?? ''"
+                  data-attachment-kind="file"
+                  :data-attachment-name="att.name ?? ''"
+                  :data-attachment-url="att.url"
+                  :data-attachment-file-id="att.fileId"
+                  :data-attachment-media-type="att.mediaType"
+                  :data-attachment-size="att.size"
+                  :aria-label="att.name"
+                ><span class="attachment-pill-icon" aria-hidden="true" v-html="attachmentIconSvg()" /><span class="attachment-pill-name">{{ truncateMentionName(att.name ?? '') }}</span></button>
+                <span
+                  v-else
+                  class="attachment-pill attachment-file"
+                  :data-attachment-id="att.fileId ?? att.name ?? ''"
+                  data-attachment-kind="file"
+                  :data-attachment-name="att.name ?? ''"
+                  :data-attachment-file-id="att.fileId"
+                  :data-attachment-media-type="att.mediaType"
+                  :data-attachment-size="att.size"
+                  :aria-label="att.name"
+                ><span class="attachment-pill-icon" aria-hidden="true" v-html="attachmentIconSvg()" /><span class="attachment-pill-name">{{ truncateMentionName(att.name ?? '') }}</span></span>
+              </template>
             </div>
             <!-- Plugin command card (replaces expanded body) -->
             <div v-if="turn.pluginCommand" class="skill-act">
@@ -972,7 +1029,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               <div
                 :class="isCommandArgs(turn) ? 'skill-act-args' : 'u-text'"
                 :ref="(el) => registerUserTextEl(turn.id, el)"
-              ><ComposerText :text="userTextContent(turn) ?? ''" :open-file="onOpenFile" /></div>
+              ><ComposerText :text="userTextContent(turn) ?? ''" :open-file="onOpenFile" :attachments="turn.inlineAttachments" /></div>
               <button
                 v-if="clampableUserTurns.has(turn.id)"
                 type="button"
@@ -1209,7 +1266,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               :ref="(el) => registerUserTextEl(queueClampId(item), el)"
               @click="onQueueBodyTap(qi)"
             >
-              <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :interactive="false" /></span>
+              <span v-if="item.text" class="u-text q-text"><ComposerText :text="item.text" :interactive="false" :attachments="item.attachments" /></span>
               <span v-else class="q-text q-text-placeholder">
                 <Icon name="file" size="sm" />
                 {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
@@ -1231,7 +1288,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             </button>
           </div>
           <div v-if="hasAttachments(item)" class="q-imgs">
-            <template v-for="(att, ai) in item.attachments" :key="ai">
+            <template v-for="(att, ai) in queueStripAttachments(item)" :key="ai">
               <span v-if="att.kind === 'file'" class="q-file">
                 <Icon name="file" size="sm" />
                 {{ att.name ?? att.fileId }}
@@ -1271,11 +1328,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- Transient hint after clicking a file chip whose type can't be opened. -->
-  <div v-if="unsupportedOpenName !== null" class="open-unsupported" role="status">
-    {{ t('composer.attachmentOpenUnsupported', { name: unsupportedOpenName }) }}
   </div>
 
   <!-- Floating preview for user-bubble media thumbnails (image/video). -->
@@ -1331,25 +1383,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 }
 .chat .chat-empty { align-self: stretch; }
 
-/* Bottom-center pill for the "can't open this file type" hint. */
-.open-unsupported {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: min(90%, 480px);
-  padding: 6px 12px;
-  border-radius: var(--radius-md);
-  border: 0.5px solid var(--color-line);
-  background: var(--color-surface-raised);
-  color: var(--color-text-muted);
-  font-size: var(--ui-font-size-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: var(--z-sticky);
-}
 .chat > .u-turn,
 .chat > .a-msg,
 .chat > .compact-divider,
@@ -1853,7 +1886,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 
 /* Image/video attachments: MediaThumb rounded thumbnails above the bubble
    text — click opens the floating MediaLightbox preview. Files keep the
-   AttachmentChip row. */
+   legacy attachment pill row. */
 .u-media {
   display: flex;
   flex-wrap: wrap;
@@ -1863,14 +1896,29 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   margin-bottom: var(--space-2);
 }
 
-/* File attachment chips above the bubble text — the chip itself is the shared
-   AttachmentChip (same as the composer's pending strip); this is only the
-   row layout. */
+/* Legacy file attachments above the bubble text: one attachment pill per
+   file — the pill itself is the shared .attachment-pill recipe from app-ui's
+   global sheet; this is only the row layout. The click affordance (pointer,
+   underline) comes from the global [data-attachment-url] rule, same as the
+   inline message pills. */
 .u-atts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: var(--space-1-5);
+  margin-bottom: var(--space-2);
+}
+/* The actionable legacy pill is a native <button> (see the template note) —
+   reset the UA chrome so the shared pill vocabulary reads exactly like the
+   inline pill's span form. The pill's own padding-inline and font-weight
+   come from the global rule; only the button-only UA defaults need
+   neutralizing. */
+.u-atts button.attachment-pill {
+  appearance: none;
+  border: none;
+  background: none;
+  padding-block: 0;
+  font-family: inherit;
+  font-size: inherit;
 }
 
 /* NOTE: Chat/bubble styles live in src/style.css (global). Scoped `.u-bub`

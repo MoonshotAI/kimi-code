@@ -140,8 +140,16 @@ export function useInputHistory(deps: InputHistoryDeps) {
 
   // Switching sessions: drop the browsing cursor so a recall in the new session
   // starts from its own latest entry, not wherever the previous session left off.
+  // But FIRST walk home: the pre-browse draft (draftBeforeHistory) only lives
+  // here — a bare cursor drop would strand it, and the outgoing session would
+  // persist the RECALLED text as its draft. (The composer's draft persistence
+  // saves the outgoing session's text on the same trigger; restoring here keeps
+  // it correct regardless of watcher order.)
   watch(sessionId, () => {
-    historyIndex = -1;
+    if (historyIndex !== -1) {
+      historyIndex = -1;
+      applyHistoryText(draftBeforeHistory);
+    }
   });
 
   return {

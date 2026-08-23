@@ -367,11 +367,6 @@ html[data-color-scheme="dark"] {
      readable nub otherwise) — read from JS via getComputedStyle. */
   --menu-scrollbar-thumb-min: 24px;
 
-  /* Attachment chip's left padding — the composer's concentric-chip override
-     pulls the icon tile left by this + --space-05 (a 2px bleed past the chip's
-     left edge), so the offset tracks the chip instead of hardcoding a sum. */
-  --att-chip-pad-left: 5px;
-
   /* Workbar-mode pill close button: sized to the pill's right-end reserve —
      below the IconButton sm default so the hover wash never outgrows the
      pill's rounded end. The desktop hit ring reaches this far past the box on
@@ -916,7 +911,8 @@ html[data-color-scheme="dark"] {
    preview, skills open their SKILL.md, folders are inert for now. Hover
    deepens the ink toward --color-text; the full path / skill card lives on
    the mentionTooltip singleton's bubble (.mention-tip below). */
-.mention-pill {
+.mention-pill,
+.attachment-pill {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-05);
@@ -931,34 +927,45 @@ html[data-color-scheme="dark"] {
   padding-inline: var(--space-05);
   transition: color var(--duration-fast) var(--ease-out);
 }
-.mention-pill:hover {
+.mention-pill:hover,
+.attachment-pill:hover {
   color: var(--color-text);
 }
-.mention-pill:hover .mention-pill-icon {
+.mention-pill:hover .mention-pill-icon,
+.attachment-pill:hover .attachment-pill-icon {
   color: inherit;
 }
-/* Message-surface affordances: file and skill pills open on click. The
-   composer overrides both back to editing semantics (click places the
-   caret, the I-beam stays). Folder pills have no target yet — inert. */
+/* Message-surface affordances: file and skill pills open on click, and so
+   does an attachment pill stamped with its open target (data-attachment-url
+   — ComposerText revives it from the message's file attachments, the legacy
+   row stamps it directly). The composer overrides both back to editing
+   semantics (click places the caret, the I-beam stays). Folder pills and
+   url-less attachment pills have no target — inert. */
 .mention-pill.mention-file,
-.mention-pill.mention-skill {
+.mention-pill.mention-skill,
+.attachment-pill[data-attachment-url] {
   cursor: pointer;
 }
 .mention-pill.mention-file:hover,
-.mention-pill.mention-skill:hover {
+.mention-pill.mention-skill:hover,
+.attachment-pill[data-attachment-url]:hover {
   text-decoration: underline;
 }
-/* Message-side file pills carry tabindex + role="button" (see ChatPane's
-   pillify pass); the ring is the design-system §08 focus visibility rule.
-   Composer pills are text atoms, never focusable, so no override is needed
-   below. */
-.mention-pill:focus-visible {
+/* Message-side file pills carry tabindex + role="button" (stamped by
+   ComposerText), and so do openable attachment pills (the url-stamped inline
+   ones and ChatPane's legacy .u-atts row); the ring is the design-system §08
+   focus visibility rule. Composer pills are text atoms, never focusable, so
+   no override is needed below. */
+.mention-pill:focus-visible,
+.attachment-pill:focus-visible {
   outline: none;
   box-shadow: var(--p-focus-ring);
   border-radius: var(--radius-sm);
 }
 .ProseMirror .mention-pill,
-.ProseMirror .mention-pill:hover {
+.ProseMirror .mention-pill:hover,
+.ProseMirror .attachment-pill,
+.ProseMirror .attachment-pill:hover {
   cursor: text;
   text-decoration: none;
 }
@@ -978,14 +985,16 @@ a.mention-folder {
    name can still outgrow a narrow bubble (the pill is nowrap), so the label
    also caps by inline size and ellipsizes instead of stretching the message
    column. The full name stays in the data attributes and the tooltip. */
-.mention-pill-name {
+.mention-pill-name,
+.attachment-pill-name {
   max-width: 24em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.mention-pill-icon {
+.mention-pill-icon,
+.attachment-pill-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -995,7 +1004,8 @@ a.mention-folder {
   align-self: center;
   flex-shrink: 0;
 }
-.mention-pill-icon svg {
+.mention-pill-icon svg,
+.attachment-pill-icon svg {
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
   display: block;
@@ -1008,10 +1018,23 @@ a.mention-folder {
    like the icon escaped the selection. Browsers don't selection-paint inline
    <svg>, so the covered pill is marked with a class instead (see
    mentionSelectionSync.ts). */
-.mention-pill.pill-in-selection {
+.mention-pill.pill-in-selection,
+.attachment-pill.pill-in-selection {
   background: var(--p-selection);
   border-radius: var(--radius-sm);
 }
+
+/* ---------------------------------------------------------------------------
+   Attachment pill — the attachment content type's variant of the pill
+   vocabulary above: SAME ink as a mention (muted, deepening toward
+   --color-text on hover) — pills never use the accent color; what sets an
+   attachment apart is only its paperclip glyph. On the message surface a pill
+   stamped with data-attachment-url is clickable (pointer + hover underline
+   above) and opens the file through the mentionTooltip singleton's routing;
+   composer pills keep editing semantics (the .ProseMirror override), and
+   url-less pills (no fileId, queue rows) stay inert. The hover metadata
+   (full path, size) lives on the mentionTooltip singleton's bubble
+   (.mention-tip). */
 
 /* ---------------------------------------------------------------------------
    Mention tooltip — the mentionTooltip singleton's single shared bubble. Same
@@ -1107,11 +1130,36 @@ a.mention-folder {
   height: var(--p-ic-sm);
   display: block;
 }
-/* Path-tooltip copy button: pull it up and right so the glyph sits the same
-   --space-1 from the top border as from the right border (the bubble's
-   padding-block is --space-1 but padding-inline is --space-2). */
+/* Attachment tooltip: the leading paperclip glyph — one text line tall, so
+   it stays first-line-aligned on wrapping paths AND its glyph is vertically
+   centered with the text line. */
+.mention-tip-att-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--p-ic-sm);
+  height: 1lh;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+.mention-tip-att-icon svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+}
+.mention-tip-att-size {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+/* The attachment tooltip's error line (a failed/interrupted upload): danger
+   lifted toward the bubble's own ink so it reads on the inverted skin. */
+.mention-tip-att-error {
+  margin-top: var(--space-05);
+  color: color-mix(in srgb, var(--color-danger) 70%, currentColor);
+}
+/* Path-tooltip copy button: hug the right border (glyph sits --space-1 from
+   it) but NO vertical pull — the button is exactly one line tall, so leaving
+   it flex-start keeps its glyph vertically centered with the text line. */
 .mention-tip-copy {
-  margin-top: calc(0px - var(--space-05));
   margin-right: calc(var(--space-05) - var(--space-2));
 }
 .mention-tip-desc {
@@ -1154,4 +1202,26 @@ a.mention-folder {
 }
 .mention-pill.mention-missing .mention-pill-icon {
   color: inherit;
+}
+/* An attachment pill the composer registry no longer knows (an undo
+   resurrected the pill without its entry) or whose probe came back
+   not-found: the same faded + strike recipe, on the shared pill ink. */
+.attachment-pill.attachment-missing,
+.attachment-pill.attachment-missing:hover,
+.attachment-pill.attachment-missing .attachment-pill-icon,
+.attachment-pill.attachment-missing:hover .attachment-pill-icon {
+  color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+  text-decoration: line-through;
+}
+/* An attachment pill whose upload failed (or was interrupted by a reload —
+   the draft sidecar's 'upload-interrupted' marker): the danger ink flags it
+   in place. The tooltip names the reason, the send gate refuses to silently
+   drop it, and re-dropping the same file restarts the upload (clearing the
+   state). Composer-only state — message-side pills have no registry behind
+   them and never mark. */
+.attachment-pill.attachment-error,
+.attachment-pill.attachment-error:hover,
+.attachment-pill.attachment-error .attachment-pill-icon,
+.attachment-pill.attachment-error:hover .attachment-pill-icon {
+  color: var(--color-danger);
 }

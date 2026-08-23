@@ -22,12 +22,23 @@ export interface SlashCommand {
    * type the message/argument that follows it.
    */
   acceptsInput?: boolean;
+  /**
+   * The command takes NO arguments: a non-empty arg is a usage error. The
+   * composer's submit decision rejects it LOCALLY (an invalid-command notice)
+   * instead of emitting a parameterized cmd that would fall through to the
+   * app's skill-activation default — the command is NOT a skill. The set
+   * mirrors the exact-match switch in the app's command handler (`/goal` and
+   * `/swarm` are NOT here: a typed `/goal <objective>` / `/swarm <task>`
+   * legitimately travels the command path even though the menu doesn't keep
+   * them as input).
+   */
+  noArgs?: boolean;
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/new',        desc: 'commands.new.desc' },
-  { name: '/clear',      desc: 'commands.clear.desc' },
-  { name: '/login',      desc: 'commands.login.desc' },
+  { name: '/new',        desc: 'commands.new.desc', noArgs: true },
+  { name: '/clear',      desc: 'commands.clear.desc', noArgs: true },
+  { name: '/login',      desc: 'commands.login.desc', noArgs: true },
   { name: '/plan',       desc: 'commands.plan.desc' },
   { name: '/swarm',      desc: 'commands.swarm.desc' },
   // /goal arms the goal pill on select (the intent pill takes the objective
@@ -36,10 +47,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/goal',       desc: 'commands.goal.desc' },
   { name: '/btw',        desc: 'commands.btw.desc', acceptsInput: true },
   { name: '/compact',    desc: 'commands.compact.desc', acceptsInput: true },
-  { name: '/undo',       desc: 'commands.undo.desc' },
-  { name: '/fork',       desc: 'commands.fork.desc' },
-  { name: '/export',     desc: 'commands.export.desc' },
-  { name: '/status',     desc: 'commands.status.desc' },
+  { name: '/undo',       desc: 'commands.undo.desc', noArgs: true },
+  { name: '/fork',       desc: 'commands.fork.desc', noArgs: true },
+  { name: '/export',     desc: 'commands.export.desc', noArgs: true },
+  { name: '/status',     desc: 'commands.status.desc', noArgs: true },
 ];
 
 /**

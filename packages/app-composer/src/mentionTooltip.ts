@@ -1,21 +1,80 @@
 // packages/app-composer/src/mentionTooltip.ts
-// Hover tooltip + click routing for mention pills, as ONE document-level
-// singleton. Pills are raw DOM in three places (the composer's ProseMirror
-// NodeView, ChatPane's pillify pass, Markdown link decoration), so a Vue
-// wrapper like Tooltip.vue can't reach them — this service delegates on
-// document mouseover instead and renders into a single shared bubble. The
-// bubble matches the design-system tooltip's dark skin (see .mention-tip in
-// app-ui's global sheet) but is INTERACTIVE: the skill card carries an
-// "open" button and the path tooltip a copy button, so the bubble keeps
-// pointer events and bridges the pill → bubble gap with a short hide grace.
+// Hover tooltip + click routing for mention AND attachment pills, as ONE
+// document-level singleton. Pills are raw DOM in three places (the
+// composer's ProseMirror NodeView, ChatPane's pillify pass, Markdown link
+// decoration), so a Vue wrapper like Tooltip.vue can't reach them — this
+// service delegates on document mouseover instead and renders into a single
+// shared bubble. The bubble matches the design-system tooltip's dark skin
+// (see .mention-tip in app-ui's global sheet) but is INTERACTIVE: the skill
+// card carries an "open" button and the path tooltip a copy button, so the
+// bubble keeps pointer events and bridges the pill → bubble gap with a
+// short hide grace.
+// Attachment pills (.attachment-pill) reuse the path-tooltip layout led by
+// the paperclip glyph; their path/size metadata comes from the registered
+// attachment resolver (the composer editor's registry — see
+// setAttachmentTooltipResolver), degrading to the pill's data attributes on
+// the message stream. A composer pill the registry no longer knows (an undo
+// resurrected it without its entry) shows struck-through, mirroring the
+// mention probe's not-found state.
 // Clicks on skill pills are routed here
 // too (capture phase, so it works on Markdown anchors that stopPropagation),
 // as is Enter/Space on the focusable message-side pills: composer pills stay
 // inert (click = caret placement), message pills open the skill's SKILL.md
-// via the host's openPath.
+// via the host's openPath. Attachment pills follow the same split: a
+// message-side pill stamped with data-attachment-url (ComposerText revives
+// the target from the message's file attachments by its 1..N attId; the
+// legacy row stamps it directly) activates through the host's
+// openAttachment, while composer pills and url-less pills (no fileId, an
+// unresolved index, queue rows) stay inert — the CSS affordance keys off the
+// same attribute, so a pill never poses as a button without a target.
 
 import { iconSvg } from './icons';
+import { attachmentIconSvg } from './attachmentPill';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+
+/** The metadata an attachment pill tooltip can show, resolved from the
+ *  composer editor's attachmentRegistry (the pill's data attributes only
+ *  carry attId/kind/name — path and size live in the registry). */
+export interface AttachmentTooltipInfo {
+  name: string;
+  /** Real absolute path — path-backed entries only; absent (pasted bytes,
+   *  message bubbles) → the tooltip shows the name line, no path line. */
+  path?: string;
+  size?: number;
+  /** The upload error marker ('upload-failed' / 'upload-interrupted') — the
+   *  pill is in the error state and the tooltip shows the reason (localized
+   *  through the host's attachmentErrorLabel, the raw code as fallback). */
+  error?: string;
+}
+
+/** Registry lookup behind the attachment tooltip: the composer editor
+ *  registers one backed by its attachmentRegistry plugin state. Returning
+ *  null means the registry knows NO entry for the attId — inside the
+ *  composer that is a dead pill (an undo resurrected the pill without its
+ *  entry), shown struck-through; the message stream never strikes (a bubble
+ *  pill simply has no registry behind it). */
+export type AttachmentTooltipResolver = (attId: string) => AttachmentTooltipInfo | null;
+
+let attachmentResolver: AttachmentTooltipResolver | null = null;
+let attachmentResolverToken: unknown = null;
+
+/** Register the attachment tooltip resolver; returns a release function.
+ *  Several composer editors can be alive at once (empty-session + docked):
+ *  the LATEST registration wins, and releasing only clears the resolver when
+ *  the caller still owns it — an older editor's destroy can't yank a
+ *  survivor's registration out from under it. Without a resolver, attachment
+ *  tooltips degrade to the pill's data attributes (name only). */
+export function setAttachmentTooltipResolver(resolver: AttachmentTooltipResolver): () => void {
+  const token = {};
+  attachmentResolverToken = token;
+  attachmentResolver = resolver;
+  return () => {
+    if (attachmentResolverToken === token) {
+      attachmentResolverToken = null;
+      attachmentResolver = null;
+    }
+  };
+}
 
 export interface MentionTooltipSkillInfo {
   name: string;
@@ -24,17 +83,36 @@ export interface MentionTooltipSkillInfo {
   path?: string;
 }
 
+/** The open target of a message-side attachment pill, read off the pill's
+ *  data attributes (stamped by ComposerText from the message's file
+ *  attachments, or by ChatPane's legacy row directly): the authed file URL
+ *  plus the fileId/name/mediaType the open chain (openFileAttachment) needs. */
+export interface AttachmentOpenTarget {
+  url: string;
+  fileId?: string;
+  name: string;
+  mediaType?: string;
+}
+
 export interface MentionTooltipHost {
   /** Look up a session skill by pill name; null/undefined → name-only card. */
   resolveSkill?: (name: string) => MentionTooltipSkillInfo | null | undefined;
   /** Open a file path in the app's preview surface (sidebar panel). */
   openPath?: (target: { path: string }) => void;
+  /** Open an attachment pill's file (the new-tab preview chain). Only
+   *  url-stamped message-side pills route here — composer pills keep caret
+   *  semantics and url-less pills stay inert. */
+  openAttachment?: (target: AttachmentOpenTarget) => void;
   /** Localized aria-label for the skill card's open button (a getter — the
    *  app language can change while this singleton lives). */
   openSkillLabel?: () => string;
   /** Localized aria-label for the path tooltip's copy button (a getter —
    *  same language-change reasoning as openSkillLabel). */
   copyPathLabel?: () => string;
+  /** Map a registry error marker ('upload-failed' / 'upload-interrupted') to
+   *  its localized attachment-tooltip line; undefined falls back to the raw
+   *  marker. */
+  attachmentErrorLabel?: (error: string) => string | undefined;
   /**
    * Whether the current scope's skill list has finished loading. The
    * unactionable degrade strips the pill from the tab order ONLY when this
@@ -88,16 +166,12 @@ const COPY_FEEDBACK_MS = tokenPx('--duration-flash', 1000);
  *  renamed after its first confirmation is re-probed on a later hover. */
 const PROBE_CACHE_TTL = 30_000;
 
-/** Path tooltip body: a flex row — the path text on the left (every segment
- *  in order, separators muted with their ORIGINAL character kept — POSIX
- *  '/' and Windows '\' both split, so a Windows path renders its own
- *  separator — the basename (last non-empty segment — a folder path ends
- *  in a separator) bold, wrapping on segment boundaries) and a top-aligned
- *  copy button on the right. A successful copy swaps the icon for a check
- *  for ~1s; clipboard failures stay silent (no swap). */
-export function buildMentionPathTooltip(path: string, opts: { copyLabel?: string } = {}): HTMLElement {
-  const el = document.createElement('div');
-  el.className = 'mention-tip-path';
+/** The wrapping path text of a path tooltip: every segment in order,
+ *  separators muted with their ORIGINAL character kept — POSIX '/' and
+ *  Windows '\' both split, so a Windows path renders its own separator —
+ *  the basename (last non-empty segment — a folder path ends in a
+ *  separator) bold, wrapping on segment boundaries. */
+function buildPathText(path: string): HTMLElement {
   const text = document.createElement('div');
   text.className = 'mention-tip-path-text';
   // Split on both separators; the capturing group keeps each separator as
@@ -121,11 +195,16 @@ export function buildMentionPathTooltip(path: string, opts: { copyLabel?: string
     span.textContent = piece;
     text.append(span);
   }
-  el.append(text);
+  return text;
+}
+
+/** The path tooltip's top-aligned copy button. A successful copy swaps the
+ *  icon for a check for ~1s; clipboard failures stay silent (no swap). */
+function buildCopyButton(value: string, label?: string): HTMLButtonElement {
   const copy = document.createElement('button');
   copy.type = 'button';
   copy.className = 'mention-tip-copy';
-  copy.setAttribute('aria-label', opts.copyLabel ?? 'Copy path');
+  copy.setAttribute('aria-label', label ?? 'Copy path');
   const copyIcon = iconSvg('copy', 'sm');
   copy.innerHTML = copyIcon;
   copy.addEventListener('click', (event) => {
@@ -135,15 +214,75 @@ export function buildMentionPathTooltip(path: string, opts: { copyLabel?: string
       // The shared helper falls back to execCommand where the async
       // Clipboard API is missing (plain-HTTP remote web) or denied — the
       // check icon only confirms a real copy.
-      if (!(await copyTextToClipboard(path))) return;
+      if (!(await copyTextToClipboard(value))) return;
       copy.innerHTML = iconSvg('check', 'sm');
       window.setTimeout(() => {
         copy.innerHTML = copyIcon;
       }, COPY_FEEDBACK_MS());
     })();
   });
-  el.append(copy);
+  return copy;
+}
+
+/** Path tooltip body: a flex row — the path text on the left (see
+ *  buildPathText) and a top-aligned copy button on the right. */
+export function buildMentionPathTooltip(path: string, opts: { copyLabel?: string } = {}): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'mention-tip-path';
+  el.append(buildPathText(path));
+  el.append(buildCopyButton(path, opts.copyLabel));
   return el;
+}
+
+/** Byte size in the attachment tooltip: B below 1 KB, rounded KB below
+ *  1 MB, one-decimal MB above. */
+function formatAttachmentSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Attachment pill tooltip body: the same flex row as the file mention path
+ *  tooltip, led by the paperclip glyph. A path-backed entry shows the full
+ *  path (copy button copies the path); a pathless one (pasted bytes, or the
+ *  message side where no registry resolves) shows the name plus the size
+ *  when known (copy button copies the name). An errored entry (a failed or
+ *  interrupted upload — the pill carries .attachment-error) adds a danger
+ *  line with the reason below the row. */
+export function buildAttachmentTooltip(info: AttachmentTooltipInfo, opts: { copyLabel?: string; errorLabel?: string } = {}): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'mention-tip-path';
+  const icon = document.createElement('span');
+  icon.className = 'mention-tip-att-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = attachmentIconSvg();
+  el.append(icon);
+  if (info.path) {
+    el.append(buildPathText(info.path));
+  } else {
+    const text = document.createElement('div');
+    text.className = 'mention-tip-path-text';
+    const name = document.createElement('span');
+    name.className = 'mention-tip-base';
+    name.textContent = info.name;
+    text.append(name);
+    if (info.size !== undefined) {
+      const size = document.createElement('span');
+      size.className = 'mention-tip-att-size';
+      size.textContent = ` · ${formatAttachmentSize(info.size)}`;
+      text.append(size);
+    }
+    el.append(text);
+  }
+  el.append(buildCopyButton(info.path ?? info.name, opts.copyLabel));
+  if (info.error === undefined) return el;
+  const wrap = document.createElement('div');
+  wrap.append(el);
+  const error = document.createElement('div');
+  error.className = 'mention-tip-att-error';
+  error.textContent = opts.errorLabel ?? info.error;
+  wrap.append(error);
+  return wrap;
 }
 
 /** Skill tooltip card: title row (name + open button when the md path is
@@ -199,6 +338,25 @@ function pillMention(pill: HTMLElement): { kind: string; name: string; path: str
   return { kind, name, path: pill.dataset.mentionPath ?? '' };
 }
 
+/** Read the pill's attachment identity from the data attributes the shared
+ *  attachment pill builder stamps (editor NodeView and ComposerText agree on
+ *  them — the tooltip needs no registry just to name the pill). The message
+ *  side also stamps data-attachment-size (attachmentTargetAttrs): the
+ *  tooltip's only size source where no registry resolves. Exported for the
+ *  node tests. */
+export function pillAttachment(pill: HTMLElement): { attId: string; kind: 'file' | 'folder'; name: string; size?: number } {
+  const kind = pill.dataset.attachmentKind === 'folder' ? 'folder' : 'file';
+  const name = pill.dataset.attachmentName ?? pill.querySelector('.attachment-pill-name')?.textContent ?? '';
+  const rawSize = pill.dataset.attachmentSize;
+  const size = rawSize === undefined || rawSize === '' ? undefined : Number(rawSize);
+  return {
+    attId: pill.dataset.attachmentId ?? '',
+    kind,
+    name,
+    size: size !== undefined && Number.isFinite(size) ? size : undefined,
+  };
+}
+
 /**
  * Start the singleton. Returns a disposer. One call per app window — every
  * `.mention-pill` in the document (composer, bubbles, Markdown, cards) is
@@ -244,11 +402,26 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
     }
   }
 
-  function probe(path: string, kind: 'file' | 'folder', actionPath?: string): void {
+  /** The attachment twin of markMissing: strike every COMPOSER pill carrying
+   *  this attId. Identity is the attId (not the path) because the pill's data
+   *  attributes carry no path — and key-dedup means one path has exactly one
+   *  attId anyway. Scoped to the editor's .ProseMirror: a message-bubble
+   *  pill's attId is message-scoped (a submit-time 1..N index) and may
+   *  coincidentally equal a composer attId — a strike must never bleed onto
+   *  the bubble (bubble pills have no registry behind them and never
+   *  strike). */
+  function markAttachmentMissing(attId: string, missing: boolean): void {
+    for (const pill of document.querySelectorAll<HTMLElement>('.ProseMirror .attachment-pill')) {
+      if (pill.dataset.attachmentId === attId) pill.classList.toggle('attachment-missing', missing);
+    }
+  }
+
+  function probe(path: string, kind: 'file' | 'folder', actionPath?: string, strike?: (missing: boolean) => void): void {
     if (!host.probePath || path === '') return;
     const scope = host.probeScope?.() ?? '';
     // Cache / inflight / strike identity is the ACTION path (see markMissing).
     const target = actionPath ?? path;
+    const applyStrike = strike ?? ((missing: boolean) => markMissing(target, missing));
     const key = `${scope}|${target}`;
     if (probeCacheFresh(key)) return;
     // The displayed spinner now belongs to THIS probe — only its settle may
@@ -265,11 +438,11 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
           // is left in place; the next hide() clears it.
           if ((host.probeScope?.() ?? '') !== scope) return false;
           if (exists === false) {
-            markMissing(target, true);
+            applyStrike(true);
           } else {
             probeCache.set(key, Date.now());
             // A recreated file recovers any earlier strike-through.
-            markMissing(target, false);
+            applyStrike(false);
           }
           return true;
         } finally {
@@ -310,6 +483,26 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   }
 
   function contentFor(pill: HTMLElement): HTMLElement {
+    if (pill.classList.contains('attachment-pill')) {
+      const att = pillAttachment(pill);
+      // The resolver speaks for the COMPOSER registry only: a pill inside the
+      // editor resolves path/size through it, while a message-bubble pill's
+      // attId is message-scoped (a submit-time 1..N index) and must never be
+      // looked up there — a coincidental match would borrow another file's
+      // path/size. Bubbles degrade to their data attributes (name only).
+      const info = pill.closest('.ProseMirror') ? (attachmentResolver?.(att.attId) ?? null) : null;
+      return buildAttachmentTooltip(
+        // A message-side pill has no registry behind it: the metadata falls
+        // back to the pill's data attributes — the name always, and the size
+        // tail when data-attachment-size rides along (DesignSystemView §05's
+        // degraded name + size recipe).
+        { name: info?.name ?? att.name, path: info?.path, size: info?.size ?? att.size, error: info?.error },
+        {
+          copyLabel: host.copyPathLabel?.(),
+          errorLabel: info?.error === undefined ? undefined : (host.attachmentErrorLabel?.(info.error) ?? info.error),
+        },
+      );
+    }
     const mention = pillMention(pill);
     if (mention.kind === 'skill') {
       const skill = host.resolveSkill?.(mention.name);
@@ -402,9 +595,48 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
     // (one singleton bubble per window); hide() and retargets above remove
     // the reference again.
     anchor.setAttribute('aria-describedby', bubble.id);
-    const mention = pillMention(pill);
-    shownPath = mention.kind !== 'skill' && mention.path !== '' ? mention.path : null;
     shownProbeKey = null;
+    // The existence probe to start once the bubble is up (a mention's
+    // display path, or an attachment's registry-resolved path), with the
+    // strike its verdict applies — attId-based for attachments, action-path-
+    // based for mentions.
+    let probeRequest: {
+      path: string;
+      kind: 'file' | 'folder';
+      actionPath?: string;
+      strike?: (missing: boolean) => void;
+    } | null = null;
+    if (pill.classList.contains('attachment-pill')) {
+      shownPath = null;
+      const att = pillAttachment(pill);
+      const inComposer = pill.closest('.ProseMirror') !== null;
+      const info = inComposer ? (attachmentResolver?.(att.attId) ?? null) : null;
+      if (info === null) {
+        // Inside the composer an unresolved attId is a dead pill (undo
+        // resurrected the pill without its registry entry) — strike it.
+        // Message-bubble pills simply have no registry behind them and
+        // degrade to their data attributes, never a strike.
+        if (attachmentResolver && inComposer) markAttachmentMissing(att.attId, true);
+      } else {
+        // The registry knows the pill again (the entry came back after an
+        // earlier strike — re-added, sidecar re-seeded): clear the stale
+        // strike, or it would linger forever.
+        markAttachmentMissing(att.attId, false);
+        if (info.path) {
+          probeRequest = { path: info.path, kind: att.kind, strike: (missing) => markAttachmentMissing(att.attId, missing) };
+        }
+      }
+    } else {
+      const mention = pillMention(pill);
+      shownPath = mention.kind !== 'skill' && mention.path !== '' ? mention.path : null;
+      if (shownPath !== null) {
+        probeRequest = {
+          path: shownPath,
+          kind: mention.kind === 'folder' ? 'folder' : 'file',
+          actionPath: pill.dataset.mentionActionPath,
+        };
+      }
+    }
     bubble.replaceChildren(contentFor(pill));
     bubble.classList.remove('positioned');
     position(pill);
@@ -413,10 +645,11 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
     // showing re-activates it.
     bubble.removeAttribute('inert');
     // Existence probe for file/folder paths: spinner while in flight; a
-    // definitive not-found strikes the pill(s) via .mention-missing.
-    if (shownPath !== null && host.probePath) {
-      const actionPath = pill.dataset.mentionActionPath ?? shownPath;
-      const key = `${host.probeScope?.() ?? ''}|${actionPath}`;
+    // definitive not-found strikes the pill(s) via .mention-missing /
+    // .attachment-missing.
+    if (probeRequest !== null && host.probePath) {
+      const { path, kind, actionPath, strike } = probeRequest;
+      const key = `${host.probeScope?.() ?? ''}|${actionPath ?? path}`;
       if (!probeCacheFresh(key)) {
         const spinner = document.createElement('span');
         spinner.className = 'mention-tip-spinner';
@@ -426,7 +659,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
         // block-wrap onto its own line under the path and stretch the bubble.
         const pathText = bubble.querySelector('.mention-tip-path-text');
         (pathText ?? bubble).append(spinner);
-        probe(shownPath, mention.kind === 'folder' ? 'folder' : 'file', pill.dataset.mentionActionPath);
+        probe(path, kind, actionPath, strike);
       }
     }
     // A streaming re-render can drop the anchor without a mouseout — close
@@ -472,7 +705,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   }
 
   function closestPill(target: EventTarget | null): HTMLElement | null {
-    return target instanceof Element ? target.closest<HTMLElement>('.mention-pill') : null;
+    return target instanceof Element ? target.closest<HTMLElement>('.mention-pill, .attachment-pill') : null;
   }
 
   function onMouseOver(event: MouseEvent): void {
@@ -499,12 +732,12 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   }
 
   function onKeyDown(event: KeyboardEvent): void {
-    // Enter/Space on a skill pill activates it exactly like a click —
-    // message-side pills are focusable (composer pills never are, and are
-    // filtered out inside activateSkillPill anyway).
+    // Enter/Space on a skill or attachment pill activates it exactly like a
+    // click — message-side pills are focusable (composer pills never are, and
+    // are filtered out inside the activate functions anyway).
     if (event.key === 'Enter' || event.key === ' ') {
       const pill = closestPill(event.target);
-      if (pill && activateSkillPill(pill, event)) return;
+      if (pill && (activateSkillPill(pill, event) || activateAttachmentPill(pill, event))) return;
     }
     // Keyboard path for the INTERACTIVE bubble (the old any-key-dismiss
     // would make it inert mid-interaction):
@@ -611,6 +844,30 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
     return true;
   }
 
+  // Attachment-pill activation, the attachment twin of activateSkillPill:
+  // composer pills keep caret semantics (inert), queue-body pills defer to
+  // the row's edit button (the click must bubble up), and a pill without a
+  // stamped url (no fileId, an unresolved attId) stays inert — its CSS
+  // affordance keys off the same attribute, so it never posed as a button.
+  // Returns false for those so the caller falls through to its default.
+  function activateAttachmentPill(pill: HTMLElement, event: Event): boolean {
+    if (!pill.classList.contains('attachment-pill')) return false;
+    if (pill.closest('.ProseMirror')) return false;
+    if (pill.closest('.q-body')) return false;
+    const url = pill.dataset.attachmentUrl ?? '';
+    if (url === '' || !host.openAttachment) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    hide();
+    host.openAttachment({
+      url,
+      fileId: pill.dataset.attachmentFileId || undefined,
+      name: pillAttachment(pill).name,
+      mediaType: pill.dataset.attachmentMediaType || undefined,
+    });
+    return true;
+  }
+
   function onFocusIn(event: FocusEvent): void {
     const pill = closestPill(event.target);
     if (!pill) return;
@@ -638,7 +895,9 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   // listener still route through here.
   function onClickCapture(event: MouseEvent): void {
     const pill = closestPill(event.target);
-    if (pill) activateSkillPill(pill, event);
+    if (!pill) return;
+    if (activateSkillPill(pill, event)) return;
+    activateAttachmentPill(pill, event);
   }
 
   document.addEventListener('mouseover', onMouseOver);

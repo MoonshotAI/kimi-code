@@ -13,7 +13,6 @@ export default {
   queuedHasImage: '包含 {n} 张图片 — 只能移除，不能编辑',
   attachmentImage: '图片',
   attachmentVideo: '视频',
-  attachmentFile: '文件',
   attachmentOpenUnsupported: '无法打开 {name}：暂不支持此文件类型',
   dropToAttach: '松开鼠标添加附件',
   remove: '移除',
@@ -49,5 +48,6 @@ export default {
   quickStartPlaceholder: '输入消息开始新对话…',
   thinkingSuffix: ' · 思考',
   thinkingSuffixEffort: ' · {level}',
+  noArgCommand: '{cmd} 不接受任何参数',
 
 } as const;

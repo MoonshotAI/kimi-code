@@ -134,6 +134,20 @@ describe('useAttachmentUpload', () => {
     expect(att.attachments.value[0].previewUrl).toBeUndefined();
   });
 
+  it('loadAttachments fast-forwards the add-order clock past a carried seq', () => {
+    const att = setup(undefined);
+    att.loadAttachments([
+      { fileId: 'f_pdf', kind: 'file', url: 'https://example.test/api/v1/files/f_pdf', name: 'a.pdf', seq: 1_000_000 },
+    ]);
+    expect(att.attachments.value[0].seq).toBe(1_000_000);
+    // A fresh stamp minted after the restore must not tie with the carried
+    // one — a tie would scramble the submit payload's media/file interleave.
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att2 = setup(uploadImage);
+    att2.handleFileInputChange(inputEvent([imageFile('b.png')]));
+    expect(att2.attachments.value[0].seq).toBeGreaterThan(1_000_000);
+  });
+
   it('removeAttachment drops the entry and revokes its object URL', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const att = setup(uploadImage);
