@@ -14,7 +14,8 @@ import {
   type Event2,
   type IOAuthService as IOAuthServiceType,
   AgentCron,
-  IAgentGoalService,
+  AgentGoal,
+  agentContextOf,
   IAgentConversationUndoService,
   IAgentLifecycleService,
   IEventBus,
@@ -290,7 +291,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const events: Event2<any>[] = [];
     const subscription = eventBus.subscribe((event) => events.push(event));
 
-    const goal = agent.accessor.get(IAgentGoalService);
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
     const snapshot =
       status === 'blocked'
         ? await goal.markBlocked({ reason: 'need credentials' })

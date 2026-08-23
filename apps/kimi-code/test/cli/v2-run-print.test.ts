@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AgentCron,
-  IAgentGoalService,
+  AgentGoal,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -174,7 +174,6 @@ function makeFakeHarness() {
   ]);
   const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const cron = { getNextFireTime: vi.fn(() => null) };
-  agentServices.set(IAgentGoalService, goal);
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
@@ -185,6 +184,7 @@ function makeFakeHarness() {
         list: vi.fn(() => []),
         handleOf: vi.fn(() => agent),
         resolve: vi.fn((_context: unknown, capability: unknown) => {
+          if (capability === AgentGoal) return goal;
           if (capability === AgentCron) return cron;
           throw new Error('unexpected capability');
         }),

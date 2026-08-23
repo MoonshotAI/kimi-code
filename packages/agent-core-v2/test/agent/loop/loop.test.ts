@@ -7,7 +7,7 @@ import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentGoalService } from '#/features/goal/goal';
+import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
 import {
@@ -1412,7 +1412,7 @@ describe('aborted step tool execution', () => {
     void ctx.restoreRuntimes();
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
-      const goals = ctx.get(IAgentGoalService);
+      const goals = ctx.resolve(AgentGoal);
       await goals.createGoal({ objective: 'finish the task' });
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 60 } });
       ctx.get(IEventBus).publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));

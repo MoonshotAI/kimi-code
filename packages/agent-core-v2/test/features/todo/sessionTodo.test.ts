@@ -29,9 +29,9 @@ import {
   AgentTodo,
   todoAgentRuntimeProvider,
   type TodoRuntime,
-} from '#/session/todo/todoAgentRuntime';
-import type { TodoItem } from '#/session/todo/todoItem';
-import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
+} from '#/features/todo/todoAgentRuntime';
+import type { TodoItem } from '#/features/todo/todoItem';
+import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';

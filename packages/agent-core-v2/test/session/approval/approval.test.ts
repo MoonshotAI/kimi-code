@@ -10,7 +10,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 
-import { stubInteractionManager, type InteractionManagerStub } from '../interaction/stubs';
+import { stubInteractionManager, type InteractionManagerStub } from '../../features/interaction/stubs';
 
 const display: ToolInputDisplay = { kind: 'command', command: 'bash' };
 

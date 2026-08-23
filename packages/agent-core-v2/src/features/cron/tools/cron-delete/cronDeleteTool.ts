@@ -1,11 +1,10 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
+import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
 
-import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
 
@@ -63,8 +62,3 @@ export class CronDeleteTool implements ICronDeleteTool {
     };
   }
 }
-
-registerAgentToolService(ICronDeleteTool, CronDeleteTool, {
-  name: 'CronDelete',
-  domain: 'cron',
-});

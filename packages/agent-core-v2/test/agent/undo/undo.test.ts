@@ -22,8 +22,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { AgentTodo } from '#/session/todo/todoAgentRuntime';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 

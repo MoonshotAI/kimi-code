@@ -1,14 +1,13 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
-import { cronToHuman, parseCronExpression } from '#/app/cron/cron-expr';
-import { type CronTask } from '#/app/cron/cronTask';
-import { formatLocalIsoWithOffset } from '#/app/cron/format';
+import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { cronToHuman, parseCronExpression } from '#/features/cron/cron-expr';
+import { type CronTask } from '#/features/cron/cronTask';
+import { formatLocalIsoWithOffset } from '#/features/cron/format';
 
-import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { ICronListTool, CronListInputSchema, type CronListInput } from './cron-list';
 import CRON_LIST_DESCRIPTION from './cron-list.md?raw';
 
@@ -99,8 +98,3 @@ export class CronListTool implements ICronListTool {
     ].join('\n');
   }
 }
-
-registerAgentToolService(ICronListTool, CronListTool, {
-  name: 'CronList',
-  domain: 'cron',
-});

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
-import { type TodoStatus } from '#/session/todo/todoItem';
+import { type TodoStatus } from '#/features/todo/todoItem';
 
 const TodoItemSchema = z.object({
   title: z.string().min(1).describe('Short, actionable title for the todo.'),

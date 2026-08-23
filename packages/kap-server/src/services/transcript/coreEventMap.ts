@@ -7,7 +7,7 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import type { CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -46,7 +46,6 @@ import type {
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
-import type { CronFired } from '@moonshot-ai/agent-core-v2/session/cron/cronOps';
 import type {
   SubagentCompleted,
   SubagentFailed,

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentGoalService,
+  AgentGoal,
+  agentContextOf,
   ErrorCodes,
   IAgentActivityView,
   IAgentLifecycleService,
@@ -139,7 +140,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const manager = session.accessor.get(IAgentLifecycleService);
     const handle = manager.handleOf(agentId);
     if (handle === undefined) throw new Error(`agent ${agentId} not found`);
-    return handle.accessor.get(IAgentGoalService);
+    return manager.resolve(agentContextOf(handle), AgentGoal);
   }
 
   it('describes all channels via GET /api/v1/debug/channels', async () => {

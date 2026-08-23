@@ -22,11 +22,11 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
+import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
 import type {
   InteractionKind,
   InteractionRequest,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { AgentInteraction } from '@moonshot-ai/agent-core-v2/session/interaction/interactionAgentRuntime';
+} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
 import {
   enqueueSessionInteraction,
   isSessionInteractionRecentlyResolved,
@@ -35,7 +35,7 @@ import {
   onSessionInteractionDidResolve,
   requestSessionInteraction,
   respondSessionInteraction,
-} from '@moonshot-ai/agent-core-v2/session/interaction/sessionInteractions';
+} from '@moonshot-ai/agent-core-v2/features/interaction/sessionInteractions';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import type {
   FileMeta,

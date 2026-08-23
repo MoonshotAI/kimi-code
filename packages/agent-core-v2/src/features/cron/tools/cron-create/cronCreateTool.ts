@@ -1,12 +1,11 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
-import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
-import { formatLocalIsoWithOffset } from '#/app/cron/format';
+import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/features/cron/cron-expr';
+import { formatLocalIsoWithOffset } from '#/features/cron/format';
 
 import {
   ICronCreateTool,
@@ -16,7 +15,7 @@ import {
   type CronCreateInput,
   type CronCreateOutput,
 } from './cron-create';
-import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '../../mainAgentOnly';
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
 
 const ONE_SHOT_MAX_FUTURE_MS = 350 * 24 * 60 * 60 * 1000;
@@ -178,8 +177,3 @@ function formatOutput(o: CronCreateOutput): string {
   ];
   return lines.join('\n');
 }
-
-registerAgentToolService(ICronCreateTool, CronCreateTool, {
-  name: 'CronCreate',
-  domain: 'cron',
-});

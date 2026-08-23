@@ -3,12 +3,12 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
+import { AgentTodo, type TodoRuntime } from '#/features/todo/todoAgentRuntime';
 import {
   TODO_LIST_TOOL_NAME,
   renderTodoList,
   type TodoItem,
-} from '#/session/todo/todoItem';
+} from '#/features/todo/todoItem';
 
 import {
   ITodoListTool,

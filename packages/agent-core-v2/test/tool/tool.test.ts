@@ -100,9 +100,10 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/session/todo/todoAgentRuntime';
-import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
-import { AgentCron, cronAgentRuntimeProvider } from '#/session/cron/cronAgentRuntime';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
+import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
+import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -466,6 +467,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentCron,
           provider: cronAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentGoal,
+          provider: goalAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

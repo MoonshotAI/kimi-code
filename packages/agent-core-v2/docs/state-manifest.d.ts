@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 93 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 79 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -66,20 +66,6 @@
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
-//     goal                                            src/features/goal/goalOps.ts
-//     goal.budgetGraceTurns                           src/features/goal/goalService.ts
-//     goal.countedGoalTurns                           src/features/goal/goalService.ts
-//     goal.exhaustedTurnBudgetGoals                   src/features/goal/goalService.ts
-//     goal.goalDrivenTurns                            src/features/goal/goalService.ts
-//     goal.goalOutcomeContinuationTurns               src/features/goal/goalService.ts
-//     goal.goalOutcomeToolResultTurns                 src/features/goal/goalService.ts
-//     goal.goalStarterTurns                           src/features/goal/goalService.ts
-//     goal.goalTurnTargets                            src/features/goal/goalService.ts
-//     goal.liveTurnId                                 src/features/goal/goalService.ts
-//     goal.liveWallClockStartedAt                     src/features/goal/goalService.ts
-//     goal.pendingContinuationGoals                   src/features/goal/goalService.ts
-//     goal.resumeContinuation                         src/features/goal/goalService.ts
-//     goalForkNotice                                  src/features/goal/goalOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
@@ -1454,45 +1440,6 @@ export interface AgentStateSnapshot {
   } | undefined;
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
-  // src/features/goal/goalOps.ts
-  // replayable · durable — folds: GoalCreate, GoalUpdate, GoalClear, GoalForked
-  'goal': /* GoalModelState — packages/agent-core-v2/src/features/goal/goalOps.ts */ /* GoalState — packages/agent-core-v2/src/features/goal/goalOps.ts */ {
-    readonly goalId: string;
-    readonly objective: string;
-    readonly completionCriterion?: string;
-    readonly status: /* GoalStatus — packages/agent-core-v2/src/features/goal/types.ts */ 'blocked' | 'active' | 'paused' | 'complete';
-    readonly turnsUsed: number;
-    readonly tokensUsed: number;
-    readonly wallClockMs: number;
-    readonly wallClockResumedAt?: number;
-    readonly budgetLimits: /* GoalBudgetLimits — packages/agent-core-v2/src/features/goal/types.ts */ {
-      readonly tokenBudget?: number;
-      readonly turnBudget?: number;
-      readonly wallClockBudgetMs?: number;
-    };
-    readonly terminalReason?: string;
-  } | null;
-  // replayable · durable — folds: GoalCreate, GoalClear, GoalForked, ContextAppendMessage
-  'goalForkNotice': /* GoalForkNoticeState — packages/agent-core-v2/src/features/goal/goalOps.ts */ {
-    readonly goalPresent: boolean;
-    readonly reminderPending: boolean;
-  };
-  // src/features/goal/goalService.ts
-  'goal.budgetGraceTurns': Set<number>;
-  'goal.countedGoalTurns': Set<number>;
-  'goal.exhaustedTurnBudgetGoals': Map<number, string>;
-  'goal.goalDrivenTurns': Map<number, string>;
-  'goal.goalOutcomeContinuationTurns': Set<number>;
-  'goal.goalOutcomeToolResultTurns': Map<number, string>;
-  'goal.goalStarterTurns': Set<number>;
-  'goal.goalTurnTargets': Map<number, string>;
-  'goal.liveTurnId': number | undefined;
-  'goal.liveWallClockStartedAt': number | undefined;
-  'goal.pendingContinuationGoals': Map<number, string>;
-  'goal.resumeContinuation': /* ResumeContinuation — packages/agent-core-v2/src/features/goal/goalService.ts */ {
-    readonly turnId: number;
-    readonly goalId: string;
-  } | undefined;
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts

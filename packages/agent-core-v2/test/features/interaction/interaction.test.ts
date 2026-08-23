@@ -22,17 +22,17 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import {
   AgentInteraction,
   type InteractionRuntime,
-} from '#/session/interaction/interactionAgentRuntime';
+} from '#/features/interaction/interactionAgentRuntime';
 import {
   InteractionRequestEvent,
   InteractionResolvedEvent,
-} from '#/session/interaction/interactionOps';
+} from '#/features/interaction/interactionOps';
 import {
   enqueueSessionInteraction,
   isSessionInteractionRecentlyResolved,
   listSessionPendingInteractions,
   respondSessionInteraction,
-} from '#/session/interaction/sessionInteractions';
+} from '#/features/interaction/sessionInteractions';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 

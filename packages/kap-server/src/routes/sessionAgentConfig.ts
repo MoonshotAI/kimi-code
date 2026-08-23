@@ -1,12 +1,13 @@
 import {
   ErrorCodes,
   Error2,
-  IAgentGoalService,
+  AgentGoal,
   IAgentLifecycleService,
   IAgentPlanService,
   IAgentProfileService,
   IAgentSwarmService,
   IAgentTowerService,
+  agentContextOf,
   resumeSessionById,
   type PermissionMode,
   type Scope,
@@ -68,10 +69,13 @@ export async function applySessionAgentConfig(
     }
   }
   if (agentConfig.goal_objective !== undefined) {
-    await agent.accessor.get(IAgentGoalService).createGoal({ objective: agentConfig.goal_objective });
+    await agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .createGoal({ objective: agentConfig.goal_objective });
   }
   if (agentConfig.goal_control !== undefined) {
-    const goal = agent.accessor.get(IAgentGoalService);
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
     switch (agentConfig.goal_control) {
       case 'pause':
         await goal.pauseGoal({});

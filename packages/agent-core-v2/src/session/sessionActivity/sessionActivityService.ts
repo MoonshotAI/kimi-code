@@ -15,11 +15,11 @@ import {
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import type { Interaction } from '#/session/interaction/interaction';
+import type { Interaction } from '#/features/interaction/interaction';
 import {
   listSessionPendingInteractions,
   onSessionInteractionDidChangePending,
-} from '#/session/interaction/sessionInteractions';
+} from '#/features/interaction/sessionInteractions';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import {

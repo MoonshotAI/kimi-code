@@ -16,7 +16,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { InteractionRuntime } from '#/session/interaction/interactionAgentRuntime';
+import type { InteractionRuntime } from '#/features/interaction/interactionAgentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 

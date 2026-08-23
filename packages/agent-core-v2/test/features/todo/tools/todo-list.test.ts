@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { TodoRuntime } from '#/session/todo/todoAgentRuntime';
-import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
-import { TodoListInputSchema } from '#/agent/tools/todo-list/todo-list';
-import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
+import type { TodoRuntime } from '#/features/todo/todoAgentRuntime';
+import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/features/todo/todoItem';
+import { TodoListInputSchema } from '#/features/todo/tools/todo-list/todo-list';
+import { TodoListTool } from '#/features/todo/tools/todo-list/todoListTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;

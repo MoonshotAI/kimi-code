@@ -14,7 +14,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import {
   AgentInteraction,
   type InteractionRuntime,
-} from '#/session/interaction/interactionAgentRuntime';
+} from '#/features/interaction/interactionAgentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 export interface InteractionManagerStub {

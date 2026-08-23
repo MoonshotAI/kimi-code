@@ -28,10 +28,11 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/agent/contextInjector/contextInjectorService';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { AgentCron } from '#/session/cron/cronAgentRuntime';
+import { AgentCron } from '#/features/cron/cronAgentRuntime';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IAgentGoalService } from '#/features/goal/goal';
-import { AgentGoalService } from '#/features/goal/goalService';
+import { AgentGoal } from '#/features/goal/goalAgentRuntime';
+import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
+import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -119,8 +120,8 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
-import { AgentTodo } from '#/session/todo/todoAgentRuntime';
-import { type TodoItem } from '#/session/todo/todoItem';
+import { AgentTodo } from '#/features/todo/todoAgentRuntime';
+import { type TodoItem } from '#/features/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
@@ -219,11 +220,11 @@ import {
   type ProvidersSection,
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
-import type { InteractionRequest } from '#/session/interaction/interaction';
+import type { InteractionRequest } from '#/features/interaction/interaction';
 import {
   AgentInteraction,
   type InteractionRuntime,
-} from '#/session/interaction/interactionAgentRuntime';
+} from '#/features/interaction/interactionAgentRuntime';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IHostClock } from '#/os/interface/hostClock';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -1183,6 +1184,7 @@ export class AgentTestContext {
             IModelCatalog,
             new SyncDescriptor(ConfigBackedModelCatalog, [{}]),
           );
+          reg.defineDescriptor(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
           if (options.telemetry !== undefined) {
             reg.defineInstance(ITelemetryService, options.telemetry);
           }
@@ -1383,7 +1385,6 @@ export class AgentTestContext {
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
-            reg.defineDescriptor(IAgentGoalService, new SyncDescriptor(AgentGoalService));
             reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
             const agentStateService = new TestAgentStateService(
@@ -1605,7 +1606,6 @@ export class AgentTestContext {
     cron.list();
     void plan.status();
 
-    this.get(IAgentGoalService);
     this.get(IAgentSkillService);
     this.get(IAgentUserToolService);
     this.get(IAgentLLMRequesterService);
@@ -2241,11 +2241,11 @@ export class AgentTestContext {
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
       clearContext: () => this.get(IAgentPromptService).clear(),
-      createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
-      getGoal: () => this.get(IAgentGoalService).getGoal(),
-      pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
-      resumeGoal: () => this.get(IAgentGoalService).resumeGoal(),
-      cancelGoal: () => this.get(IAgentGoalService).cancelGoal(),
+      createGoal: (payload) => this.resolve(AgentGoal).createGoal(payload),
+      getGoal: () => this.resolve(AgentGoal).getGoal(),
+      pauseGoal: () => this.resolve(AgentGoal).pauseGoal(),
+      resumeGoal: () => this.resolve(AgentGoal).resumeGoal(),
+      cancelGoal: () => this.resolve(AgentGoal).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.get(IAgentProfileService).data(),

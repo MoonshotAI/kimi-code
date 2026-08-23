@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   AgentCron,
-  IAgentGoalService,
+  AgentGoal,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -58,7 +58,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
-import type { GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
   AssistantDelta,
@@ -469,7 +469,9 @@ async function runNativeTurn(
     if (result.type === 'completed') {
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
-      const goalService = agent.accessor.get(IAgentGoalService);
+      const goalService = session.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentGoal);
       const cronService = session.accessor
         .get(IAgentLifecycleService)
         .resolve(agentContextOf(agent), AgentCron);
@@ -525,7 +527,9 @@ async function runNativeGoal(
   stderr: PromptOutput,
 ): Promise<void> {
   requireConfiguredModel(model);
-  const goalService = agent.accessor.get(IAgentGoalService);
+  const goalService = session.accessor
+    .get(IAgentLifecycleService)
+    .resolve(agentContextOf(agent), AgentGoal);
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,
@@ -827,9 +831,9 @@ function formatTurnEndingFailure(ending: PrintTurnEnding): string {
 
 function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   let count = 0;
-  const agentLifecycle = session.accessor.get(IAgentLifecycleService);
-  for (const agent of agentLifecycle.list()) {
-    const handle = agentLifecycle.handleOf(agent.agentId);
+  const agentManager = session.accessor.get(IAgentLifecycleService);
+  for (const agent of agentManager.list()) {
+    const handle = agentManager.handleOf(agent.agentId);
     if (handle === undefined) continue;
     count += handle.accessor.get(IAgentTaskService).list(true).length;
   }
@@ -852,9 +856,9 @@ async function drainBackgroundTasks(
     const batch: Promise<unknown>[] = [];
     const suppressions: Promise<void>[] = [];
     let activeCount = 0;
-    const agentLifecycle = session.accessor.get(IAgentLifecycleService);
-    for (const agent of agentLifecycle.list()) {
-      const handle = agentLifecycle.handleOf(agent.agentId);
+    const agentManager = session.accessor.get(IAgentLifecycleService);
+    for (const agent of agentManager.list()) {
+      const handle = agentManager.handleOf(agent.agentId);
       if (handle === undefined) continue;
       const taskService = handle.accessor.get(IAgentTaskService);
       for (const task of taskService.list(true)) {

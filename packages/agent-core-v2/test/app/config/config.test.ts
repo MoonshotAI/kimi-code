@@ -35,7 +35,7 @@ import {
 } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
-import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/app/cron/configSection';
+import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
 import '#/app/skillCatalog/configSection';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import {

@@ -26,14 +26,14 @@ import {
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
+import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
 import {
   type Interaction,
   type InteractionKind,
   type InteractionPendingChangedEvent,
   type InteractionRequest,
   type InteractionResolution,
-} from '#/session/interaction/interaction';
+} from '#/features/interaction/interaction';
 import {
   ISessionActivityView,
   type SessionActivityChangedEvent,

@@ -8,27 +8,27 @@ import type {
   RunnableToolExecution,
   ToolExecution,
 } from '#/tool/toolContract';
-import type { CronTask, CronTaskInit } from '#/app/cron/cronTask';
+import type { CronTask, CronTaskInit } from '#/features/cron/cronTask';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { type CronRuntime } from '#/session/cron/cronAgentRuntime';
+import { type CronRuntime } from '#/features/cron/cronAgentRuntime';
 import {
   computeNextCronRun,
   parseCronExpression,
-} from '#/app/cron/cron-expr';
-import { renderCronFireXml } from '#/app/cron/format';
+} from '#/features/cron/cron-expr';
+import { renderCronFireXml } from '#/features/cron/format';
 import {
   jitteredNextCronRunMs,
   oneShotJitteredNextCronRunMs,
-} from '#/app/cron/jitter';
+} from '#/features/cron/jitter';
 import {
   MAX_CRON_JOBS_PER_SESSION,
   type CronCreateInput,
-} from '#/agent/tools/cron/cron-create/cron-create';
-import { CronCreateTool } from '#/agent/tools/cron/cron-create/cronCreateTool';
-import type { CronDeleteInput } from '#/agent/tools/cron/cron-delete/cron-delete';
-import { CronDeleteTool } from '#/agent/tools/cron/cron-delete/cronDeleteTool';
-import type { CronListInput } from '#/agent/tools/cron/cron-list/cron-list';
-import { CronListTool } from '#/agent/tools/cron/cron-list/cronListTool';
+} from '#/features/cron/tools/cron-create/cron-create';
+import { CronCreateTool } from '#/features/cron/tools/cron-create/cronCreateTool';
+import type { CronDeleteInput } from '#/features/cron/tools/cron-delete/cron-delete';
+import { CronDeleteTool } from '#/features/cron/tools/cron-delete/cronDeleteTool';
+import type { CronListInput } from '#/features/cron/tools/cron-list/cron-list';
+import { CronListTool } from '#/features/cron/tools/cron-list/cronListTool';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 const WALL_ANCHOR = 1_700_000_000_000;

@@ -18,7 +18,7 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
-import { stubInteractionManagerFor, type InteractionManagerStub } from '../interaction/stubs';
+import { stubInteractionManagerFor, type InteractionManagerStub } from '../../features/interaction/stubs';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,

@@ -27,8 +27,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
-import { renderTodoList } from '#/session/todo/todoItem';
+import { AgentTodo, type TodoRuntime } from '#/features/todo/todoAgentRuntime';
+import { renderTodoList } from '#/features/todo/todoItem';
 import {
   APIContextOverflowError,
   APIEmptyResponseError,

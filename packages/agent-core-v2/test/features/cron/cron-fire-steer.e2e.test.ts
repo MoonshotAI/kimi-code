@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { CronConfig } from '#/app/cron/configSection';
-import { AgentCron } from '#/session/cron/cronAgentRuntime';
+import type { CronConfig } from '#/features/cron/configSection';
+import { AgentCron } from '#/features/cron/cronAgentRuntime';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 

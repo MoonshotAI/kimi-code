@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentCron } from '#/session/cron/cronAgentRuntime';
-import { CronCursor } from '#/session/cron/cronOps';
+import { AgentCron } from '#/features/cron/cronAgentRuntime';
+import { CronCursor } from '#/features/cron/cronOps';
 
 import {
   createTestAgent,

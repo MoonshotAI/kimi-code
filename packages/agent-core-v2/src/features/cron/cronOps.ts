@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import type { CronJobOrigin } from '#/agent/contextMemory/types';
-import type { CronTask } from '#/app/cron/cronTask';
+import type { CronTask } from '#/features/cron/cronTask';
 import { Event2 } from '#/app/event/event2';
 
 export type CronModelState = Map<string, CronTask>;

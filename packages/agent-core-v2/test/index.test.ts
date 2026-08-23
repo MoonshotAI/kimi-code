@@ -5,7 +5,7 @@ import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
-  IAgentGoalService,
+  AgentGoal,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -29,7 +29,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { ToolsUpdateStore } from '#/session/todo/todoOps';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
@@ -399,7 +399,7 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'g1',
       objective: 'do work',
       completionCriterion: 'tests pass',
@@ -427,7 +427,7 @@ describe('AgentRecords persistence metadata', () => {
       'goal.create',
       'forked',
     ]);
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
@@ -453,7 +453,7 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'fork-goal',
       objective: 'fork work',
     });

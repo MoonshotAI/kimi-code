@@ -12,12 +12,12 @@ import {
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { IConfigService } from '#/app/config/config';
-import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
-import { type CronConfig, CRON_SECTION, DEFAULT_CRON_CONFIG } from '#/app/cron/configSection';
-import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
-import type { CronTask, CronTaskInit } from '#/app/cron/cronTask';
-import { renderCronFireXml } from '#/app/cron/format';
-import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/app/cron/jitter';
+import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/features/cron/clock';
+import { type CronConfig, CRON_SECTION, DEFAULT_CRON_CONFIG } from '#/features/cron/configSection';
+import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/features/cron/cron-expr';
+import type { CronTask, CronTaskInit } from '#/features/cron/cronTask';
+import { renderCronFireXml } from '#/features/cron/format';
+import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/features/cron/jitter';
 import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { BugIndicatingError } from '#/errors';

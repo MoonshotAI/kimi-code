@@ -65,7 +65,8 @@
  *   rebuilt over the profile's cached AGENTS.md warning plus the engine's
  *   `prepareSystemPromptContext` (no v2 aggregate service exists).
  * - `createGoal` / `getGoal` / `pauseGoal` / `resumeGoal` / `cancelGoal` →
- *   `IAgentGoalService` through the agent scope; `getCronTasks` →
+ *   the `AgentGoal` runtime facade resolved through the session's agent
+ *   lifecycle service; `getCronTasks` →
  *   with the v1 snapshot
  *   shape restored; `listBackgroundTasks` / `getBackgroundTaskOutput` → the
  *   `klient.session(id).agent(id)` facade; `stopBackgroundTask` /
@@ -165,9 +166,9 @@ import {
   IAgentContextInjectorService,
   IAgentContextMemoryService,
   AgentCron,
+  AgentGoal,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentGoalService,
   IAgentPluginService,
   IAgentLifecycleService,
   IAgentLoopService,
@@ -2106,7 +2107,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // -----------------------------------------------------------------------
 
   /**
-   * Through the agent scope (`IAgentGoalService.createGoal`) — no klient
+   * Through the `AgentGoal` runtime facade resolved from the session's agent
+   * lifecycle service — no klient
    * facade exists for the goal domain. Gap: v2 rejects every goal command on
    * a non-main agent (`goal.unsupported_agent`) where v1 keeps a `GoalMode`
    * on every agent; only reachable through a non-main `interactiveAgentId`
@@ -2114,29 +2116,42 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor
-      .get(IAgentGoalService)
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
       .createGoal({ objective: input.objective, replace: input.replace });
   }
 
   override async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).getGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .getGoal();
   }
 
   override async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).pauseGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .pauseGoal();
   }
 
   override async resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).resumeGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .resumeGoal();
   }
 
   override async cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentGoalService).cancelGoal();
+    return this.requireLiveSession(input.sessionId)
+      .accessor.get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .cancelGoal();
   }
 
   /**

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
+import { resolveClockSources, SYSTEM_CLOCKS } from '#/features/cron/clock';
 
 describe('cron clock sources', () => {
   describe('SYSTEM_CLOCKS', () => {
