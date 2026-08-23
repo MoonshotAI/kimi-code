@@ -143,6 +143,13 @@ describe('AcpServer ext method surface', () => {
             agentId: 'main',
             turnId: 1,
           } as Event);
+          fn({
+            type: 'turn.ended',
+            sessionId,
+            agentId: 'subagent-1',
+            turnId: 1,
+            reason: 'completed',
+          } as Event);
         }
         signalPromptStarted?.();
         // Hold the ACP prompt open until the test releases it, so
@@ -205,8 +212,14 @@ describe('AcpServer ext method surface', () => {
       expect.objectContaining({ type: 'image_url' }),
     ]);
 
+    const endingSteer = client.extMethod(STEER_METHOD, {
+      sessionId,
+      prompt: [{ type: 'image', data: oversizedPng, mimeType: 'image/png' }],
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     releaseTurn?.();
     await expect(promptPromise).resolves.toMatchObject({ stopReason: 'end_turn' });
+    await expect(endingSteer).rejects.toMatchObject({ code: -32600 });
   });
 
   it('rejects steering before the underlying turn.started event', async () => {
@@ -276,7 +289,11 @@ describe('AcpServer ext method surface', () => {
     const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
-    for (const prompt of [[null], [{ type: 'text' }]]) {
+    for (const prompt of [
+      [null],
+      [{ type: 'text' }],
+      [{ type: 'resource', resource: { uri: 'x', text: 1, blob: 'valid' } }],
+    ]) {
       await expect(client.extMethod(STEER_METHOD, { sessionId, prompt })).rejects.toMatchObject({
         code: -32602,
       });

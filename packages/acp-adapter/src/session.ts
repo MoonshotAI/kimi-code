@@ -785,13 +785,20 @@ export class AcpSession {
    *    it blindly.
    */
   async steer(blocks: readonly ContentBlock[]): Promise<{ outcome: 'injected' }> {
-    if (this.activePromptTurnIds.size === 0) {
+    const activeTurnId = this.activePromptTurnIds.values().next().value;
+    if (activeTurnId === undefined) {
       throw RequestError.invalidRequest(
         { reason: 'no_active_turn' },
         'No turn is running; submit the message via session/prompt instead',
       );
     }
     const parts = await this.preparePromptParts(blocks);
+    if (!this.activePromptTurnIds.has(activeTurnId)) {
+      throw RequestError.invalidRequest(
+        { reason: 'no_active_turn' },
+        'The running turn ended while steering content was prepared; submit the message via session/prompt instead',
+      );
+    }
     if (parts.length === 0) {
       throw RequestError.invalidParams(
         undefined,
@@ -1266,9 +1273,9 @@ export class AcpSession {
           return;
         }
         if (event.type === 'turn.ended') {
+          if (!isFromMainAgent(event)) return;
           this.activePromptTurnIds.delete(event.turnId);
           if (settled) return;
-          if (!isFromMainAgent(event)) return;
           settled = true;
           if (event.reason === 'failed') {
             // Failures bubble up via the SDK `error` payload. Phase 11.1

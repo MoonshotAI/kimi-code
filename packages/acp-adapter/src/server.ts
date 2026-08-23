@@ -91,9 +91,12 @@ function isSteeringContentBlock(value: unknown): value is ContentBlock {
   }
   if (value['type'] !== 'resource' || !isRecord(value['resource'])) return false;
   const resource = value['resource'];
+  const hasText = 'text' in resource;
+  const hasBlob = 'blob' in resource;
   return (
     typeof resource['uri'] === 'string' &&
-    (typeof resource['text'] === 'string' || typeof resource['blob'] === 'string')
+    hasText !== hasBlob &&
+    (hasText ? typeof resource['text'] === 'string' : typeof resource['blob'] === 'string')
   );
 }
 
