@@ -23,6 +23,7 @@ import { IFlagService } from '#/app/flag/flag';
 import {
   compactionDisplayModel,
   compactionModelBindingFor,
+  resolveCompactionSecondaryModel,
   wrapCompactionModelError,
 } from '#/session/compaction/configSection';
 import {
@@ -334,6 +335,46 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this.observedMaxContextTokensByModel.set(modelAlias, observed);
   }
 
+  /**
+   * Resolve the squeeze model alias for the compaction started indicator,
+   * cascading exactly like the compaction round itself: the primary squeeze
+   * model (`[compaction_model] model`) when configured and resolvable, else
+   * the secondary squeeze model (`[compaction_model] secondary_model`, set
+   * via `/squeeze-model-secondary`) when configured and resolvable, else the
+   * caller's own model. Never throws — an unresolvable tier just cascades to
+   * the next, mirroring run()'s fallback order.
+   */
+  private resolveSqueezeModelAliasWithCascade(currentModelAlias: string): string {
+    const binding = compactionModelBindingFor(this.configService, this.flags, {
+      modelAlias: currentModelAlias,
+      thinkingLevel: this.profile.data().thinkingLevel,
+    });
+    const primaryAlias = binding.model;
+    if (primaryAlias !== currentModelAlias) {
+      try {
+        this.profile.resolveModelContextFor(primaryAlias);
+        return primaryAlias;
+      } catch {
+        // Primary squeeze model unresolvable — cascade to the secondary tier.
+      }
+    }
+    const secondaryAlias = resolveCompactionSecondaryModel(this.configService, this.flags);
+    if (
+      secondaryAlias !== undefined &&
+      secondaryAlias !== currentModelAlias &&
+      secondaryAlias !== primaryAlias
+    ) {
+      try {
+        this.profile.resolveModelContextFor(secondaryAlias);
+        return secondaryAlias;
+      } catch {
+        // Secondary squeeze model also unresolvable — fall through to the
+        // caller's own model.
+      }
+    }
+    return currentModelAlias;
+  }
+
   begin(input: FullCompactionInput): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
@@ -344,12 +385,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const profileData = this.profile.data();
     const currentModelAlias = profileData.modelAlias;
     if (currentModelAlias !== undefined) {
-      const binding = compactionModelBindingFor(this.configService, this.flags, {
-        modelAlias: currentModelAlias,
-        thinkingLevel: profileData.thinkingLevel,
-      });
-      data.model = binding.model;
-      data.modelDisplay = compactionDisplayModel(this.configService, binding.model);
+      const squeezeAlias = this.resolveSqueezeModelAliasWithCascade(currentModelAlias);
+      data.model = squeezeAlias;
+      data.modelDisplay = compactionDisplayModel(this.configService, squeezeAlias);
     }
     if (!this.reserveCompactionSlot(data.source)) return false;
 
@@ -669,24 +707,83 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         thinkingLevel: thinkingEffort,
       });
       const dedicatedModelAlias = binding.model;
+      let activeSqueezeAlias = dedicatedModelAlias;
       let hasDedicatedModel = dedicatedModelAlias !== currentModelAlias;
       let usingFallbackModel = false;
+      let usingSecondaryModel = false;
       let boundModel = resolvedModel;
       if (hasDedicatedModel) {
         try {
           boundModel = this.profile.resolveModelContextFor(dedicatedModelAlias);
         } catch (error) {
-          this.log.warn(
-            `compaction model "${dedicatedModelAlias}" is not configured; falling back to current model "${currentModelAlias}"`,
-            { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+          // Primary squeeze model unavailable — cascade to the secondary
+          // squeeze model (`/squeeze-model-secondary`) before giving up on
+          // dedicated compaction models entirely.
+          const secondaryAlias = resolveCompactionSecondaryModel(
+            this.configService,
+            this.flags,
           );
-          hasDedicatedModel = false;
-          boundModel = resolvedModel;
+          let cascaded = false;
+          if (
+            secondaryAlias !== undefined &&
+            secondaryAlias !== currentModelAlias &&
+            secondaryAlias !== dedicatedModelAlias
+          ) {
+            try {
+              boundModel = this.profile.resolveModelContextFor(secondaryAlias);
+              activeSqueezeAlias = secondaryAlias;
+              usingSecondaryModel = true;
+              cascaded = true;
+              this.log.warn(
+                `compaction model "${dedicatedModelAlias}" is not configured; using secondary compaction model "${secondaryAlias}"`,
+                { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+              );
+            } catch (secondaryError) {
+              this.log.warn(
+                `compaction model "${dedicatedModelAlias}" and secondary "${secondaryAlias}" are not configured; falling back to current model "${currentModelAlias}"`,
+                { cause: wrapCompactionModelError(secondaryError, secondaryAlias) },
+              );
+            }
+          }
+          if (!cascaded) {
+            if (
+              secondaryAlias === undefined ||
+              secondaryAlias === currentModelAlias ||
+              secondaryAlias === dedicatedModelAlias
+            ) {
+              this.log.warn(
+                `compaction model "${dedicatedModelAlias}" is not configured; falling back to current model "${currentModelAlias}"`,
+                { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+              );
+            }
+            hasDedicatedModel = false;
+            boundModel = resolvedModel;
+          }
+        }
+      } else {
+        // No primary squeeze model configured — the secondary squeeze model
+        // still applies on its own (squeeze → secondary → current cascade).
+        const secondaryAlias = resolveCompactionSecondaryModel(
+          this.configService,
+          this.flags,
+        );
+        if (secondaryAlias !== undefined && secondaryAlias !== currentModelAlias) {
+          try {
+            boundModel = this.profile.resolveModelContextFor(secondaryAlias);
+            activeSqueezeAlias = secondaryAlias;
+            usingSecondaryModel = true;
+            hasDedicatedModel = true;
+          } catch (secondaryError) {
+            this.log.warn(
+              `secondary compaction model "${secondaryAlias}" is not configured; falling back to current model "${currentModelAlias}"`,
+              { cause: wrapCompactionModelError(secondaryError, secondaryAlias) },
+            );
+          }
         }
       }
       const boundMaxOutputSize = boundModel.maxOutputSize ?? defaultCompactionCap;
-      let compactionRequestModel = hasDedicatedModel ? dedicatedModelAlias : undefined;
-      let effectiveModelAlias = hasDedicatedModel ? dedicatedModelAlias : currentModelAlias;
+      let compactionRequestModel = hasDedicatedModel ? activeSqueezeAlias : undefined;
+      let effectiveModelAlias = hasDedicatedModel ? activeSqueezeAlias : currentModelAlias;
       const effectiveMaxOutputSize = Math.min(
         compactionMaxOutputSize ?? DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS,
         boundMaxOutputSize ?? DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS,
@@ -775,12 +872,40 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             (isRetryableGenerateError(unwrappedError) ||
               !(error instanceof CompactionTruncatedError))
           ) {
+            // The active squeeze model failed at runtime. Cascade order:
+            // primary squeeze model → secondary squeeze model → current
+            // model. Skip the secondary tier when we are already on it or
+            // when it is unset/same-as-current.
+            const secondaryAlias = resolveCompactionSecondaryModel(
+              this.configService,
+              this.flags,
+            );
+            if (
+              !usingSecondaryModel &&
+              secondaryAlias !== undefined &&
+              secondaryAlias !== currentModelAlias &&
+              secondaryAlias !== activeSqueezeAlias
+            ) {
+              usingSecondaryModel = true;
+              activeSqueezeAlias = secondaryAlias;
+              effectiveModelAlias = secondaryAlias;
+              compactionRequestModel = secondaryAlias;
+              // Only reachable while still on the primary squeeze model
+              // (a config-resolution cascade sets usingSecondaryModel up
+              // front), so the failed model is always the primary here.
+              this.log.warn(
+                `compaction model "${dedicatedModelAlias}" failed; trying secondary compaction model "${secondaryAlias}"`,
+                { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+              );
+              retryCount = 0;
+              continue;
+            }
             usingFallbackModel = true;
             effectiveModelAlias = currentModelAlias;
             compactionRequestModel = undefined;
             this.log.warn(
-              `compaction model "${dedicatedModelAlias}" failed; falling back to current model "${currentModelAlias}"`,
-              { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+              `compaction model "${activeSqueezeAlias}" failed; falling back to current model "${currentModelAlias}"`,
+              { cause: wrapCompactionModelError(error, activeSqueezeAlias) },
             );
             retryCount = 0;
             continue;

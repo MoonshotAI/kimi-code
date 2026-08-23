@@ -530,6 +530,7 @@ export {
 } from '#/session/compaction/flag';
 export {
   resolveCompactionModel,
+  resolveCompactionSecondaryModel,
   resolveCompactionBinding,
   compactionModelBindingFor,
 } from '#/session/compaction/configSection';

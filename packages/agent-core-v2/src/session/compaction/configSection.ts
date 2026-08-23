@@ -61,6 +61,21 @@ export function resolveCompactionModel(
 }
 
 /**
+ * The secondary squeeze model (`[compaction_model] secondary_model`, set via
+ * `/squeeze-model-secondary`): the second tier of the compaction cascade.
+ * Compaction tries the primary squeeze model first, then this alias, and only
+ * then falls back to the caller's own (current) model. Returns `undefined`
+ * while the experiment is off or no secondary is configured — the cascade
+ * then collapses to the historical two-tier behavior.
+ */
+export function resolveCompactionSecondaryModel(
+  config: IConfigService,
+  flags: IFlagService,
+): string | undefined {
+  return resolveCompactionModel(config, flags)?.secondaryModel;
+}
+
+/**
  * Resolve which model handles a compaction round. `own` is the caller's current
  * model state, used when inheriting (compaction model unset). Returns the
  * dedicated compaction model when configured, otherwise the caller's own model.
