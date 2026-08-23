@@ -45,6 +45,7 @@ describe('update preference commands', () => {
       disablePasteBurst: false,
       renderLatex: true,
       cacheExpiryHint: true,
+      favoriteModels: [],
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },

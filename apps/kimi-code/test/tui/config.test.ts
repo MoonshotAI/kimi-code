@@ -63,11 +63,36 @@ auto_install = false
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
+      favoriteModels: [],
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
     });
+  });
+
+  it('parses favorite_models in add-order and defaults to empty', () => {
+    expect(parseTuiConfig('').favoriteModels).toEqual([]);
+
+    const config = parseTuiConfig(`
+theme = "dark"
+favorite_models = ["kimi-code/kimi-for-coding", "openai/gpt-5"]
+`);
+
+    expect(config.favoriteModels).toEqual(['kimi-code/kimi-for-coding', 'openai/gpt-5']);
+  });
+
+  it('round-trips favorite_models through save and reload, and emits a commented guide when empty', async () => {
+    await saveTuiConfig(
+      { ...DEFAULT_TUI_CONFIG, favoriteModels: ['kimi-code/kimi-for-coding'] },
+      filePath,
+    );
+    expect(readFileSync(filePath, 'utf-8')).toContain('favorite_models = ["kimi-code/kimi-for-coding"]');
+    expect((await loadTuiConfig(filePath)).favoriteModels).toEqual(['kimi-code/kimi-for-coding']);
+
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, favoriteModels: [] }, filePath);
+    expect(readFileSync(filePath, 'utf-8')).toContain('# favorite_models =');
+    expect((await loadTuiConfig(filePath)).favoriteModels).toEqual([]);
   });
 
   it('parses disable_paste_burst', () => {
@@ -109,6 +134,7 @@ command = "   "
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
+      favoriteModels: [],
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -156,6 +182,7 @@ command = "   "
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
+      favoriteModels: [],
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -170,6 +197,7 @@ command = "   "
         theme,
         disablePasteBurst: DEFAULT_TUI_CONFIG.disablePasteBurst,
         cacheExpiryHint: DEFAULT_TUI_CONFIG.cacheExpiryHint,
+        favoriteModels: [],
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,

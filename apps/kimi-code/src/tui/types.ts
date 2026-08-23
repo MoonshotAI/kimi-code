@@ -80,6 +80,9 @@ export interface AppState {
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
   statusLine?: StatusLineConfig;
+  /** Favorite model aliases (tui.toml favorite_models, add-order); absent means
+   * none. Drives the /model Favorites tab, star markers, and Alt+M rotation. */
+  favoriteModels?: readonly string[];
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;

@@ -16,7 +16,7 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
-import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { modelDisplayName, defaultThinkingEffortFor, segmentsFor } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -61,6 +61,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    favoriteModels: [...(host.state.appState.favoriteModels ?? DEFAULT_TUI_CONFIG.favoriteModels ?? [])],
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
@@ -949,25 +950,99 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
     );
     return;
   }
-  host.mountEditorReplacement(
-    new TabbedModelSelectorComponent({
-      models,
-      currentValue: host.state.appState.model,
-      selectedValue,
-      currentThinkingEffort: host.state.appState.thinkingEffort,
-      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
-      onSelect: ({ alias, thinking }) => {
-        host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, true);
-      },
-      onSessionOnlySelect: ({ alias, thinking }) => {
-        host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, false);
-      },
-      onCancel: () => {
-        host.restoreEditor();
-      },
-    }),
+  let picker: TabbedModelSelectorComponent | undefined;
+  picker = new TabbedModelSelectorComponent({
+    models,
+    currentValue: host.state.appState.model,
+    selectedValue,
+    currentThinkingEffort: host.state.appState.thinkingEffort,
+    favoriteAliases: host.state.appState.favoriteModels ?? [],
+    onToggleFavorite: (alias) => {
+      void toggleFavoriteModel(host, alias, picker);
+    },
+    warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
+    onSelect: ({ alias, thinking }) => {
+      host.restoreEditor();
+      void performModelSwitch(host, alias, thinking, true);
+    },
+    onSessionOnlySelect: ({ alias, thinking }) => {
+      host.restoreEditor();
+      void performModelSwitch(host, alias, thinking, false);
+    },
+    onCancel: () => {
+      host.restoreEditor();
+    },
+  });
+  host.mountEditorReplacement(picker);
+}
+
+/**
+ * Toggle a model's favorite state: append at the end on add (add-order drives
+ * the Favorites tab and Alt+M rotation), remove on unmark, persist to
+ * tui.toml, and live-refresh the open picker so the tab and ★ markers update
+ * without reopening the dialog.
+ */
+async function toggleFavoriteModel(
+  host: SlashCommandHost,
+  alias: string,
+  picker: TabbedModelSelectorComponent | undefined,
+): Promise<void> {
+  const current = host.state.appState.favoriteModels ?? [];
+  const isFavorite = current.includes(alias);
+  const next = isFavorite ? current.filter((entry) => entry !== alias) : [...current, alias];
+  host.setAppState({ favoriteModels: next });
+  picker?.setFavoriteAliases(next);
+  host.track('model_favorite_toggle', { alias, enabled: !isFavorite });
+  try {
+    await saveTuiConfig({ ...currentTuiConfig(host), favoriteModels: [...next] });
+  } catch (error) {
+    host.showError(`Failed to save favorite models: ${formatErrorMessage(error)}`);
+  }
+}
+
+/**
+ * Next favorite after the current model for the Alt+M rotation. Favorites not
+ * present in the available catalog are skipped; the current model need not be
+ * a favorite (rotation then starts at the first favorite). Returns undefined
+ * when there is nothing useful to rotate to (no favorites, the only favorite
+ * is already active, or none resolve in the catalog).
+ */
+export function nextFavoriteAlias(
+  favorites: readonly string[],
+  currentModel: string,
+  availableAliases: ReadonlySet<string>,
+): string | undefined {
+  const usable = favorites.filter((alias) => availableAliases.has(alias));
+  if (usable.length === 0) return undefined;
+  if (usable.length === 1 && usable[0] === currentModel) return undefined;
+  const currentIndex = usable.indexOf(currentModel);
+  if (currentIndex === -1) return usable[0];
+  return usable[(currentIndex + 1) % usable.length]!;
+}
+
+/**
+ * Alt+M from the editor: switch the session straight to the next favorite
+ * model — no dialog, no persistence (the saved default model is untouched;
+ * /model remains the way to change the default).
+ */
+export async function rotateToNextFavoriteModel(host: SlashCommandHost): Promise<void> {
+  const favorites = host.state.appState.favoriteModels ?? [];
+  const available = new Set(Object.keys(host.state.appState.availableModels));
+  const next = nextFavoriteAlias(favorites, host.state.appState.model, available);
+  if (next === undefined) {
+    host.showNotice(
+      'No favorite models to rotate to',
+      'Open /model and press Alt+M on a model to add it to Favorites.',
+    );
+    return;
+  }
+  const model = host.state.appState.availableModels[next];
+  host.track('shortcut_model_rotate', { model: next });
+  await performModelSwitch(
+    host,
+    next,
+    model === undefined ? 'on' : defaultThinkingEffortFor(model),
+    false,
   );
 }
 

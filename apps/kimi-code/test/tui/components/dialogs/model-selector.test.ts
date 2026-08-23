@@ -565,3 +565,65 @@ describe('ModelSelectorComponent overrides', () => {
     expect(out).not.toContain('Max');
   });
 });
+
+describe('ModelSelectorComponent favorites', () => {
+  const ALT_M = `${ESC}m`;
+
+  function makeFavoritesPicker(overrides: {
+    favoriteAliases?: ReadonlySet<string>;
+    onToggleFavorite?: (alias: string) => void;
+    emptyMessage?: string;
+    models?: Record<string, ModelAlias>;
+  } = {}) {
+    return new ModelSelectorComponent({
+      models: overrides.models ?? {
+        kimi: model('Kimi K2'),
+        gpt: { ...model('GPT-5'), provider: 'openai' },
+      },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      favoriteAliases: overrides.favoriteAliases,
+      ...(overrides.onToggleFavorite !== undefined ? { onToggleFavorite: overrides.onToggleFavorite } : {}),
+      ...(overrides.emptyMessage !== undefined ? { emptyMessage: overrides.emptyMessage } : {}),
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+  }
+
+  it('renders ★ after the name for favorite models only, keeping providers aligned', () => {
+    const picker = makeFavoritesPicker({ favoriteAliases: new Set(['kimi']) });
+    const out = text(picker);
+
+    expect(out).toMatch(/Kimi K2 ★\s+Kimi Code/);
+    expect(out).toMatch(/GPT-5\s+openai/);
+    expect(out).not.toMatch(/GPT-5 ★/);
+  });
+
+  it('Alt+M toggles the favorite state of the highlighted model', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ onToggleFavorite });
+
+    picker.handleInput(ALT_M);
+
+    expect(onToggleFavorite).toHaveBeenCalledWith('kimi');
+  });
+
+  it('mentions Alt+M in the hint line only when the toggle is available', () => {
+    const withToggle = makeFavoritesPicker({ onToggleFavorite: vi.fn() });
+    expect(text(withToggle)).toContain('Alt+M favorite');
+
+    const withoutToggle = makeFavoritesPicker();
+    expect(text(withoutToggle)).not.toContain('Alt+M favorite');
+  });
+
+  it('shows the custom empty message instead of "No matches" when the list is empty', () => {
+    const picker = makeFavoritesPicker({
+      models: {},
+      emptyMessage: 'No favorites yet — press Alt+M',
+    });
+
+    const out = text(picker);
+    expect(out).toContain('No favorites yet — press Alt+M');
+    expect(out).not.toContain('No matches');
+  });
+});
