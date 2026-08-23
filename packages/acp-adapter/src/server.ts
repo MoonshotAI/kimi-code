@@ -20,6 +20,7 @@ import {
   type AvailableCommand,
   type CancelNotification,
   type ClientCapabilities,
+  type ContentBlock,
   type Implementation,
   type InitializeRequest,
   type InitializeResponse,
@@ -74,6 +75,27 @@ import { negotiateVersion, type AcpVersionSpec } from './version';
  * unknown-method fallthrough.
  */
 const STEER_METHOD = '_session/steering';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isSteeringContentBlock(value: unknown): value is ContentBlock {
+  if (!isRecord(value) || typeof value['type'] !== 'string') return false;
+  if (value['type'] === 'text') return typeof value['text'] === 'string';
+  if (value['type'] === 'image' || value['type'] === 'audio') {
+    return typeof value['data'] === 'string' && typeof value['mimeType'] === 'string';
+  }
+  if (value['type'] === 'resource_link') {
+    return typeof value['uri'] === 'string' && typeof value['name'] === 'string';
+  }
+  if (value['type'] !== 'resource' || !isRecord(value['resource'])) return false;
+  const resource = value['resource'];
+  return (
+    typeof resource['uri'] === 'string' &&
+    (typeof resource['text'] === 'string' || typeof resource['blob'] === 'string')
+  );
+}
 
 /**
  * Per-session snapshot returned by the {@link AcpServer} caller's
@@ -895,13 +917,14 @@ export class AcpServer implements Agent {
         'prompt must be a non-empty ContentBlock array',
       );
     }
+    if (!prompt.every(isSteeringContentBlock)) {
+      throw RequestError.invalidParams(undefined, 'prompt contains an invalid ContentBlock');
+    }
     const acpSession = this.sessions.get(sessionId);
     if (!acpSession) {
       throw RequestError.invalidParams(undefined, `Unknown sessionId: ${sessionId}`);
     }
-    // ContentBlock shape is validated loosely — unknown block kinds are
-    // dropped inside `acpBlocksToPromptParts`, matching `session/prompt`.
-    return acpSession.steer(prompt as Parameters<AcpSession['steer']>[0]);
+    return acpSession.steer(prompt);
   }
 
   /**

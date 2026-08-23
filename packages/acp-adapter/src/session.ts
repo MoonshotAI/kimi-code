@@ -156,13 +156,7 @@ export class AcpSession {
   // prompts are all covered rather than only the most recent.
   private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
 
-  /**
-   * Number of {@link runTurnBody} invocations that have not yet settled.
-   * Used by {@link steer} to decide whether `_session/steering` can inject
-   * into a live ACP-owned turn. Compression-only windows (tracked by
-   * {@link pendingPromptAborts}) do not count — there is no turn yet.
-   */
-  private activePromptDepth = 0;
+  private readonly activePromptTurnIds = new Set<number>();
 
   /**
    * The most recent command palette advertised to the ACP client. Used by
@@ -791,13 +785,13 @@ export class AcpSession {
    *    it blindly.
    */
   async steer(blocks: readonly ContentBlock[]): Promise<{ outcome: 'injected' }> {
-    if (this.activePromptDepth === 0) {
+    if (this.activePromptTurnIds.size === 0) {
       throw RequestError.invalidRequest(
         { reason: 'no_active_turn' },
         'No turn is running; submit the message via session/prompt instead',
       );
     }
-    const parts = acpBlocksToPromptParts(blocks);
+    const parts = await this.preparePromptParts(blocks);
     if (parts.length === 0) {
       throw RequestError.invalidParams(
         undefined,
@@ -806,6 +800,23 @@ export class AcpSession {
     }
     await this.session.steer(parts);
     return { outcome: 'injected' };
+  }
+
+  private preparePromptParts(blocks: readonly ContentBlock[]): Promise<PromptPart[]> {
+    const sessionDir = this.session.summary?.sessionDir;
+    const track = this.track;
+    return compressPromptImageParts(acpBlocksToPromptParts(blocks), {
+      originalsDir:
+        sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+      maxImageEdgePx: this.harness?.imageLimits?.maxEdgePx(),
+      telemetry:
+        track === undefined
+          ? undefined
+          : {
+              track: (event, properties) =>
+                track(event, properties === undefined ? undefined : { ...properties }),
+            },
+    });
   }
 
   /**
@@ -843,20 +854,7 @@ export class AcpSession {
     this.pendingPromptAborts.add(pending);
     let parts: readonly PromptPart[];
     try {
-      const sessionDir = this.session.summary?.sessionDir;
-      const track = this.track;
-      parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
-        originalsDir:
-          sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
-        maxImageEdgePx: this.harness?.imageLimits?.maxEdgePx(),
-        telemetry:
-          track === undefined
-            ? undefined
-            : {
-                track: (event, properties) =>
-                  track(event, properties === undefined ? undefined : { ...properties }),
-              },
-      });
+      parts = await this.preparePromptParts(blocks);
     } finally {
       this.pendingPromptAborts.delete(pending);
     }
@@ -1030,10 +1028,6 @@ export class AcpSession {
     conn: AgentSideConnection,
     kick: () => Promise<unknown>,
   ): Promise<PromptResponse> {
-    // Count this prompt so `_session/steering` can inject while the ACP
-    // request still owns the turn. Decremented in `finally` so every
-    // settle path (success, cancel, reject) clears the gate.
-    this.activePromptDepth += 1;
     return new Promise<PromptResponse>((resolve, reject) => {
       let settled = false;
       const isFromMainAgent = (event: { agentId?: string }): boolean =>
@@ -1073,6 +1067,7 @@ export class AcpSession {
           (initialActiveTurnId === undefined || event.turnId !== initialActiveTurnId)
         ) {
           hasReceivedOwnTurnStarted = true;
+          this.activePromptTurnIds.add(event.turnId);
         }
         // Track the active turn so `handleApproval` (registered once at
         // construction, called via `setApprovalHandler`) can compose the
@@ -1271,6 +1266,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'turn.ended') {
+          this.activePromptTurnIds.delete(event.turnId);
           if (settled) return;
           if (!isFromMainAgent(event)) return;
           settled = true;
@@ -1324,8 +1320,6 @@ export class AcpSession {
         unsub();
         reject(mapPromptError(err, sessionId));
       });
-    }).finally(() => {
-      this.activePromptDepth -= 1;
     });
   }
 

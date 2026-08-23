@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   AgentSideConnection,
@@ -15,6 +15,7 @@ import {
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import { Jimp } from 'jimp';
 
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
@@ -135,6 +136,14 @@ describe('AcpServer ext method surface', () => {
     const session = {
       id: sessionId,
       prompt: async () => {
+        for (const fn of listeners) {
+          fn({
+            type: 'turn.started',
+            sessionId,
+            agentId: 'main',
+            turnId: 1,
+          } as Event);
+        }
         signalPromptStarted?.();
         // Hold the ACP prompt open until the test releases it, so
         // `_session/steering` sees an active turn.
@@ -184,8 +193,94 @@ describe('AcpServer ext method surface', () => {
     expect(steerResult).toEqual({ outcome: 'injected' });
     expect(steered).toEqual([[{ type: 'text', text: 'also do this' }]]);
 
+    const oversizedPng = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+    await client.extMethod(STEER_METHOD, {
+      sessionId,
+      prompt: [{ type: 'image', data: oversizedPng, mimeType: 'image/png' }],
+    });
+    expect(steered[1]).toEqual([
+      expect.objectContaining({ type: 'text', text: expect.stringContaining('Image compressed') }),
+      expect.objectContaining({ type: 'image_url' }),
+    ]);
+
     releaseTurn?.();
     await expect(promptPromise).resolves.toMatchObject({ stopReason: 'end_turn' });
+  });
+
+  it('rejects steering before the underlying turn.started event', async () => {
+    const sessionId = 'sess-steer-not-started';
+    let signalPromptEntered: (() => void) | undefined;
+    const promptEntered = new Promise<void>((resolve) => {
+      signalPromptEntered = resolve;
+    });
+    let releasePrompt: (() => void) | undefined;
+    const promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+    const listeners = new Set<(event: Event) => void>();
+    const steer = vi.fn();
+    const session = {
+      id: sessionId,
+      prompt: async () => {
+        signalPromptEntered?.();
+        await promptGate;
+        for (const fn of listeners) {
+          fn({
+            type: 'turn.ended',
+            sessionId,
+            agentId: 'main',
+            turnId: 1,
+            reason: 'completed',
+          } as Event);
+        }
+      },
+      steer,
+      cancel: async () => undefined,
+      onEvent: (fn: (event: Event) => void) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    const promptPromise = client.prompt({ sessionId, prompt: [textBlock('start')] });
+    await promptEntered;
+    await expect(
+      client.extMethod(STEER_METHOD, { sessionId, prompt: [textBlock('too early')] }),
+    ).rejects.toMatchObject({ code: -32600 });
+    expect(steer).not.toHaveBeenCalled();
+
+    releasePrompt?.();
+    await promptPromise;
+  });
+
+  it('rejects malformed steering content blocks as invalid params', async () => {
+    const sessionId = 'sess-steer-invalid-blocks';
+    const session = { id: sessionId } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    for (const prompt of [[null], [{ type: 'text' }]]) {
+      await expect(client.extMethod(STEER_METHOD, { sessionId, prompt })).rejects.toMatchObject({
+        code: -32602,
+      });
+    }
   });
 
   it('over-the-wire _session/steering rejects unknown sessionId', async () => {
