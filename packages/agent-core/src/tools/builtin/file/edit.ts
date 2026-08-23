@@ -62,7 +62,8 @@ export function countEditLines(text: string): number {
   if (text.length === 0) return 0;
   let lines = 1;
   for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) lines++;
+    const char = text[i];
+    if (char === '\n' || (char === '\r' && text[i + 1] !== '\n')) lines++;
   }
   return lines;
 }

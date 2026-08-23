@@ -382,6 +382,26 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', '\n\nmore');
   });
 
+  it('counts lone carriage returns when guarding multi-line deletions', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('first\rsecond\rthird\rtail'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(
+      tool,
+      context({ path: '/tmp/cr.txt', old_string: 'first\rsecond\rthird', new_string: '' }),
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Refusing a multi-line deletion');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it('tells the model to reread a large region when old_string is missing', async () => {
     const writeText = vi.fn().mockResolvedValue(0);
     const tool = new EditTool(
