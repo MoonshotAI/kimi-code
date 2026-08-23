@@ -6,6 +6,7 @@ import {
   type ModelAlias,
   type PermissionMode,
   type Session,
+  type SessionSummary,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -21,6 +22,7 @@ import { PermissionSelectorComponent } from '../components/dialogs/permission-se
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
+import { ConfirmDialogComponent } from '../components/dialogs/confirm-dialog';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
@@ -264,6 +266,219 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   showModelPicker(host, alias);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk session model switch (`/update-all-session-models`)
+// ---------------------------------------------------------------------------
+
+type BulkSessionOutcome =
+  | { readonly id: string; readonly status: 'succeeded' }
+  | { readonly id: string; readonly status: 'skipped'; readonly reason: string }
+  | { readonly id: string; readonly status: 'failed'; readonly reason: string };
+
+/**
+ * Enumerate the active sessions the bulk switch will target: the non-archived
+ * sessions the harness manages, plus the current session (which listSessions may
+ * or may not include). Archived/closed sessions are excluded by the listing, so
+ * they are never touched (FR-008); the current session is always in scope
+ * (FR-003).
+ */
+function activeSessionsForBulk(host: SlashCommandHost, listed: readonly SessionSummary[]): SessionSummary[] {
+  const current = host.session;
+  if (current === undefined) return [...listed];
+  const ids = new Set(listed.map((s) => s.id));
+  if (ids.has(current.id)) return [...listed];
+  return [
+    ...listed,
+    {
+      id: current.id,
+      workDir: current.workDir,
+      sessionDir: current.workDir,
+      createdAt: 0,
+      updatedAt: 0,
+      title: 'Current session',
+      archived: false,
+    },
+  ];
+}
+
+/** A setModel rejection is a "skip" when the model itself can't be applied to
+ * that session (unavailable/invalid); anything else is a hard "failure". */
+function classifyModelError(error: unknown): 'skipped' | 'failed' {
+  const message = formatErrorMessage(error).toLowerCase();
+  const modelProblem =
+    message.includes('model') &&
+    (message.includes('not found') ||
+      message.includes('unknown') ||
+      message.includes('invalid') ||
+      message.includes('unavailable') ||
+      message.includes('unsupported'));
+  return modelProblem ? 'skipped' : 'failed';
+}
+
+export async function handleUpdateAllSessionModelsCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  if (alias.length > 0 && host.state.appState.availableModels[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const listed = await host.harness.listSessions();
+  const sessions = activeSessionsForBulk(host, listed);
+  if (sessions.length === 0) {
+    host.showNotice(
+      'No active sessions',
+      'There are no active sessions to update. Start or resume a session, then try again.',
+    );
+    return;
+  }
+  showBulkModelPicker(host, alias, sessions);
+}
+
+function showBulkModelPicker(
+  host: SlashCommandHost,
+  selectedValue: string,
+  sessions: readonly SessionSummary[],
+): void {
+  const models = pickerModelsForHost(host);
+  const entries = Object.entries(models);
+  if (entries.length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue: host.state.appState.model,
+      selectedValue,
+      currentThinkingEffort: host.state.appState.thinkingEffort,
+      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        showBulkConfirm(host, alias, sessions);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function showBulkConfirm(host: SlashCommandHost, alias: string, sessions: readonly SessionSummary[]): void {
+  const count = sessions.length;
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  host.mountEditorReplacement(
+    new ConfirmDialogComponent({
+      title: `Update ${count} active session${count === 1 ? '' : 's'} to ${displayName}?`,
+      body: [
+        `This switches the working model for every active session${
+          count === 1 ? '' : ` (${String(count)})`
+        }.`,
+        'The new-session default model will also be updated.',
+        'This cannot be undone per session — choose Cancel to make no changes.',
+      ],
+      confirmLabel: 'Update all',
+      cancelLabel: 'Cancel',
+      onResolve: (confirmed) => {
+        host.restoreEditor();
+        if (!confirmed) {
+          host.showStatus('Cancelled — no sessions were changed.', 'textDim');
+          return;
+        }
+        void applyModelToAllSessions(host, alias, sessions);
+      },
+    }),
+  );
+}
+
+async function applyModelToAllSessions(
+  host: SlashCommandHost,
+  alias: string,
+  sessions: readonly SessionSummary[],
+): Promise<void> {
+  const currentId = host.session?.id;
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  const results: BulkSessionOutcome[] = [];
+  const resumedSessions = new Set<string>();
+
+  try {
+    for (const summary of sessions) {
+      const id = summary.id;
+      let session: Session | undefined;
+      if (id === currentId) {
+        session = host.session;
+      } else {
+        session = host.harness.getSession(id);
+        if (session === undefined) {
+          try {
+            session = await host.harness.resumeSession({ id });
+            resumedSessions.add(id);
+          } catch (error) {
+            results.push({ id, status: 'failed', reason: formatErrorMessage(error) });
+            continue;
+          }
+        }
+      }
+      if (session === undefined) {
+        results.push({ id, status: 'failed', reason: 'session unavailable' });
+        continue;
+      }
+      try {
+        await session.setModel(alias);
+        results.push({ id, status: 'succeeded' });
+      } catch (error) {
+        results.push({ id, status: classifyModelError(error), reason: formatErrorMessage(error) });
+      }
+    }
+
+    if (currentId !== undefined) {
+      const currentResult = results.find((r) => r.id === currentId);
+      if (currentResult?.status === 'succeeded') {
+        host.setAppState({ model: alias });
+      }
+    }
+    try {
+      await host.harness.setConfig({ defaultModel: alias });
+    } catch (error) {
+      host.showError(`Switched sessions to ${displayName}, but failed to save default: ${formatErrorMessage(error)}`);
+    }
+
+    reportBulkResult(host, displayName, results);
+  } finally {
+    for (const id of resumedSessions) {
+      const session = host.harness.getSession(id);
+      if (session !== undefined) {
+        await session.close().catch(() => {});
+      }
+    }
+  }
+}
+
+function reportBulkResult(
+  host: SlashCommandHost,
+  displayName: string,
+  results: readonly BulkSessionOutcome[],
+): void {
+  const succeeded = results.filter((r) => r.status === 'succeeded').length;
+  const skipped = results.filter((r) => r.status === 'skipped').length;
+  const failed = results.filter((r) => r.status === 'failed').length;
+
+  const parts = [`Updated ${String(succeeded)} session${succeeded === 1 ? '' : 's'} to ${displayName}`];
+  if (skipped > 0) parts.push(`${String(skipped)} skipped`);
+  if (failed > 0) parts.push(`${String(failed)} failed`);
+  const statusColor = succeeded === 0 ? 'error' : (skipped > 0 || failed > 0) ? 'warning' : 'success';
+  host.showStatus(`${parts.join(' · ')}.`, statusColor);
+
+  if (skipped > 0 || failed > 0) {
+    const lines = results
+      .filter((r) => r.status !== 'succeeded')
+      .map((r) => `• ${r.id}: ${r.status} — ${r.reason}`);
+    host.showNotice('Some sessions were not updated', lines.join('\n'));
+  }
 }
 
 export async function handleSecondaryModelCommand(host: SlashCommandHost, args: string): Promise<void> {

@@ -36,6 +36,7 @@ import {
   handlePlanCommand,
   handleSecondaryModelCommand,
   handleSubstituteModelCommand,
+  handleUpdateAllSessionModelsCommand,
   handleVisualModelCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -92,6 +93,7 @@ export {
   handlePlanCommand,
   handleSecondaryModelCommand,
   handleSubstituteModelCommand,
+  handleUpdateAllSessionModelsCommand,
   handleVisualModelCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -538,6 +540,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'model':
       await handleModelCommand(host, args);
+      return;
+    case 'update-all-session-models':
+      await handleUpdateAllSessionModelsCommand(host, args);
       return;
     case 'secondary-model':
       await handleSecondaryModelCommand(host, args);

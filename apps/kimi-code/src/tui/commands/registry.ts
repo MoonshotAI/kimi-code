@@ -216,6 +216,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'update-all-session-models',
+    aliases: ['update-models'],
+    description: 'Switch the model for all active sessions at once',
+    priority: 100,
+    availability: 'always',
+  },
+  {
     name: 'secondary-model',
     aliases: ['subagent-model'],
     description: 'Configure the secondary model for subagents',
