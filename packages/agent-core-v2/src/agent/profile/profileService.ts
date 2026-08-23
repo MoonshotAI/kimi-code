@@ -183,11 +183,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       }),
     );
     this._register(
-      this.instructions.onDidChange(() => {
-        void this.refreshSystemPrompt();
-      }),
-    );
-    this._register(
       this.config.onDidSectionChange(({ domain }) => {
         if (domain === TOOLS_SECTION) {
           this.publishToolPatternWarnings();
