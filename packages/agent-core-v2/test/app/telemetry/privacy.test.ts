@@ -14,6 +14,8 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('/home/李明/proj/secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('/home/иван/proj/secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('/home/josé/proj/secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/秘密🔒/secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice,smith/project/secret.txt')).toBe(REDACTED);
   });
 
   it('redacts Windows paths whose user folder is non-ASCII or contains an apostrophe', () => {
