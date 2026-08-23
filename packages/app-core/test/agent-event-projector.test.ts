@@ -325,7 +325,7 @@ describe('session status single-sourcing', () => {
     expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
   });
 
-  it('turn.ended finalizes the message and usage but projects no sessionWorkChanged', () => {
+  it('turn.ended finalizes the message but projects no sessionWorkChanged or usage snapshot', () => {
     const projector = createAgentProjector({ t });
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
@@ -338,7 +338,23 @@ describe('session status single-sourcing', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'messageUpdated', status: 'completed', durationMs: 123 }),
     );
-    expect(events).toContainEqual(expect.objectContaining({ type: 'sessionUsageUpdated' }));
+    // Usage snapshots only ever derive from agent.status.updated frames (the
+    // real source). turn.ended is a pure lifecycle boundary: a replayed one
+    // after a reset would otherwise fabricate {0/0} and clobber the
+    // snapshot-seeded usage in the pool.
+    expect(events.some((e) => e.type === 'sessionUsageUpdated')).toBe(false);
+  });
+
+  it('emits no usage snapshot when a turn.ended replays after a reset', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('agent.status.updated', { agentId: 'main', contextTokens: 12345 }, 's1');
+    projector.reset('s1');
+    const events = projector.project(
+      'turn.ended',
+      { agentId: 'main', turnId: 1, reason: 'completed' },
+      's1',
+    );
+    expect(events.some((e) => e.type === 'sessionUsageUpdated')).toBe(false);
   });
 
   it('seedInFlight returns only the seeded message — status comes from the snapshot', () => {
