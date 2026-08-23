@@ -61,6 +61,7 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('\\\\fileserver\\alice\\')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\server\\C$\\Users\\alice\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\server\\team#1\\alice\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\server\\share\\alice#1\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\Secret \\file.txt')).toBe(REDACTED);
   });
 
@@ -92,6 +93,12 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   it('leaves non-path text alone', () => {
     expect(cleanTelemetryString('edit failed: missing old_string')).toBe(
       'edit failed: missing old_string',
+    );
+  });
+
+  it('bounds synchronous cleaning for oversized telemetry strings', () => {
+    expect(cleanTelemetryString(`/home/${'a.'.repeat(30_000)}x`)).toBe(
+      '<REDACTED: oversized telemetry-string>',
     );
   });
 
