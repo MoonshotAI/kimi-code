@@ -41,10 +41,19 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('/home/alice/Secret Folder/')).toBe(REDACTED);
   });
 
+  it('redacts extensionless spaced final path components', () => {
+    expect(cleanTelemetryString('C:\\Users\\alice\\Secret Folder')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/Secret Folder')).toBe(REDACTED);
+  });
+
   it('redacts UNC and long-path Windows spellings', () => {
     expect(cleanTelemetryString('\\\\fileserver\\home\\alice.chen\\proj\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\proj\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\?\\UNC\\fileserver\\home\\alice\\proj\\secret.txt')).toBe(
+      REDACTED,
+    );
+    expect(cleanTelemetryString('\\\\server\\Shared Files\\alice\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\?\\UNC\\server\\Shared Files\\alice\\secret.txt')).toBe(
       REDACTED,
     );
   });
