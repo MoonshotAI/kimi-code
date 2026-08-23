@@ -42,10 +42,16 @@ export function compactionModelPatch(
   compaction: CompactionModelConfig | undefined,
 ): ModelOverride | undefined {
   if (compaction === undefined) return undefined;
-  // `model` and the legacy `defaultModel` pointer are not patch fields —
-  // stripping both keeps a pointer-only config patch-free so it binds the
-  // pointed entry directly instead of synthesizing the derived override.
-  const { model: _model, defaultModel: _defaultModel, ...patch } = compaction;
+  // `model`, the legacy `defaultModel` pointer, and the cascade pointer
+  // `secondaryModel` are not patch fields — stripping them keeps a
+  // pointer-only config patch-free so it binds the pointed entry directly
+  // instead of synthesizing the derived override.
+  const {
+    model: _model,
+    defaultModel: _defaultModel,
+    secondaryModel: _secondaryModel,
+    ...patch
+  } = compaction;
   return Object.keys(patch).length > 0 ? patch : undefined;
 }
 

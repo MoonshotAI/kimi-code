@@ -348,6 +348,10 @@ export const CompactionModelConfigSchema = ModelOverrideSchema.extend({
   /** Legacy pointer written by an older TUI; honored as a fallback by the
    * resolver so those configs start working instead of staying dead. */
   defaultModel: z.string().min(1).optional(),
+  /** Second tier of the compaction model cascade (`/squeeze-model-secondary`):
+   * tried when the primary squeeze model is unset or unavailable, before
+   * falling back to the current conversation model. */
+  secondaryModel: z.string().min(1).optional(),
 });
 
 export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;

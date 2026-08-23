@@ -141,6 +141,10 @@ export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
 export const CompactionModelConfigSchema = ModelAliasOverrideSchema.extend({
   model: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
+  // Second tier of the compaction cascade (`/squeeze-model-secondary`):
+  // tried when the primary squeeze model is unset or unavailable, before
+  // falling back to the current conversation model.
+  secondaryModel: z.string().min(1).optional(),
 });
 
 export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;

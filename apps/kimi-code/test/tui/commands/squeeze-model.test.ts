@@ -1,15 +1,19 @@
 /**
- * Scenario: /compaction-model command behavior in the interactive TUI.
- * Responsibilities: picker filtering, persistence of `[compaction_model] model` plus
+ * Scenario: /squeeze-model and /squeeze-model-secondary command behavior in the TUI.
+ * Responsibilities: picker filtering, persistence of `[compaction_model] model` (and
+ * `secondary_model` for the secondary command) plus
  * enabling the `compaction-model` experiment flag, and error paths.
  * Wiring: real command and selector with the SDK/session boundaries stubbed by a small host rig.
- * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/compaction-model.test.ts
+ * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/squeeze-model.test.ts
  */
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SlashCommandHost } from '#/tui/commands';
-import { handleCompactionModelCommand } from '#/tui/commands/config';
+import {
+  handleSqueezeModelCommand,
+  handleSqueezeModelSecondaryCommand,
+} from '#/tui/commands/config';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 
 interface PickerOptions {
@@ -31,7 +35,11 @@ function model(name: string): ModelAlias {
 }
 
 function makeHost(options?: {
-  readonly compactionModel?: { defaultModel?: string; model?: string };
+  readonly compactionModel?: {
+    defaultModel?: string;
+    model?: string;
+    secondaryModel?: string;
+  };
 }) {
   const appState = {
     availableModels: {
@@ -85,23 +93,23 @@ function mountedPicker(host: { mountEditorReplacement: ReturnType<typeof vi.fn> 
   return (component as unknown as { opts: PickerOptions }).opts;
 }
 
-describe('handleCompactionModelCommand', () => {
+describe('handleSqueezeModelCommand', () => {
   it('opens the picker filtered to user models, with the configured model as current', async () => {
     const { host } = makeHost({ compactionModel: { model: 'cheap' } });
 
-    await handleCompactionModelCommand(host, '');
+    await handleSqueezeModelCommand(host, '');
 
     const opts = mountedPicker(host);
     expect(Object.keys(opts.models)).toEqual(['k2', 'cheap']);
     expect(opts.currentValue).toBe('cheap');
-    expect(opts.title).toContain('compaction model');
+    expect(opts.title).toContain('squeeze model');
     expect(opts.thinkingControl).toBe(false);
   });
 
   it('falls back to the legacy default_model key when no model is set', async () => {
     const { host } = makeHost({ compactionModel: { defaultModel: 'k2' } });
 
-    await handleCompactionModelCommand(host, '');
+    await handleSqueezeModelCommand(host, '');
 
     const opts = mountedPicker(host);
     expect(opts.currentValue).toBe('k2');
@@ -110,7 +118,7 @@ describe('handleCompactionModelCommand', () => {
   it('persists the engine-contract model pointer and enables the experiment flag', async () => {
     const { host } = makeHost();
 
-    await handleCompactionModelCommand(host, '');
+    await handleSqueezeModelCommand(host, '');
     mountedPicker(host).onSelect({ alias: 'k2' });
 
     await vi.waitFor(() => {
@@ -126,7 +134,7 @@ describe('handleCompactionModelCommand', () => {
   it('pre-selects a valid alias argument instead of erroring', async () => {
     const { host } = makeHost();
 
-    await handleCompactionModelCommand(host, 'cheap');
+    await handleSqueezeModelCommand(host, 'cheap');
 
     const opts = mountedPicker(host);
     expect(opts.selectedValue).toBe('cheap');
@@ -135,7 +143,7 @@ describe('handleCompactionModelCommand', () => {
   it('rejects an unknown alias argument without opening the picker', async () => {
     const { host } = makeHost();
 
-    await handleCompactionModelCommand(host, 'nope');
+    await handleSqueezeModelCommand(host, 'nope');
 
     expect(host.showError).toHaveBeenCalledWith('Unknown model alias: nope');
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
@@ -145,7 +153,7 @@ describe('handleCompactionModelCommand', () => {
     const { host } = makeHost();
     host.state.appState.availableModels = {};
 
-    await handleCompactionModelCommand(host, '');
+    await handleSqueezeModelCommand(host, '');
 
     expect(host.showNotice).toHaveBeenCalled();
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
@@ -155,7 +163,68 @@ describe('handleCompactionModelCommand', () => {
     const { host } = makeHost();
     host.harness.setConfig.mockRejectedValueOnce(new Error('disk full'));
 
-    await handleCompactionModelCommand(host, '');
+    await handleSqueezeModelCommand(host, '');
+    mountedPicker(host).onSelect({ alias: 'k2' });
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalled();
+    });
+    expect(host.showError.mock.calls[0]![0]).toContain('disk full');
+    expect(host.showStatus).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('handleSqueezeModelSecondaryCommand', () => {
+  it('shows the configured secondary squeeze model as current', async () => {
+    const { host } = makeHost({ compactionModel: { secondaryModel: 'cheap' } });
+
+    await handleSqueezeModelSecondaryCommand(host, '');
+
+    const opts = mountedPicker(host);
+    expect(opts.currentValue).toBe('cheap');
+    expect(opts.title).toContain('secondary squeeze model');
+  });
+
+  it('shows an empty current value when no secondary squeeze model is set', async () => {
+    const { host } = makeHost({ compactionModel: { model: 'k2' } });
+
+    await handleSqueezeModelSecondaryCommand(host, '');
+
+    expect(mountedPicker(host).currentValue).toBe('');
+  });
+
+  it('persists the secondary_model pointer and enables the experiment flag', async () => {
+    const { host } = makeHost();
+
+    await handleSqueezeModelSecondaryCommand(host, '');
+    mountedPicker(host).onSelect({ alias: 'cheap' });
+
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalled();
+    });
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      compactionModel: { secondaryModel: 'cheap' },
+      experimental: { 'compaction-model': true },
+    });
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('pre-selects a valid alias argument and rejects an unknown one', async () => {
+    const { host } = makeHost();
+
+    await handleSqueezeModelSecondaryCommand(host, 'cheap');
+    expect(mountedPicker(host).selectedValue).toBe('cheap');
+
+    await handleSqueezeModelSecondaryCommand(host, 'nope');
+    expect(host.showError).toHaveBeenCalledWith('Unknown model alias: nope');
+  });
+
+  it('reports a persistence failure without a status message', async () => {
+    const { host } = makeHost();
+    host.harness.setConfig.mockRejectedValueOnce(new Error('disk full'));
+
+    await handleSqueezeModelSecondaryCommand(host, '');
     mountedPicker(host).onSelect({ alias: 'k2' });
 
     await vi.waitFor(() => {

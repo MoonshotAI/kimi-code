@@ -39,7 +39,8 @@ import {
   handleSubstituteModelCommand,
   handleUpdateAllSessionModelsCommand,
   handleVisualModelCommand,
-  handleCompactionModelCommand,
+  handleSqueezeModelCommand,
+  handleSqueezeModelSecondaryCommand,
   handleThemeCommand,
   handleYoloCommand,
   showExperimentsPanel,
@@ -98,7 +99,8 @@ export {
   handleSubstituteModelCommand,
   handleUpdateAllSessionModelsCommand,
   handleVisualModelCommand,
-  handleCompactionModelCommand,
+  handleSqueezeModelCommand,
+  handleSqueezeModelSecondaryCommand,
   handleThemeCommand,
   handleYoloCommand,
   showModelPicker,
@@ -554,8 +556,11 @@ async function handleBuiltInSlashCommand(
     case 'visual-model':
       await handleVisualModelCommand(host, args);
       return;
-    case 'compaction-model':
-      await handleCompactionModelCommand(host, args);
+    case 'squeeze-model':
+      await handleSqueezeModelCommand(host, args);
+      return;
+    case 'squeeze-model-secondary':
+      await handleSqueezeModelSecondaryCommand(host, args);
       return;
     case 'substitute-model':
       await handleSubstituteModelCommand(host, args);

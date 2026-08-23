@@ -241,9 +241,20 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
-    name: 'compaction-model',
+    // Renamed from `compaction-model` (issue: `/comp` + Tab autocompleted to
+    // this command instead of `/compact`, breaking muscle memory). The
+    // engine flag id stays `compaction-model` — only the command name moved.
+    name: 'squeeze-model',
     aliases: [],
-    description: 'Configure the model used for context compaction',
+    description: 'Configure the model used for context compaction (squeeze)',
+    priority: 91,
+    availability: 'always',
+  },
+  {
+    name: 'squeeze-model-secondary',
+    aliases: [],
+    description:
+      'Configure the fallback compaction model (tried after the squeeze model, before the current model)',
     priority: 91,
     availability: 'always',
   },

@@ -645,7 +645,7 @@ function showVisualModelPicker(
 async function performVisualModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
-    // Same contract as /compaction-model: the engine pointer field is `model`
+    // Same contract as /squeeze-model: the engine pointer field is `model`
     // (`[visual_model] model`, resolved by `resolveVisualBinding`), and the
     // `visual-model` experiment flag gates the resolver — enable it on save
     // so the pick actually takes effect.
@@ -686,14 +686,16 @@ export async function handleVisualModelCommand(host: SlashCommandHost, args: str
 }
 
 // ---------------------------------------------------------------------------
-// Compaction model (`/compaction-model`) — persists `[compaction_model] model`
-// and enables the `compaction-model` experiment flag
+// Squeeze model (`/squeeze-model`) — persists `[compaction_model] model`
+// and enables the `compaction-model` experiment flag.
+// (Renamed from `compaction-model` so `/comp` + Tab completes to `/compact`.)
 // ---------------------------------------------------------------------------
 
-function showCompactionModelPicker(
+function showSqueezeModelPicker(
   host: SlashCommandHost,
   models: Record<string, ModelAlias>,
   currentValue: string,
+  secondary: boolean,
   selectedValue?: string,
 ): void {
   host.mountEditorReplacement(
@@ -703,10 +705,14 @@ function showCompactionModelPicker(
       selectedValue,
       currentThinkingEffort: 'off',
       thinkingControl: false,
-      title: ' Select a compaction model (context summarization)',
+      title: secondary
+          ? ' Select a secondary squeeze model (compaction fallback)'
+          : ' Select a squeeze model (context summarization)',
       onSelect: ({ alias }) => {
         host.restoreEditor();
-        void performCompactionModelSave(host, alias);
+        void (secondary
+            ? performSqueezeModelSecondarySave(host, alias)
+            : performSqueezeModelSave(host, alias));
       },
       onCancel: () => {
         host.restoreEditor();
@@ -715,7 +721,7 @@ function showCompactionModelPicker(
   );
 }
 
-async function performCompactionModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+async function performSqueezeModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
     // The engine contract pointer field is `model` (`[compaction_model] model`,
@@ -729,16 +735,45 @@ async function performCompactionModelSave(host: SlashCommandHost, alias: string)
       experimental: { 'compaction-model': true },
     });
   } catch (error) {
-    host.showError(`Failed to save compaction model: ${formatErrorMessage(error)}`);
+    host.showError(`Failed to save squeeze model: ${formatErrorMessage(error)}`);
     return;
   }
   host.showStatus(
-    `Compaction model set to ${displayName}. Context compaction will use it.`,
+    `Squeeze model set to ${displayName}. Context compaction will use it.`,
     'success',
   );
 }
 
-export async function handleCompactionModelCommand(host: SlashCommandHost, args: string): Promise<void> {
+/**
+ * `/squeeze-model-secondary`: the fallback squeeze model. Compaction tries
+ * the squeeze model first, then this secondary pick, and only then falls
+ * back to the current conversation model.
+ */
+async function performSqueezeModelSecondarySave(
+  host: SlashCommandHost,
+  alias: string,
+): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  try {
+    // `secondaryModel` is the second tier of the compaction cascade
+    // (`[compaction_model] secondary_model`): squeeze model → secondary →
+    // current model. Saving enables the same `compaction-model` experiment
+    // flag the primary pick does.
+    await host.harness.setConfig({
+      compactionModel: { secondaryModel: alias },
+      experimental: { 'compaction-model': true },
+    });
+  } catch (error) {
+    host.showError(`Failed to save secondary squeeze model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Secondary squeeze model set to ${displayName}. Compaction tries the squeeze model, then ${displayName}, then the current model.`,
+    'success',
+  );
+}
+
+export async function handleSqueezeModelCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = args.trim();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
@@ -758,7 +793,30 @@ export async function handleCompactionModelCommand(host: SlashCommandHost, args:
   // field an older TUI wrote (inert until the resolver fallback) — shown as
   // the current value so the picker reflects what compaction will use.
   const current = compaction?.model ?? compaction?.defaultModel ?? '';
-  showCompactionModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
+  showSqueezeModelPicker(host, models, current, false, alias.length > 0 ? alias : undefined);
+}
+
+export async function handleSqueezeModelSecondaryCommand(
+  host: SlashCommandHost,
+  args: string,
+): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const compaction = (await host.harness.getConfig()).compactionModel;
+  const current = compaction?.secondaryModel ?? '';
+  showSqueezeModelPicker(host, models, current, true, alias.length > 0 ? alias : undefined);
 }
 
 // ---------------------------------------------------------------------------

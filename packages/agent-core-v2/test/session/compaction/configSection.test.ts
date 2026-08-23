@@ -1,7 +1,8 @@
 /**
  * `session/compaction` resolver tests — covers `resolveCompactionModel`,
- * `resolveCompactionBinding`, `compactionModelBindingFor`, `compactionDisplayModel`,
- * and `wrapCompactionModelError`, including the unset-fallback path.
+ * `resolveCompactionSecondaryModel`, `resolveCompactionBinding`,
+ * `compactionModelBindingFor`, `compactionDisplayModel`, and
+ * `wrapCompactionModelError`, including the unset-fallback path.
  *
  * Mirror of the `session/visual` resolver tests: the compaction model is an
  * opt-in override for the compaction step, parallel to how the visual model is
@@ -18,6 +19,7 @@ import {
   compactionModelBindingFor,
   resolveCompactionBinding,
   resolveCompactionModel,
+  resolveCompactionSecondaryModel,
   wrapCompactionModelError,
 } from '#/session/compaction/configSection';
 import { COMPACTION_MODEL_FLAG_ID } from '#/session/compaction/flag';
@@ -54,6 +56,37 @@ describe('resolveCompactionModel', () => {
       model: 'kimi/compaction',
       defaultEffort: 'low',
     });
+  });
+});
+
+describe('resolveCompactionSecondaryModel', () => {
+  it('returns undefined when the compaction-model flag is disabled', () => {
+    const { config, flags } = makeServices(
+      { [COMPACTION_MODEL_SECTION]: { secondaryModel: 'kimi/backup' } },
+      false,
+    );
+    expect(resolveCompactionSecondaryModel(config, flags)).toBeUndefined();
+  });
+
+  it('returns undefined when no secondary squeeze model is configured', () => {
+    const { config, flags } = makeServices({
+      [COMPACTION_MODEL_SECTION]: { model: 'kimi/compaction' },
+    });
+    expect(resolveCompactionSecondaryModel(config, flags)).toBeUndefined();
+  });
+
+  it('returns the secondary squeeze model when configured and the flag is on', () => {
+    const { config, flags } = makeServices({
+      [COMPACTION_MODEL_SECTION]: { model: 'kimi/compaction', secondaryModel: 'kimi/backup' },
+    });
+    expect(resolveCompactionSecondaryModel(config, flags)).toBe('kimi/backup');
+  });
+
+  it('returns the secondary squeeze model even when no primary is set', () => {
+    const { config, flags } = makeServices({
+      [COMPACTION_MODEL_SECTION]: { secondaryModel: 'kimi/backup' },
+    });
+    expect(resolveCompactionSecondaryModel(config, flags)).toBe('kimi/backup');
   });
 });
 
