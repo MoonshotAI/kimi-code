@@ -81,6 +81,9 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('/home/alice/NODE_MODULES/private-project/secret.js')).toBe(
       REDACTED,
     );
+    expect(cleanTelemetryString('C:\\Users\\alice-node_modules\\private\\secret.txt')).toBe(
+      REDACTED,
+    );
   });
 
   it('does not swallow trailing diagnostic text after a spaced Windows path', () => {
@@ -89,6 +92,12 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     );
     expect(cleanTelemetryString("failure at '/home/alice/file.txt' could not be read")).toBe(
       `failure at '${REDACTED}' could not be read`,
+    );
+    expect(cleanTelemetryString('failure at C:\\Users\\alice\\file.txt, retrying now')).toBe(
+      `failure at ${REDACTED}, retrying now`,
+    );
+    expect(cleanTelemetryString('failure at /home/alice/file.txt, retrying now')).toBe(
+      `failure at ${REDACTED}, retrying now`,
     );
   });
 
