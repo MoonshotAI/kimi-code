@@ -144,6 +144,7 @@ describe('readClipboardMedia', () => {
         return { ok: true, stdout: Buffer.from('C:\\Users\\test\\AppData\\Local\\Temp\\kimi.png') };
       }
       if (command === 'powershell.exe') {
+        const script = args[args.indexOf('-Command') + 1] ?? '';
         expect(args).toContain('-STA');
         expect(args).toContain('-NoProfile');
         expect(args).toContain('-NonInteractive');
@@ -151,6 +152,8 @@ describe('readClipboardMedia', () => {
         expect(options?.env?.['KIMI_WSL_CLIPBOARD_IMAGE_PATH']).toBe(
           'C:\\Users\\test\\AppData\\Local\\Temp\\kimi.png',
         );
+        expect(script).not.toContain('{;');
+        expect(script).not.toContain('};');
         // PowerShell writes via the Windows path; under WSL that is the same inode
         // as the Linux temp file created before wslpath.
         writeFileSync(linuxTmpPath, imageBytes);
