@@ -506,7 +506,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
     bus!.publish(

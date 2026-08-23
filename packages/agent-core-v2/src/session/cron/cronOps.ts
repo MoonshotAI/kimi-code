@@ -4,7 +4,6 @@ import { z } from 'zod';
 import type { CronJobOrigin } from '#/agent/contextMemory/types';
 import type { CronTask } from '#/app/cron/cronTask';
 import { Event2 } from '#/app/event/event2';
-import { defineState } from '#/state/state';
 
 export type CronModelState = Map<string, CronTask>;
 
@@ -66,20 +65,3 @@ export class CronFired extends Event2<CronFiredPayload> {
   static override readonly observable = true;
 }
 export interface CronFired extends CronFiredPayload {}
-
-export const cronKey = defineState('cron', (): CronModelState => new Map()).replayable({
-  schema: z.custom<CronModelState>(),
-})
-  .on(CronAdd, (s, e) => {
-    s.set(e.task.id, e.task);
-  })
-  .on(CronDelete, (s, e) => {
-    for (const id of e.ids) {
-      s.delete(id);
-    }
-  })
-  .on(CronCursor, (s, e) => {
-    const task = s.get(e.id);
-    if (task === undefined) return;
-    s.set(e.id, { ...task, lastFiredAt: e.lastFiredAt });
-  });

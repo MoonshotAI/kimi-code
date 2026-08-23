@@ -24,8 +24,6 @@ import { userToolKey } from '#/agent/userTool/userToolOps';
 import { planKey } from '#/features/plan/planOps';
 import { swarmKey } from '#/features/swarm/swarmOps';
 import { towerKey, towerOwnerKey } from '#/features/tower/towerOps';
-import { cronKey } from '#/session/cron/cronOps';
-import { interactionKey } from '#/session/interaction/interactionOps';
 
 export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] = [
   contextMemoryKey,
@@ -53,6 +51,4 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   swarmKey,
   towerKey,
   towerOwnerKey,
-  cronKey,
-  interactionKey,
 ];

@@ -42,6 +42,7 @@ describe('Agent loop', () => {
 
   beforeEach(() => {
     ctx = createTestAgent();
+    void ctx.restoreRuntimes();
     loop = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
   });
@@ -1408,6 +1409,7 @@ describe('aborted step tool execution', () => {
       { generate: createAbortedStepGenerate() },
       permissionModeServices('yolo'),
     );
+    void ctx.restoreRuntimes();
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
       const goals = ctx.get(IAgentGoalService);

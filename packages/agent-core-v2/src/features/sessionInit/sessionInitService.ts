@@ -28,7 +28,7 @@ export class SessionInitService implements ISessionInitService {
   private initRun: AbortController | undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
@@ -41,7 +41,7 @@ export class SessionInitService implements ISessionInitService {
   }
 
   async generateAgentsMd(): Promise<void> {
-    const main = this.lifecycle.list().find((handle) => handle.id === MAIN_AGENT_ID);
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
@@ -55,13 +55,14 @@ export class SessionInitService implements ISessionInitService {
       }
       const permissionMode = main.accessor.get(IAgentPermissionModeService).mode;
 
-      const child = await this.lifecycle.create({
+      const childContext = await this.agentLifecycle.create({
         binding: {
           profile: INIT_PROFILE_NAME,
           model: own.modelAlias,
           thinking: own.thinkingLevel,
         },
       });
+      const child = this.agentLifecycle.handleOf(childContext.agentId)!;
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
 
       emitAgentRunSpawned(main, child.id, {

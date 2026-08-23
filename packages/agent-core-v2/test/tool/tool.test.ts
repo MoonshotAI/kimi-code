@@ -65,7 +65,6 @@ import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type {
@@ -99,6 +98,11 @@ import {
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/session/todo/todoAgentRuntime';
+import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/session/cron/cronAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -224,15 +228,13 @@ interface AgentLifecycleStubOptions {
   readonly handleServices?: ReadonlyMap<string, ReadonlyMap<unknown, unknown>>;
 }
 
-interface AgentLifecycleStub extends IAgentLifecycleService {
+interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentService {
   readonly create: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
   readonly fork: ReturnType<typeof vi.fn<IAgentLifecycleService['fork']>>;
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
-  readonly hooks: ISessionSubagentService['hooks'];
-  readonly onDidStopAgentTask: ISessionSubagentService['onDidStopAgentTask'];
-  readonly notifyAgentTaskStopped: ISessionSubagentService['notifyAgentTaskStopped'];
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
   readonly publishedEvents: Event2[];
+  restoreRuntimes(agent: AgentContext): Promise<void>;
   addHandle(
     agentId: string,
     profileName: string,
@@ -249,6 +251,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   const handles = new Map<string, IAgentScopeHandle>();
   const servicesByAgentId = new Map(options.handleServices);
   const contextsByAgentId = new Map<string, AgentContext>();
+  let adoptedManaged: ManagedAgent | undefined;
   const publishedEvents: Event2[] = [];
   const contextFor = (agentId: string): AgentContext => {
     let context = contextsByAgentId.get(agentId);
@@ -384,7 +387,8 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     onDidStopAgentTask: Event.None as KimiEvent<AgentTaskStopHookContext>,
     onDidCreate: Event.None as KimiEvent<AgentContext>,
     onDidCreateScope: Event.None as KimiEvent<AgentScopeCreatedEvent>,
-    onDidDispose: Event.None as KimiEvent<AgentContext>,
+    onWillClose: Event.None as KimiEvent<AgentContext>,
+    onDidClose: Event.None as KimiEvent<AgentContext>,
     create: vi.fn(async (input = {}) => {
       if (options.createError !== undefined) throw options.createError;
       const agentId =
@@ -394,11 +398,16 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       created += 1;
       const profileName = input.binding?.profile ?? 'coder';
       profileByAgentId.set(agentId, profileName);
-      const createdHandle = handle(agentId);
-      handles.set(agentId, createdHandle);
-      return createdHandle;
+      handles.set(agentId, handle(agentId));
+      return contextFor(agentId);
     }),
     notifyAgentTaskStopped: vi.fn(),
+    planSpawn: vi.fn(async () => {
+      throw new Error('unexpected planSpawn');
+    }),
+    spawn: vi.fn(async () => {
+      throw new Error('unexpected spawn');
+    }),
     fork: vi.fn(async (source, input = {}) => {
       if (options.createError !== undefined) throw options.createError;
       const agentId =
@@ -409,7 +418,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       profileByAgentId.set(agentId, profileByAgentId.get(source.agentId) ?? 'coder');
       const createdHandle = handle(agentId);
       handles.set(agentId, createdHandle);
-      return createdHandle;
+      return contextFor(agentId);
     }),
     run: vi.fn(async (agent, request, runOptions): Promise<AgentRunHandle> => {
       const completion =
@@ -421,9 +430,56 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         completion,
       };
     }),
-    get: vi.fn((agent) => handles.get(agent.agentId)),
-    findAgentHandle: vi.fn((agentId: string) => handles.get(agentId)),
-    list: vi.fn(() => [...handles.values()]),
+    get: vi.fn((agentId: string) => contextsByAgentId.get(agentId)),
+    handleOf: vi.fn((agentId: string) => handles.get(agentId)),
+    list: vi.fn(() => [...handles.keys()].map((agentId) => contextFor(agentId))),
+    resolve: vi.fn(((agent, definition) => {
+      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
+        return adoptedManaged.runtimeSet.resolve(definition);
+      }
+      throw new Error('unexpected resolve');
+    }) as IAgentLifecycleService['resolve']),
+    inspect: vi.fn((agent) => {
+      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
+        return {
+          identity: { agentId: agent.agentId, generation: agent.generation },
+          contributions: adoptedManaged.runtimeSet.inspect(),
+        };
+      }
+      throw new Error('unexpected inspect');
+    }),
+    adopt: vi.fn((adopted) => {
+      const adoptedHandle = adopted as IAgentScopeHandle;
+      handles.set(adoptedHandle.id, adoptedHandle);
+      adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
+        {
+          definition: AgentTodo,
+          provider: todoAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentInteraction,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentCron,
+          provider: cronAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+      ]);
+      return adoptedManaged.context;
+    }),
+    attachRuntimes: vi.fn(() => {
+      adoptedManaged?.attachDurableRuntimes();
+    }),
+    restoreRuntimes: vi.fn(async (agent) => {
+      const managed = adoptedManaged;
+      if (managed === undefined || managed.context.agentId !== agent.agentId) return;
+      await managed.runtimeSet.restore();
+    }),
     broadcastPermissionMode: vi.fn(),
     remove: vi.fn(async (agent) => {
       handles.delete(agent.agentId);
@@ -495,11 +551,6 @@ function currentAgentHandle(ctx: TestAgentContext, agentId: string): IAgentScope
     dispose: () => {},
   };
 }
-
-const cronStub = {
-  _serviceBrand: undefined,
-  list: () => [],
-} as unknown as ISessionCronService;
 
 function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISessionMetadata {
   return {
@@ -1144,7 +1195,6 @@ describe('Agent tool execution contract', () => {
   ): TestAgentContext {
     ctx = createTestAgent(
       sessionService(IAgentLifecycleService, lifecycle),
-      sessionService(ISessionCronService, cronStub),
       modelProviderServices(
         modelCatalogResolving('mock-model', 'provider/fast', 'provider/smart'),
       ),
@@ -3588,8 +3638,7 @@ describe('Agent tools', () => {
       });
       ctx = createTestAgent(
         sessionService(IAgentLifecycleService, lifecycle),
-        sessionService(ISessionCronService, cronStub),
-      );
+        );
       wireRealSubagentService(ctx, lifecycle);
     });
 
@@ -3843,6 +3892,8 @@ describe('Agent tools', () => {
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+        [wire] interaction.request         { "agentId": "main", "id": "<user_tool-1>", "kind": "user_tool", "toolCallId": "call_lookup", "request": { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
+        [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-1>", "response": { "content": "moon-result", "output": "moon-result" }, "time": "<time>" }
         [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
         [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "moon-result" } }, "time": "<time>" }

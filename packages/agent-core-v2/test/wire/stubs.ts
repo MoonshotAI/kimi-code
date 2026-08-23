@@ -2,6 +2,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -9,6 +10,9 @@ import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/session/todo/todoAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/session/cron/cronAgentRuntime';
+import { AgentInteraction } from '#/session/interaction/interactionAgentRuntime';
 import {
   IWireService,
   type IWireService as AgentWire,
@@ -92,6 +96,53 @@ export function registerTestEventDispatcher(ix: TestInstantiationService): IEven
   }
   ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
   return ix.get(IEventDispatcher);
+}
+
+export function attachTodoRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentTodo,
+    provider: todoAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachCronRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentCron,
+    provider: cronAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachInteractionRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentInteraction,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
 }
 
 export async function restoreTestEventDispatcher(

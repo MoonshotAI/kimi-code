@@ -1,8 +1,9 @@
-import { type ToolExecution } from '#/tool/toolContract';
+import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { AgentCron, type CronRuntime } from '#/session/cron/cronAgentRuntime';
 import { cronToHuman, parseCronExpression } from '#/app/cron/cron-expr';
 import { type CronTask } from '#/app/cron/cronTask';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
@@ -33,12 +34,16 @@ export class CronListTool implements ICronListTool {
   );
 
   constructor(
-    @ISessionCronService private readonly cron: ISessionCronService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scope: IAgentScopeContext,
   ) {}
 
+  private get cron(): CronRuntime {
+    return this.manager.resolve(this.scope.agentContext, AgentCron);
+  }
+
   resolveExecution(_args: CronListInput): ToolExecution {
-    const denied = mainAgentOnlyExecution(this.scopeContext, CRON_MAIN_AGENT_ONLY);
+    const denied = mainAgentOnlyExecution(this.scope, CRON_MAIN_AGENT_ONLY);
     if (denied !== undefined) return denied;
     return {
       description: 'Listing scheduled cron jobs',

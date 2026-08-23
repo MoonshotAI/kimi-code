@@ -98,4 +98,3 @@ function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
   if (status === 'complete') return 'Goal not completed: the current goal changed.';
   return 'Goal not blocked: the current goal changed.';
 }
-

@@ -437,6 +437,14 @@ describe('goal tools', () => {
     return results;
   }
 
+  function goalToolCall(
+    id: string,
+    name: 'CreateGoal' | 'GetGoal' | 'SetGoalBudget' | 'UpdateGoal',
+    args: Record<string, unknown>,
+  ): ToolCall {
+    return { type: 'function', id, name, arguments: JSON.stringify(args) };
+  }
+
   it('registers the goal tool surface for a subagent', async () => {
     const subCtx = createSubagentContext();
     try {
@@ -481,14 +489,6 @@ describe('goal tools', () => {
         makeAgentScopeContext({ agentId: 'sub-1', agentScope: 'test/agents/sub-1' }),
       ),
     );
-  }
-
-  function goalToolCall(
-    id: string,
-    name: 'CreateGoal' | 'GetGoal' | 'SetGoalBudget' | 'UpdateGoal',
-    args: Record<string, unknown>,
-  ): ToolCall {
-    return { type: 'function', id, name, arguments: JSON.stringify(args) };
   }
 });
 

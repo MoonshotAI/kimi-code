@@ -1,11 +1,9 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
-import {
-  agentContextOfScope,
-  IAgentScopeContext,
-} from '#/agent/scopeContext/scopeContext';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { AgentTodo, type TodoRuntime } from '#/session/todo/todoAgentRuntime';
 import {
   TODO_LIST_TOOL_NAME,
   renderTodoList,
@@ -26,10 +24,14 @@ export class TodoListTool implements ITodoListTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TodoListInputSchema);
 
+  private readonly todo: TodoRuntime;
+
   constructor(
-    @ISessionTodoService private readonly todo: ISessionTodoService,
-    @IAgentScopeContext private readonly agent: IAgentScopeContext,
-  ) {}
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scope: IAgentScopeContext,
+  ) {
+    this.todo = manager.resolve(scope.agentContext, AgentTodo);
+  }
 
   resolveExecution(args: TodoListInput): ToolExecution {
     const description =
@@ -42,18 +44,16 @@ export class TodoListTool implements ITodoListTool {
       description,
       approvalRule: this.name,
       execute: async () => {
-        const agent = agentContextOfScope(this.agent);
         if (args.todos === undefined) {
-          const todos = await this.todo.getTodos(agent);
-          return { isError: false, output: renderTodoList(todos) };
+          return { isError: false, output: renderTodoList(this.todo.get()) };
         }
 
         const next: readonly TodoItem[] = args.todos.map((todo) => ({
           title: todo.title,
           status: todo.status,
         }));
-        await this.todo.setTodos(agent, next);
-        const stored = await this.todo.getTodos(agent);
+        await this.todo.replace(next);
+        const stored = this.todo.get();
         const output =
           stored.length === 0
             ? 'Todo list cleared.'

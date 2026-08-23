@@ -9,12 +9,15 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type {
+  AgentRuntimeDefinition,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import { IFeatureManager } from '#/app/feature/featureManager';
+import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
-import {
-  IAgentLifecycleService,
-  type AgentScopeCreatedEvent,
-} from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -22,11 +25,10 @@ import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import '#/agent/contextInjector/contextInjectorService';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { AgentCron } from '#/session/cron/cronAgentRuntime';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IAgentGoalService } from '#/features/goal/goal';
 import { AgentGoalService } from '#/features/goal/goalService';
@@ -117,7 +119,7 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 import { type TodoItem } from '#/session/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
@@ -217,13 +219,11 @@ import {
   type ProvidersSection,
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
+import type { InteractionRequest } from '#/session/interaction/interaction';
 import {
-  ISessionInteractionService,
-  type Interaction,
-  type InteractionRequest,
-  type InteractionPendingChangedEvent,
-  type InteractionResolution,
-} from '#/session/interaction/interaction';
+  AgentInteraction,
+  type InteractionRuntime,
+} from '#/session/interaction/interactionAgentRuntime';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IHostClock } from '#/os/interface/hostClock';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -752,10 +752,6 @@ export function taskServices(): TestAgentServiceOverride {
   return agentService(IAgentTaskService, new SyncDescriptor(AgentTaskService));
 }
 
-export function cronServices(): TestAgentServiceOverride {
-  return sessionService(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
-}
-
 export function mcpServices(options: {
   readonly manager?: McpConnectionManager;
 }): TestAgentServiceOverride {
@@ -1247,16 +1243,6 @@ export class AgentTestContext {
       .get(ITelemetryService)
       .withContext({ agent_id: agentId });
     const sessionScope = `${bootstrap.scope('sessions')}/${workspaceId}/${sessionId}`;
-    const lifecycleHandle = (): IAgentScopeHandle | undefined => {
-      const agent = this.agentLifecycleScope;
-      if (agent === undefined) return undefined;
-      return {
-        id: agentId,
-        kind: LifecycleScope.Agent,
-        accessor: agent.accessor,
-        dispose: () => agent.dispose(),
-      };
-    };
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       seeds: collectScopeSeed(
         [
@@ -1275,7 +1261,6 @@ export class AgentTestContext {
               onDidCreateSession: Event.None as Event<SessionCreatedEvent & IWaitUntil>,
               onWillCloseSession: Event.None as Event<SessionWillCloseEvent & IWaitUntil>,
             });
-            reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
             reg.defineInstance(ISessionSkillCatalogData, {
@@ -1305,37 +1290,9 @@ export class AgentTestContext {
               IWorkspaceStateService,
               new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
             );
-            reg.defineInstance(IAgentLifecycleService, {
-              _serviceBrand: undefined,
-              onDidCreate: Event.None as Event<AgentContext>,
-              onDidCreateScope: Event.None as Event<AgentScopeCreatedEvent>,
-              onDidDispose: Event.None as Event<AgentContext>,
-              create: () =>
-                Promise.reject(
-                  new Error('IAgentLifecycleService.create is not supported in the test harness'),
-                ),
-              fork: () =>
-                Promise.reject(
-                  new Error('IAgentLifecycleService.fork is not supported in the test harness'),
-                ),
-              get: () => lifecycleHandle(),
-              findAgentHandle: () => lifecycleHandle(),
-              list: () => {
-                const handle = lifecycleHandle();
-                return handle === undefined ? [] : [handle];
-              },
-              remove: () => Promise.resolve(),
-              broadcastPermissionMode: (mode: PermissionMode) => {
-                this.agent.accessor.get(IAgentPermissionModeService).setMode(mode);
-              },
-            } satisfies IAgentLifecycleService);
             reg.defineDescriptor(
               ISessionWorkspaceContext,
               new SyncDescriptor(SessionWorkspaceContextService),
-            );
-            reg.defineDescriptor(
-              ISessionCronService,
-              new SyncDescriptor(SessionCronServiceImpl),
             );
           },
         ],
@@ -1354,6 +1311,16 @@ export class AgentTestContext {
     this.session.accessor.get(ISessionEventBus).activateAgent(agentScopeContext.agentContext);
 
     this.agent = this.session.createChild(LifecycleScope.Agent, agentId, {
+      configureContainer: (container) => {
+        this.session.accessor.get(IAgentLifecycleService).adopt({
+          id: agentId,
+          kind: LifecycleScope.Agent,
+          accessor: {
+            get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+          },
+          dispose: () => { container.dispose(); },
+        });
+      },
       seeds: collectScopeSeed(
         [
           (reg) => {
@@ -1435,9 +1402,12 @@ export class AgentTestContext {
       ),
     });
     this.agentLifecycleScope = this.agent;
+    const harnessAgentContext = this.agent.accessor.get(IAgentScopeContext).agentContext;
     this.session.accessor
       .get(ISessionEventBus)
-      .activateAgent(this.agent.accessor.get(IAgentScopeContext).agentContext);
+      .activateAgent(harnessAgentContext);
+    this.session.accessor.get(IAgentLifecycleService).attachRuntimes(harnessAgentContext);
+    this.installInteractionBridge(harnessAgentContext);
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
@@ -1463,6 +1433,12 @@ export class AgentTestContext {
       throw new Error('AgentTestContext.get called with undefined service id');
     }
     return this.agent.accessor.get(id);
+  }
+
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    return this.session.accessor.get(IAgentLifecycleService).resolve(this.agentContext, definition);
   }
 
   get modelResolver(): IModelCatalog {
@@ -1534,13 +1510,22 @@ export class AgentTestContext {
 
   async restorePersisted(): Promise<void> {
     await this.dispatcher.restore();
+    await this.restoreRuntimes();
+  }
+
+  restoreRuntimes(): Promise<void> {
+    const agent = this.get(IAgentScopeContext).agentContext;
+    return (this.session.accessor.get(IAgentLifecycleService) as AgentLifecycleService).restoreRuntimes(agent);
   }
 
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
-    const scope = this.get(IAgentScopeContext).scope();
+    const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
-    await log.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
+    await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
     await this.dispatcher.restore();
+    await (this.session.accessor.get(IAgentLifecycleService) as AgentLifecycleService).restoreRuntimes(
+      scopeContext.agentContext,
+    );
   }
 
   private async dispatchRecordsOnly(records: readonly WireRecord[]): Promise<void> {
@@ -1566,13 +1551,39 @@ export class AgentTestContext {
     await this.wire.flush();
   }
 
+  private installInteractionBridge(agent: AgentContext): void {
+    const interaction = this.session.accessor.get(IAgentLifecycleService).resolve(agent, AgentInteraction);
+    const request = interaction.request.bind(interaction);
+    interaction.request = (<TPayload, TResponse>(req: InteractionRequest<TPayload>) => {
+      if (req.kind !== 'user_tool') return request<TPayload, TResponse>(req);
+      const pending = request<TPayload, TResponse>(req);
+      const parked = interaction.listPending('user_tool').at(-1)!;
+      const payload = req.payload as UserToolInteractionPayload;
+      const response = this.createRpcPromise<ExecutableToolResult>();
+      void response.then(
+        (result) => { interaction.respond(parked.id, result); },
+        () => { interaction.respond(parked.id, { cancelled: true }); },
+      );
+      this.recordRpc(
+        'toolCall',
+        {
+          turnId: payload.turnId,
+          toolCallId: payload.toolCallId,
+          args: payload.args,
+        },
+        response,
+      );
+      return pending;
+    }) as InteractionRuntime['request'];
+  }
+
   private initializeRestorableServices(): void {
     const context = this.get(IAgentContextMemoryService);
     const tokenCounting = this.tokenCounting;
     const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
     const permissionRules = this.get(IAgentPermissionRulesService);
-    const cron = this.get(ISessionCronService);
+    const cron = this.resolve(AgentCron);
     const plan = this.get(IAgentPlanService);
     void this.get(IAgentToolActivationService).activate();
     this.get(IAgentToolDedupeService);
@@ -2108,78 +2119,6 @@ export class AgentTestContext {
     };
   }
 
-  private createInteractionService(): ISessionInteractionService {
-    const pending = new Map<string, Interaction>();
-    function createTestInteraction<TPayload>(
-      request: InteractionRequest<TPayload>,
-    ): Interaction<TPayload> {
-      return {
-        id: request.id ?? 'interaction:test',
-        kind: request.kind,
-        payload: request.payload,
-        origin: request.origin ?? {},
-        createdAt: Date.now(),
-      };
-    }
-    return {
-      _serviceBrand: undefined,
-      request: <TPayload, TResponse>(request: InteractionRequest<TPayload>) => {
-        if (request.kind !== 'user_tool') {
-          throw new Error(`Unsupported test interaction kind: ${request.kind}`);
-        }
-        const interaction = createTestInteraction(request);
-        pending.set(interaction.id, interaction);
-        const payload = request.payload as UserToolInteractionPayload;
-        const promise = this.createRpcPromise<ExecutableToolResult>();
-        promise.then(
-          () => pending.delete(interaction.id),
-          () => pending.delete(interaction.id),
-        );
-        this.recordRpc(
-          'toolCall',
-          {
-            turnId: payload.turnId,
-            toolCallId: payload.toolCallId,
-            args: payload.args,
-          },
-          promise,
-        );
-        return promise as unknown as Promise<TResponse>;
-      },
-      enqueue: <TPayload>(request: InteractionRequest<TPayload>): Interaction<TPayload> => {
-        const interaction = createTestInteraction(request);
-        pending.set(interaction.id, interaction);
-        if (request.kind === 'user_tool') {
-          const payload = request.payload as UserToolInteractionPayload;
-          this.recordRpc('toolCall', {
-            turnId: payload.turnId,
-            toolCallId: payload.toolCallId,
-            args: payload.args,
-          });
-        }
-        return interaction;
-      },
-      respond: (id, response) => {
-        pending.delete(id);
-        this.resolvePendingRpc('toolCall', id, response);
-      },
-      listPending: (kind) => {
-        const interactions = [...pending.values()];
-        return kind === undefined
-          ? interactions
-          : interactions.filter((interaction) => interaction.kind === kind);
-      },
-      isRecentlyResolved: () => false,
-      cancelPendingForTurn: (turnId: number) => {
-        for (const [id, interaction] of pending) {
-          if (interaction.origin?.turnId === turnId) pending.delete(id);
-        }
-      },
-      onDidChangePending: Event.None as Event<InteractionPendingChangedEvent>,
-      onDidResolve: Event.None as Event<InteractionResolution>,
-    };
-  }
-
   private createApprovalService(): ISessionApprovalService {
     return {
       _serviceBrand: undefined,
@@ -2467,7 +2406,7 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
         .filter((key) => key.replayable.undoable !== undefined)
         .map((key) => [key.name, ctx.get(IAgentStateService).get(key)]),
     ),
-    todos: ctx.readModel(TodoAgentModelDefinition, (model) => model.items()),
+    todos: ctx.resolve(AgentTodo).get(),
     permission: permissionData,
     usage: usageStatus,
   };
@@ -2614,10 +2553,13 @@ function configService(readConfig: () => KimiConfig): IConfigService {
     readonly value: unknown;
     readonly previousValue: unknown;
   }>();
+  const sectionDefault = (domain: string): unknown =>
+    getConfigSectionContributions().find((section) => section.domain === domain)?.options
+      .defaultValue;
   const valueFor = (domain: string): unknown =>
     memory.has(domain)
       ? memory.get(domain)
-      : (effectiveConfig() as Record<string, unknown>)[domain];
+      : ((effectiveConfig() as Record<string, unknown>)[domain] ?? sectionDefault(domain));
   const replace = (domain: string, value: unknown): Promise<void> => {
     const previousValue = valueFor(domain);
     memory.set(domain, value);

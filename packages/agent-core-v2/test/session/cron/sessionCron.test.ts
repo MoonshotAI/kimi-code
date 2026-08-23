@@ -1,59 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { Emitter, Event } from '#/_base/event';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
-import { type IAgentScopeHandle } from '#/_base/di/scope';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
-import {
-  IAgentLifecycleService,
-  type AgentScopeCreatedEvent,
-} from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentCron } from '#/session/cron/cronAgentRuntime';
 import { CronCursor } from '#/session/cron/cronOps';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import {
   createTestAgent,
   InMemoryWireRecordPersistence,
-  sessionService,
   type TestAgentContext,
   type TestAgentOptions,
 } from '../../harness';
-import { stubAgentContext } from '../../agent/agentContext/stubs';
 
-interface CronHarness {
-  readonly ctx: TestAgentContext;
-  readonly onDidCreateScope: Emitter<AgentScopeCreatedEvent>;
-}
-
-async function bootCronContext(options: TestAgentOptions = {}): Promise<CronHarness> {
-  const onDidCreateScope = new Emitter<AgentScopeCreatedEvent>();
-  const mainAgent = stubAgentContext('main', 1);
-  let mainHandle: IAgentScopeHandle | undefined;
-  const lifecycleStub: IAgentLifecycleService = {
-    _serviceBrand: undefined,
-    onDidCreate: Event.None as Event<AgentContext>,
-    onDidCreateScope: onDidCreateScope.event,
-    onDidDispose: Event.None as Event<AgentContext>,
-    create: () => Promise.reject(new Error('not supported in this test')),
-    fork: () => Promise.reject(new Error('not supported in this test')),
-    get: (agent) => (agent === mainAgent ? mainHandle : undefined),
-    findAgentHandle: (agentId) => (agentId === mainAgent.agentId ? mainHandle : undefined),
-    list: () => (mainHandle === undefined ? [] : [mainHandle]),
-    broadcastPermissionMode: () => {},
-    remove: () => Promise.resolve(),
-  };
-  const ctx = createTestAgent(options, sessionService(IAgentLifecycleService, lifecycleStub));
+async function bootCronContext(options: TestAgentOptions = {}): Promise<TestAgentContext> {
+  const ctx = createTestAgent(options);
   ctx.kimiConfig = {
     ...ctx.kimiConfig,
     cron: { debug: false, noJitter: true, noStale: false, disabled: false, manualTick: true },
   };
-  const accessor = {
-    get: <T,>(id: ServiceIdentifier<T>): T => ctx.get(id),
-  };
-  mainHandle = { id: 'main', kind: LifecycleScope.Agent, accessor, dispose: () => {} };
-  onDidCreateScope.fire({ context: mainAgent, handle: mainHandle });
-  return { ctx, onDidCreateScope };
+  return ctx;
 }
 
 describe('session cron wire persistence', () => {
@@ -61,28 +25,27 @@ describe('session cron wire persistence', () => {
     const persistence = new InMemoryWireRecordPersistence();
     const first = await bootCronContext({ persistence });
     try {
-      await first.ctx.restorePersisted();
+      await first.restorePersisted();
 
-      const cron = first.ctx.get(ISessionCronService);
+      const cron = first.resolve(AgentCron);
       const task = cron.addTask({ cron: '0 9 * * *', prompt: 'wire me', recurring: true });
-      await first.ctx.dispatcher.dispatch(new CronCursor({ id: task.id, lastFiredAt: 1234 }));
-      await first.ctx.dispatcher.flush();
+      await first.dispatcher.dispatch(new CronCursor({ id: task.id, lastFiredAt: 1234 }));
+      await first.dispatcher.flush();
 
       const types = persistence.records.map((record) => record.type);
       expect(types).toContain('cron.add');
       expect(types).toContain('cron.cursor');
     } finally {
-      await first.ctx.dispose();
-      first.onDidCreateScope.dispose();
+      await first.dispose();
     }
 
     const second = await bootCronContext({
       persistence: new InMemoryWireRecordPersistence(persistence.records),
     });
     try {
-      await second.ctx.restorePersisted();
+      await second.restorePersisted();
 
-      const resumed = second.ctx.get(ISessionCronService);
+      const resumed = second.resolve(AgentCron);
       const rebuilt = resumed.list();
       expect(rebuilt).toHaveLength(1);
       expect(rebuilt[0]).toMatchObject({
@@ -92,8 +55,7 @@ describe('session cron wire persistence', () => {
         lastFiredAt: 1234,
       });
     } finally {
-      await second.ctx.dispose();
-      second.onDidCreateScope.dispose();
+      await second.dispose();
     }
   });
 
@@ -101,33 +63,57 @@ describe('session cron wire persistence', () => {
     const persistence = new InMemoryWireRecordPersistence();
     const first = await bootCronContext({ persistence });
     try {
-      await first.ctx.restorePersisted();
+      await first.restorePersisted();
 
-      const cron = first.ctx.get(ISessionCronService);
+      const cron = first.resolve(AgentCron);
       const kept = cron.addTask({ cron: '0 9 * * *', prompt: 'keep', recurring: true });
       const dropped = cron.addTask({ cron: '0 10 * * *', prompt: 'drop', recurring: true });
       cron.removeTasks([dropped.id]);
-      await first.ctx.dispatcher.flush();
+      await first.dispatcher.flush();
 
       const types = persistence.records.map((record) => record.type);
       expect(types).toContain('cron.delete');
       expect(kept.id).not.toBe(dropped.id);
     } finally {
-      await first.ctx.dispose();
-      first.onDidCreateScope.dispose();
+      await first.dispose();
     }
 
     const second = await bootCronContext({
       persistence: new InMemoryWireRecordPersistence(persistence.records),
     });
     try {
-      await second.ctx.restorePersisted();
+      await second.restorePersisted();
 
-      const resumed = second.ctx.get(ISessionCronService);
+      const resumed = second.resolve(AgentCron);
       expect(resumed.list().map((task) => task.prompt)).toEqual(['keep']);
     } finally {
-      await second.ctx.dispose();
-      second.onDidCreateScope.dispose();
+      await second.dispose();
+    }
+  });
+
+  it('activates effects once after restore and cleans them up on close', async () => {
+    const ctx = await bootCronContext();
+    const registry = ctx.get(IAgentToolRegistryService);
+    let disposed = false;
+    try {
+      expect(registry.listReferences().filter((tool) => tool.name.startsWith('Cron'))).toEqual([
+        { name: 'CronCreate', source: 'builtin' },
+        { name: 'CronDelete', source: 'builtin' },
+        { name: 'CronList', source: 'builtin' },
+      ]);
+      await expect(ctx.resolve(AgentCron).tick()).rejects.toThrow('not restored');
+
+      await ctx.restorePersisted();
+      void ctx.restoreRuntimes();
+
+      await expect(ctx.resolve(AgentCron).tick()).resolves.toBeUndefined();
+
+      await ctx.dispose();
+      disposed = true;
+
+      expect(() => ctx.resolve(AgentCron)).toThrow();
+    } finally {
+      if (!disposed) await ctx.dispose();
     }
   });
 });

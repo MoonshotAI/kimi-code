@@ -19,6 +19,7 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  AgentCron,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
@@ -30,12 +31,12 @@ import {
   IConfigService,
   IEventBus,
   IOAuthToolkit,
-  ISessionCronService,
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
+  agentContextOf,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
@@ -356,7 +357,8 @@ async function resolveNativeSession(
       throw new Error(`Session "${opts.session}" was created under a different directory.`);
     }
     const session = await resumeById(opts.session);
-    const agent = await ensureMainAgent(session);
+    const agentContext = await ensureMainAgent(session);
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
     const profile = agent.accessor.get(IAgentProfileService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
@@ -375,7 +377,8 @@ async function resolveNativeSession(
     const previous = page.items.find((summary) => summary.cwd === workDir);
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
-      const agent = await ensureMainAgent(session);
+      const agentContext = await ensureMainAgent(session);
+      const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
       const profile = agent.accessor.get(IAgentProfileService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
@@ -400,7 +403,8 @@ async function resolveNativeSession(
       model,
     },
   });
-  const agent = await ensureMainAgent(session);
+  const agentContext = await ensureMainAgent(session);
+  const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,
@@ -466,7 +470,9 @@ async function runNativeTurn(
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = agent.accessor.get(IAgentGoalService);
-      const cronService = session.accessor.get(ISessionCronService);
+      const cronService = session.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentCron);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -821,7 +827,10 @@ function formatTurnEndingFailure(ending: PrintTurnEnding): string {
 
 function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   let count = 0;
-  for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+  const agentLifecycle = session.accessor.get(IAgentLifecycleService);
+  for (const agent of agentLifecycle.list()) {
+    const handle = agentLifecycle.handleOf(agent.agentId);
+    if (handle === undefined) continue;
     count += handle.accessor.get(IAgentTaskService).list(true).length;
   }
   return count;
@@ -843,7 +852,10 @@ async function drainBackgroundTasks(
     const batch: Promise<unknown>[] = [];
     const suppressions: Promise<void>[] = [];
     let activeCount = 0;
-    for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+    const agentLifecycle = session.accessor.get(IAgentLifecycleService);
+    for (const agent of agentLifecycle.list()) {
+      const handle = agentLifecycle.handleOf(agent.agentId);
+      if (handle === undefined) continue;
       const taskService = handle.accessor.get(IAgentTaskService);
       for (const task of taskService.list(true)) {
         activeCount++;

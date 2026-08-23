@@ -4,19 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Emitter, Event } from '#/_base/event';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
-import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { CronConfig } from '#/app/cron/configSection';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentLifecycleService, type AgentScopeCreatedEvent } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { AgentCron } from '#/session/cron/cronAgentRuntime';
 
-import { createTestAgent, sessionService, type TestAgentContext } from '../../harness';
-import { stubAgentContext } from '../../agent/agentContext/stubs';
+import { createTestAgent, type TestAgentContext } from '../../harness';
 
 function textOf(message: ContextMessage): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
@@ -25,39 +18,13 @@ function textOf(message: ContextMessage): string {
 describe('cron-fired steer turn context', () => {
   let ctx: TestAgentContext;
   let clockFile: string;
-  let onDidCreate: Emitter<AgentContext>;
-  let onDidCreateScope: Emitter<AgentScopeCreatedEvent>;
-  let mainHandle: IAgentScopeHandle | undefined;
 
   beforeEach(async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cron-steer-'));
     clockFile = join(dir, 'clock.txt');
     writeFileSync(clockFile, String(Date.now()));
 
-    onDidCreate = new Emitter<AgentContext>();
-    onDidCreateScope = new Emitter<AgentScopeCreatedEvent>();
-    const lifecycleStub: IAgentLifecycleService = {
-      _serviceBrand: undefined,
-      onDidCreate: onDidCreate.event,
-      onDidCreateScope: onDidCreateScope.event,
-      onDidDispose: Event.None as Event<AgentContext>,
-      create: () => Promise.reject(new Error('not supported in this test')),
-      fork: () => Promise.reject(new Error('not supported in this test')),
-      get: (context: AgentContext) => (context.agentId === 'main' ? mainHandle : undefined),
-      findAgentHandle: (agentId: string) => (agentId === 'main' ? mainHandle : undefined),
-      list: () => (mainHandle === undefined ? [] : [mainHandle]),
-      broadcastPermissionMode: () => {},
-      remove: () => Promise.resolve(),
-    };
-    ctx = createTestAgent(sessionService(IAgentLifecycleService, lifecycleStub));
-
-    const accessor = {
-      get: <T,>(id: ServiceIdentifier<T>): T => ctx.get(id),
-    };
-    mainHandle = { id: 'main', kind: LifecycleScope.Agent, accessor, dispose: () => {} };
-    const agent = stubAgentContext('main', 1);
-    onDidCreate.fire(agent);
-    onDidCreateScope.fire({ context: agent, handle: mainHandle });
+    ctx = createTestAgent();
 
     const cronConfig: CronConfig = {
       debug: false,
@@ -74,7 +41,6 @@ describe('cron-fired steer turn context', () => {
   });
 
   afterEach(async () => {
-    onDidCreate.dispose();
     await ctx.dispose();
   });
 
@@ -97,7 +63,7 @@ describe('cron-fired steer turn context', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'cron turn done' });
     writeFileSync(clockFile, String(Date.now() + 120_000));
-    await ctx.get(ISessionCronService).tick();
+    await ctx.resolve(AgentCron).tick();
     await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.llmCalls.length).toBe(3);

@@ -4,21 +4,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IEventBus } from '#/app/event/eventBus';
 import { type ApprovalRequest, ISessionApprovalService } from '#/session/approval/approval';
 import { SessionApprovalService } from '#/session/approval/approvalService';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 
-const display: ToolInputDisplay = { kind: 'command', command: 'bash' };
+import { stubInteractionManager, type InteractionManagerStub } from '../interaction/stubs';
 
-const noopEventBus: IEventBus = {
-  _serviceBrand: undefined,
-  publish: () => undefined,
-  subscribe: () => ({ dispose: () => undefined }),
-};
+const display: ToolInputDisplay = { kind: 'command', command: 'bash' };
 
 function makeRequest(id: string): ApprovalRequest {
   return { id, toolName: 'bash', action: 'run', display };
@@ -27,13 +21,15 @@ function makeRequest(id: string): ApprovalRequest {
 describe('SessionApprovalService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let interactions: InteractionManagerStub;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    interactions = stubInteractionManager();
+    disposables.add(interactions.disposables);
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IEventBus, noopEventBus);
+    ix.stub(IAgentLifecycleService, interactions.manager);
     ix.set(ISessionStateService, new SessionStateService());
-    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
     ix.set(ISessionApprovalService, new SyncDescriptor(SessionApprovalService));
   });
   afterEach(() => disposables.dispose());
@@ -64,7 +60,7 @@ describe('SessionApprovalService', () => {
 
   it('mints distinct interaction ids when the provider reuses a toolCallId within one step', async () => {
     const svc = ix.get(ISessionApprovalService);
-    const interaction = ix.get(ISessionInteractionService);
+    const interaction = interactions.runtimeOf('main');
     const req = (): ApprovalRequest => ({
       toolCallId: 'Bash_0',
       toolName: 'bash',
@@ -92,7 +88,7 @@ describe('SessionApprovalService', () => {
 
   it('a toolCallId repeated across steps still gets a fresh id after the first request resolved', async () => {
     const svc = ix.get(ISessionApprovalService);
-    const interaction = ix.get(ISessionInteractionService);
+    const interaction = interactions.runtimeOf('main');
     const req = (): ApprovalRequest => ({
       toolCallId: 'Bash_0',
       toolName: 'bash',

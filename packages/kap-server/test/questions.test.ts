@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   ISessionQuestionService,
+  ensureMainAgent,
   getLiveSessionById,
   type QuestionRequest,
   type QuestionResult,
@@ -119,6 +120,9 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       metadata: { cwd: home as string },
     });
     expect(body.code).toBe(0);
+    const handle = getLiveSessionById(server!.core.accessor, body.data.id);
+    expect(handle).toBeDefined();
+    await ensureMainAgent(handle!);
     return body.data.id;
   }
 

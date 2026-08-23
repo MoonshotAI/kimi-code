@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  enqueueSessionInteraction,
+  listSessionPendingInteractions,
+  requestSessionInteraction,
+  respondSessionInteraction,
+} from '#/session/interaction/sessionInteractions';
 
 import {
   type QuestionRequest,
@@ -14,11 +20,11 @@ import {
 export class SessionQuestionService implements ISessionQuestionService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@ISessionInteractionService private readonly interaction: ISessionInteractionService) {}
+  constructor(@IAgentLifecycleService private readonly agents: IAgentLifecycleService) {}
 
   request(req: QuestionRequest, options?: { signal?: AbortSignal; agentId?: string }): Promise<QuestionResult> {
     const id = requestId(req);
-    const pending = this.interaction.request<QuestionRequest, QuestionResult>({
+    const pending = requestSessionInteraction<QuestionRequest, QuestionResult>(this.agents, {
       id,
       kind: 'question',
       payload: req,
@@ -44,7 +50,7 @@ export class SessionQuestionService implements ISessionQuestionService {
 
   enqueue(req: QuestionRequest): QuestionRequest & { readonly id: string } {
     const id = requestId(req);
-    this.interaction.enqueue<QuestionRequest>({
+    enqueueSessionInteraction<QuestionRequest>(this.agents, {
       id,
       kind: 'question',
       payload: req,
@@ -54,16 +60,15 @@ export class SessionQuestionService implements ISessionQuestionService {
   }
 
   answer(id: string, result: QuestionResult): void {
-    this.interaction.respond(id, result);
+    respondSessionInteraction(this.agents, id, result);
   }
 
   dismiss(id: string): void {
-    this.interaction.respond(id, null);
+    respondSessionInteraction(this.agents, id, null);
   }
 
   listPending(): readonly QuestionRequest[] {
-    return this.interaction
-      .listPending('question')
+    return listSessionPendingInteractions(this.agents, 'question')
       .map((i) => ({ ...(i.payload as QuestionRequest), id: i.id }));
   }
 }

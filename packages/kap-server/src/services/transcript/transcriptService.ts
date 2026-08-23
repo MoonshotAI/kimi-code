@@ -384,7 +384,7 @@ export class TranscriptService {
     const agent =
       session === undefined
         ? undefined
-        : session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
+        : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
     const status = agent?.accessor.get(IAgentLoopService).status();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
     const ordinal = status.activeTurnId;

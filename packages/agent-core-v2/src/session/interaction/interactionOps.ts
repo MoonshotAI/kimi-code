@@ -2,7 +2,6 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { defineState } from '#/state/state';
 
 import type { InteractionKind } from './interaction';
 
@@ -59,23 +58,3 @@ export interface InteractionResolvedEvent {
   readonly id: string;
   readonly response: unknown;
 }
-
-export const interactionKey = defineState(
-  'interaction',
-  (): InteractionModelState => new Map(),
-).replayable({ schema: z.custom<InteractionModelState>() })
-  .on(InteractionRequestEvent, (s, e) => {
-    s.set(e.id, {
-      id: e.id,
-      kind: e.kind,
-      toolCallId: e.toolCallId,
-      agentId: e.agentId,
-      request: e.request,
-      resolved: false,
-    });
-  })
-  .on(InteractionResolvedEvent, (s, e) => {
-    const existing = s.get(e.id);
-    if (existing === undefined) return;
-    s.set(e.id, { ...existing, resolved: true, response: e.response });
-  });

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
@@ -21,7 +23,7 @@ import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryCon
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
+import { AgentTodo } from '#/session/todo/todoAgentRuntime';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
@@ -239,6 +241,14 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
+    const manager = ctx.get(IAgentLifecycleService);
+    const agent = ctx.get(IAgentScopeContext).agentContext;
+    expect(manager.inspect(agent).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
+      id: 'todo',
+      status: 'materialized',
+      state: [],
+      error: undefined,
+    });
     ctx.appendTurnExchange('u1', 'a1');
     await ctx.dispatcher.dispatch(
       new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
@@ -250,7 +260,7 @@ describe('AgentConversationUndoService', () => {
 
     await undo.undo(1);
 
-    expect(ctx.readModel(TodoAgentModelDefinition, (model) => model.items())).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.resolve(AgentTodo).get()).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {

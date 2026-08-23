@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 17 keys · Agent: 95 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 93 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -37,14 +37,6 @@
 //     workspaceSkillCatalog.merged         src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
 //     workspaceTrust.trusted               src/workspace/workspaceTrust/workspaceTrustService.ts
 //   Session
-//     cron.inFlight                      src/session/cron/sessionCronServiceImpl.ts
-//     cron.lastSeenAt                    src/session/cron/sessionCronServiceImpl.ts
-//     cron.parsedCache                   src/session/cron/sessionCronServiceImpl.ts
-//     cron.seededFromStore               src/session/cron/sessionCronServiceImpl.ts
-//     cron.started                       src/session/cron/sessionCronServiceImpl.ts
-//     interaction.nextId                 src/session/interaction/interactionService.ts
-//     interaction.pending                src/session/interaction/interactionService.ts
-//     interaction.recentlyResolved       src/session/interaction/interactionService.ts
 //     sessionActivity.current            src/session/sessionActivity/sessionActivityService.ts
 //     sessionActivity.folds              src/session/sessionActivity/sessionActivityService.ts
 //     sessionLog.rootLevel               src/session/sessionLog/sessionLogService.ts
@@ -66,7 +58,6 @@
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
-//     cron                                            src/session/cron/cronOps.ts
 //     dateChange.seed                                 src/features/dateChange/dateChangeService.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
@@ -89,7 +80,6 @@
 //     goal.pendingContinuationGoals                   src/features/goal/goalService.ts
 //     goal.resumeContinuation                         src/features/goal/goalService.ts
 //     goalForkNotice                                  src/features/goal/goalOps.ts
-//     interaction                                     src/session/interaction/interactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
@@ -424,42 +414,11 @@ export type WorkspaceStateKey = keyof WorkspaceStateSnapshot;
 
 /** Session-scope keys registered into ISessionStateService. */
 export interface SessionStateSnapshot {
-  // src/session/cron/sessionCronServiceImpl.ts
-  'cron.inFlight': Set<string>;
-  'cron.lastSeenAt': Map<string, number>;
-  'cron.parsedCache': Map<string, /* ParsedCronExpression — packages/agent-core-v2/src/app/cron/cron-expr.ts */ {
-    readonly raw: string;
-    readonly minutes: ReadonlySet<number>;
-    readonly hours: ReadonlySet<number>;
-    readonly daysOfMonth: ReadonlySet<number>;
-    readonly months: ReadonlySet<number>;
-    readonly daysOfWeek: ReadonlySet<number>;
-    readonly daysOfMonthWildcard: boolean;
-    readonly daysOfWeekWildcard: boolean;
-  }>;
-  'cron.seededFromStore': Set<string>;
-  'cron.started': boolean;
-  // src/session/interaction/interactionService.ts
-  'interaction.nextId': number;
-  'interaction.pending': Map<string, /* Pending — packages/agent-core-v2/src/session/interaction/interactionService.ts */ {
-    readonly interaction: {
-      readonly id: string;
-      readonly kind: /* InteractionKind — packages/agent-core-v2/src/session/interaction/interaction.ts */ 'approval' | 'question' | 'user_tool';
-      readonly payload: unknown;
-      readonly origin: /* InteractionOrigin — packages/agent-core-v2/src/session/interaction/interaction.ts */ {
-        readonly agentId?: string;
-        readonly turnId?: number;
-      };
-      readonly createdAt: number;
-    };
-    readonly resolve: (response: unknown) => void;
-  }>;
-  'interaction.recentlyResolved': Map<string, number>;
   // src/session/sessionActivity/sessionActivityService.ts
   'sessionActivity.current': /* SessionActivityState — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ {
     readonly busy: boolean;
     readonly mainTurnActive: boolean;
-    readonly pendingInteraction: /* SessionPendingInteraction — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ 'approval' | 'question' | 'none';
+    readonly pendingInteraction: /* SessionPendingInteraction — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ 'none' | 'approval' | 'question';
     readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   };
   'sessionActivity.folds': Map<string, /* AgentWorkFold — packages/agent-core-v2/src/session/sessionActivity/sessionActivityService.ts */ {
@@ -1371,13 +1330,10 @@ export interface AgentStateSnapshot {
   'stepRetry.lastFailedDriverId': string | undefined;
   // src/agent/task/taskOps.ts
   // replayable · durable — folds: TaskStarted, TaskTerminated
-  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
-    readonly kind: 'agent';
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly parentToolCallId?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
+  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
+    readonly kind: 'question';
+    readonly questionCount: number;
+    readonly toolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1387,10 +1343,13 @@ export interface AgentStateSnapshot {
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
-  } | /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
-    readonly kind: 'question';
-    readonly questionCount: number;
-    readonly toolCallId?: string;
+  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
+    readonly kind: 'agent';
+    readonly agentId?: string;
+    readonly subagentType?: string;
+    readonly parentToolCallId?: string;
+    readonly model?: string;
+    readonly thinkingEffort?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1418,13 +1377,10 @@ export interface AgentStateSnapshot {
   // src/agent/task/taskService.ts
   'task.activeTaskReminderPending': boolean;
   'task.deliveredNotificationKeys': Set<string>;
-  'task.ghosts': Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
-    readonly kind: 'agent';
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly parentToolCallId?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
+  'task.ghosts': Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
+    readonly kind: 'question';
+    readonly questionCount: number;
+    readonly toolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1434,10 +1390,13 @@ export interface AgentStateSnapshot {
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
-  } | /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
-    readonly kind: 'question';
-    readonly questionCount: number;
-    readonly toolCallId?: string;
+  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
+    readonly kind: 'agent';
+    readonly agentId?: string;
+    readonly subagentType?: string;
+    readonly parentToolCallId?: string;
+    readonly model?: string;
+    readonly thinkingEffort?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1554,28 +1513,6 @@ export interface AgentStateSnapshot {
   'tower': boolean;
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower.owner': string | undefined;
-  // src/session/cron/cronOps.ts
-  // replayable · durable — folds: CronAdd, CronDelete, CronCursor
-  'cron': /* CronModelState — packages/agent-core-v2/src/session/cron/cronOps.ts */ Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
-    readonly id: string;
-    readonly cron: string;
-    readonly prompt: string;
-    readonly createdAt: number;
-    readonly recurring?: boolean;
-    readonly lastFiredAt?: number;
-    readonly tags?: Readonly<Record<string, string>>;
-  }>;
-  // src/session/interaction/interactionOps.ts
-  // replayable · durable — folds: InteractionRequestEvent, InteractionResolvedEvent
-  'interaction': /* InteractionModelState — packages/agent-core-v2/src/session/interaction/interactionOps.ts */ Map<string, /* InteractionRecord — packages/agent-core-v2/src/session/interaction/interactionOps.ts */ {
-    readonly id: string;
-    readonly kind: /* InteractionKind — packages/agent-core-v2/src/session/interaction/interaction.ts */ 'approval' | 'question' | 'user_tool';
-    readonly toolCallId?: string;
-    readonly agentId: string;
-    readonly request: unknown;
-    readonly resolved: boolean;
-    readonly response?: unknown;
-  }>;
 }
 
 export type AgentStateKey = keyof AgentStateSnapshot;

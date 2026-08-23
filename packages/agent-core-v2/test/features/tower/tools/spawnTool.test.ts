@@ -101,26 +101,7 @@ describe('TowerSpawnTool', () => {
     secondaryFlagOn = false;
     secondaryModel = undefined;
     createdSetMode = vi.fn();
-    createAgent = vi.fn(
-      async () =>
-        ({
-          id: 'agent-7',
-          accessor: {
-            get: (id: unknown) => {
-              if (id === (IAgentPermissionModeService as unknown)) {
-                return { setMode: createdSetMode };
-              }
-              if (id === (IAgentScopeContext as unknown)) {
-                return {
-                  agentId: 'agent-7',
-                  agentContext: stubAgentContext('agent-7', 1),
-                };
-              }
-              return undefined;
-            },
-          },
-        }) as never,
-    );
+    createAgent = vi.fn(async () => stubAgentContext('agent-7', 1));
     runAgent = vi.fn(
       async (agent: AgentContext) =>
         ({
@@ -147,6 +128,23 @@ describe('TowerSpawnTool', () => {
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
     ix.stub(IAgentScopeContext, { agentId: 'main', scope: (subKey?: string) => subKey ?? '' });
+    const createdHandle = {
+      id: 'agent-7',
+      accessor: {
+        get: (id: unknown) => {
+          if (id === (IAgentPermissionModeService as unknown)) {
+            return { setMode: createdSetMode };
+          }
+          if (id === (IAgentScopeContext as unknown)) {
+            return {
+              agentId: 'agent-7',
+              agentContext: stubAgentContext('agent-7', 1),
+            };
+          }
+          return undefined;
+        },
+      },
+    } as never;
     const mainHandle = {
       id: 'main',
       accessor: {
@@ -154,14 +152,16 @@ describe('TowerSpawnTool', () => {
           id === (IEventBus as unknown)
             ? ix.get(IEventBus)
             : id === (IAgentLifecycleService as unknown)
-              ? { list: () => [], findAgentHandle: () => undefined }
+              ? { list: () => [], handleOf: () => undefined }
               : undefined,
       },
     } as never;
     ix.stub(IAgentLifecycleService, {
-      get: (context: AgentContext) => (context.agentId === 'main' ? mainHandle : undefined),
-      findAgentHandle: (agentId: string) => (agentId === 'main' ? mainHandle : undefined),
-      list: () => [mainHandle],
+      handleOf: (agentId: string) => {
+        if (agentId === 'main') return mainHandle;
+        if (agentId === 'agent-7') return createdHandle;
+        return undefined;
+      },
       create: createAgent,
     } as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);

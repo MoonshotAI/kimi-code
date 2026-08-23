@@ -21,7 +21,6 @@ import type {
   RuntimeLease,
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { IFlagService } from '#/app/flag/flag';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
@@ -34,7 +33,6 @@ import {
 
 import {
   appService,
-  sessionService,
   sessionServices,
   testAgent,
   type TestAgentContext,
@@ -130,7 +128,6 @@ describe('fork subagent first-request parity', () => {
     ctx = testAgent(
       appService(IAppendLogStore, store),
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
-      sessionService(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService)),
       sessionServices((reg) => {
         reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
@@ -140,8 +137,9 @@ describe('fork subagent first-request parity', () => {
       }),
     );
 
-    const lifecycle = ctx.get(IAgentLifecycleService);
-    const parent = await lifecycle.create({ agentId: 'parent' });
+    const agentLifecycle = ctx.get(IAgentLifecycleService);
+    const parentContext = await agentLifecycle.create({ agentId: 'parent' });
+    const parent = agentLifecycle.handleOf(parentContext.agentId)!;
     const profile = parent.accessor.get(IAgentProfileService);
     profile.update({
       modelAlias: 'mock-model',
@@ -202,10 +200,10 @@ describe('fork subagent first-request parity', () => {
     expect(parentFollowup.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(parentFollowup.history[parentReq.history.length]).toEqual(tail[0]);
 
-    const childId = lifecycle
+    const childId = agentLifecycle
       .list()
-      .map((agent) => agent.id)
-      .find((id) => id !== 'parent');
+      .map((agent) => agent.agentId)
+      .find((id) => id !== 'parent' && id !== 'main');
     expect(childId).toBeDefined();
     const scopeOf = (agentId: string) =>
       `sessions/test-workspace/test-session/agents/${agentId}`;

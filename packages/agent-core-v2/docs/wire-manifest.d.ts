@@ -31,9 +31,9 @@
 //   context.apply_compaction           contextMemory, plan, task.notificationDelivery                  src/agent/contextMemory/contextEvents.ts
 //   context.clear                      contextMemory, plan, task.notificationDelivery                  src/agent/contextMemory/contextEvents.ts
 //   context.undo                       contextMemory, plan, task.notificationDelivery                  src/agent/contextMemory/contextEvents.ts
-//   cron.add                           cron                                                            src/session/cron/cronOps.ts
-//   cron.cursor                        cron                                                            src/session/cron/cronOps.ts
-//   cron.delete                        cron                                                            src/session/cron/cronOps.ts
+//   cron.add                           (none)                                                          src/session/cron/cronOps.ts
+//   cron.cursor                        (none)                                                          src/session/cron/cronOps.ts
+//   cron.delete                        (none)                                                          src/session/cron/cronOps.ts
 //   forked                             goal, goalForkNotice                                            src/features/goal/goalOps.ts
 //   full_compaction.begin              fullCompaction                                                  src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                                  src/agent/fullCompaction/compactionOps.ts
@@ -41,8 +41,8 @@
 //   goal.clear                         goal, goalForkNotice                                            src/features/goal/goalOps.ts
 //   goal.create                        goal, goalForkNotice                                            src/features/goal/goalOps.ts
 //   goal.update                        goal                                                            src/features/goal/goalOps.ts
-//   interaction.request                interaction                                                     src/session/interaction/interactionOps.ts
-//   interaction.resolved               interaction                                                     src/session/interaction/interactionOps.ts
+//   interaction.request                (none)                                                          src/session/interaction/interactionOps.ts
+//   interaction.resolved               (none)                                                          src/session/interaction/interactionOps.ts
 //   interruptionReminder.recorded      interruptionReminder                                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //   llm.request                        llm.requestTrace                                                src/agent/llmRequester/llmRequestOps.ts
 //   llm.tools_snapshot                 llm.requestTrace                                                src/agent/llmRequester/llmRequestOps.ts
@@ -179,7 +179,7 @@ interface ContextUndoPayload {
 }
 
 /**
- * states: cron
+ * states: (none)
  * owner: src/session/cron/cronOps.ts
  */
 interface CronAddPayload {
@@ -196,7 +196,7 @@ interface CronAddPayload {
 }
 
 /**
- * states: cron
+ * states: (none)
  * owner: src/session/cron/cronOps.ts
  */
 interface CronCursorPayload {
@@ -206,7 +206,7 @@ interface CronCursorPayload {
 }
 
 /**
- * states: cron
+ * states: (none)
  * owner: src/session/cron/cronOps.ts
  */
 interface CronDeletePayload {
@@ -305,7 +305,7 @@ interface GoalUpdatePayload {
 }
 
 /**
- * states: interaction
+ * states: (none)
  * owner: src/session/interaction/interactionOps.ts
  */
 interface InteractionRequestPayload {
@@ -318,7 +318,7 @@ interface InteractionRequestPayload {
 }
 
 /**
- * states: interaction
+ * states: (none)
  * owner: src/session/interaction/interactionOps.ts
  */
 interface InteractionResolvedPayload {

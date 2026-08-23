@@ -109,7 +109,22 @@ export * from '#/state/errors';
 export * from '#/state/state';
 export * from '#/state/stateContribution';
 export * from '#/state/agentModel';
-export * from '#/state/agentEffect';
+export {
+  AgentRuntimeContributionPoint,
+  AgentRuntimeOverrideContributionPoint,
+  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
+} from '#/agent/runtime/agentRuntime';
+export type {
+  AgentRuntimeContributionSnapshot,
+  AgentRuntimeDefinition,
+  AgentRuntimeIdentity,
+  AgentRuntimeProvider,
+  AgentRuntimeSnapshot,
+  AgentRuntimeStatus,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 export * from '#/state/eventDispatcher';
 import '#/state/eventDispatcherService';
 export * from '#/_base/state/stateRegistry';
@@ -428,8 +443,9 @@ export * from '#/app/cron/format';
 export * from '#/app/cron/jitter';
 export * from '#/app/cron/clock';
 export * from '#/app/cron/configSection';
-export * from '#/session/cron/sessionCronService';
-export * from '#/session/cron/sessionCronServiceImpl';
+export * from '#/session/cron/cronAgentRuntime';
+export * from '#/session/cron/cronOps';
+import '#/features/cron/cronFeature';
 export * from '#/agent/tools/cron/cron-create/cron-create';
 import '#/agent/tools/cron/cron-create/cronCreateTool';
 export * from '#/agent/tools/cron/cron-list/cron-list';
@@ -489,8 +505,10 @@ export * from '#/app/sessionExport/zip';
 export * from '#/app/sessionLegacy/sessionLegacy';
 export * from '#/app/sessionLegacy/sessionLegacyService';
 export * from '#/session/interaction/interaction';
+export * from '#/session/interaction/interactionAgentRuntime';
 export * from '#/session/interaction/interactionOps';
-export * from '#/session/interaction/interactionService';
+export * from '#/session/interaction/sessionInteractions';
+import '#/features/interaction/interactionFeature';
 export * from '#/session/sessionContext/sessionContext';
 
 import '#/session/approval/approval';
@@ -715,10 +733,7 @@ export * from '#/features/sessionInit/profile/init';
 import '#/features/sessionInit/sessionInitFeature';
 export * from '#/session/todo/todoItem';
 export * from '#/session/todo/todoListReminder';
-export * from '#/session/todo/sessionTodo';
-export * from '#/session/todo/todoAgentModel';
-export * from '#/session/todo/todoAgentEffect';
-export * from '#/session/todo/sessionTodoService';
+export * from '#/session/todo/todoAgentRuntime';
 export * from '#/agent/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
 export * from '#/tool/toolContract';

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { IAgentScopeHandle } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -29,7 +29,6 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -62,7 +61,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @ITowerRateLimitService private readonly rateLimit: ITowerRateLimitService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -273,15 +272,15 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     controller: AbortController,
     binding: SubagentBinding | undefined,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.findAgentHandle(this.callerAgentId);
+    const requester = this.agentLifecycle.handleOf(this.callerAgentId);
     if (requester === undefined) {
       throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
     }
 
-    let created: IAgentScopeHandle;
+    let createdContext: AgentContext;
     try {
       if (binding !== undefined) this.modelCatalog.get(binding.model);
-      created = await this.lifecycle.create({
+      createdContext = await this.agentLifecycle.create({
         binding: {
           profile: TOWER_WORKER_PROFILE,
           model: binding?.model,
@@ -294,8 +293,9 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         ? error
         : wrapSubagentModelError(error, binding.model, this.profile.data().modelAlias);
     }
+    const created = this.agentLifecycle.handleOf(createdContext.agentId)!;
     created.accessor.get(IAgentPermissionModeService).setMode('auto');
-    const agentId = created.id;
+    const agentId = createdContext.agentId;
 
     emitAgentRunSpawned(requester, agentId, {
       profileName: TOWER_WORKER_PROFILE,
@@ -305,7 +305,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     });
 
     const run = await this.subagents.run(
-      agentContextOf(created),
+      createdContext,
       { kind: 'prompt', prompt },
       { signal: controller.signal },
     );

@@ -1,29 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
-import { type ISessionTodoService } from '#/session/todo/sessionTodo';
-import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { TodoRuntime } from '#/session/todo/todoAgentRuntime';
+import { TODO_LIST_TOOL_NAME, type TodoItem } from '#/session/todo/todoItem';
 import { TodoListInputSchema } from '#/agent/tools/todo-list/todo-list';
 import { TodoListTool } from '#/agent/tools/todo-list/todoListTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+type TodoApi = Pick<TodoRuntime, 'get' | 'replace' | 'clear' | 'onDidChange'>;
 
-function makeTodoService(initial: readonly TodoItem[] = []): {
-  readonly service: ISessionTodoService;
+function makeTodo(initial: readonly TodoItem[] = []): {
+  readonly runtime: TodoApi;
   readonly getTodos: () => readonly TodoItem[];
 } {
   let todos = [...initial];
   return {
-    service: {
-      _serviceBrand: undefined,
-      getTodos: async () => todos,
-      setTodos: async (_agent, next: readonly TodoItem[]) => {
+    runtime: {
+      get: () => todos,
+      replace: async (next) => {
         todos = next.map((todo) => ({ title: todo.title, status: todo.status }));
       },
-      clear: async () => {
-        todos = [];
-      },
+      clear: async () => { todos = []; },
       onDidChange: () => ({ dispose: () => {} }),
     },
     getTodos: () => todos,
@@ -34,9 +34,9 @@ function makeTool(initial: readonly TodoItem[] = []): {
   readonly tool: TodoListTool;
   readonly getTodos: () => readonly TodoItem[];
 } {
-  const { service, getTodos } = makeTodoService(initial);
-  const agent = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
-  return { tool: new TodoListTool(service, agent), getTodos };
+  const { runtime, getTodos } = makeTodo(initial);
+  const manager = { resolve: () => runtime } as unknown as IAgentLifecycleService;
+  return { tool: new TodoListTool(manager, scope), getTodos };
 }
 
 describe('TodoListTool', () => {
@@ -75,7 +75,7 @@ describe('TodoListTool', () => {
     expect(getTodos()).toEqual([{ title: 'existing', status: 'in_progress' }]);
   });
 
-  it('write mode replaces the list and defensively copies todos into the service', async () => {
+  it('write mode replaces the list and defensively copies todos into the runtime', async () => {
     const { tool, getTodos } = makeTool();
     const todos: TodoItem[] = [
       { title: 'first', status: 'pending' },

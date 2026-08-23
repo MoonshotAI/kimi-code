@@ -567,7 +567,8 @@ export function defineKlientConformance(
       });
       const session = getLiveSessionById(target.app.accessor, created.id);
       if (session === undefined) throw new Error('conformance session was not materialized');
-      const main = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      const main = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
       const reservation = reservePrompt(main.accessor.get(IAgentPromptService), 'submission-1');
       try {
         await expect(

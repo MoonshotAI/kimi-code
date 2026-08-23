@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import * as AgentCore from '#/index';
 import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
@@ -29,12 +30,10 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -101,6 +100,18 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'cron.cursor',
   'token_counting.turn_recorded',
 ]);
+
+describe('package runtime exports', () => {
+  it('exports the opaque runtime contract surface without internal descriptors or hosts', () => {
+    expect(AgentCore).toHaveProperty('AgentRuntimeContributionPoint');
+    expect(AgentCore).toHaveProperty('AgentRuntimeOverrideContributionPoint');
+    expect(AgentCore).toHaveProperty('defineAgentRuntimeContract');
+    expect(AgentCore).toHaveProperty('defineAgentRuntimeProvider');
+    expect(AgentCore).not.toHaveProperty('AgentRuntimeSet');
+    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDescriptor');
+    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDefinitionId');
+  });
+});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
@@ -178,11 +189,12 @@ describe('v1 wire vocabulary', () => {
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
     const fresh = registerTestEventDispatcher(ix2);
+    const runtimes = attachTodoRuntime(ix2, fresh);
+    store.add({ dispose: () => { void runtimes.close(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    const freshAgent = ix2.get(IAgentScopeContext).agentContext;
-    expect(freshAgent.space.use(TodoAgentModelDefinition, (model) => model.items())).toEqual([
+    expect(runtimes.inspect()[0]?.state).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });

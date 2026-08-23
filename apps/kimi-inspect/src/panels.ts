@@ -31,7 +31,6 @@ import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
@@ -121,12 +120,6 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
   {
     id: String(ISessionQuestionService),
     label: 'SessionQuestionService',
-    scope: 'session',
-    fetch: (svc) => call(svc, 'listPending'),
-  },
-  {
-    id: String(ISessionInteractionService),
-    label: 'SessionInteractionService',
     scope: 'session',
     fetch: (svc) => call(svc, 'listPending'),
   },
