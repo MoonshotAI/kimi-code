@@ -24,7 +24,9 @@ import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/pro
 import type {
   PromptAborted,
   PromptCompleted,
+  PromptStarted,
   PromptSteered,
+  PromptSubmitted,
 } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
 import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
 import type { PromptQueued } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
@@ -91,6 +93,8 @@ type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
 type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
 type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
+type PromptSubmittedEvent = { readonly type: 'prompt.submitted' } & PromptSubmitted;
+type PromptStartedEvent = { readonly type: 'prompt.started' } & PromptStarted;
 type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptCompleted;
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
 type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
@@ -125,6 +129,8 @@ export type ProjectorBusEvent =
   | AgentActivityUpdatedEvent
   | PromptAcceptedEvent
   | PromptQueuedEvent
+  | PromptSubmittedEvent
+  | PromptStartedEvent
   | PromptCompletedEvent
   | PromptAbortedEvent
   | PromptSteeredEvent
@@ -139,15 +145,6 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'context.spliced' } & ContextSpliced)
   | ({ readonly type: 'error' } & AgentErrorEvent)
   | ({ readonly type: 'warning' } & WarningIssued);
-
-export interface ProjectorPromptSubmittedEvent {
-  readonly type: 'prompt.submitted';
-  readonly promptId: string;
-  readonly userMessageId: string;
-  readonly status: 'running' | 'queued' | 'blocked';
-  readonly content?: unknown;
-  readonly createdAt: string;
-}
 
 export type ProjectorFrameLookup = (
   turnId: string,
@@ -226,7 +223,7 @@ export class AgentTranscriptProjector {
     private readonly lookups?: ProjectorLookups,
   ) {}
 
-  map(event: ProjectorBusEvent | ProjectorPromptSubmittedEvent): TranscriptOperation[] {
+  map(event: ProjectorBusEvent): TranscriptOperation[] {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
@@ -284,6 +281,8 @@ export class AgentTranscriptProjector {
         return this.onPromptQueued(event);
       case 'prompt.submitted':
         return this.onPromptSubmitted(event);
+      case 'prompt.started':
+        return this.onPromptStarted(event);
       case 'prompt.completed':
         return this.onPromptCompleted(event);
       case 'prompt.aborted':
@@ -1233,13 +1232,28 @@ export class AgentTranscriptProjector {
     return [{ op: 'prompt.upsert', prompt }];
   }
 
-  private onPromptSubmitted(event: ProjectorPromptSubmittedEvent): TranscriptOperation[] {
-    const prompt = this.upsertPrompt(event.promptId, () => ({
+  private onPromptSubmitted(event: PromptSubmittedEvent): TranscriptOperation[] {
+    const prompt = this.upsertPrompt(event.promptId, (prev) => ({
       promptId: event.promptId,
-      status: event.status,
+      status: prev !== undefined && isTerminalPromptStatus(prev.status) ? prev.status : event.status,
       userMessageId: event.userMessageId,
-      content: event.content,
-      createdAt: event.createdAt,
+      content: projectPromptContentParts(event.content),
+      createdAt: prev?.createdAt ?? event.createdAt,
+      finishedAt: prev?.finishedAt,
+      steeredAt: prev?.steeredAt,
+    }));
+    return [{ op: 'prompt.upsert', prompt }];
+  }
+
+  private onPromptStarted(event: PromptStartedEvent): TranscriptOperation[] {
+    const prompt = this.upsertPrompt(event.promptId, (prev) => ({
+      promptId: event.promptId,
+      status: 'running',
+      userMessageId: prev?.userMessageId,
+      content: prev?.content,
+      createdAt: prev?.createdAt ?? new Date().toISOString(),
+      finishedAt: prev?.finishedAt,
+      steeredAt: prev?.steeredAt,
     }));
     return [{ op: 'prompt.upsert', prompt }];
   }
@@ -1343,6 +1357,10 @@ export class AgentTranscriptProjector {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function isTerminalPromptStatus(status: TranscriptPrompt['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'aborted' || status === 'blocked';
 }
 
 function epochMsToIso(value: number): string {

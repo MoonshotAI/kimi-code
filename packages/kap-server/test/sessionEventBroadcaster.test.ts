@@ -969,7 +969,7 @@ describe('SessionEventBroadcaster', () => {
     );
   });
 
-  it.each(['prompt.steered', 'prompt.queued'])(
+  it.each(['prompt.steered', 'prompt.queued', 'prompt.submitted'])(
     'projects %s content without leaking daemon refs (live + tail replay)',
     async (type) => {
       const lc = new FakeLifecycle();
@@ -981,7 +981,9 @@ describe('SessionEventBroadcaster', () => {
       const ids =
         type === 'prompt.steered'
           ? { activePromptId: 'p1', promptIds: ['p2'], steeredAt: '2026-01-01T00:00:02.000Z' }
-          : { promptId: 'p2', queueLength: 1 };
+          : type === 'prompt.submitted'
+            ? { promptId: 'p2', userMessageId: 'p2', status: 'queued', createdAt: '2026-01-01T00:00:01.000Z' }
+            : { promptId: 'p2', queueLength: 1 };
       main.bus.emit(
         agentEvent(type, {
           ...ids,

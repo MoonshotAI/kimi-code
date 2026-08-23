@@ -106,6 +106,32 @@ export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
 }
 export interface PromptQueued extends PromptQueuedPayload {}
 
+export interface PromptSubmittedPayload {
+  readonly agentId: string;
+  readonly promptId: string;
+  readonly userMessageId: string;
+  readonly status: 'running' | 'queued';
+  readonly content: ContentPart[];
+  readonly createdAt: string;
+}
+
+export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {
+  static override readonly type = 'prompt.submitted';
+  static override readonly observable = true;
+}
+export interface PromptSubmitted extends PromptSubmittedPayload {}
+
+export interface PromptStartedPayload {
+  readonly agentId: string;
+  readonly promptId: string;
+}
+
+export class PromptStarted extends AgentEvent2<PromptStartedPayload> {
+  static override readonly type = 'prompt.started';
+  static override readonly observable = true;
+}
+export interface PromptStarted extends PromptStartedPayload {}
+
 interface Deferred<T> { readonly promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void }
 interface Record extends PromptSnapshot {
   state: PromptState;
@@ -236,16 +262,15 @@ export class AgentPromptService implements IAgentPromptService {
       completion: completionDeferred.promise,
     };
     this.pending.push(record);
-    if (this.active === undefined && !this.launching) {
-      if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') {
-        this.publishQueued(record);
-        return record.handle;
-      }
-      void this.startNext();
-      await Promise.race([record.launchedDeferred.promise, record.completionDeferred.promise]);
-    } else {
+    const idle = this.active === undefined && !this.launching;
+    const queued = !idle || (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running');
+    this.publishSubmitted(record, queued ? 'queued' : 'running');
+    if (queued) {
       this.publishQueued(record);
+      return record.handle;
     }
+    void this.startNext();
+    await Promise.race([record.launchedDeferred.promise, record.completionDeferred.promise]);
     return record.handle;
   }
 
@@ -421,6 +446,7 @@ export class AgentPromptService implements IAgentPromptService {
       const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminder())).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
+      this.publishStarted(item);
       void turn.result.then((result) => this.settle(item, result));
     } catch {
       item.state = 'failed';
@@ -490,6 +516,14 @@ export class AgentPromptService implements IAgentPromptService {
   private publishQueued(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
     void this.dispatcher.dispatch(new PromptQueued({ agentId: this.scopeContext.agentId, promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
+  }
+  private publishSubmitted(record: Record, status: 'running' | 'queued'): void {
+    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
+    void this.dispatcher.dispatch(new PromptSubmitted({ agentId: this.scopeContext.agentId, promptId: record.id, userMessageId: record.userMessageId, status, content: stripBundledSkillBlocks(record.message), createdAt: record.createdAt }));
+  }
+  private publishStarted(record: Record): void {
+    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
+    void this.dispatcher.dispatch(new PromptStarted({ agentId: this.scopeContext.agentId, promptId: record.id }));
   }
   private publishAborted(promptId: string): void { void this.dispatcher.dispatch(new PromptAborted({ agentId: this.scopeContext.agentId, promptId, abortedAt: new Date().toISOString() })); }
 }
