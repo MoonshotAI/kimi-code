@@ -507,6 +507,7 @@ import '#/session/compaction/flag';
 import '#/session/compaction/configSection';
 import '#/session/substitute/flag';
 import '#/session/substitute/configSection';
+import '#/session/updateAllSessionModels/flag';
 export {
   VISUAL_MODEL_FLAG_ID,
   VISUAL_MODEL_FLAG_ENV,
@@ -537,6 +538,11 @@ export {
   SUBSTITUTE_MODEL_FLAG_ENV,
   substituteModelFlag,
 } from '#/session/substitute/flag';
+export {
+  UPDATE_ALL_SESSION_MODELS_FLAG_ID,
+  UPDATE_ALL_SESSION_MODELS_FLAG_ENV,
+  updateAllSessionModelsFlag,
+} from '#/session/updateAllSessionModels/flag';
 export {
   resolveSubstituteModel,
   resolveSubstituteModelAlias,
