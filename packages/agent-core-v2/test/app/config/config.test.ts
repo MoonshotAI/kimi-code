@@ -1,12 +1,3 @@
-/**
- * Scenario: agent-facing config projection, owner-registered sections, and env overlays.
- *
- * Exercises the public profile/config surfaces and resolves the real
- * `ConfigService` with TOML document storage while stubbing host and model
- * boundaries. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/config/config.test.ts`.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ToolCall } from '#/kosong/contract/message';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,21 +6,38 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
+import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  Error2,
+  ErrorCodes,
+  isError2,
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+  toErrorPayload,
+} from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../../harness/snapshots';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
+import { createDecorator, type ProvideHandle } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Service } from '#/_base/di/service';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { ConfigTarget, IConfigRegistry, IConfigService } from '#/app/config/config';
+import {
+  type ConfigSchema,
+  ConfigTarget,
+  IConfigRegistry,
+  IConfigService,
+  type RegisterSectionOptions,
+} from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
-import '#/app/cron/configSection';
-import type { CronConfig } from '#/app/cron/configSection';
+import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
+import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
+import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -38,9 +46,16 @@ import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+import '#/agent/tokenCounting/configSection';
+import {
+  TOKEN_COUNTING_SECTION,
+  TOKEN_COUNTING_STRATEGY_ENV,
+  type TokenCountingConfig,
+} from '#/agent/tokenCounting/configSection';
 import '#/agent/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
+  LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
@@ -49,11 +64,9 @@ import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
-  SECONDARY_MODEL_EFFORT_ENV,
-  SECONDARY_MODEL_ENV,
-  SECONDARY_MODEL_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
+import '#/app/kosongConfig/envOverlay';
 import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
@@ -66,14 +79,17 @@ import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
-  resolveSecondaryModel,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
+  SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
+  type SecondaryModelConfig,
   type SubagentConfig,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   SERVICES_SECTION,
   WEB_FETCH_API_KEY_ENV,
@@ -82,24 +98,26 @@ import {
   WEB_SEARCH_BASE_URL_ENV,
   type ServicesConfig,
 } from '#/app/auth/configSection';
-import { SECONDARY_DERIVED_MODEL_ID } from '#/app/kosongConfig/secondaryModelOverlay';
-import { type SecondaryModelConfig } from '#/app/kosongConfig/configSection';
-import '#/agent/mcp/configSection';
+import '#/app/mcpConfig/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
   McpSectionSchema,
   type McpSection,
-} from '#/agent/mcp/configSection';
+} from '#/app/mcpConfig/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubFlag } from '../flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../flag/stubs';
+
+function secondaryModelFlags(enabled = true) {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
 
 const TEST_OS_ENV = {
   osKind: 'Linux',
@@ -108,10 +126,6 @@ const TEST_OS_ENV = {
   shellName: 'bash',
   shellPath: '/bin/bash',
 } as const;
-
-function secondaryModelFlags(enabled = true) {
-  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
-}
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;
@@ -185,11 +199,11 @@ describe('Agent config', () => {
   });
 
   it('useProfile emits the rendered system prompt and active tools', async () => {
-    const resolvedProfile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'test-profile',
       systemPrompt: () => 'Profile system prompt.',
       tools: ['Read'],
-    };
+    });
 
     profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
@@ -197,19 +211,19 @@ describe('Agent config', () => {
     });
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
-      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "disallowedTools": [], "time": "<time>" }
-      [emit] agent.status.updated     { "model": "mock-model", "maxContextTokens": 1000000 }
-      [wire] tools.set_active_tools   { "names": [ "Read" ], "time": "<time>" }
+      [wire] config.update            { "agentId": "main", "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "environmentDisclosure": { "cwd": "<cwd>", "date": { "disclosed": false } }, "agentsMdPaths": [], "disallowedTools": [], "time": "<time>" }
+      [emit] agent.status.updated     { "time": "<time>", "agentId": "main", "model": "mock-model", "maxContextTokens": 1000000 }
+      [wire] tools.set_active_tools   { "agentId": "main", "names": [ "Read" ], "time": "<time>" }
     `);
   });
 
   it('useProfile passes additionalDirsInfo to profile system prompts', async () => {
-    const resolvedProfile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'context-profile',
       systemPrompt: (context) =>
         `Prompt with additional dirs: ${context['additionalDirsInfo'] ?? 'none'}`,
       tools: ['Read'],
-    };
+    });
 
     profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
@@ -239,11 +253,13 @@ describe('Agent config', () => {
         created_at: 1,
       },
       {
-        type: 'config.update',
+        type: 'profile.bind',
         cwd: '/restored-cwd',
         modelAlias: 'restored-model',
         profileName: 'restored-profile',
+        thinkingEffort: 'off',
         systemPrompt: 'Restored prompt.',
+        disallowedTools: [],
       },
       {
         type: 'tools.set_active_tools',
@@ -252,7 +268,6 @@ describe('Agent config', () => {
     ]);
 
     expect(profile.data()).toMatchObject({
-      cwd: '/restored-cwd',
       modelAlias: 'restored-model',
       profileName: 'restored-profile',
       systemPrompt: 'Restored prompt.',
@@ -260,7 +275,7 @@ describe('Agent config', () => {
     });
   });
 
-  it('config.update with cwd initializes builtin tools', async () => {
+  it('config.update initializes builtin tools', async () => {
     const tools = await ctx.rpc.getTools({});
 
     expect(toolNames(tools)).toEqual(
@@ -295,27 +310,30 @@ describe('Agent config', () => {
       input: [{ type: 'text', text: 'Look up before config changes' }],
     });
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
-      [wire] turn.prompt                     { "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
-      [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [emit] context.spliced                 { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
-      [wire] context.append_message          { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
-      [emit] turn.step.started               { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
-      [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] context.append_loop_event       { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
-      [wire] llm.tools_snapshot              { "hash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "tools": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false } } ], "time": "<time>" }
-      [wire] llm.request                     { "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] assistant.delta                 { "turnId": 0, "delta": "I will look it up." }
-      [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [emit] tool.call.delta                 { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"original\\"}" }
-      [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "tool_call", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] usage.record                    { "model": "mock-model", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated            { "usage": { "byModel": { "mock-model": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [emit] agent.status.updated            { "contextTokens": 26 }
-      [wire] context.append_loop_event       { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
-      [emit] permission.approval.requested   { "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "original" } }, "toolInput": { "query": "original" } }
-      [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "tool_call", "step": 1, "ending": false, "pendingApprovals": [ { "approvalId": "call_lookup", "toolCallId": "call_lookup", "since": "<time>" } ], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [emit] requestApproval                 { "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "original" } } }
+      [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "time": "<time>" }
+      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "time": "<time>" }
+      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
+      [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
+      [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
+      [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
+      [emit] turn.step.started               { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
+      [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
+      [wire] llm.tools_snapshot              { "agentId": "main", "hash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "tools": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false } } ], "time": "<time>" }
+      [wire] llm.request                     { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
+      [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up." }
+      [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"original\\"}" }
+      [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "tool_call", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] usage.record                    { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] token_counting.measured         { "agentId": "main", "length": 2, "tokens": 26, "time": "<time>" }
+      [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "contextTokens": 26 }
+      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
+      [emit] permission.approval.requested   { "time": "<time>", "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "original" } }, "toolInput": { "query": "original" } }
+      [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "tool_call", "step": 1, "ending": false, "pendingApprovals": [ { "approvalId": "<approval-1>", "toolCallId": "call_lookup", "since": "<time>" } ], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [emit] requestApproval                 { "id": "<approval-1>", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "original" } } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -340,27 +358,31 @@ describe('Agent config', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Still using the original turn config.' });
     await toolCallEvents;
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "original" } }, "time": "<time>" }
-      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_lookup", "output": "original-result" }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "original-result" } }, "time": "<time>" }
-      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
-      [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-4>", "turnId": "0", "step": 2 }, "time": "<time>" }
-      [wire] llm.tools_snapshot          { "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "tools": [], "time": "<time>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "systemPrompt": "You are a deterministic test agent.", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
-      [emit] assistant.delta             { "turnId": 0, "delta": "Still using the original turn config." }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 31, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "usage": { "byModel": { "mock-model": { "inputOther": 40, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 40, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 40, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [emit] agent.status.updated        { "contextTokens": 44 }
-      [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 31, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "Still using the original turn config." } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 31, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-      [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "original" } }, "time": "<time>" }
+      [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "original-result" }
+      [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "original-result" } }, "time": "<time>" }
+      [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 3, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<date-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "date_change", "disclosure": { "kind": "date", "renderGeneration": 2, "localDate": "<date>", "timeZone": "<time-zone>" } } } ] }
+      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<date-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "date_change", "disclosure": { "kind": "date", "renderGeneration": 2, "localDate": "<date>", "timeZone": "<time-zone>" } } }, "time": "<time>" }
+      [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
+      [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-4>", "turnId": "0", "step": 2 }, "time": "<time>" }
+      [wire] llm.tools_snapshot          { "agentId": "main", "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "tools": [], "time": "<time>" }
+      [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "systemPrompt": "You are a deterministic test agent.", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "Still using the original turn config." }
+      [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 89, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 98, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 98, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 98, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] token_counting.measured     { "agentId": "main", "length": 5, "tokens": 102, "time": "<time>" }
+      [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 102 }
+      [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 89, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
+      [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 2, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "Still using the original turn config." } }, "time": "<time>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 89, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                  { "agentId": "main", "turnId": 0, "reason": "completed", "time": "<time>" }
+      [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       tools: []
@@ -368,33 +390,39 @@ describe('Agent config', () => {
         <last>
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "original" }
         tool[call_lookup]: text "original-result"
+        user: text <date-reminder>
     `);
 
     ctx.mockNextResponse({ type: 'text', text: 'Now the changed config is active.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start a fresh turn' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [emit] agent.activity.updated      { "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [] }
-      [emit] prompt.completed            { "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
-      [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "turnId": 1, "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [emit] context.spliced             { "start": 4, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
-      [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" }, "time": "<time>" }
-      [emit] turn.step.started           { "turnId": 1, "step": 1, "stepId": "<uuid-6>" }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-6>", "turnId": "1", "step": 1 }, "time": "<time>" }
-      [wire] llm.request                 { "kind": "loop", "provider": "openai", "model": "changed-model", "modelAlias": "changed-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "7617cb8b42659214c397a1d7505fce204b673b078a10de8bcccc697d88dcda56", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 5, "turnStep": "1.1", "time": "<time>" }
-      [emit] assistant.delta             { "turnId": 1, "delta": "Now the changed config is active." }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] usage.record                { "model": "changed-model", "usage": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "usage": { "byModel": { "mock-model": { "inputOther": 40, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 }, "changed-model": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 90, "output": 42, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [emit] agent.status.updated        { "contextTokens": 62 }
-      [emit] turn.step.completed         { "turnId": 1, "step": 1, "stepId": "<uuid-6>", "usage": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-      [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
-      [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "1", "step": 1, "stepUuid": "<uuid-6>", "part": { "type": "text", "text": "Now the changed config is active." } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 50, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
-      [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
+      [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 102, "time": "<time>" }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
+      [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 102 }
+      [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
+      [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "time": "<time>" }
+      [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "time": "<time>" }
+      [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
+      [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" }, "time": "<time>" }
+      [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>" }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-6>", "turnId": "1", "step": 1 }, "time": "<time>" }
+      [wire] llm.request                    { "agentId": "main", "kind": "loop", "provider": "openai", "model": "changed-model", "modelAlias": "changed-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "7617cb8b42659214c397a1d7505fce204b673b078a10de8bcccc697d88dcda56", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 6, "turnStep": "1.1", "time": "<time>" }
+      [emit] assistant.delta                { "time": "<time>", "agentId": "main", "turnId": 1, "delta": "Now the changed config is active." }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "streaming", "stream": "assistant", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] usage.record                   { "agentId": "main", "model": "changed-model", "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 98, "output": 30, "inputCacheRead": 0, "inputCacheCreation": 0 }, "changed-model": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 206, "output": 42, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] token_counting.measured        { "agentId": "main", "length": 7, "tokens": 120, "time": "<time>" }
+      [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 120 }
+      [emit] turn.step.completed            { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>", "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
+      [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-7>", "turnId": "1", "step": 1, "stepUuid": "<uuid-6>", "part": { "type": "text", "text": "Now the changed config is active." } }, "time": "<time>" }
+      [wire] context.append_loop_event      { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-3", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
+      [wire] turn.ended                     { "agentId": "main", "turnId": 1, "reason": "completed", "time": "<time>" }
+      [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: "Changed system prompt."
@@ -425,6 +453,56 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(true);
     env['KIMI_DISABLE_CRON'] = '0';
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
+
+    disposables.dispose();
+  });
+
+  it('applies a scalar section env binding and keeps it out of the file', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = '0';
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
+
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, true);
+    delete env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'];
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
+
+    disposables.dispose();
+  });
+
+  it('keeps the file value when a scalar section env value fails to parse', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    await config.replace(BUILTIN_PRODUCT_SKILLS_SECTION, false);
+
+    for (const invalid of ['', '   ', 'maybe']) {
+      env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = invalid;
+      expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(false);
+    }
+
+    env['KIMI_CODE_BUILTIN_PRODUCT_SKILLS'] = 'on';
+    expect(config.get(BUILTIN_PRODUCT_SKILLS_SECTION)).toBe(true);
 
     disposables.dispose();
   });
@@ -473,9 +551,6 @@ describe('ConfigService env overlay (live)', () => {
   });
 
   it('deletes a scalar section on replace(undefined) — set(undefined) cannot', async () => {
-    // Contract the refresh host relies on: an explicit undefined in a refresh
-    // patch must DELETE the section. `set()` deep-merges, so an undefined
-    // scalar patch resolves back to the base value; only `replace()` deletes.
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
@@ -743,17 +818,68 @@ describe('image config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set(IMAGE_SECTION, { maxEdgePx: 1500, readByteBudget: 262144 });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<ImageConfig>(IMAGE_SECTION)).toEqual({
       maxEdgePx: 1500,
       readByteBudget: 262144,
     });
-    // …but persistence drops the env-owned field and keeps the genuine edit.
     expect(config.inspect<ImageConfig>(IMAGE_SECTION).userValue).toEqual({
       readByteBudget: 262144,
+    });
+
+    disposables.dispose();
+  });
+});
+
+describe('tokenCounting config section', () => {
+  it('registers the tokenCounting section with the mixed strategy as default', () => {
+    const registry = new ConfigRegistry();
+
+    const section = registry.getSection(TOKEN_COUNTING_SECTION);
+    expect(section).toBeDefined();
+    expect(section?.defaultValue).toEqual({ strategy: 'measured+estimated' });
+
+    expect(registry.validate(TOKEN_COUNTING_SECTION, { strategy: 'measured' })).toEqual({
+      strategy: 'measured',
+    });
+    expect(registry.validate(TOKEN_COUNTING_SECTION, { strategy: 'estimated' })).toEqual({
+      strategy: 'estimated',
+    });
+    expect(() => registry.validate(TOKEN_COUNTING_SECTION, { strategy: 'bogus' })).toThrow();
+    expect(() => registry.validate(TOKEN_COUNTING_SECTION, {})).toThrow();
+  });
+
+  it('re-applies the env override on every get() and ignores invalid values', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'measured+estimated',
+    });
+
+    env[TOKEN_COUNTING_STRATEGY_ENV] = 'bogus';
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'measured+estimated',
+    });
+
+    env[TOKEN_COUNTING_STRATEGY_ENV] = 'measured';
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'measured',
+    });
+
+    env[TOKEN_COUNTING_STRATEGY_ENV] = 'estimated';
+    expect(config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)).toEqual({
+      strategy: 'estimated',
     });
 
     disposables.dispose();
@@ -769,10 +895,10 @@ describe('loopControl config section', () => {
 
     expect(registry.validate(LOOP_CONTROL_SECTION, {})).toEqual({});
     expect(
-      registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 100, maxRetriesPerStep: 3 }),
-    ).toEqual({ maxStepsPerTurn: 100, maxRetriesPerStep: 3 });
+      registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 100, maxAttemptsPerStep: 3 }),
+    ).toEqual({ maxStepsPerTurn: 100, maxAttemptsPerStep: 3 });
     expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: -1 })).toThrow();
-    expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxRetriesPerStep: 1.5 })).toThrow();
+    expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1.5 })).toThrow();
   });
 
   it('re-applies loopControl env bindings on every get() and ignores invalid env', async () => {
@@ -791,14 +917,14 @@ describe('loopControl config section', () => {
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
-    env[LOOP_MAX_RETRIES_PER_STEP_ENV] = '-1';
+    env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '-1';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '100';
-    env[LOOP_MAX_RETRIES_PER_STEP_ENV] = '3';
+    env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '3';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 100,
-      maxRetriesPerStep: 3,
+      maxAttemptsPerStep: 3,
     });
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '50';
@@ -810,7 +936,7 @@ describe('loopControl config section', () => {
   it('restores env-owned fields to the raw value on set() while the env var is set', async () => {
     const env: Record<string, string> = {
       [LOOP_MAX_STEPS_PER_TURN_ENV]: '7',
-      [LOOP_MAX_RETRIES_PER_STEP_ENV]: '2',
+      [LOOP_MAX_ATTEMPTS_PER_STEP_ENV]: '2',
     };
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -829,20 +955,17 @@ describe('loopControl config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set(LOOP_CONTROL_SECTION, {
       maxStepsPerTurn: 7,
-      maxRetriesPerStep: 2,
+      maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 7,
-      maxRetriesPerStep: 2,
+      maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
     });
-    // …but persistence keeps the raw value and drops the env-only field.
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerTurn: 100,
       reservedContextSize: 5000,
@@ -850,7 +973,7 @@ describe('loopControl config section', () => {
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('max_steps_per_turn = 100');
     expect(onDisk).toContain('reserved_context_size = 5000');
-    expect(onDisk).not.toContain('max_retries_per_step');
+    expect(onDisk).not.toContain('max_attempts_per_step');
 
     disposables.dispose();
   });
@@ -892,7 +1015,6 @@ describe('loopControl config section', () => {
 
     await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 50 });
 
-    // The invalid env value is ignored on both the read and the write path.
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(50);
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerTurn: 50,
@@ -923,14 +1045,12 @@ describe('loopControl config section', () => {
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '7';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
 
-    // A degraded env value falls back to the file, not to the previous override.
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(100);
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '9';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(9);
 
-    // Unsetting falls back to the file as well, on both get() and getAll().
     delete env[LOOP_MAX_STEPS_PER_TURN_ENV];
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(100);
 
@@ -942,7 +1062,7 @@ describe('loopControl config section', () => {
     disposables.dispose();
   });
 
-  it('restores the env-owned field from the normalized raw base when the config uses the legacy key', async () => {
+  it('warns and ignores the deprecated max_steps_per_run key without rewriting the file', async () => {
     const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: '7' };
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -961,13 +1081,20 @@ describe('loopControl config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
-
-    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
-    // The legacy `max_steps_per_run` value is honored as the field's raw value.
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxStepsPerTurn: 7 });
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
-      maxStepsPerTurn: 100,
+      maxStepsPerRun: 100,
     });
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_steps_per_run' is deprecated and no longer used; rename it to 'max_steps_per_turn'. Run /update-config to fix it.",
+    });
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_steps_per_run = 100');
 
     disposables.dispose();
   });
@@ -1027,11 +1154,176 @@ describe('loopControl config section', () => {
       config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7, reservedContextSize: 5000 }),
     ).rejects.toThrow();
 
-    // Nothing is persisted: the invalid value stays quarantined on disk and
-    // the accompanying valid edit is not written either.
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('max_steps_per_turn = -1');
     expect(onDisk).not.toContain('reserved_context_size');
+
+    disposables.dispose();
+  });
+});
+
+describe('config deprecations', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, storage };
+  }
+
+  it('warns and ignores a deprecated TOML key whose value no longer applies', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[loop_control]\nmax_retries_per_step = 3\n',
+    );
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
+    });
+
+    disposables.dispose();
+  });
+
+  it('lets the replacement key win when both are present, still warning', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[loop_control]\nmax_retries_per_step = 3\nmax_attempts_per_step = 2\n',
+    );
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 2 });
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
+    });
+
+    disposables.dispose();
+  });
+
+  it('resolves a deprecated env var as a fallback with a warning, new var first', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '4' };
+    const { config, disposables } = await createConfig(env);
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
+    expect(config.diagnostics()).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message: `Environment variable ${LOOP_MAX_RETRIES_PER_STEP_ENV} is deprecated; use ${LOOP_MAX_ATTEMPTS_PER_STEP_ENV} instead.`,
+    });
+    env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '2';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 2 });
+
+    disposables.dispose();
+  });
+
+  it('reports no env deprecation when only the replacement var is set', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_ATTEMPTS_PER_STEP_ENV]: '4' };
+    const { config, disposables } = await createConfig(env);
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
+    expect(config.diagnostics()).toEqual([]);
+
+    disposables.dispose();
+  });
+
+  it('keeps the deprecated env warning across a no-op reload', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '4' };
+    const { config, disposables } = await createConfig(env);
+
+    const warning = {
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning' as const,
+      message: `Environment variable ${LOOP_MAX_RETRIES_PER_STEP_ENV} is deprecated; use ${LOOP_MAX_ATTEMPTS_PER_STEP_ENV} instead.`,
+    };
+    expect(config.diagnostics()).toContainEqual(warning);
+
+    await config.reload();
+
+    expect(config.diagnostics()).toContainEqual(warning);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 4 });
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned field on set() when only the deprecated env var is set', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_RETRIES_PER_STEP_ENV]: '2' };
+    const { config, disposables, storage } = await createConfig(
+      env,
+      '[loop_control]\nmax_attempts_per_step = 9\n',
+    );
+
+    await config.set(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 2, reservedContextSize: 5000 });
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxAttemptsPerStep: 2,
+      reservedContextSize: 5000,
+    });
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      maxAttemptsPerStep: 9,
+      reservedContextSize: 5000,
+    });
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_attempts_per_step = 9');
+
+    disposables.dispose();
+  });
+
+  it('emits onDidChangeDiagnostics on load and again when the warning clears', async () => {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_retries_per_step = 3\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    const emissions: Array<readonly unknown[]> = [];
+    config.onDidChangeDiagnostics((diagnostics) => {
+      emissions.push(diagnostics);
+    });
+    await config.ready;
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toContainEqual({
+      domain: LOOP_CONTROL_SECTION,
+      severity: 'warning',
+      message:
+        "[loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run /update-config to fix it.",
+    });
+
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_attempts_per_step = 3\n'),
+    );
+    await config.reload();
+
+    expect(emissions).toHaveLength(2);
+    expect(emissions[1]).toEqual([]);
+    expect(config.diagnostics()).toEqual([]);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({ maxAttemptsPerStep: 3 });
 
     disposables.dispose();
   });
@@ -1137,20 +1429,17 @@ describe('task config section', () => {
       '[background]\nmax_running_tasks = 3\n',
     );
 
-    // A client echoing the env-overlaid section back (plus a genuine edit).
     await config.set('background', {
       keepAliveOnExit: true,
       maxRunningTasks: 8,
       killGracePeriodMs: 25,
     });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<AgentTaskConfig>('background')).toEqual({
       keepAliveOnExit: true,
       maxRunningTasks: 8,
       killGracePeriodMs: 25,
     });
-    // …but persistence keeps the raw value and drops the env-only field.
     expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
       maxRunningTasks: 3,
       killGracePeriodMs: 25,
@@ -1165,7 +1454,6 @@ describe('task config section', () => {
 
     await config.set('background', { keepAliveOnExit: true });
 
-    // The invalid env value is ignored on both the read and the write path.
     expect(config.get<AgentTaskConfig>('background')?.keepAliveOnExit).toBe(true);
     expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
       keepAliveOnExit: true,
@@ -1316,7 +1604,7 @@ describe('applyPrintModeConfigDefaults', () => {
   it('keeps sibling user keys of a filled section visible', async () => {
     const { config, disposables } = await createConfig(
       {},
-      '[task]\nprint_background_mode = "drain"\n\n[loop_control]\nmax_retries_per_step = 5\n',
+      '[task]\nprint_background_mode = "drain"\n\n[loop_control]\nmax_attempts_per_step = 5\n',
     );
 
     await applyPrintModeConfigDefaults(config);
@@ -1324,7 +1612,7 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(resolvePrintBackgroundMode(config)).toBe('drain');
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toMatchObject({
-      maxRetriesPerStep: 5,
+      maxAttemptsPerStep: 5,
       maxStepsPerTurn: 0,
     });
 
@@ -1392,12 +1680,9 @@ describe('subagent config section', () => {
     const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env, '[subagent]\ntimeout_ms = 5000\n');
 
-    // A client echoing the env-overlaid section back.
     await config.set(SUBAGENT_SECTION, { timeoutMs: 7000 });
 
-    // Runtime resolution still lets the env win…
     expect(resolveSubagentTimeoutMs(config)).toBe(7000);
-    // …but persistence keeps the raw value.
     expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toEqual({
       timeoutMs: 5000,
     });
@@ -1409,9 +1694,6 @@ describe('subagent config section', () => {
     const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env);
 
-    // A client echoing the env-overlaid section back: nothing persistable
-    // remains, so the raw section is cleared instead of shadowing the default
-    // with an empty object.
     await config.set(SUBAGENT_SECTION, { timeoutMs: 7000 });
 
     expect(resolveSubagentTimeoutMs(config)).toBe(7000);
@@ -1425,77 +1707,260 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-
-    const noModel = await createConfig({});
-    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own)).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-    });
-    expect(resolveSubagentBinding(noModel.config, secondaryModelFlags(), own, 'secondary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-    });
-    noModel.disposables.dispose();
-
-    const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
-    // Pointer-only recipe: bind the pointed entry directly; thinking resolves
-    // naturally (no inheriting the caller's level).
-    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own)).toEqual({
-      model: 'provider/secondary',
-      thinking: undefined,
-    });
-    expect(resolveSubagentBinding(withModel.config, secondaryModelFlags(), own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-    });
-    withModel.disposables.dispose();
-
-    const withEffort = await createConfig(
+  it('reads default_model and [secondary_model.models] from config.toml', async () => {
+    const { config, disposables } = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = ""\n',
     );
-    // Patch fields bind the synthesized derived entry; default_effort is the
-    // explicit subagent thinking.
-    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own)).toEqual({
-      model: SECONDARY_DERIVED_MODEL_ID,
-      thinking: 'low',
-    });
-    // default_effort only applies together with the secondary model.
-    expect(resolveSubagentBinding(withEffort.config, secondaryModelFlags(), own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-    });
-    withEffort.disposables.dispose();
 
-    const withFactPatch = await createConfig(
-      {},
-      '[secondary_model]\nmodel = "provider/secondary"\nmax_output_size = 8192\n',
-    );
-    expect(resolveSubagentBinding(withFactPatch.config, secondaryModelFlags(), own)).toEqual({
-      model: SECONDARY_DERIVED_MODEL_ID,
-      thinking: undefined,
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'fast and cheap', 'provider/smart': '' },
     });
-    withFactPatch.disposables.dispose();
+
+    disposables.dispose();
   });
 
-  it('inherits the caller binding when the secondary-model experiment is disabled', async () => {
+  it('resolves the spawn binding: pool default, explicit alias, primary opt-in, inherit without pool', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+
+    const noPool = await createConfig({});
+    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    noPool.disposables.dispose();
+
+    const pool = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
+    );
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'provider/smart')).toEqual({
+      model: 'provider/smart',
+      thinking: undefined,
+    });
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    pool.disposables.dispose();
+  });
+
+  it('keeps the pool inert while the secondary-model experiment is off', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
     expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
+    expect(() =>
+      resolveSubagentBinding(config, secondaryModelFlags(false), own, 'provider/fast'),
+    ).toThrow(/no \[secondary_model\.models\] pool is configured/);
 
     disposables.dispose();
   });
 
-  it('preserves the coded error contract when adding secondary-model guidance', () => {
+  it('treats a pool-less default_model as an implicit single-entry pool', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+    );
+
+    disposables.dispose();
+  });
+
+  it('falls back to the legacy model key when no pool keys are set', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/fast',
+      defaultEffort: 'low',
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': '' },
+    });
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+    );
+
+    disposables.dispose();
+  });
+
+  it('lets default_model win over the legacy model key', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not let the legacy model key substitute for a pool table default_model', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+      '[secondary_model].default_model is required when [secondary_model.models] is configured',
+    );
+
+    disposables.dispose();
+  });
+
+  it('lets force pin the legacy model fallback when no default_model is set', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+      /Invalid model "primary": \[secondary_model\]\.force is set/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('round-trips legacy recipe patch fields the pool resolution ignores', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      model: 'provider/fast',
+      defaultEffort: 'low',
+      maxOutputSize: 8192,
+    });
+    expect(resolveSubagentModelPool(config)).toEqual({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': '' },
+    });
+
+    await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
+    const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
+    expect(after?.defaultEffort).toBe('low');
+    expect(after?.maxOutputSize).toBe(8192);
+
+    disposables.dispose();
+  });
+
+  it('binds every spawn to the forced default_model, rejecting even "primary"', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n',
+    );
+
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+      defaultModel: 'provider/fast',
+      force: true,
+    });
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+      /Invalid model "primary": \[secondary_model\]\.force is set/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('rejects force combined with a models table at spawn resolution, matching startup validation', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+      /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('rejects an alias outside the pool, listing the available models', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
+    );
+
+    let caught: unknown;
+    try {
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/typo');
+    } catch (error) {
+      caught = error;
+    }
+    expect(isError2(caught)).toBe(true);
+    expect((caught as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect((caught as Error2).message).toBe(
+      'Invalid model "provider/typo". Available models: provider/fast, provider/smart, primary.',
+    );
+
+    disposables.dispose();
+  });
+
+  it('rejects a stray model choice when no pool is configured', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig({});
+
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/fast')).toThrow(
+      /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
+    );
+
+    disposables.dispose();
+  });
+
+  it('preserves the coded error contract when adding subagent-model guidance', () => {
     const cause = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/bad" is not configured in config.toml.',
@@ -1506,13 +1971,12 @@ describe('subagent config section', () => {
 
     expect(toErrorPayload(result)).toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
-      message: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      message: expect.stringContaining('comes from [secondary_model.models]'),
       details: {
         model: 'provider/bad',
-        secondaryModel: 'provider/bad',
-        secondaryModelConfig: {
-          section: 'secondaryModel.model',
-          environment: SECONDARY_MODEL_ENV,
+        subagentModel: 'provider/bad',
+        subagentModelConfig: {
+          section: 'secondary_model.models',
         },
       },
       cause: {
@@ -1523,106 +1987,18 @@ describe('subagent config section', () => {
   });
 
   it('passes through config-invalid failures that are not a missing bound alias', () => {
-    // A malformed [models.*] entry fails without details.model.
     const malformed = new Error2(
       ErrorCodes.CONFIG_INVALID,
-      'Model "provider/secondary" must declare a wire protocol (config: models.<id>.protocol).',
+      'Model "provider/pool" must declare a wire protocol (config: models.<id>.protocol).',
     );
-    expect(wrapSubagentModelError(malformed, 'provider/secondary', 'provider/main')).toBe(malformed);
+    expect(wrapSubagentModelError(malformed, 'provider/pool', 'provider/main')).toBe(malformed);
 
-    // A missing alias that is not the bound model.
     const unrelated = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/other" is not configured in config.toml.',
       { details: { model: 'provider/other' } },
     );
-    expect(wrapSubagentModelError(unrelated, 'provider/secondary', 'provider/main')).toBe(unrelated);
-  });
-});
-
-describe('secondaryModel config section', () => {
-  async function createConfig(env: Record<string, string>, toml?: string) {
-    const disposables = new DisposableStore();
-    const ix = disposables.add(new TestInstantiationService());
-    const storage = new InMemoryStorageService();
-    if (toml !== undefined) {
-      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
-    }
-    ix.stub(ILogService, stubLog());
-    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
-    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
-    ix.set(IConfigService, new SyncDescriptor(ConfigService));
-    const config = ix.get(IConfigService);
-    await config.ready;
-    return { config, disposables };
-  }
-
-  it('reads model/default_effort from config.toml and lets the env vars win', async () => {
-    const env: Record<string, string> = {};
-    const { config, disposables } = await createConfig(
-      env,
-      '[secondary_model]\nmodel = "provider/secondary"\ndefault_effort = "low"\n',
-    );
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('low');
-
-    env[SECONDARY_MODEL_ENV] = 'provider/env-secondary';
-    env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.defaultEffort).toBe('high');
-
-    // Blank env values are ignored.
-    env[SECONDARY_MODEL_ENV] = '  ';
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/secondary');
-
-    disposables.dispose();
-  });
-
-  it('restores the env-owned model to the raw value on set() while the env var is set', async () => {
-    const env: Record<string, string> = { [SECONDARY_MODEL_ENV]: 'provider/env-secondary' };
-    const { config, disposables } = await createConfig(
-      env,
-      '[secondary_model]\nmodel = "provider/raw-secondary"\n',
-    );
-
-    // A client echoing the env-overlaid section back.
-    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/env-secondary' });
-
-    expect(resolveSecondaryModel(config, secondaryModelFlags())?.model).toBe('provider/env-secondary');
-    expect(config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue).toEqual({
-      model: 'provider/raw-secondary',
-    });
-
-    disposables.dispose();
-  });
-
-  it('propagates overlay-induced models changes to section events on runtime set', async () => {
-    const { config, disposables } = await createConfig(
-      {},
-      '[models.k2]\nprovider = "kimi"\nmodel = "kimi-k2"\n',
-    );
-    const domains: string[] = [];
-    config.onDidSectionChange((e) => domains.push(e.domain));
-
-    // Runtime set with patch fields: the derived entry appears in the
-    // effective models view AND the models section event fires — the
-    // persistence bridge re-hydrates the registry from that event.
-    await config.set(SECONDARY_MODEL_SECTION, { model: 'k2', maxOutputSize: 8192 });
-    const models = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
-    expect(models[SECONDARY_DERIVED_MODEL_ID]).toBeDefined();
-    expect(domains).toContain(SECONDARY_MODEL_SECTION);
-    expect(domains).toContain(MODELS_SECTION);
-
-    // Removing the patch retracts the derived entry and fires again.
-    domains.length = 0;
-    await config.replace(SECONDARY_MODEL_SECTION, { model: 'k2' });
-    const after = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
-    expect(after[SECONDARY_DERIVED_MODEL_ID]).toBeUndefined();
-    expect(domains).toContain(MODELS_SECTION);
-
-    disposables.dispose();
+    expect(wrapSubagentModelError(unrelated, 'provider/pool', 'provider/main')).toBe(unrelated);
   });
 });
 
@@ -1726,12 +2102,9 @@ describe('mcp config section', () => {
     const env: Record<string, string> = { [MCP_STARTUP_TIMEOUT_ENV]: '7000' };
     const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
 
-    // A client echoing the env-overlaid section back.
     await config.set(MCP_SECTION, { startupTimeoutMs: 7000 });
 
-    // Runtime resolution still lets the env win…
     expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
-    // …but persistence keeps the raw value.
     expect(config.inspect<McpSection>(MCP_SECTION).userValue).toEqual({
       startupTimeoutMs: 5000,
     });
@@ -1808,6 +2181,179 @@ describe('nested env bindings', () => {
     });
 
     disposables.dispose();
+  });
+});
+
+describe('config section collection fold (D12)', () => {
+  const RUNTIME_SECTION = 'runtimeFoldDemo';
+  const RUNTIME_NOTE_ENV = 'RUNTIME_FOLD_DEMO_NOTE';
+
+  interface RuntimeFoldDemo {
+    enabled: boolean;
+    note?: string;
+  }
+
+  const RuntimeFoldDemoSchema: ConfigSchema<RuntimeFoldDemo> = {
+    parse(value: unknown): RuntimeFoldDemo {
+      const demo = value as RuntimeFoldDemo;
+      if (typeof demo?.enabled !== 'boolean') {
+        throw new Error('runtimeFoldDemo.enabled must be a boolean');
+      }
+      return demo;
+    },
+  };
+
+  interface IRuntimeSectionContributor {
+    readonly marker: string;
+  }
+  const IRuntimeSectionContributor = createDecorator<IRuntimeSectionContributor>(
+    'test-runtime-section-contributor',
+  );
+
+  class RuntimeSectionContributor extends Service implements IRuntimeSectionContributor {
+    readonly marker = 'runtime-section-contributor';
+    constructor(contribution: ConfigSectionContribution) {
+      super();
+      this.provide(ConfigSectionContribution, contribution);
+    }
+  }
+
+  function sectionContribution<T>(
+    domain: string,
+    schema: ConfigSchema<T>,
+    options: RegisterSectionOptions<T> = {},
+  ): ConfigSectionContribution {
+    return {
+      domain,
+      schema: schema as ConfigSchema<unknown>,
+      options: options as RegisterSectionOptions<unknown>,
+    };
+  }
+
+  function provideContribution(
+    ix: TestInstantiationService,
+    contribution: ConfigSectionContribution,
+  ): ProvideHandle {
+    const handle = ix.provide(
+      IRuntimeSectionContributor,
+      new SyncDescriptor(RuntimeSectionContributor, [contribution] as never),
+    );
+    ix.invokeFunction((accessor) => accessor.get(IRuntimeSectionContributor));
+    return handle;
+  }
+
+  function setupFold(env: Record<string, string>) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    return { disposables, ix, storage };
+  }
+
+  it('activates a runtime-provided section: defaults, env bindings and validation apply', async () => {
+    const env: Record<string, string> = {};
+    const { disposables, ix } = setupFold(env);
+    const registry = ix.get(IConfigRegistry);
+    const config = ix.get(IConfigService);
+    await config.ready;
+    expect(registry.getSection(RUNTIME_SECTION)).toBeUndefined();
+
+    provideContribution(
+      ix,
+      sectionContribution(RUNTIME_SECTION, RuntimeFoldDemoSchema, {
+        defaultValue: { enabled: true },
+        env: { note: RUNTIME_NOTE_ENV },
+      }),
+    );
+
+    expect(registry.getSection(RUNTIME_SECTION)).toBeDefined();
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({ enabled: true });
+    env[RUNTIME_NOTE_ENV] = 'from-env';
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({
+      enabled: true,
+      note: 'from-env',
+    });
+    delete env[RUNTIME_NOTE_ENV];
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({ enabled: true });
+
+    await config.set(RUNTIME_SECTION, { enabled: false }, ConfigTarget.Memory);
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({ enabled: false });
+    await expect(
+      config.set(RUNTIME_SECTION, { enabled: 'nope' }, ConfigTarget.Memory),
+    ).rejects.toThrow('enabled');
+
+    disposables.dispose();
+  });
+
+  it('withdraws the section when the provider dies; TOML values survive, builtins untouched', async () => {
+    const env: Record<string, string> = {};
+    const { disposables, ix, storage } = setupFold(env);
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const registry = ix.get(IConfigRegistry);
+    const builtinSection = registry.getSection(DEFAULT_PERMISSION_MODE_SECTION);
+
+    const handle = provideContribution(
+      ix,
+      sectionContribution(RUNTIME_SECTION, RuntimeFoldDemoSchema, {
+        defaultValue: { enabled: true },
+      }),
+    );
+    await config.set(RUNTIME_SECTION, { enabled: false, note: 'kept' }, ConfigTarget.User);
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({
+      enabled: false,
+      note: 'kept',
+    });
+
+    handle.dispose();
+    await ix.cascade.whenIdle();
+
+    expect(registry.getSection(RUNTIME_SECTION)).toBeUndefined();
+    const persisted = await storage.read('', 'config.toml');
+    expect(new TextDecoder().decode(persisted)).toContain('runtime_fold_demo');
+    expect(config.get<RuntimeFoldDemo>(RUNTIME_SECTION)).toEqual({
+      enabled: false,
+      note: 'kept',
+    });
+    expect(registry.getSection(DEFAULT_PERMISSION_MODE_SECTION)).toBe(builtinSection);
+    expect(registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'auto')).toBe('auto');
+
+    disposables.dispose();
+  });
+
+  it('logs — never throws — a record colliding with a builtin section, and the builtin survives', async () => {
+    const env: Record<string, string> = {};
+    const { disposables, ix } = setupFold(env);
+    const config = ix.get(IConfigService);
+    await config.ready;
+    const registry = ix.get(IConfigRegistry);
+    const builtinSection = registry.getSection(DEFAULT_PERMISSION_MODE_SECTION);
+
+    const logged: unknown[] = [];
+    setUnexpectedErrorHandler((err) => logged.push(err));
+    try {
+      const handle = provideContribution(
+        ix,
+        sectionContribution(DEFAULT_PERMISSION_MODE_SECTION, { parse: () => 'rogue' }),
+      );
+      expect(logged).toHaveLength(1);
+      expect(String(logged[0])).toContain('already registered');
+      expect(registry.getSection(DEFAULT_PERMISSION_MODE_SECTION)).toBe(builtinSection);
+      expect(registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'auto')).toBe('auto');
+
+      handle.dispose();
+      await ix.cascade.whenIdle();
+
+      expect(registry.getSection(DEFAULT_PERMISSION_MODE_SECTION)).toBe(builtinSection);
+    } finally {
+      resetUnexpectedErrorHandler();
+      disposables.dispose();
+    }
   });
 });
 
@@ -1893,7 +2439,6 @@ describe('ConfigService thinking effort max migration', () => {
 });
 
 describe('ConfigService replaceSections', () => {
-  // Top-level keys must precede every [table] header in TOML.
   const SEED_TOML = [
     'default_model = "acme/m1"',
     '',
@@ -1949,10 +2494,30 @@ describe('ConfigService replaceSections', () => {
     expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
     expect(config.get(THINKING_SECTION)).toEqual({});
     expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
-    // `stripThinkingEnv` maps a clear to `{}` (`{...undefined}`), so the user
-    // layer collapses to an empty object instead of disappearing — the
-    // long-standing `replace(domain, undefined)` behavior, unchanged here.
     expect(config.inspect(THINKING_SECTION).userValue).toEqual({});
+
+    disposables.dispose();
+  });
+
+  it('treats null as clear — the wire encoding JSON transports use for undefined', async () => {
+    const { config, disposables, store } = await createSectionsConfig();
+    const setSpy = vi.spyOn(store, 'set');
+
+    await config.replaceSections({
+      [DEFAULT_MODEL_SECTION]: null,
+      [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
+    });
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBeUndefined();
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+    });
+
+    await config.replace(DEFAULT_MODEL_SECTION, 'acme/m1');
+    await config.replace(DEFAULT_MODEL_SECTION, null);
+    expect(config.inspect(DEFAULT_MODEL_SECTION).userValue).toBeUndefined();
 
     disposables.dispose();
   });
@@ -1980,9 +2545,6 @@ describe('ConfigService replaceSections', () => {
       [THINKING_SECTION]: undefined,
     });
 
-    // Every event — including the very first one — already observes the fully
-    // applied state; no listener can catch the write half-applied. (The
-    // cleared thinking section still resolves to its schema default `{}`.)
     expect(snapshotDuringFirstEvent).toEqual({
       providers: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
       models: { 'acme/m2': { provider: 'acme', model: 'm2', maxContextSize: 2000 } },
@@ -2019,9 +2581,6 @@ describe('ConfigService replaceSections', () => {
     const { config, disposables, store } = await createSectionsConfig();
     const setSpy = vi.spyOn(store, 'set');
 
-    // Providers is applied first in key order and validates fine; thinking
-    // then fails schema validation (`enabled` must be a boolean). The batch
-    // must reject with NO observable partial application.
     await expect(
       config.replaceSections({
         [PROVIDERS_SECTION]: { acme: { type: 'openai', apiKey: 'sk-acme-2' } },
@@ -2037,6 +2596,199 @@ describe('ConfigService replaceSections', () => {
       acme: { type: 'openai', apiKey: 'sk-acme' },
     });
     expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+});
+
+describe('ConfigService persistence guards', () => {
+  class SilentStorage extends InMemoryStorageService {
+    override watch(): Event<void> {
+      return Event.None as Event<void>;
+    }
+  }
+
+  async function createGuardedConfig(toml: string, env: NodeJS.ProcessEnv = {}) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new SilentStorage();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg-guards', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables, storage };
+  }
+
+  async function overwrite(storage: InMemoryStorageService, toml: string): Promise<void> {
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+  }
+
+  async function stored(storage: InMemoryStorageService): Promise<string> {
+    const bytes = await storage.read('', 'config.toml');
+    return new TextDecoder().decode(bytes);
+  }
+
+  async function expectPersistBlocked(promise: Promise<unknown>): Promise<void> {
+    const error = await promise.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isError2(error)).toBe(true);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_PERSIST_BLOCKED);
+  }
+
+  it('refuses to persist when the initial load fails and keeps the file untouched', async () => {
+    const broken = '[providers\nbroken';
+    const { config, disposables, storage } = await createGuardedConfig(broken);
+
+    expect(config.diagnostics().some((d) => d.severity === 'error')).toBe(true);
+    expect(config.get(PROVIDERS_SECTION)).toEqual({});
+    expect(config.get<CronConfig>(CRON_SECTION)).toEqual(DEFAULT_CRON_CONFIG);
+
+    await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
+    await expectPersistBlocked(config.replace(THINKING_SECTION, { enabled: true }));
+    await expectPersistBlocked(config.replaceSections({ [THINKING_SECTION]: { enabled: true } }));
+
+    expect(await stored(storage)).toBe(broken);
+
+    await config.set(THINKING_SECTION, { enabled: true }, ConfigTarget.Memory);
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+
+  it('keeps last-known-good values when a reload hits a broken file, and recovers after the file is fixed', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+
+    await overwrite(storage, '= broken =');
+    await config.reload();
+
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+    });
+    await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
+    expect(await stored(storage)).toBe('= broken =');
+
+    await overwrite(storage, '[providers.beta]\ntype = "openai"\napi_key = "sk-beta"\n');
+    await config.reload();
+
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+    });
+    await config.set(THINKING_SECTION, { enabled: true });
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
+
+    disposables.dispose();
+  });
+
+  it('merges external edits observed at persist time instead of clobbering them', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      'default_model = "acme/m1"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await overwrite(
+      storage,
+      'default_model = "acme/m1"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme-2"\n\n[providers.beta]\ntype = "openai"\napi_key = "sk-beta"\n',
+    );
+
+    const changed: string[] = [];
+    config.onDidSectionChange((e) => changed.push(e.domain));
+    await config.set(THINKING_SECTION, { enabled: true });
+
+    const doc = await stored(storage);
+    expect(doc).toContain('sk-acme-2');
+    expect(doc).toContain('[providers.beta]');
+    expect(doc).toContain('[thinking]');
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme-2' },
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+    });
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
+    expect(changed).toContain(PROVIDERS_SECTION);
+    expect(changed).toContain(THINKING_SECTION);
+
+    disposables.dispose();
+  });
+
+  it('honors an external delete instead of resurrecting the in-memory copy', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await storage.delete('', 'config.toml');
+    await config.set(THINKING_SECTION, { enabled: true });
+
+    const doc = await stored(storage);
+    expect(doc).toContain('[thinking]');
+    expect(doc).not.toContain('[providers.acme]');
+    expect(config.inspect(PROVIDERS_SECTION).userValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('rebases a set() merge onto external edits of the same section', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n',
+    );
+
+    await overwrite(
+      storage,
+      '[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n\n[providers.beta]\ntype = "openai"\napi_key = "sk-beta"\n',
+    );
+    await config.set(PROVIDERS_SECTION, { gamma: { type: 'openai', apiKey: 'sk-gamma' } });
+
+    const doc = await stored(storage);
+    expect(doc).toContain('[providers.beta]');
+    expect(doc).toContain('[providers.gamma]');
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      acme: { type: 'openai', apiKey: 'sk-acme' },
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+      gamma: { type: 'openai', apiKey: 'sk-gamma' },
+    });
+
+    disposables.dispose();
+  });
+
+  it('restores env-masked values from the freshly re-read file instead of the stale snapshot', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      'default_model = "acme/m1"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n\n[models."acme/m1"]\nprovider = "acme"\nmodel = "m1"\n',
+      { KIMI_MODEL_NAME: 'env-model' },
+    );
+    expect(config.get(DEFAULT_MODEL_SECTION)).toBe('__kimi_env_model__');
+
+    await overwrite(
+      storage,
+      'default_model = "acme/m2"\n\n[providers.acme]\ntype = "openai"\napi_key = "sk-acme"\n\n[models."acme/m2"]\nprovider = "acme"\nmodel = "m2"\n',
+    );
+    await config.replace(DEFAULT_MODEL_SECTION, config.get(DEFAULT_MODEL_SECTION));
+
+    const doc = await stored(storage);
+    expect(doc).toContain('default_model = "acme/m2"');
+    expect(doc).not.toContain('default_model = "acme/m1"');
+
+    disposables.dispose();
+  });
+
+  it('keeps the in-memory snapshots untouched when a write fails validation', async () => {
+    const { config, disposables, storage } = await createGuardedConfig(
+      '[thinking]\nenabled = true\n',
+    );
+
+    await overwrite(storage, '[thinking]\nenabled = false\n');
+    await expect(config.set(THINKING_SECTION, { enabled: 'yes' })).rejects.toThrow();
+
+    expect(config.inspect(THINKING_SECTION).userValue).toEqual({ enabled: true });
+    expect(await stored(storage)).toBe('[thinking]\nenabled = false\n');
 
     disposables.dispose();
   });

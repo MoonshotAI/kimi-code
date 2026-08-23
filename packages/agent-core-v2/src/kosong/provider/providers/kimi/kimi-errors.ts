@@ -1,26 +1,3 @@
-/**
- * `kosong/provider` domain (L2) — Kimi vendor error classification, declared
- * on the Kimi traits via the `convertError` hook.
- *
- * This module owns the vendor-specific knowledge of how the Moonshot backend
- * signals quota/balance exhaustion on a 429: the structured body
- * `error.type`/`error.code` value `exceeded_current_quota_error`, and the
- * observed billing wordings for gateways that flatten the body to text
- * ("You exceeded your current token quota: … please check your account
- * balance", "Your account … is suspended due to insufficient balance, please
- * recharge your account …", and arrears phrasing). Every pattern is anchored
- * to billing wording — deliberately no bare /quota/ or /balance/, so
- * transient throttle messages like "token quota per minute" keep classifying
- * as retryable rate limits. The classifier reads the raw SDK error
- * structurally (status / code / type / message), so it works over both the
- * OpenAI and Anthropic transports Kimi registers on: the OpenAI SDK hoists
- * the body's `error.code`/`error.type` to the top level, while the Anthropic
- * SDK keeps the full body on `.error` (`{type: 'error', error: {type}}`), so
- * candidate codes are collected from `error` → `.error` → `.error.error`.
- * Anything not positively recognized answers `undefined`, keeping the base
- * classification.
- */
-
 import {
   APIProviderQuotaExhaustedError,
   parseRetryAfterMs,

@@ -1,0 +1,174 @@
+import { mkdtempSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { join } from 'pathe';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { createServices } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
+import { McpOAuthService } from '#/mcpCore/oauth/service';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
+import { IPluginService } from '#/app/plugin/plugin';
+import type { PluginReloadEvent } from '#/app/plugin/types';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import {
+  IHostFsWatchService,
+  type HostFsChange,
+  type IHostFsWatchHandle,
+} from '#/os/interface/hostFsWatch';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
+import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
+import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
+
+import { stubLog } from '../../_base/log/stubs';
+import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
+import {
+  createMemoryMcpOAuthStore,
+  slowToolStdioFixture,
+  stdioFixture,
+} from '../../mcpCore/stubs';
+
+describe('Workspace MCP initialization', () => {
+  let cwd: string;
+  let homeDir: string;
+  let disposables: DisposableStore;
+  let manager: McpConnectionManager | undefined;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-home-'));
+    disposables = new DisposableStore();
+    manager = undefined;
+  });
+
+  afterEach(async () => {
+    await manager?.shutdown();
+    disposables.dispose();
+    await Promise.all([
+      rm(cwd, { recursive: true, force: true }),
+      rm(homeDir, { recursive: true, force: true }),
+    ]);
+  });
+
+  function createWorkspaceMcpService(ready: Promise<void>, mcpSection?: McpSection) {
+    const ix = createServices(disposables, {
+      strict: true,
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IBootstrapService, { homeDir });
+        reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
+        reg.definePartialInstance(IPluginService, {
+          enabledMcpServers: async () => ({}),
+          onDidReload: Event.None as Event<PluginReloadEvent>,
+        });
+        reg.definePartialInstance(
+          IMcpOAuthService,
+          new McpOAuthService({ store: createMemoryMcpOAuthStore() }),
+        );
+        reg.definePartialInstance(IMcpConfigStore, {
+          onDidWrite: Event.None as Event<McpConfigWriteEvent>,
+        });
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
+        const runtime = Object.assign(
+          new FakeRuntime({ workspaceId: 'test-workspace', runtimeId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
+          { process: new HostProcessService() },
+        );
+        reg.defineInstance(IRuntimeResolver, { _serviceBrand: undefined, inspect: () => runtime, acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }) });
+        reg.definePartialInstance(IConfigService, {
+          ready,
+          get: (<T = unknown>(domain: string): T =>
+            (domain === MCP_SECTION ? mcpSection : undefined) as T),
+        });
+        reg.definePartialInstance(IHostFsWatchService, {
+          watch: (): IHostFsWatchHandle => ({
+            ready: Promise.resolve(),
+            onDidChange: Event.None as Event<HostFsChange>,
+            dispose: () => {},
+          }),
+        });
+        reg.defineInstance(IHostFileSystem, new HostFileSystem());
+        reg.definePartialInstance(IWorkspaceTrust, {
+          ready: Promise.resolve(),
+          isTrusted: () => true,
+          onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
+        });
+        reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
+        registerAgentIdentityStub(reg);
+        reg.define(IWorkspaceMcpService, WorkspaceMcpService);
+      },
+    });
+    return ix.get(IWorkspaceMcpService);
+  }
+
+  it('exposes the connection manager before config is ready and starts connecting once ready', async () => {
+    let resolveConfigReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveConfigReady = resolve;
+    });
+    await writeProjectMcpJson(cwd, {
+      alpha: {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [stdioFixture],
+        runtime_id: 'local',
+      },
+    });
+    const service = createWorkspaceMcpService(ready);
+    manager = service.connectionManager();
+    expect(manager.list()).toEqual([]);
+
+    await sleep(50);
+    expect(manager.list()).toEqual([]);
+
+    resolveConfigReady();
+    await service.ready;
+    expect(manager.get('alpha')?.status).toBe('connected');
+  }, 15000);
+
+  it('times out tool calls using the session MCP timeout preference', async () => {
+    await writeProjectMcpJson(cwd, {
+      slowTool: {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [slowToolStdioFixture],
+        runtime_id: 'local',
+        env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
+      },
+    });
+    const service = createWorkspaceMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
+    await service.ready;
+    manager = service.connectionManager();
+    const client = manager.resolved('slowTool')?.client;
+    if (client === undefined) throw new Error('expected a connected client');
+    await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
+  }, 15000);
+});
+
+async function writeProjectMcpJson(
+  cwd: string,
+  servers: Record<string, unknown>,
+): Promise<void> {
+  await mkdir(join(cwd, '.kimi-code'), { recursive: true });
+  await writeFile(
+    join(cwd, '.kimi-code', 'mcp.json'),
+    JSON.stringify({ mcpServers: servers }),
+    'utf8',
+  );
+}

@@ -1,16 +1,7 @@
-/**
- * `auth` domain — the v1 OAuth wire DTO schemas.
- *
- * Request/response shapes of the v1 `/oauth/*` endpoints plus the managed
- * OAuth provider model-refresh response, defined as zod schemas so the
- * transports validate against the same contract the `IOAuthService` returns.
- * New endpoints use the camelCase domain contract owned by the oauth
- * package (re-exported below); legacy snake_case schemas stay local.
- */
-
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
+import { kimiRegionSchema } from '@moonshot-ai/kimi-code-oauth';
 
 export const oauthFlowStatusEnum = z.enum([
   'pending',
@@ -21,18 +12,6 @@ export const oauthFlowStatusEnum = z.enum([
 ]);
 export type OAuthFlowStatus = z.infer<typeof oauthFlowStatusEnum>;
 
-/**
- * Result of `POST /v1/oauth/login`.
- *
- * Two shapes, discriminated by `status`:
- *   - `pending`: a real device-code flow was started; the `verification_*`,
- *     `user_code`, `expires_*`, and `interval` fields are populated so the
- *     client can render the device-code step and start polling.
- *   - `authenticated`: the toolkit already had a usable token and short-
- *     circuited via its `ensureFresh` fast path, so no device code was
- *     issued. The client can skip the device-code step and treat the login
- *     as already complete.
- */
 export const oauthFlowStartPendingSchema = z.object({
   flow_id: z.string().min(1),
   provider: z.string().min(1),
@@ -86,6 +65,11 @@ export const oauthLogoutResponseSchema = z.object({
 });
 export type OAuthLogoutResponse = z.infer<typeof oauthLogoutResponseSchema>;
 
+export const oauthRegionResultSchema = z.object({
+  region: kimiRegionSchema,
+});
+export type OAuthRegionResult = z.infer<typeof oauthRegionResultSchema>;
+
 const providerRefreshChangeSchema = z.object({
   provider_id: z.string().min(1),
   provider_name: z.string().min(1),
@@ -98,9 +82,6 @@ const providerRefreshFailureSchema = z.object({
   reason: z.string().min(1),
 });
 
-// Same response shape as the modelCatalog refresh endpoint; defined
-// self-contained here because the two domains sit at different layers and the
-// `auth` domain owns the OAuth-provider refresh operation.
 export const refreshOAuthProviderModelsResponseSchema = z.object({
   changed: z.array(providerRefreshChangeSchema),
   unchanged: z.array(z.string().min(1)),
@@ -109,11 +90,6 @@ export const refreshOAuthProviderModelsResponseSchema = z.object({
 export type RefreshOAuthProviderModelsResponse = z.infer<
   typeof refreshOAuthProviderModelsResponseSchema
 >;
-
-// ---------------------------------------------------------------------------
-// Managed-account usage (`GET /v1/oauth/usage`) — mirrors the toolkit's
-// `AuthManagedUsageResult` (camelCase domain model → snake_case wire DTO).
-// ---------------------------------------------------------------------------
 
 export const usageWindowSchema = z.object({
   duration: z.number().int(),
@@ -160,13 +136,6 @@ export const managedUsageResultSchema = z.discriminatedUnion('kind', [
   managedUsageErrorSchema,
 ]);
 export type ManagedUsageResult = z.infer<typeof managedUsageResultSchema>;
-
-// ---------------------------------------------------------------------------
-// Managed-account profile (`GET /v1/oauth/userinfo`) — camelCase domain
-// contract owned by `@moonshot-ai/kimi-code-oauth` (its zod schemas are the
-// single source of truth); re-exported here so transports keep one import
-// path. Legacy snake_case endpoints keep their local schemas above.
-// ---------------------------------------------------------------------------
 
 export {
   managedUserInfoResultSchema,

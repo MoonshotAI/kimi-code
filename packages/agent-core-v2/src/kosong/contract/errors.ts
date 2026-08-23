@@ -1,43 +1,52 @@
-/**
- * `kosong/contract` domain (L0) — the provider error taxonomy.
- *
- * The single authority on error classification for the LLM wire layer:
- * the `API*Error` class family, the retry verdict (`isRetryableGenerateError`),
- * the telemetry classification (`ApiErrorKind` / `classifyApiError`), and the
- * status-error normalizer every dialect's error converter funnels through.
- * Alongside the wire-status classes, `VideoUploadUnsupportedError` marks the
- * by-design capability gap (provider has no video upload hook) so callers
- * can tell it apart from an upload that failed at runtime.
- *
- * Abort has exactly one standard shape here: the DOMException built by
- * `createAbortError`. Provider error converters must run the `throwIfAbortError`
- * guard FIRST in their classification chain — a user cancellation is thrown
- * as the standard abort shape, never converted into (and never returned as)
- * a retryable provider error.
- */
-
+import { Error2, type Error2Options } from '#/_base/errors/errors';
 import type { FinishReason } from './provider';
 
-/**
- * Wire error code for invalid model/provider configuration (`config.invalid`).
- * The code string is a wire contract matched downstream (protocol event
- * schemas, clients), so it is declared here in the L0 contract; the error
- * registry entry is owned by the `config` domain's error module, which
- * registers this constant. Kosong code throws it without registering, keeping
- * a single registry owner.
- */
 export const CONFIG_INVALID_ERROR_CODE = 'config.invalid';
 
-export class ChatProviderError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ChatProviderError';
+export const PROVIDER_API_ERROR_CODE = 'provider.api_error';
+export const PROVIDER_FILTERED_ERROR_CODE = 'provider.filtered';
+export const PROVIDER_RATE_LIMIT_ERROR_CODE = 'provider.rate_limit';
+export const PROVIDER_AUTH_ERROR_CODE = 'provider.auth_error';
+export const PROVIDER_CONNECTION_ERROR_CODE = 'provider.connection_error';
+export const PROVIDER_OVERLOADED_ERROR_CODE = 'provider.overloaded';
+export const CONTEXT_OVERFLOW_ERROR_CODE = 'context.overflow';
+
+export type ProviderErrorCode =
+  | typeof PROVIDER_API_ERROR_CODE
+  | typeof PROVIDER_FILTERED_ERROR_CODE
+  | typeof PROVIDER_RATE_LIMIT_ERROR_CODE
+  | typeof PROVIDER_AUTH_ERROR_CODE
+  | typeof PROVIDER_CONNECTION_ERROR_CODE
+  | typeof PROVIDER_OVERLOADED_ERROR_CODE
+  | typeof CONTEXT_OVERFLOW_ERROR_CODE;
+
+export function sanitizeStatusErrorMessage(message: string): string {
+  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
+  const extracted = titleMatch?.[1]?.trim();
+  const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;
+  return normalized.replaceAll('\r', '');
+}
+
+function codeForStatusError(statusCode: number): ProviderErrorCode {
+  if (statusCode === 429) return PROVIDER_RATE_LIMIT_ERROR_CODE;
+  if (statusCode === 401 || statusCode === 403) return PROVIDER_AUTH_ERROR_CODE;
+  if (statusCode === 529) return PROVIDER_OVERLOADED_ERROR_CODE;
+  return PROVIDER_API_ERROR_CODE;
+}
+
+export class ChatProviderError extends Error2 {
+  constructor(
+    message: string,
+    code: ProviderErrorCode = PROVIDER_API_ERROR_CODE,
+    options?: Error2Options,
+  ) {
+    super(code, message, { ...options, name: 'ChatProviderError' });
   }
 }
 
 export class APIConnectionError extends ChatProviderError {
   constructor(message: string) {
-    super(message);
+    super(message, PROVIDER_CONNECTION_ERROR_CODE);
     this.name = 'APIConnectionError';
   }
 }
@@ -51,7 +60,7 @@ export class VideoUploadUnsupportedError extends ChatProviderError {
 
 export class APITimeoutError extends ChatProviderError {
   constructor(message: string) {
-    super(message);
+    super(message, PROVIDER_CONNECTION_ERROR_CODE);
     this.name = 'APITimeoutError';
   }
 }
@@ -60,7 +69,6 @@ export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
-  /** Trace id from the `x-trace-id` response header (Kimi only; `null` otherwise). */
   readonly traceId: string | null;
 
   constructor(
@@ -69,8 +77,11 @@ export class APIStatusError extends ChatProviderError {
     requestId?: string | null,
     retryAfterMs?: number | null,
     traceId?: string | null,
+    code: ProviderErrorCode = codeForStatusError(statusCode),
   ) {
-    super(message);
+    super(sanitizeStatusErrorMessage(message), code, {
+      details: { statusCode, requestId: requestId ?? null, traceId: traceId ?? null },
+    });
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
@@ -87,7 +98,7 @@ export class APIContextOverflowError extends APIStatusError {
     retryAfterMs?: number | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId);
+    super(statusCode, message, requestId, retryAfterMs, traceId, CONTEXT_OVERFLOW_ERROR_CODE);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -124,7 +135,7 @@ export class APIProviderQuotaExhaustedError extends APIStatusError {
     retryAfterMs?: number | null,
     traceId?: string | null,
   ) {
-    super(429, message, requestId, retryAfterMs, traceId);
+    super(429, message, requestId, retryAfterMs, traceId, PROVIDER_API_ERROR_CODE);
     this.name = 'APIProviderQuotaExhaustedError';
   }
 }
@@ -137,7 +148,7 @@ export class APIProviderOverloadedError extends APIStatusError {
     retryAfterMs?: number | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId);
+    super(statusCode, message, requestId, retryAfterMs, traceId, PROVIDER_OVERLOADED_ERROR_CODE);
     this.name = 'APIProviderOverloadedError';
   }
 }
@@ -153,33 +164,23 @@ export class APIEmptyResponseError extends ChatProviderError {
       readonly rawFinishReason?: string | null;
     } = {},
   ) {
-    super(message);
+    const finishReason = options.finishReason ?? null;
+    const rawFinishReason = options.rawFinishReason ?? null;
+    super(
+      message,
+      finishReason === 'filtered' ? PROVIDER_FILTERED_ERROR_CODE : PROVIDER_API_ERROR_CODE,
+      { details: { finishReason, rawFinishReason } },
+    );
     this.name = 'APIEmptyResponseError';
-    this.finishReason = options.finishReason ?? null;
-    this.rawFinishReason = options.rawFinishReason ?? null;
+    this.finishReason = finishReason;
+    this.rawFinishReason = rawFinishReason;
   }
 }
 
-/**
- * The single standard abort shape for the wire layer: a DOMException named
- * `'AbortError'`, matching the platform's own `AbortSignal.reason`
- * convention. Every user-cancellation path — the `generate()` driver,
- * provider error converters, stream wrappers — throws exactly this shape so
- * upstream code can recognize cancellation without SDK knowledge.
- */
 export function createAbortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
 
-/**
- * Whether `error` is any abort shape that can surface from a provider call:
- *
- *  - the standard abort DOMException (`createAbortError`, `signal.reason`),
- *  - a bare `Error` named `'AbortError'` (generic abort helpers), or
- *  - an SDK user-abort (`APIUserAbortError` in both the OpenAI and Anthropic
- *    SDKs) — recognized structurally by constructor name so this module
- *    stays SDK-free.
- */
 export function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === 'AbortError') return true;
   if (error instanceof Error && error.name === 'AbortError') return true;
@@ -190,13 +191,6 @@ export function isAbortError(error: unknown): boolean {
   );
 }
 
-/**
- * The abort guard for provider error converters. Must run at the very front
- * of every error classification chain: when `error` is abort-shaped this
- * THROWS the standard abort DOMException — it never returns a converted
- * error — so a user cancellation can never be misclassified as a retryable
- * provider failure. Does nothing for non-abort errors.
- */
 export function throwIfAbortError(error: unknown): void {
   if (isAbortError(error)) {
     throw createAbortError();
@@ -242,7 +236,7 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIEmptyResponseError) {
-    return true;
+    return error.finishReason !== 'filtered';
   }
   if (error instanceof APIProviderOverloadedError) {
     return true;
@@ -471,11 +465,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Telemetry-level classification of a failed generation. Callers pass the
- * already-unwrapped cause; aborts are expected to be filtered out before
- * classification (a cancellation is not an API error).
- */
 export type ApiErrorKind =
   | 'context_overflow'
   | 'overloaded'

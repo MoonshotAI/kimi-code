@@ -120,8 +120,6 @@ describe('TodoListReminderInjector', () => {
     await injector.inject();
 
     const text = lastReminderText(history);
-    expect(text).toContain('The TodoList tool has not been updated recently');
-    expect(text).toContain('NEVER mention this reminder to the user');
     expect(text).toContain('Current todo list:');
     expect(text).toContain('1. [in_progress] Read current TodoList implementation');
     expect(text).toContain('2. [pending] Add reminder injector tests');
@@ -167,6 +165,6 @@ describe('TodoListReminderInjector', () => {
 
     await injector.inject();
 
-    expect(lastReminderText(history)).toContain('The TodoList tool has not been updated recently');
+    expect(lastReminderText(history)).toContain('Current todo list:');
   });
 });

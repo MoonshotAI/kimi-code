@@ -1,18 +1,3 @@
-/**
- * Pure op-stream clipping for a given grade.
- *
- * `append` is the only grade-gated *kind*: it flows at 'delta' only. All
- * other ops are state-style, so dropping them for lower grades cannot strand
- * the client — the producer re-emits whole-state upserts at flush points, and
- * a client that upgrades gets a full reset snapshot.
- *
- * Content-bearing ops gated below 'block':
- *  - step.upsert / frame.upsert (step & frame detail)
- * Everything else (turn headers, markers, taskrefs, tasks, interactions,
- * prompts, meta, removals, resets) flows at 'turn' and up. `off` admits
- * nothing.
- */
-
 import type { TranscriptGrade } from './grade';
 import { GRADE_RANK } from './grade';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '../ops/operation';

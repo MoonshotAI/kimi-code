@@ -1,25 +1,3 @@
-/**
- * `kosong/model` domain (L2) — shared auth-material resolution.
- *
- * Resolves Model / Provider credential precedence for runtime model
- * resolution and auth-readiness probes. Pure computation, outside the
- * service graph.
- *
- * Two deliberate differences from the legacy implementation:
- *  - The per-protocol env-var fallback table is gone: env-bag credential and
- *    endpoint resolution goes through the provider-definition registry
- *    (`resolveProviderEndpoint` against the config env bag).
- *  - The inferred Anthropic effort profile is reserved for providers whose
- *    thinking is NOT trait-driven; trait-driven providers — including
- *    managed models routed through protocol `anthropic` — keep only
- *    catalog-declared effort metadata. The verdict comes from the registry
- *    (`drivesThinkingThroughTraits`), not from a vendor string compare.
- *    The unknown-name fallback within that inference only applies to names
- *    that still carry a Claude marker (a `claude` substring or a bare family
- *    word like `sonnet-latest`); clearly non-Claude names served over the
- *    Anthropic protocol get no synthesized effort metadata.
- */
-
 import { Error2 } from '#/_base/errors/errors';
 import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
 import type { ResolutionTrace } from '#/kosong/contract/inspection';
@@ -36,12 +14,6 @@ import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import { drivesThinkingThroughTraits } from './thinking';
 
-/**
- * The Model → Provider credential precedence chain. When `trace` is given,
- * the winning layer (and any env-bag hit, by env-var name) is recorded at
- * `resolved.auth`; without a trace the function is the pure chain it always
- * was.
- */
 export function resolveModelAuthMaterial(
   args: {
     readonly modelId: string;

@@ -1,30 +1,37 @@
-/**
- * `GET /api/v1/sessions/{session_id}/snapshot` — atomic-at-a-watermark
- * snapshot shape and watermark consistency.
- */
-
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  type DomainEvent,
+  type Event2,
+  IAgentBlobService,
   IAgentContextMemoryService,
+  IAgentScopeContext,
+  IAppendLogStore,
   IEventBus,
   IAgentLifecycleService,
+  IAgentProfileService,
   IAgentPromptService,
-  ILogService,
   ISessionInteractionService,
   ISessionContext,
-  ISessionLifecycleService,
+  ISessionIndex,
   ISessionMetadata,
+  ISessionLifecycleService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
+  IWireService,
+  ISessionManager,
+  ITelemetryService,
   IWorkspaceService,
+  agentContextOf,
+  getLiveSessionById,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
+import { emptySessionUsage } from '../src/protocol/session';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';
-import { SnapshotNotFoundError } from '../src/services/snapshot';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -54,6 +61,25 @@ describe('server-v2 snapshot route enrichment', () => {
           IAgentPromptService,
           { list: () => ({ active: { id: promptId }, pending: [] }) },
         ],
+        [IWireService, { flush: async () => {} }],
+        [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],
+        [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
+        [
+          IAgentProfileService,
+          {
+            getModelCapabilities: () => ({ max_input_tokens: 262144 }),
+            getModel: () => 'kimi-for-test',
+          },
+        ],
+        [
+          ISessionUsageService,
+          {
+            status: () => ({
+              total: { inputOther: 120, output: 34, inputCacheRead: 56, inputCacheCreation: 7 },
+            }),
+          },
+        ],
+        [ISessionTokenCountingService, { statusSize: () => 4321 }],
       ]),
     };
     const session = {
@@ -71,17 +97,49 @@ describe('server-v2 snapshot route enrichment', () => {
             }),
           },
         ],
-        [IAgentLifecycleService, { get: () => main }],
+        [IAgentLifecycleService, { get: () => main, create: async () => main }],
         [ISessionInteractionService, { listPending: () => [] }],
       ]),
     };
-    const core = {
+    const handler = {
       accessor: fakeAccessor([
         [
           ISessionLifecycleService,
           { resume: async () => session, get: () => undefined },
         ],
+      ]),
+    };
+    const core = {
+      accessor: fakeAccessor([
+        [
+          ISessionIndex,
+          {
+            get: async () => ({
+              id: sessionId,
+              workspaceId,
+              cwd: '/workspace',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [
+          ISessionManager,
+          {
+            resume: async () => session,
+            get: () => undefined,
+            list: () => [],
+          },
+        ],
         [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
+        [ITelemetryService, { withContext: () => ({ track2: () => {} }) }],
+        [
+          IAppendLogStore,
+          {
+            read: async function* () {},
+          },
+        ],
       ]),
     };
     const broadcaster = {
@@ -117,28 +175,17 @@ describe('server-v2 snapshot route enrichment', () => {
           reply: { send(payload: unknown): unknown },
         ) => Promise<void> | void)
       | undefined;
-    // Exercise the legacy (resume + live assembly) path — the fakes model the
-    // live scope, not the on-disk reader.
-    const previousReaderMode = process.env['KIMI_SNAPSHOT_READER'];
-    process.env['KIMI_SNAPSHOT_READER'] = 'legacy';
-    const unusedReader = { read: async () => ({}) as never };
-    try {
-      registerSnapshotRoutes(
-        {
-          get: (_path, _options, handler) => {
-            routeHandler = handler;
-          },
+    registerSnapshotRoutes(
+      {
+        get: (_path, _options, handler) => {
+          routeHandler = handler;
         },
-        {
-          core: core as never,
-          broadcaster: broadcaster as never,
-          reader: unusedReader as never,
-        },
-      );
-    } finally {
-      if (previousReaderMode === undefined) delete process.env['KIMI_SNAPSHOT_READER'];
-      else process.env['KIMI_SNAPSHOT_READER'] = previousReaderMode;
-    }
+      },
+      {
+        core: core as never,
+        broadcaster: broadcaster as never,
+      },
+    );
 
     let payload: unknown;
     await routeHandler?.(
@@ -158,6 +205,15 @@ describe('server-v2 snapshot route enrichment', () => {
       assistant_text: 'Hello',
       current_prompt_id: promptId,
     });
+    expect(snap.session.usage).toEqual({
+      input_tokens: 120,
+      output_tokens: 34,
+      cache_read_tokens: 56,
+      cache_creation_tokens: 7,
+      context_tokens: 4321,
+      context_limit: 262144,
+    });
+    expect(snap.session.agent_config.model).toBe('kimi-for-test');
     expect(snap.subagents).toEqual([
       expect.objectContaining({
         id: 'agent-1',
@@ -169,82 +225,124 @@ describe('server-v2 snapshot route enrichment', () => {
       }),
     ]);
   });
-});
 
-describe('server-v2 snapshot route error mapping', () => {
-  function captureHandler(
-    deps: { core: unknown; broadcaster: unknown; reader: unknown },
-    env?: Record<string, string>,
-  ) {
-    const previous = new Map<string, string | undefined>();
-    for (const [k, v] of Object.entries(env ?? {})) {
-      previous.set(k, process.env[k]);
-      process.env[k] = v;
-    }
-    let handler:
+  it('keeps the placeholder usage when the main agent exposes no status services', async () => {
+    const sessionId = 'sess_snapshot_degraded';
+    const workspaceId = 'wd_snapshot_abcdef012345';
+    const now = Date.parse('2026-01-01T00:00:00.000Z');
+    const main = {
+      accessor: fakeAccessor([
+        [IAgentContextMemoryService, { get: () => [] }],
+        [IWireService, { flush: async () => {} }],
+        [IAgentScopeContext, { scope: () => 'scope/sess_snapshot_degraded' }],
+        [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
+        [IAgentProfileService, undefined],
+        [ISessionUsageService, undefined],
+        [ISessionTokenCountingService, undefined],
+      ]),
+    };
+    const session = {
+      accessor: fakeAccessor([
+        [ISessionContext, { workspaceId }],
+        [
+          ISessionMetadata,
+          {
+            read: async () => ({
+              id: sessionId,
+              title: 'Snapshot degraded',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [IAgentLifecycleService, { get: () => main, create: async () => main }],
+        [ISessionInteractionService, { listPending: () => [] }],
+      ]),
+    };
+    const handler = {
+      accessor: fakeAccessor([
+        [
+          ISessionLifecycleService,
+          { resume: async () => session, get: () => undefined },
+        ],
+      ]),
+    };
+    const core = {
+      accessor: fakeAccessor([
+        [
+          ISessionIndex,
+          {
+            get: async () => ({
+              id: sessionId,
+              workspaceId,
+              cwd: '/workspace',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [
+          ISessionManager,
+          {
+            resume: async () => session,
+            get: () => undefined,
+            list: () => [],
+          },
+        ],
+        [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
+        [ITelemetryService, { withContext: () => ({ track2: () => {} }) }],
+        [
+          IAppendLogStore,
+          {
+            read: async function* () {},
+          },
+        ],
+      ]),
+    };
+    const broadcaster = {
+      getSnapshotState: async () => ({
+        seq: 1,
+        epoch: 'ep_snapshot',
+        inFlightTurn: null,
+        subagents: [],
+      }),
+    };
+
+    let routeHandler:
       | ((
           req: { id: string; params: { session_id: string } },
           reply: { send(payload: unknown): unknown },
         ) => Promise<void> | void)
       | undefined;
-    try {
-      registerSnapshotRoutes(
-        {
-          get: (_path, _options, h) => {
-            handler = h;
-          },
+    registerSnapshotRoutes(
+      {
+        get: (_path, _options, handler) => {
+          routeHandler = handler;
         },
-        deps as never,
-      );
-    } finally {
-      for (const [k, v] of previous) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
-    return handler!;
-  }
-
-  it('maps SnapshotNotFoundError to 40401', async () => {
-    const warns: unknown[] = [];
-    const core = {
-      accessor: fakeAccessor([[ILogService, { warn: (...a: unknown[]) => warns.push(a) }]]),
-    };
-    const reader = {
-      read: async () => {
-        throw new SnapshotNotFoundError('sess_missing');
       },
-    };
-    const handler = captureHandler({ core, broadcaster: {}, reader });
-    let payload: unknown;
-    await handler(
-      { id: 'req_404', params: { session_id: 'sess_missing' } },
-      { send: (v) => (payload = v) },
+      {
+        core: core as never,
+        broadcaster: broadcaster as never,
+      },
     );
-    expect((payload as { code: number }).code).toBe(40401);
-    expect(warns).toHaveLength(0);
-  });
 
-  it('maps SnapshotTimeoutError to 50001 and logs snapshot.timeout', async () => {
-    const warns: unknown[] = [];
-    const core = {
-      accessor: fakeAccessor([[ILogService, { warn: (...a: unknown[]) => warns.push(a) }]]),
-    };
-    const reader = {
-      read: () => new Promise<never>(() => {}), // hangs → triggers the timeout race
-    };
-    const handler = captureHandler(
-      { core, broadcaster: {}, reader },
-      { KIMI_SNAPSHOT_TIMEOUT_MS: '150' },
-    );
     let payload: unknown;
-    await handler(
-      { id: 'req_to', params: { session_id: 'sess_slow' } },
-      { send: (v) => (payload = v) },
+    await routeHandler?.(
+      { id: 'req_snapshot_degraded', params: { session_id: sessionId } },
+      {
+        send: (value) => {
+          payload = value;
+        },
+      },
     );
-    expect((payload as { code: number }).code).toBe(50001);
-    expect(warns).toHaveLength(1);
-    expect((warns[0] as unknown[])[0]).toBe('snapshot.timeout');
+
+    const body = payload as { code: number; data: unknown };
+    expect(body.code).toBe(0);
+    const snap = sessionSnapshotResponseSchema.parse(body.data);
+    expect(snap.session.usage).toEqual(emptySessionUsage());
+    expect(snap.session.agent_config.model).toBe('');
   });
 });
 
@@ -282,14 +380,14 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   }
 
   async function ensureMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.findAgentHandle('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
-  function emit(sessionId: string, event: DomainEvent): void {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
-    const main = session!.accessor.get(IAgentLifecycleService).get('main');
+  function emit(sessionId: string, event: Event2<any>): void {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    const main = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
     main!.accessor.get(IEventBus).publish(event);
   }
 
@@ -318,13 +416,13 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   it('reflects the durable watermark and in-flight turn after events', async () => {
     const sid = await createSession();
     await ensureMainAgent(sid);
-    await snapshot(sid); // activate the journal after agent metadata records
+    await snapshot(sid);
 
     emit(sid, {
       type: 'turn.started',
       turnId: 1,
-    } as unknown as DomainEvent); // durable → seq 1
-    emit(sid, { type: 'assistant.delta', turnId: 1, delta: 'Hello' } as unknown as DomainEvent); // volatile
+    } as unknown as Event2<any>);
+    emit(sid, { type: 'assistant.delta', turnId: 1, delta: 'Hello' } as unknown as Event2<any>);
 
     const snap = await snapshot(sid);
     expect(snap.as_of_seq).toBeGreaterThanOrEqual(2);
@@ -332,6 +430,32 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
       turn_id: 1,
       assistant_text: 'Hello',
     });
+  });
+
+  it('serves the real usage ledger instead of the zero placeholder', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+    const session = getLiveSessionById(server!.core.accessor, sid);
+    const main = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main')!;
+    await main.accessor.get(ISessionUsageService).record(agentContextOf(main), 'kimi-for-test', {
+      inputOther: 120,
+      output: 34,
+      inputCacheRead: 56,
+      inputCacheCreation: 7,
+    });
+    main.accessor.get(IAgentContextMemoryService).append({
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
+      toolCalls: [],
+    });
+
+    const snap = await snapshot(sid);
+    expect(snap.session.usage.input_tokens).toBe(120);
+    expect(snap.session.usage.output_tokens).toBe(34);
+    expect(snap.session.usage.cache_read_tokens).toBe(56);
+    expect(snap.session.usage.cache_creation_tokens).toBe(7);
+    expect(snap.session.usage.context_tokens).toBeGreaterThan(0);
+    expect(snap.session.usage.context_limit).toBeUndefined();
   });
 
   it('returns 404 for an unknown session', async () => {
@@ -342,11 +466,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     expect(body.code).not.toBe(0);
   });
 
-  // Regression for the cold-session 404: a session that exists on disk but is
-  // not live in this process (e.g. carried over from a prior process, or
-  // created by v1) must load from disk instead of returning 40401. We restart
-  // the whole server on the same homeDir so the session is genuinely cold.
-  it('loads a cold (not live) session from disk instead of 404', async () => {
+  it('loads a cold (not live) session instead of 404', async () => {
     const sid = await createSession();
 
     await server!.close();
@@ -354,20 +474,15 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
 
-    // Guard: nothing is live in the new process — the session is cold.
-    expect(server!.core.accessor.get(ISessionLifecycleService).get(sid)).toBeUndefined();
+    expect(getLiveSessionById(server!.core.accessor, sid)).toBeUndefined();
 
     const snap = await snapshot(sid);
     expect(snap.session.id).toBe(sid);
   });
 
-  // The auto reader must source messages from `agents/main/wire.jsonl` on disk
-  // — not from a live (resumed) context. We seed a wire log, restart so the
-  // session is genuinely cold, then assert the snapshot returns the on-disk
-  // transcript while the scope stays un-materialized.
-  it('auto reader returns messages read directly from wire.jsonl for a cold session', async () => {
+  it('returns the persisted transcript for a cold session', async () => {
     const sid = await createSession();
-    const live = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const live = getLiveSessionById(server!.core.accessor, sid);
     if (live === undefined) throw new Error(`session ${sid} not found`);
     const metaScope = live.accessor.get(ISessionContext).metaScope;
 
@@ -399,8 +514,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
 
-    // Guard: still cold — the auto reader must serve from disk, not resume.
-    expect(server!.core.accessor.get(ISessionLifecycleService).get(sid)).toBeUndefined();
+    expect(getLiveSessionById(server!.core.accessor, sid)).toBeUndefined();
 
     const snap = await snapshot(sid);
     expect(snap.session.id).toBe(sid);
@@ -410,22 +524,12 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     expect(snap.epoch).toMatch(/^ep_/);
   });
 
-  // Regression for the v1-layout 50001 ("Invalid time value"): v1 persists
-  // `createdAt`/`updatedAt` as ISO strings (and omits the v2 `id` field) in
-  // `state.json`. Projecting that raw metadata broke message timestamp
-  // arithmetic and dropped the session id. `ISessionMetadata` now normalizes
-  // legacy documents on load. We rewrite `state.json` in the v1 layout, restart
-  // so the session is cold, then seed messages into the live (resumed) context
-  // so the snapshot exercises the message-timestamp projection deterministically
-  // (no reliance on wire-restore timing).
   it('serves a v1-layout session (ISO timestamps, no id field) without crashing', async () => {
     const sid = await createSession();
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const session = getLiveSessionById(server!.core.accessor, sid);
     if (session === undefined) throw new Error(`session ${sid} not found`);
     const metaScope = session.accessor.get(ISessionContext).metaScope;
 
-    // Shut down, then rewrite state.json in the v1 layout (ISO-string
-    // timestamps, no `id`) so the next boot reads a cold legacy session.
     await server!.close();
     server = undefined;
     const statePath = join(home as string, metaScope, 'state.json');
@@ -443,9 +547,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
 
-    // Resume the cold session, then seed messages into the live context so the
-    // snapshot projects message timestamps from the normalized numeric base.
-    const resumed = await server!.core.accessor.get(ISessionLifecycleService).resume(sid);
+    const resumed = await resumeSessionById(server!.core.accessor, sid);
     if (resumed === undefined) throw new Error(`session ${sid} failed to resume`);
     const main = await resumed.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const context = main.accessor.get(IAgentContextMemoryService);
@@ -455,8 +557,6 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     const snap = await snapshot(sid);
     expect(snap.session.id).toBe(sid);
     expect(snap.session.title).toBe('v1 session');
-    // Session- and message-level timestamps are derived from the normalized
-    // numeric base — they must be valid ISO strings, not "Invalid time value".
     expect(Number.isNaN(Date.parse(snap.session.created_at))).toBe(false);
     expect(snap.messages.items.length).toBeGreaterThan(0);
     for (const message of snap.messages.items) {

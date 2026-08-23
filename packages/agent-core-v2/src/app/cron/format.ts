@@ -1,12 +1,3 @@
-/**
- * LLM-facing text rendering for the cron domain: local-time timestamps for
- * tool output, and the `<cron-fire>` injection the scheduler hands to the model
- * when a task fires.
- *
- * Both renderers stay dependency-free so the tools and the service can import
- * them without pulling in the rest of the cron stack.
- */
-
 import type { CronJobOrigin } from '#/agent/contextMemory/types';
 
 export function formatLocalIsoWithOffset(ms: number): string {

@@ -1,21 +1,8 @@
-/**
- * `profile` domain (L4) — `IAgentProfileService` contract.
- *
- * Owns the active agent's identity: bound profile, model alias, thinking
- * level, system prompt, and active-tool set. `bind()` takes an optional
- * `model`, falling back to the configured `defaultModel` so edges don't each
- * re-implement the fallback (a missing model everywhere throws
- * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
- * `thinking` as an explicit user request (edge input) rather than inherited
- * state, so the effort is validated against the model's supported efforts and
- * the bind rejects up front when unsupported — internal spawns pass inherited
- * thinking without the flag, and a persisted effort that drifted out of the
- * model's support list clamps instead of breaking the spawn. The profile
- * contract also owns live status re-publication for consumers that attach to
- * an agent after its initial model binding.
- */
-
-import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type {
+  AgentProfile,
+  AgentProfileContext,
+  EnvironmentDisclosureSnapshot,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelRequestParams } from '#/kosong/model/modelRequester';
@@ -38,7 +25,6 @@ export class ProfileError extends Error2 {
 }
 
 export interface AgentConfigData {
-  cwd: string;
   modelAlias?: string;
   modelCapabilities: ModelCapability;
   profileName?: string;
@@ -47,7 +33,6 @@ export interface AgentConfigData {
 }
 
 export type AgentConfigUpdateData = Partial<{
-  cwd: string;
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
@@ -56,40 +41,45 @@ export type AgentConfigUpdateData = Partial<{
 
 export interface SystemPromptContext extends AgentProfileContext {
   readonly agentsMdWarning?: string;
+  readonly agentsMdPaths?: readonly string[];
 }
 
 export type ResolvedAgentProfile = AgentProfile;
 
 export interface ProfileData extends AgentConfigData {
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
 }
 
 export type ProfileUpdateData = Partial<{
-  cwd: string;
   modelAlias: string;
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  environmentDisclosure: EnvironmentDisclosureSnapshot;
+  agentsMdPaths: readonly string[];
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
 }>;
 
 export interface ProfileBindingSnapshot {
-  readonly cwd: string;
   readonly modelAlias?: string;
   readonly profileName?: string;
   readonly thinkingLevel: string;
   readonly systemPrompt: string;
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
 }
 
 export interface ProfileServiceOptions {
-  readonly cwd?: string | (() => string | undefined);
-  readonly chdir?: (cwd: string) => void | Promise<void>;
   readonly emitStatusUpdated?: () => void;
 }
 
@@ -117,7 +107,6 @@ export interface BindAgentInput {
   readonly model?: string;
   readonly thinking?: string;
   readonly strictThinking?: boolean;
-  readonly cwd?: string;
 }
 
 export interface IAgentProfileService {
@@ -138,11 +127,6 @@ export interface IAgentProfileService {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
-  /**
-   * The dialect-free per-turn intent for the bound model: prompt-cache key,
-   * sampling overrides, thinking effort/keep. Wire encoding is each dialect's
-   * own business — the profile never branches on protocol or vendor.
-   */
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;

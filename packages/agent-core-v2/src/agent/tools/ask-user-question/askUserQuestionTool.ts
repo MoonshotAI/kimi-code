@@ -1,26 +1,3 @@
-/**
- * `tools` domain (L7) — `AskUserQuestionTool` implementation (the
- * `AskUserQuestion` tool).
- *
- * The LLM calls this tool when it needs structured input from the user
- * (multiple-choice, preference selection, disambiguation). The tool delegates
- * to `ISessionQuestionService` (the Session-scoped question service backed by
- * the `interaction` kernel), which owns the actual UI interaction. Requests
- * record the owning agent (`IAgentScopeContext.agentId`) on the interaction
- * origin, so question events and transcript frames route to the asking
- * agent's surfaces instead of falling back to 'main' (a subagent's question
- * must not land there). Answers and dismissals are tracked through
- * `ITelemetryService`; `background: true` registers a
- * `QuestionBackgroundTask` (`./question-background-task`) on
- * `IAgentTaskService` so the call returns immediately with a `task_id`. The
- * public contract (input schemas, uniqueness validation,
- * `IAskUserQuestionTool`) lives in `./ask-user-question`.
- *
- * Registered via the module-level `registerAgentToolService(IAskUserQuestionTool,
- * AskUserQuestionTool)` at the bottom of this file — the same "import =
- * register" pattern used by every agent tool. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { CoreErrors } from '#/_base/errors/codes';
@@ -54,12 +31,10 @@ import {
 import DESCRIPTION from './ask-user.md?raw';
 import { QuestionBackgroundTask } from './question-background-task';
 
-
 const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answering.';
 
 const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
-
 
 export class AskUserQuestionTool implements IAskUserQuestionTool {
   declare readonly _serviceBrand: undefined;

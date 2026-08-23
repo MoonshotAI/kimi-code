@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
   type Scope,
@@ -16,6 +16,8 @@ import { type QuestionRequest, ISessionQuestionService } from '#/session/questio
 import { SessionQuestionService } from '#/session/question/questionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,
@@ -49,7 +51,9 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     disposables = new DisposableStore();
     host = createScopedTestHost([stubPair(IEventBus, noopEventBus)]);
-    session = host.child(LifecycleScope.Session, 'session-a');
+    session = host.child(LifecycleScope.Session, 'session-a', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
   });
 
   afterEach(() => {
@@ -170,7 +174,9 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('Session scope isolates brokers: a question parked in A is invisible to B', () => {
-    const sessionB = host.child(LifecycleScope.Session, 'session-b');
+    const sessionB = host.child(LifecycleScope.Session, 'session-b', [
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+    ]);
     const questionsA = session.accessor.get(ISessionQuestionService);
     const questionsB = sessionB.accessor.get(ISessionQuestionService);
 
@@ -180,5 +186,47 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     questionsB.answer('q1', { answers: { q_0: 'Yes' } });
     expect(questionsA.listPending().map((r) => r.id)).toEqual(['q1']);
+  });
+
+  it('mints distinct interaction ids when the provider reuses a toolCallId', async () => {
+    const interaction = session.accessor.get(ISessionInteractionService);
+    const questions = session.accessor.get(ISessionQuestionService);
+    const req = (): QuestionRequest => ({
+      toolCallId: 'AskUserQuestion:0',
+      questions: [{ question: 'Pick one', options: [{ label: 'Yes' }, { label: 'No' }] }],
+    });
+
+    const first = questions.request(req());
+    const second = questions.request(req());
+
+    const pending = interaction.listPending();
+    expect(pending.map((i) => (i.payload as QuestionRequest).toolCallId)).toEqual([
+      'AskUserQuestion:0',
+      'AskUserQuestion:0',
+    ]);
+    const ids = pending.map((i) => i.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every((id) => id.startsWith('question_'))).toBe(true);
+
+    questions.dismiss(ids[0]!);
+    questions.answer(ids[1]!, { answers: { q_0: 'Yes' } });
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toEqual({ answers: { q_0: 'Yes' } });
+  });
+
+  it('listPending surfaces the minted interaction id so hosts can answer', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const parked = questions.request({
+      toolCallId: 'AskUserQuestion:0',
+      questions: [{ question: 'Pick one', options: [{ label: 'Yes' }, { label: 'No' }] }],
+    });
+    const pending = questions.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toMatch(/^question_/);
+    expect(pending[0]!.toolCallId).toBe('AskUserQuestion:0');
+
+    questions.answer(pending[0]!.id!, { answers: { q_0: 'Yes' } });
+    await expect(parked).resolves.toEqual({ answers: { q_0: 'Yes' } });
   });
 });

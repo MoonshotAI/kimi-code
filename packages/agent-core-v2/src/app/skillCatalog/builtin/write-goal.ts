@@ -1,7 +1,3 @@
-/**
- * `skillCatalog` domain (L3) — builtin `write-goal` skill definition.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import WRITE_GOAL_BODY from './write-goal.md?raw';

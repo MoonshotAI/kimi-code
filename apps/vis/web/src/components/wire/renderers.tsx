@@ -83,6 +83,29 @@ export const WIRE_RENDERERS: RendererMap = {
     },
   },
 
+  'profile.bind': {
+    tone: 'config',
+    label: 'profile',
+    headline: (r) => {
+      const parts: string[] = [];
+      if (r.profileName !== undefined) parts.push(`profile=${r.profileName}`);
+      if (r.modelAlias !== undefined) parts.push(`model=${r.modelAlias}`);
+      if (r.thinkingEffort !== undefined) parts.push(`thinking=${r.thinkingEffort}`);
+      if (r.activeToolNames !== undefined) {
+        parts.push(`${r.activeToolNames.length} tools`);
+      } else {
+        parts.push('all tools');
+      }
+      return {
+        main: (
+          <span className="truncate text-fg-0">
+            {parts.length === 0 ? <Dim>(no fields)</Dim> : parts.join(' · ')}
+          </span>
+        ),
+      };
+    },
+  },
+
   'turn.prompt': {
     tone: 'turn',
     label: 'prompt',
@@ -324,6 +347,14 @@ export const WIRE_RENDERERS: RendererMap = {
     },
   },
 
+  'tools.reset_active_tools': {
+    tone: 'tools',
+    label: 'reset',
+    headline: () => ({
+      main: <Mono>all tools active</Mono>,
+    }),
+  },
+
   'tools.update_store': {
     tone: 'meta',
     label: 'store',
@@ -557,6 +588,18 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'subagent',
     label: 'swarm✓',
     headline: () => ({ main: <Dim>swarm mode exited</Dim> }),
+  },
+
+  'tower_mode.enter': {
+    tone: 'subagent',
+    label: 'tower↻',
+    headline: () => ({ main: <Dim>tower mode entered</Dim> }),
+  },
+
+  'tower_mode.exit': {
+    tone: 'subagent',
+    label: 'tower✓',
+    headline: () => ({ main: <Dim>tower mode exited</Dim> }),
   },
 
   'goal.create': {

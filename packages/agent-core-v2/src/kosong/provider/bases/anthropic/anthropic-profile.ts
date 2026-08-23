@@ -1,9 +1,3 @@
-/**
- * `kosong/provider` domain (L2) — Anthropic model capability profiles and name
- * matching. Matrix source: https://platform.claude.com/docs/en/build-with-claude/effort
- * and https://platform.claude.com/docs/en/build-with-claude/extended-thinking.
- */
-
 export type AnthropicThinkingMode = 'budget' | 'adaptive';
 
 export interface AnthropicModelProfile {

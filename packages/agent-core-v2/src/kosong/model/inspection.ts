@@ -1,23 +1,6 @@
-/**
- * `kosong/model` domain (L2) — the `IModelCatalog.inspect` payload and its
- * assembly.
- *
- * The inspection is a *god object* for one configured model: the raw config
- * layers (`[models.*]` record + effective record, `[providers.*]` config +
- * provider-definition facts) beside the
- * resolved runtime view — plus `sources`, a dot-path → provenance map that
- * answers "where did this value come from" (`config` / `override` /
- * `builtin` / `env` / `synthesized` / `none`).
- *
- * Everything here is on-demand: `ModelCatalog.entry` captures a
- * `ResolutionTraceCollector` while resolving (reference-only, no copies), and
- * `assembleModelInspection` builds the god object — including secret
- * redaction — only when `inspect` is called. The trace and the resolved
- * Model come from the SAME resolution pass, so the inspection can never
- * drift from what `get` served (same config generation, same cache entry).
- */
-
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+
+import { BugIndicatingError } from '#/_base/errors/errors';
 
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { InspectionSource, ResolutionTrace } from '#/kosong/contract/inspection';
@@ -30,18 +13,12 @@ import { getProviderDefinition } from '../provider/providerDefinition';
 import type { ModelRecord } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
 
-// ---------------------------------------------------------------------------
-// Inspection payload
-// ---------------------------------------------------------------------------
-
 export interface InspectedAuth {
   readonly kind: 'apiKey' | 'oauth' | 'none';
-  /** Masked (`••••` + last 4) when present — never the raw secret. */
   readonly apiKey?: string;
   readonly oauthProviderKey?: string;
 }
 
-/** The resolved runtime view — `Model` minus the `authProvider` closure. */
 export interface InspectedResolvedModel {
   readonly protocol: Protocol;
   readonly providerType?: string;
@@ -67,17 +44,13 @@ export interface ModelInspection {
   readonly id: string;
   readonly model: {
     readonly id: string;
-    /** Raw `[models.*]` record, secrets masked. */
     readonly record: ModelRecord;
-    /** After overrides merge + the Anthropic profile pass, secrets masked. */
     readonly effective: ModelRecord;
   };
   readonly provider: {
     readonly id: string;
-    /** True for flat models: the provider was synthesized from the baseUrl host. */
     readonly synthesized: boolean;
     readonly config?: ProviderConfig;
-    /** Vendor-registry facts (definition-level endpoint declaration: env NAMES, never values). */
     readonly definition?: {
       readonly registered: boolean;
       readonly baseProtocol?: Protocol;
@@ -90,11 +63,6 @@ export interface ModelInspection {
   readonly sources: Readonly<Record<string, InspectionSource>>;
 }
 
-// ---------------------------------------------------------------------------
-// Trace collector
-// ---------------------------------------------------------------------------
-
-/** Capture keys shared between the resolver and the assembly. */
 export const TRACE = {
   configuredModel: 'configuredModel',
   effectiveModel: 'effectiveModel',
@@ -106,6 +74,8 @@ export const TRACE = {
   detectedCapability: 'detectedCapability',
   capabilitySource: 'capabilitySource',
   hostHeaders: 'hostHeaders',
+  thirdPartyHeaders: 'thirdPartyHeaders',
+  identitySlug: 'identitySlug',
 } as const;
 
 export class ResolutionTraceCollector implements ResolutionTrace {
@@ -129,10 +99,6 @@ export class ResolutionTraceCollector implements ResolutionTrace {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Secret redaction
-// ---------------------------------------------------------------------------
-
 const SECRET_KEY_RE = /api[-_]?key|token|secret|password|authorization/i;
 
 export function maskSecret(value: string): string {
@@ -140,7 +106,6 @@ export function maskSecret(value: string): string {
   return `••••${value.slice(-4)}`;
 }
 
-/** Deep-copy with every string under a secret-looking key masked. */
 export function redactSecrets<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => redactSecrets(item)) as T;
   if (value !== null && typeof value === 'object') {
@@ -153,17 +118,6 @@ export function redactSecrets<T>(value: T): T {
   return value;
 }
 
-// ---------------------------------------------------------------------------
-// Field attribution helpers (called from the resolver while the trace is live)
-// ---------------------------------------------------------------------------
-
-/**
- * Attribute every leaf of the effective record: `override` for keys the
- * `overrides` block set, `builtin` for values the Anthropic profile pass
- * filled in or changed (capabilities / supportEfforts / defaultEffort),
- * `synthesized` for the pruned defaultEffort, `config` for everything that
- * came straight through from the raw record.
- */
 export function attributeEffectiveFields(
   trace: ResolutionTraceCollector,
   configured: ModelRecord,
@@ -229,7 +183,6 @@ const PROVIDER_OPTION_FIELD: Readonly<Record<string, string>> = {
   reasoningKey: 'reasoningKey',
 };
 
-/** Attribute each `resolved.providerOptions.*` key back to its model field or the provider env bag. */
 export function attributeProviderOptions(
   trace: ResolutionTraceCollector,
   options: ProtocolProviderOptions,
@@ -260,10 +213,6 @@ export function attributeProviderOptions(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Assembly (on-demand, only when `inspect` is called)
-// ---------------------------------------------------------------------------
-
 interface ResolvedModelLike {
   readonly protocol: Protocol;
   readonly providerType?: string;
@@ -293,13 +242,6 @@ const CAPABILITY_KEYS = [
   'dynamically_loaded_tools',
 ] as const;
 
-/**
- * Build the god object from the trace of one resolution pass and the Model it
- * produced. Adds the derived annotations (mirrored `resolved.*` sources,
- * per-key capability / header attribution) on top of the resolver-recorded
- * ones. All secrets are masked here — the trace holds raw values in memory
- * (as does the resolved Model's auth closure), the payload never does.
- */
 export function assembleModelInspection(args: {
   readonly id: string;
   readonly model: ResolvedModelLike;
@@ -332,7 +274,6 @@ export function assembleModelInspection(args: {
     ],
   ]);
 
-  // Mirror the effective-field sources onto their resolved counterparts.
   for (const field of [
     'maxContextSize',
     'maxInputSize',
@@ -366,8 +307,6 @@ export function assembleModelInspection(args: {
     sources.get('provider') ?? { kind: 'config', detail: `provider '${providerName}'` },
   );
 
-  // Node-level annotations for structural fields that otherwise render
-  // without any provenance (ids, the headers merge).
   sources.set('model', { kind: 'config', detail: 'the [models.*] section entry' });
   sources.set('model.id', { kind: 'config', detail: 'the [models.*] section key' });
   sources.set('resolved.headers', {
@@ -391,7 +330,6 @@ export function assembleModelInspection(args: {
   attributeCapabilities(sources, configured, effective, trace);
   attributeHeaders(sources, model, providerConfig, trace);
 
-  // Provider definition facts (vendor-registry knowledge, never config).
   const providerType = providerConfig?.type;
   const definition = providerType === undefined ? undefined : getProviderDefinition(providerType);
   if (providerConfig !== undefined) {
@@ -468,9 +406,6 @@ function attributeCapabilities(
   effective: ModelRecord,
   trace: ResolutionTraceCollector,
 ): void {
-  // The raw record declares with `config`; the profile pass may append
-  // thinking capabilities on top — those are `builtin`, like the profile
-  // itself. (The runtime merge uses the effective record either way.)
   const raw = new Set((configured.capabilities ?? []).map((c) => c.trim().toLowerCase()));
   const added = new Set((effective.capabilities ?? []).map((c) => c.trim().toLowerCase()));
   const detected = trace.captured<ModelCapability>(TRACE.detectedCapability);
@@ -511,6 +446,17 @@ function attributeCapabilities(
   );
 }
 
+function hostHeaderDetail(
+  forwardsAll: boolean,
+  key: string,
+  identitySlug: string | undefined,
+): string {
+  if (forwardsAll) return "host request headers (hostHeaders: 'full')";
+  return identitySlug !== undefined && key === 'User-Agent'
+    ? `host User-Agent, product token from [identity] (${identitySlug})`
+    : 'host User-Agent';
+}
+
 function attributeHeaders(
   sources: Map<string, InspectionSource>,
   model: ResolvedModelLike,
@@ -519,17 +465,14 @@ function attributeHeaders(
 ): void {
   const envLayer = parseKimiCodeCustomHeaders();
   const rawHost = trace.captured<Readonly<Record<string, string>>>(TRACE.hostHeaders) ?? {};
+  const identitySlug = trace.captured<string | undefined>(TRACE.identitySlug);
   const forwardsAll =
     providerConfig?.type !== undefined &&
     getProviderDefinition(providerConfig.type)?.hostHeaders === 'full';
   const hostLayer: Readonly<Record<string, string>> = forwardsAll
     ? rawHost
-    : rawHost['User-Agent'] === undefined
-      ? {}
-      : { 'User-Agent': rawHost['User-Agent'] };
+    : trace.captured<Readonly<Record<string, string>>>(TRACE.thirdPartyHeaders) ?? {};
   const customLayer = providerConfig?.customHeaders ?? {};
-  // The merge order is env < host < custom (resolveOutboundHeaders); the
-  // winner of each final key is attributed, losers are shadowed silently.
   for (const key of Object.keys(model.headers)) {
     const path = `resolved.headers.${key}`;
     if (key in customLayer) {
@@ -537,7 +480,7 @@ function attributeHeaders(
     } else if (key in hostLayer) {
       sources.set(path, {
         kind: 'builtin',
-        detail: forwardsAll ? "host request headers (hostHeaders: 'full')" : 'host User-Agent',
+        detail: hostHeaderDetail(forwardsAll, key, identitySlug),
       });
     } else if (key in envLayer) {
       sources.set(path, { kind: 'env', detail: 'KIMI_CODE_CUSTOM_HEADERS' });
@@ -548,7 +491,7 @@ function attributeHeaders(
 function required<T>(trace: ResolutionTraceCollector, key: string, what: string): T {
   const value = trace.captured<T>(key);
   if (value === undefined) {
-    throw new Error(`resolution trace is missing the ${what} capture ('${key}')`);
+    throw new BugIndicatingError(`resolution trace is missing the ${what} capture ('${key}')`);
   }
   return value;
 }

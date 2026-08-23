@@ -1,30 +1,6 @@
-/**
- * `kosong/provider` domain (L2) — the single production implementation of
- * `IProtocolAdapterRegistry`.
- *
- * This is the one resolution point for "(protocol, providerType) → which base
- * + which traits" and the single construction point for composed
- * ChatProviders:
- *
- *  - `resolveAdapterIdentity` — the two branches: a `(providerType,
- *    protocol)` pair registration → the protocol as base with that
- *    registration's traits; no pair registration (unregistered vendor, no
- *    providerType, or the vendor does not run over this protocol) → the
- *    protocol itself as base with no vendor traits. The config
- *    `defaultHeaders` synthetic trait is ALWAYS appended last, so config
- *    headers win header aggregation; it declares no per-request hooks, so it
- *    can never shadow a real trait hook in composition.
- *  - `createChatProvider` — re-binds every resolved trait's context to the
- *    full adapter config (identity resolution knows only
- *    `(protocol, providerType)`; composition needs the real config) and
- *    delegates to the registered base's contrib factory.
- *  - `resolveCapability` — the fixed fallback chain: trait capability hooks
- *    (last declarer wins) → the base's own catalog → `UNKNOWN_CAPABILITY`.
- *
- * Bound at App scope, eager.
- */
+import { LifecycleScope } from '#/app/scopes';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { ChatProviderError } from '#/kosong/contract/errors';
@@ -45,12 +21,6 @@ import type { ProtocolTrait, ResolvedTrait, TraitContext } from '#/kosong/protoc
 
 import { getProviderDefinition } from './providerDefinition';
 
-/**
- * The trailing synthetic trait that lets config `defaultHeaders` win: it is
- * appended after every vendor trait so its headers merge last in
- * `traitDefaultHeaders` aggregation. It declares nothing else — composition
- * (which picks the last `withThinking` declarer, etc.) is unaffected.
- */
 const CONFIG_DEFAULT_HEADERS_TRAIT: ProtocolTrait = {
   defaultHeaders: (ctx) =>
     ctx.config.defaultHeaders === undefined ? undefined : { ...ctx.config.defaultHeaders },
@@ -69,9 +39,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const baseId: ProtocolBaseId = protocol;
     const traits: readonly ProtocolTrait[] = definition?.traits ?? [];
 
-    // Identity resolution has no live adapter config, so contexts are bound
-    // to a stub here; `createChatProvider` re-binds them to the real config
-    // before composition.
     const context: TraitContext = {
       config: { protocol, providerType, modelName: '' },
       providerId: providerType,
@@ -81,11 +48,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return { baseId, traits: resolved };
   }
 
-  /**
-   * Kept for interface stability. A pair registration composes with the
-   * protocol it registered for, so its `baseProtocol` IS the protocol — this
-   * currently always answers the protocol itself.
-   */
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);

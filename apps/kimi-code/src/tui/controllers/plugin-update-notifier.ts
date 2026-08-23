@@ -1,6 +1,6 @@
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import {
   computeUpdateStatus,
   loadPluginMarketplace,
@@ -166,7 +166,7 @@ export class PluginUpdateNotifier {
       // Only the default official catalog can back an "Official Marketplace"
       // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
       // advertise anything under any id.
-      if (marketplace.source !== KIMI_CODE_PLUGIN_MARKETPLACE_URL) return;
+      if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
       const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
       if (entry === undefined) return;
       const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);

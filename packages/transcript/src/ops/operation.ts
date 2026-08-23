@@ -1,16 +1,3 @@
-/**
- * L2 transport vocabulary.
- *
- * Operations are volatile — they carry no rendering contract and clients may
- * coalesce or drop them freely within the rules below. There is exactly one
- * non-idempotent op: `append` (must carry `offset`). Everything else is a
- * state-style upsert/merge: duplicates are absorbed, and ops consumed in the
- * producer's causal order (a single sequenced channel per agent) converge to
- * the producer's store.
- *
- * The single convergence path is `AgentTranscript.apply` in `store/`.
- */
-
 import type {
   AgentId,
   FrameId,

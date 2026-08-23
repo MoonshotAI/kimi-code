@@ -47,7 +47,8 @@ export const IGreeter: ServiceIdentifier<IGreeter> = createDecorator<IGreeter>('
 
 ```ts
 // greet/greetService.ts
-import { LifecycleScope, registerScopedService, ScopeActivation } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { registerScopedService, ScopeActivation } from '#/_base/di/scope';
 import { IGreeter } from './greet';
 
 export class Greeter implements IGreeter {
@@ -139,19 +140,21 @@ const meta = accessor.get(ISessionMetadata);   // 类型是 ISessionMetadata
 
 > 你要做的：每个会话一份、或每个 agent 一份。参考 [`sessionMetadata`](../src/session/sessionMetadata/sessionMetadata.ts)、[`turn`](../src/turn/turn.ts)。
 
-这一步引入：**`LifecycleScope` 三层生命周期** 与 **父子 scope 的可见性**。
+这一步引入：**`LifecycleScope` 四层生命周期** 与 **父子 scope 的可见性**。
 
-### 3.1 三层，按寿命从长到短
+### 3.1 四层，按寿命从长到短
 
 ```ts
+// src/app/scopes.ts（业务层声明；内核只认识字符串 kind 与拓扑序）
 export enum LifecycleScope {
-  App = 0,    // 进程级，全局一份
-  Session = 1, // 一次会话
-  Agent = 2,   // 一个 agent
+  App = 'app',             // 进程级，全局一份
+  Workspace = 'workspace', // 一个工作区 handler（与 Session 一对多）
+  Session = 'session',     // 一次会话
+  Agent = 'agent',         // 一个 agent
 }
 ```
 
-数值越大，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
+拓扑里越靠后，寿命越短、越靠叶子。注册时把 `scope` 换成对应层即可：
 
 ```ts
 registerScopedService(
@@ -171,15 +174,16 @@ Scope 是一棵树，`kind` 必须沿父子方向**严格递增**：
 
 ```
 App (0)
- └── Session (1)
-      └── Agent (2)
+ └── Workspace (1)
+      └── Session (2)
+           └── Agent (3)
 ```
 
 解析服务时，容器先看自己这一层，没有就**递归问父 scope**。所以一条铁律：
 
 > **短寿命的服务可以注入长寿命的服务，反过来不行。**
 
-- ✅ Agent 服务注入 Session / App 服务（往上找，找得到）。
+- ✅ Agent 服务注入 Session / Workspace / App 服务（往上找，找得到）。
 - ❌ App 服务注入 Session 服务（App 创建时 Session 还不存在，且父不会往下找）。
 
 这条规则由树的结构强制保证，不靠纪律维持。
@@ -350,7 +354,7 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 
 ### 9.2 为什么不允许
 
-- scope 分层让正常依赖天然是 DAG（Agent → Session → App 向上找），一个环几乎总是设计味道。
+- scope 分层让正常依赖天然是 DAG（Agent → Session → Workspace → App 向上找），一个环几乎总是设计味道。
 - 靠「让环刚好能跑」会把构造顺序变成隐式约定，难调试、难排错。
 
 所以 v2 的立场是：**依赖图必须是无环的。**
@@ -412,7 +416,7 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 5. 父 scope 的服务不依赖子 scope 的服务（运行时也解析不到）。
 6. **不写循环依赖**——容器会抛 `CyclicDependencyError`；撞上时按场景 9 重构，激活方式不能绕过循环检测。
 7. `ServicesAccessor` 只在 `invokeFunction` 调用期间有效，不存起来异步用。
-8. 注册写在实现文件顶层；测试里用 `_clearScopedRegistryForTests()` 后显式重注册，不依赖生产 import 顺序。
+8. 注册写在实现文件顶层；同一 (scope, token) 只能静态注册一次——重复注册（包括经别名的同一 decorator 对象）在 import 期抛 `BugIndicatingError`，有意替换用 `overrideScopedService`（目标没有注册时同样抛错）。测试里用 `_clearScopedRegistryForTests()` 后显式重注册，不依赖生产 import 顺序。
 
 ## 附录 C：新增一个服务的标准动作
 

@@ -1,24 +1,23 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { isWithinWorkspace } from '#/tool/path-access';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IHostEnvironment as HostEnvironment } from '#/os/interface/hostEnvironment';
+import { IGitService } from '#/app/git/git';
+import type { IGitService as GitService } from '#/app/git/git';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
-import {
-  findLocalGitWorkTreeMarker,
-  writeFileAccesses,
-} from './path-utils';
+import { writeFileAccesses } from './path-utils';
 
 export class GitCwdWriteApprovePermissionPolicyService implements PermissionPolicy {
   readonly name = 'git-cwd-write-approve';
 
   constructor(
-    @IHostEnvironment private readonly env: HostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
+    @IGitService private readonly git: GitService,
   ) {}
 
   async evaluate(
@@ -26,7 +25,10 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   ): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
-    if (this.env.pathClass !== 'posix') return undefined;
+    const lease = this.runtime.acquire();
+    const pathClass = lease.runtime.environment.pathClass;
+    lease.dispose();
+    if (pathClass !== 'posix') return undefined;
 
     const cwd = this.workspace.workDir;
     if (cwd.length === 0) return undefined;
@@ -45,7 +47,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
       return undefined;
     }
 
-    return (await findLocalGitWorkTreeMarker(cwd)) === null
+    return (await this.git.findWorkTree(cwd)) === null
       ? undefined
       : { kind: 'approve' };
   }

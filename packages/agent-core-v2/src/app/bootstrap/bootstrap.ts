@@ -1,18 +1,3 @@
-/**
- * `bootstrap` domain (L1) — frozen startup snapshot and composition root.
- *
- * Defines the `IBootstrapService`, the snapshot of the world the process runs
- * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientIdentity`) and the
- * app path layout (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is
- * the single place that reads `process.env` / `os.homedir()` / invocation
- * input to resolve the snapshot; everything downstream reads from
- * `IBootstrapService` instead of touching `process` directly. Bound at App
- * scope. Also seeds the `IFileSystemStorageService` with a `FileStorageService`
- * rooted at `homeDir` so the byte layer (and every Store above it) persists
- * to disk.
- */
-
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
@@ -30,6 +15,32 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 
+export interface HostArgs {
+  readonly agentFiles?: readonly string[];
+  readonly skillDirs?: readonly string[];
+  readonly requestHeaders: Readonly<Record<string, string>>;
+  readonly displayName?: string;
+  readonly replyStyleGuide?: string;
+}
+
+export interface HostArgsInput {
+  readonly agentFiles?: readonly string[];
+  readonly skillDirs?: readonly string[];
+  readonly requestHeaders?: Readonly<Record<string, string>>;
+  readonly displayName?: string;
+  readonly replyStyleGuide?: string;
+}
+
+export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
+  return {
+    agentFiles: input?.agentFiles,
+    skillDirs: input?.skillDirs,
+    requestHeaders: input?.requestHeaders ?? {},
+    displayName: input?.displayName,
+    replyStyleGuide: input?.replyStyleGuide,
+  };
+}
+
 export interface IBootstrapOptions {
   readonly homeDir: string;
   readonly configPath: string;
@@ -39,6 +50,7 @@ export interface IBootstrapOptions {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
 }
 
 export const IBootstrapOptions: ServiceIdentifier<IBootstrapOptions> =
@@ -51,8 +63,7 @@ export type PersistenceScopeName =
   | 'store'
   | 'logs'
   | 'cache'
-  | 'credentials'
-  | 'cron';
+  | 'credentials';
 
 export interface IBootstrapService {
   readonly _serviceBrand: undefined;
@@ -64,6 +75,7 @@ export interface IBootstrapService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -71,10 +83,6 @@ export interface IBootstrapService {
   readonly logsDir: string;
   getEnv(name: string): string | undefined;
   scope(name: PersistenceScopeName): string;
-  sessionScope(workspaceId: string, sessionId: string): string;
-  agentScope(workspaceId: string, sessionId: string, agentId: string): string;
-  sessionDir(workspaceId: string, sessionId: string): string;
-  agentHomedir(workspaceId: string, sessionId: string, agentId: string): string;
   readonly configKey: string;
 }
 
@@ -89,9 +97,8 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
-  /** Required: every process names its host. There is deliberately no default
-      — a fabricated identity would silently misreport the host upstream. */
   readonly clientIdentity: KimiHostIdentity;
+  readonly args?: HostArgsInput;
 }
 
 export function resolveBootstrapOptions(input: BootstrapInput): IBootstrapOptions {
@@ -108,11 +115,17 @@ export function resolveBootstrapOptions(input: BootstrapInput): IBootstrapOption
     cwd: input.cwd ?? process.cwd(),
     env,
     clientIdentity: input.clientIdentity,
+    args: resolveHostArgs(input.args),
   };
 }
 
 export function bootstrapSeed(input: BootstrapInput): ScopeSeed {
-  return [[IBootstrapOptions as ServiceIdentifier<unknown>, resolveBootstrapOptions(input)]];
+  return [
+    [
+      IBootstrapOptions as ServiceIdentifier<unknown>,
+      resolveBootstrapOptions(input),
+    ],
+  ];
 }
 
 export interface BootstrapResult {
@@ -122,7 +135,7 @@ export interface BootstrapResult {
 export function bootstrap(input: BootstrapInput, extraSeeds: ScopeSeed = []): BootstrapResult {
   const options = resolveBootstrapOptions(input);
   const app = createAppScope({
-    extra: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
+    seeds: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
   });
   return { app };
 }

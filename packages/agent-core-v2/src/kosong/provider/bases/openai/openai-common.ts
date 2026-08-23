@@ -1,23 +1,3 @@
-/**
- * `kosong/provider` domain (L2) — shared OpenAI-family wire mechanics.
- *
- * Everything the Chat Completions and Responses bases share: content-part and
- * tool conversion, usage extraction, finish-reason normalization, the
- * capability constants, and the error converter.
- *
- * `convertOpenAIError`'s FIRST line is the contract's `throwIfAbortError`
- * guard: a user cancellation (SDK `APIUserAbortError`, bare `AbortError`, the
- * standard abort DOMException) is THROWN as the standard abort shape at the
- * very front of the classification chain — it can never be converted into,
- * nor returned as, a retryable provider error. After the guard,
- * already-converted `ChatProviderError`s pass through untouched; only then is
- * the optional trait-composed `convertError` hook consulted, so a vendor
- * classifies each RAW wire failure (e.g. quota 429s) exactly once before the
- * base rules run. The base itself classifies only OpenAI's own documented
- * `insufficient_quota` code as a non-retryable quota exhaustion —
- * vendor-specific quota signals belong on the vendor's trait.
- */
-
 import {
   APIConnectionError as OpenAIConnectionError,
   APIConnectionTimeoutError as OpenAITimeoutError,
@@ -25,6 +5,7 @@ import {
   OpenAIError,
 } from 'openai';
 
+import { BugIndicatingError } from '#/_base/errors/errors';
 import {
   APIConnectionError,
   APIProviderQuotaExhaustedError,
@@ -81,7 +62,7 @@ export function convertContentPart(part: ContentPart): OpenAIContentPart | null 
             : { url: part.videoUrl.url, id: part.videoUrl.id },
       };
     default:
-      throw new Error(`Unknown content part type: ${(part as ContentPart).type}`);
+      throw new BugIndicatingError(`Unknown content part type: ${(part as ContentPart).type}`);
   }
 }
 
@@ -120,9 +101,6 @@ export function convertOpenAIError(
   error: unknown,
   convertErrorHook?: (error: unknown) => ChatProviderError | undefined,
 ): ChatProviderError {
-  // Abort guard FIRST: throws (never returns) the standard abort DOMException
-  // for any abort shape, so a user cancellation is never misclassified as a
-  // retryable provider failure.
   throwIfAbortError(error);
   if (error instanceof ChatProviderError) {
     return error;
@@ -245,10 +223,6 @@ export function convertToolMessageContent(
     .map((p) => convertContentPart(p))
     .filter((p): p is OpenAIContentPart => p !== null);
 }
-
-// ---------------------------------------------------------------------------
-// Capability constants shared by the OpenAI-family base catalogs.
-// ---------------------------------------------------------------------------
 
 export const OPENAI_REASONING_CAPABILITY = Object.freeze({
   image_in: false,

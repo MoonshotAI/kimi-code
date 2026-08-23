@@ -1,7 +1,3 @@
-/**
- * `skillCatalog` domain (L3) — builtin `check-kimi-code-docs` skill definition.
- */
-
 import type { SkillDefinition } from '#/app/skillCatalog/types';
 import { parseSkillText } from '#/app/skillCatalog/parser';
 import CHECK_KIMI_CODE_DOCS_BODY from './check-kimi-code-docs.md?raw';
@@ -23,4 +19,5 @@ export const CHECK_KIMI_CODE_DOCS_SKILL: SkillDefinition = {
     ...parsed.metadata,
     type: parsed.metadata.type ?? 'inline',
   },
+  productSpecific: true,
 };

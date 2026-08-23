@@ -1,13 +1,7 @@
-/**
- * `flag` domain (L3) — `IFlagRegistry` implementation.
- *
- * In-memory catalog of flag definitions. Seeds itself from the import-time
- * contributions (`getContributedFlags`) on construction, and also accepts
- * runtime `register` calls (used by tests). Bound at App scope.
- */
-
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { BugIndicatingError } from '#/errors';
 
 import {
   type FlagDefinitionInput,
@@ -46,7 +40,7 @@ export class FlagRegistryService extends Disposable implements IFlagRegistry {
 
   private add(definition: FlagDefinitionInput): void {
     if (this.byId.has(definition.id)) {
-      throw new Error(`Flag '${definition.id}' is already registered`);
+      throw new BugIndicatingError(`Flag '${definition.id}' is already registered`);
     }
     this.byId.set(definition.id, definition);
   }

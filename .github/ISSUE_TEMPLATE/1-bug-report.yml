@@ -13,7 +13,7 @@ body:
 
         Please try to include as much information as possible.
 
-        If you plan to submit a fix: link this issue in your PR. Small, reproducible bugs can go straight to a PR; for broader or uncertain fixes, wait for maintainer feedback first.
+        If you plan to submit a fix: check the Contribution box below and wait for a maintainer's `/approve` comment in this issue before opening a PR.
 
   - type: input
     id: version
@@ -65,3 +65,10 @@ body:
     attributes:
       label: Additional information
       description: Is there anything else you think we should know?
+
+  - type: checkboxes
+    id: willing-to-pr
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to submit a PR for this bug fix myself (please wait for maintainer approval in this issue first)

@@ -1,13 +1,3 @@
-/**
- * `toolRegistry` domain (L3) — `IAgentToolRegistryService` contract.
- *
- * Per-agent registry of the tools an agent can resolve and run: `register` /
- * `unregister` / `list` / `resolve`, plus `onRegistered` / `onUnregistered`
- * hooks. The tool model types it references (`ExecutableTool`, `ToolInfo`,
- * `ToolSource`) live in the foundational `tool` contract. Bound at Agent
- * scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 import type {

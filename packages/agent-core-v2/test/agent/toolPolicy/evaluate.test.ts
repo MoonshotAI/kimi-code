@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findInactiveToolPatterns,
   isToolActive,
+  isToolActiveComposed,
   literalToolNames,
 } from '#/agent/toolPolicy/evaluate';
 
@@ -25,8 +26,6 @@ describe('findInactiveToolPatterns', () => {
 
   it('flags a bare * as never matching, and the evaluator agrees', () => {
     expect(findInactiveToolPatterns(['*'])).toEqual([{ pattern: '*', kind: 'wildcard-not-mcp' }]);
-    // Pin the matching semantics the warning describes: `*` in an allowlist
-    // disables everything, in a denylist it is a no-op.
     expect(isToolActive({ tools: ['*'] }, 'Read')).toBe(false);
     expect(isToolActive({ tools: ['*'] }, 'mcp__github__create_pr', 'mcp')).toBe(false);
     expect(isToolActive({ disallowedTools: ['*'] }, 'Read')).toBe(true);
@@ -59,5 +58,53 @@ describe('literalToolNames', () => {
     expect(
       literalToolNames(['Read', 'mcp__*', 'Bash*', 'mcp__github__create_issue']),
     ).toEqual(['Read']);
+  });
+});
+
+describe('isToolActiveComposed workspace veto', () => {
+  it('lets the workspace layer veto a tool every other layer allows', () => {
+    expect(
+      isToolActiveComposed(
+        {
+          workspaceDisabledTools: ['Bash'],
+          profile: { tools: ['Bash', 'Read'] },
+          global: { enabled: ['Bash', 'Read'] },
+          sessionDisabledTools: [],
+        },
+        'Bash',
+      ),
+    ).toBe(false);
+    expect(
+      isToolActiveComposed(
+        {
+          workspaceDisabledTools: ['Bash'],
+          profile: { tools: ['Bash', 'Read'] },
+        },
+        'Read',
+      ),
+    ).toBe(true);
+  });
+
+  it('applies the workspace veto to MCP tools by glob', () => {
+    expect(
+      isToolActiveComposed(
+        { workspaceDisabledTools: ['mcp__blocked__*'], profile: {} },
+        'mcp__blocked__write',
+        'mcp',
+      ),
+    ).toBe(false);
+  });
+
+  it('stays inactive when any classic layer also denies', () => {
+    expect(
+      isToolActiveComposed(
+        {
+          workspaceDisabledTools: ['Bash'],
+          profile: {},
+          sessionDisabledTools: ['Bash'],
+        },
+        'Bash',
+      ),
+    ).toBe(false);
   });
 });

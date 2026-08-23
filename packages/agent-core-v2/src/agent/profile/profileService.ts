@@ -1,64 +1,7 @@
-/**
- * `profile` domain (L4) — `IAgentProfileService` implementation.
- *
- * Owns the active agent's model alias, thinking level, system prompt, and
- * active-tool set; reads the bound model's pure data through the App-scope
- * `IModelCatalog` and produces the dialect-free per-turn intent
- * (`resolveRequestParams`: cache key / sampling / thinking effort+keep —
- * wire encoding is each dialect's own hook), persists the profile binding
- * (`cwd` / `modelAlias` / `profileName` / resolved base `thinkingLevel` /
- * `systemPrompt` / `activeToolNames` / profile `disallowedTools` / profile
- * `subagents`) in the `wire` `ProfileModel` through the `profile.bind` Op
- * (later slice updates ride the `config.update` Op) and the persisted
- * active-tool set in the `wire` `ActiveToolsModel` through the
- * `tools.set_active_tools` / `tools.reset_active_tools` Ops (`wire.dispatch`),
- * and reads both through
- * `wire.getModel`. The effective active-tool set read by consumers is the
- * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
- * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
- * (used by `userTool`; intentionally not persisted, re-derived on resume); the
- * live overlay is held in `agentState` and falls back to the Model when unset,
- * so no restore-ordering coupling with `userTool` arises. Profile and client
- * policy are persisted independently. The `agent.status.updated`
- * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
- * `usageOps`). `chdir` and
- * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
- * rebuilds the Models silently; the same live-only path mirrors the resolved
- * model protocol into the ambient telemetry context (`provider_type` /
- * `protocol`) whenever the model alias changes.
- * `bind()` is first-bind only — a profile is the session's identity: the
- * guard runs before name resolution so `already bound` fails fast, and again
- * in the synchronous segment before the first dispatch, so concurrent binds
- * cannot both pass (an edge-level guard always leaves an interleaving
- * window); a same-name rebind keeps the persisted thinking effort unless the
- * caller explicitly overrides it. Prompt builds inject the enabled plugins'
- * system-prompt sections (budget-capped, see `PLUGIN_SECTIONS_MAX_BYTES`);
- * plugin changes reach the prompt when the session skill catalog re-pulls
- * its plugin source on explicit plugin reload — the same point where plugin
- * skills take effect. `refreshSystemPrompt` never rejects: a
- * failed context build keeps the current prompt and surfaces a warning,
- * because the `[tools]` config watcher fires it voided (an unhandled
- * rejection would crash kap-server) and the Session tool-policy fan-out
- * awaits it across agents. Tool-policy entries that can never activate
- * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
- * `mcp__` literals) surface as `warning` events instead of silently shrinking
- * the tool set; the known-name vocabulary is the live registry plus
- * builtin-profile literal names — deliberately not the session catalog, so a
- * typo in one agent file cannot legitimize the same typo in another, and
- * flag-gated tools (which every builtin profile lists) stay "known" even when
- * unregistered.
- * The mutable plain-data state (`activeToolNamesOverlay` / `agentsMdWarning`
- * / the three emitted-warning dedupe sets) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; `optionsValue` (holds
- * the `cwd` / `chdir` / `emitStatusUpdated` callbacks) and `activeProfile`
- * (a `ResolvedAgentProfile` carrying the `systemPrompt` function) stay plain
- * fields because the container only holds pure data structures. Bound at
- * Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { defineState } from '#/state/state';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -76,31 +19,39 @@ import {
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
+import { BUILTIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { IWireService } from '#/wire/wire';
-import type { PayloadOf } from '#/wire/types';
-import { IEventBus } from '#/app/event/eventBus';
-import { IHostIdentity } from '#/app/hostIdentity/hostIdentity';
-import { prepareSystemPromptContext } from './context';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import {
+  extractAgentsMdPathsFromSystemPrompt,
+  prepareSystemPromptContext,
+  type LoadedAgentsMd,
+} from './context';
 import type {
   ApplyProfileOptions,
   BindAgentInput,
@@ -117,26 +68,24 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import {
-  ActiveToolsModel,
-  configUpdate,
-  profileBind,
-  ProfileModel,
-  setActiveTools,
-  resetActiveTools,
+  profileActiveToolsKey,
+  ConfigUpdate,
+  ProfileBind,
+  profileKey,
+  ToolsResetActiveTools,
+  ToolsSetActiveTools,
+  WarningIssued,
   type ActiveToolsState,
+  type ConfigUpdatePayload,
   type ProfileModelState,
 } from './profileOps';
+
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 
 export interface WarningEvent {
   readonly type: 'warning';
   readonly message: string;
   readonly code?: string;
-}
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    warning: WarningEvent;
-  }
 }
 
 function describeInactiveToolPattern(
@@ -185,44 +134,57 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private get activeToolNames(): ActiveToolsState {
     return (
       this.activeToolNamesOverlay ??
-      (this.wire.getModel(ActiveToolsModel) as ActiveToolsState)
+      (this.states.get(profileActiveToolsKey) as ActiveToolsState)
     );
   }
 
   private activeProfile: ResolvedAgentProfile | undefined;
 
+  private frozenSkillListing: string | undefined;
+  private frozenPluginSections: string | undefined;
+
   constructor(
-    @IWireService private readonly wire: IWireService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
-    @IHostEnvironment private readonly env: IHostEnvironment,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IHostClock private readonly clock: IHostClock,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
+    @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileCatalogService private readonly builtinProfiles: IAgentProfileCatalogService,
+    @IBuiltinAgentProfileLoader private readonly builtinProfiles: IBuiltinAgentProfileLoader,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IHostIdentity private readonly hostIdentity: IHostIdentity,
     @IPluginService private readonly plugins: IPluginService,
+    @IAgentIdentity private readonly identity: IAgentIdentity,
+    @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
   ) {
     super();
-    this.states.register(profileActiveToolNamesOverlayKey);
-    this.states.register(profileAgentsMdWarningKey);
-    this.states.register(profileEmittedThinkingEffortWarningsKey);
-    this.states.register(profileEmittedToolPatternWarningsKey);
-    this.states.register(profileEmittedPluginBudgetWarningsKey);
+    this.states.contributeState(profileKey);
+    this.states.contributeState(profileActiveToolsKey);
+    this.states.contributeState(profileActiveToolNamesOverlayKey);
+    this.states.contributeState(profileAgentsMdWarningKey);
+    this.states.contributeState(profileEmittedThinkingEffortWarningsKey);
+    this.states.contributeState(profileEmittedToolPatternWarningsKey);
+    this.states.contributeState(profileEmittedPluginBudgetWarningsKey);
     this.configure({});
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
         event.waitUntil(this.refreshSystemPrompt());
+      }),
+    );
+    this._register(
+      this.instructions.onDidChange(() => {
+        void this.refreshSystemPrompt();
       }),
     );
     this._register(
@@ -235,7 +197,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
+        if (sourceId === BUILTIN_SKILL_SOURCE_ID) {
           void this.refreshSystemPrompt();
         }
       }),
@@ -272,8 +234,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   configure(options: ProfileServiceOptions): void {
     this.optionsValue = {
-      cwd: options.cwd ?? this.optionsValue.cwd,
-      chdir: options.chdir ?? this.optionsValue.chdir,
       emitStatusUpdated: options.emitStatusUpdated ?? this.optionsValue.emitStatusUpdated,
     };
   }
@@ -287,7 +247,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       this.activeProfile = undefined;
     }
     if (Object.keys(configChanged).length > 0) {
-      this.wire.dispatch(configUpdate(this.resolveConfigPayload(configChanged)));
+      void this.dispatcher.dispatch(new ConfigUpdate(this.resolveConfigPayload(configChanged)));
       this.afterConfigDispatch(configChanged);
     }
     if (activeToolNames !== undefined) {
@@ -298,30 +258,38 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
     this.activeProfile = undefined;
     this.activeToolNamesOverlay = undefined;
-    this.wire.dispatch(
-      profileBind({
-        cwd: snapshot.cwd,
+    const agentsMdPaths =
+      snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
+    void this.dispatcher.dispatch(
+      new ProfileBind({
+        agentId: this.scopeContext.agentId,
         modelAlias: snapshot.modelAlias,
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
         systemPrompt: snapshot.systemPrompt,
+        environmentDisclosure: snapshot.environmentDisclosure,
+        renderGeneration: snapshot.renderGeneration,
+        agentsMdPaths,
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
         subagents: snapshot.subagents,
       }),
     );
     this.afterConfigDispatch({
-      cwd: snapshot.cwd,
       modelAlias: snapshot.modelAlias,
       profileName: snapshot.profileName,
       thinkingLevel: snapshot.thinkingLevel,
       systemPrompt: snapshot.systemPrompt,
+      environmentDisclosure: snapshot.environmentDisclosure,
+      agentsMdPaths,
       disallowedTools: snapshot.disallowedTools ?? [],
     });
+    this.agentsMdReminder.seedInjected(agentsMdPaths, this.sessionContext.cwd);
   }
 
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
+    await this.identity.resolved();
     this.assertBindable(input.profile);
     const profile = this.catalog.get(input.profile);
     if (profile === undefined) {
@@ -349,10 +317,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
 
     await this.sessionToolPolicy.ready;
-    const context = await this.buildSystemPromptContext(profile, input.cwd);
+    const context = await this.buildSystemPromptContext(profile);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
-    const systemPrompt = profile.systemPrompt(context);
+    const rendered = profile.renderSystemPrompt(context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
@@ -362,24 +330,26 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
 
     this.activeToolNamesOverlay = undefined;
-    this.wire.dispatch(profileBind({
-      cwd: input.cwd,
+    await this.dispatcher.dispatch(new ProfileBind({
+      agentId: this.scopeContext.agentId,
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
-      systemPrompt,
+      systemPrompt: rendered.text,
+      environmentDisclosure: rendered.environment,
+      agentsMdPaths: context.agentsMdPaths ?? [],
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
       subagents: profile.subagents,
     }));
     this.afterConfigDispatch({
-      cwd: input.cwd,
       modelAlias: alias,
       profileName: profile.name,
       thinkingLevel,
-      systemPrompt,
+      systemPrompt: rendered.text,
       disallowedTools: profile.disallowedTools ?? [],
     });
+    this.seedAgentsMdReminder(context);
 
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -436,17 +406,21 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
+    const rendered = profile.renderSystemPrompt(context);
     this.update({
       profileName: profile.name,
-      systemPrompt: profile.systemPrompt(context),
+      systemPrompt: rendered.text,
+      environmentDisclosure: rendered.environment,
+      agentsMdPaths: context.agentsMdPaths ?? [],
       disallowedTools: profile.disallowedTools ?? [],
     });
     this.setActiveTools(profile.tools);
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await this.buildSystemPromptContext(profile, undefined, options);
+    const context = await this.buildSystemPromptContext(profile, options);
     this.useProfile(profile, context);
+    this.seedAgentsMdReminder(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -458,22 +432,35 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
     let context: SystemPromptContext;
     try {
-      context = await this.buildSystemPromptContext(profile, this.cwd);
+      context = await this.buildSystemPromptContext(profile);
     } catch (error) {
-      this.eventBus.publish({
-        type: 'warning',
-        message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
-        code: 'system-prompt-refresh-failed',
-      });
+      void this.dispatcher.dispatch(
+        new WarningIssued({
+          agentId: this.scopeContext.agentId,
+          message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
+          code: 'system-prompt-refresh-failed',
+        }),
+      );
       return;
     }
     this.activeProfile = profile;
+    const rendered = profile.renderSystemPrompt(context);
     this.update({
       profileName: profile.name,
-      systemPrompt: profile.systemPrompt(context),
+      systemPrompt: rendered.text,
+      environmentDisclosure: rendered.environment,
+      agentsMdPaths: context.agentsMdPaths ?? [],
     });
+    this.seedAgentsMdReminder(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
+  }
+
+  private seedAgentsMdReminder(context: SystemPromptContext): void {
+    this.agentsMdReminder.seedInjected(
+      context.agentsMdPaths ?? [],
+      context.cwd ?? this.sessionContext.cwd,
+    );
   }
 
   getAgentsMdWarning(): string | undefined {
@@ -483,16 +470,18 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   data(): ProfileData {
     const model = this.tryResolveRawModel();
     return {
-      cwd: this.cwd,
       modelAlias: this.modelAlias,
       modelCapabilities: model?.capabilities ?? UNKNOWN_CAPABILITY,
       profileName: this.profileName,
       thinkingLevel: this.thinkingLevel,
       systemPrompt: this.systemPrompt,
+      agentsMdPaths: this.profileState.agentsMdPaths,
       activeToolNames: this.activeToolNames === undefined ? undefined : [...this.activeToolNames],
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
       subagents:
         this.profileState.subagents === undefined ? undefined : [...this.profileState.subagents],
+      environmentDisclosure: this.profileState.environmentDisclosure,
+      renderGeneration: this.profileState.renderGeneration,
     };
   }
 
@@ -579,11 +568,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
-  ): PayloadOf<typeof configUpdate> {
-    const payload: {
-      -readonly [K in keyof PayloadOf<typeof configUpdate>]: PayloadOf<typeof configUpdate>[K];
-    } = {};
-    if (changed.cwd !== undefined) payload.cwd = changed.cwd;
+  ): ConfigUpdatePayload {
+    const payload: ConfigUpdatePayload = { agentId: this.scopeContext.agentId };
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
     if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
@@ -592,7 +578,15 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
       payload.thinkingEffort = this.resolveThinkingEffort(requested, model);
     }
-    if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
+    if (changed.systemPrompt !== undefined) {
+      payload.systemPrompt = changed.systemPrompt;
+      if (changed.environmentDisclosure !== undefined) {
+        payload.environmentDisclosure = changed.environmentDisclosure;
+      }
+    }
+    if (changed.agentsMdPaths !== undefined) {
+      payload.agentsMdPaths = [...changed.agentsMdPaths];
+    }
     if (changed.disallowedTools !== undefined) {
       payload.disallowedTools = [...changed.disallowedTools];
     }
@@ -600,9 +594,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
-    if (changed.cwd !== undefined) {
-      void this.optionsValue.chdir?.(changed.cwd);
-    }
     if (changed.modelAlias !== undefined) {
       const model = this.tryResolveRawModel();
       this.telemetryContext.set({
@@ -637,7 +628,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
-      this.eventBus.publish({ type: 'warning', code, message });
+      void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
     } catch {
     }
   }
@@ -645,10 +636,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private setActiveTools(names: readonly string[] | undefined): void {
     this.activeToolNamesOverlay = undefined;
     if (names === undefined) {
-      this.wire.dispatch(resetActiveTools({}));
+      void this.dispatcher.dispatch(new ToolsResetActiveTools({ agentId: this.scopeContext.agentId }));
       return;
     }
-    this.wire.dispatch(setActiveTools({ names: [...names] }));
+    void this.dispatcher.dispatch(
+      new ToolsSetActiveTools({ agentId: this.scopeContext.agentId, names: [...names] }),
+    );
   }
 
   private emitStatusUpdated(includeThinkingEffort = false): void {
@@ -657,17 +650,21 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       custom();
       return;
     }
-    if (!this.hasModel()) return;
-    this.eventBus.publish({
-      type: 'agent.status.updated',
-      model: this.modelAlias,
-      thinkingEffort: includeThinkingEffort
-        ? this.getEffectiveThinkingLevel()
-        : undefined,
-      maxContextTokens:
-        this.getModelCapabilities().max_input_tokens ??
-        this.getModelCapabilities().max_context_tokens,
-    });
+    const modelAlias = this.modelAlias;
+    if (modelAlias === undefined) return;
+    const capabilities = this.tryResolveRawModel()?.capabilities;
+    const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
+    void this.dispatcher.dispatch(
+      new AgentStatusUpdated({
+        agentId: this.scopeContext.agentId,
+        model: modelAlias,
+        thinkingEffort: includeThinkingEffort
+          ? this.getEffectiveThinkingLevel()
+          : undefined,
+        maxContextTokens:
+          maxContextTokens !== undefined && maxContextTokens > 0 ? maxContextTokens : undefined,
+      }),
+    );
   }
 
   republishStatus(): void {
@@ -675,11 +672,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private get profileState(): ProfileModelState {
-    return this.wire.getModel(ProfileModel);
-  }
-
-  private get cwd(): string {
-    return this.profileState.cwd ?? this.readConfiguredCwd() ?? '';
+    return this.states.get(profileKey);
   }
 
   private get model(): string {
@@ -723,15 +716,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return { effective: forced ?? base, forced };
   }
 
-  /**
-   * The registry-driven strict-validation verdict for one model (v1
-   * `provider.type === 'kimi'` parity): strict effort validation and
-   * trait-driven normalization apply only when the (protocol, providerType)
-   * pair's thinking driver marks `strictThinkingValidation`. Over a foreign
-   * transport (the `(kimi, anthropic)` registration, e.g. managed models on
-   * protocol `anthropic`) the profile stays lenient and warns instead of
-   * rejecting unlisted efforts.
-   */
   private strictThinkingValidation(model: Model | undefined): boolean {
     if (model === undefined) return false;
     return requiresStrictThinkingValidation(
@@ -800,18 +784,17 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private publishAgentsMdWarning(): void {
     const warning = this.agentsMdWarning;
     if (warning === undefined) return;
-    this.eventBus.publish({
-      type: 'warning',
-      message: warning,
-      code: 'agents-md-oversized',
-    });
+    void this.dispatcher.dispatch(
+      new WarningIssued({
+        agentId: this.scopeContext.agentId,
+        message: warning,
+        code: 'agents-md-oversized',
+      }),
+    );
   }
 
   private publishToolPatternWarnings(profile?: ResolvedAgentProfile): void {
     const known = new Set<string>();
-    // The registry only holds tools the bound Profile activated; the
-    // contribution table is the full static universe, so a valid-but-inactive
-    // name never trips the unknown-tool warning.
     for (const contribution of getAgentToolContributions()) known.add(contribution.options.name);
     for (const ref of this.toolRegistry.listReferences()) known.add(ref.name);
     for (const builtin of this.builtinProfiles.list()) {
@@ -848,41 +831,71 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         const key = `${context}|${field}|${issue.pattern}`;
         if (this.emittedToolPatternWarnings.has(key)) continue;
         this.emittedToolPatternWarnings.add(key);
-        this.eventBus.publish({
-          type: 'warning',
-          code: 'tool-pattern-no-match',
-          message: describeInactiveToolPattern(context, field, issue),
-        });
+        void this.dispatcher.dispatch(
+          new WarningIssued({
+            agentId: this.scopeContext.agentId,
+            code: 'tool-pattern-no-match',
+            message: describeInactiveToolPattern(context, field, issue),
+          }),
+        );
       }
     }
   }
 
   private async buildSystemPromptContext(
     profile: ResolvedAgentProfile,
-    cwd?: string,
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
-    const effectiveCwd = cwd ?? this.sessionContext.cwd;
-    const base = await prepareSystemPromptContext(
-      { fs: this.fs, homeDir: this.env.homeDir },
-      effectiveCwd,
-      this.bootstrap.homeDir,
-      { additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs },
-    );
+    const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
+    const fsAvailable = this.runtime.isAvailable(['fs']);
+    const lease = this.runtime.acquire(fsAvailable ? ['fs'] : []);
+    const env = lease.runtime.environment;
+    const view = new RuntimeWorkspaceView(lease.runtime, {
+      workDir: this.sessionContext.cwd,
+      additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
+    });
+    let base: SystemPromptContext;
+    try {
+      base = !fsAvailable
+        ? {}
+        : await prepareSystemPromptContext(
+            { fs: lease.runtime.fs!, homeDir: env.homeDir },
+            view.workDir,
+            this.bootstrap.homeDir,
+            {
+              additionalDirs: view.additionalDirs,
+              preloadedAgentsMd,
+            },
+          );
+    } finally {
+      lease.dispose();
+    }
     const skills = await this.resolveSkillListing();
     const pluginSections = await this.resolvePluginSections();
+    const now = this.clock.now();
+    const timeZone = this.clock.timeZone();
     return {
       ...base,
-      cwd: effectiveCwd,
-      osKind: this.env.osKind,
-      shellName: this.env.shellName,
-      shellPath: this.env.shellPath,
-      now: new Date().toISOString(),
+      cwd: view.workDir,
+      osKind: env.osKind,
+      shellName: env.shellName,
+      shellPath: env.shellPath,
+      now: now.toISOString(),
+      timeZone,
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
-      productName: this.hostIdentity.productName,
-      replyStyleGuide: this.hostIdentity.replyStyleGuide,
+      productName: (await this.identity.resolved()).displayName,
+      replyStyleGuide: this.bootstrap.args.replyStyleGuide,
+    };
+  }
+
+  private async workspaceInstructionsSnapshot(): Promise<LoadedAgentsMd> {
+    await this.instructions.ready;
+    return {
+      content: this.instructions.agentsMd ?? '',
+      warning: this.instructions.agentsMdWarning,
+      paths: this.instructions.agentsMdPaths ?? [],
     };
   }
 
@@ -893,6 +906,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): boolean {
     return isToolActiveComposed(
       {
+        workspaceDisabledTools: this.toolPolicyGate.disabledTools,
         profile,
         global: this.config.get<ToolsConfig>(TOOLS_SECTION),
         sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
@@ -903,15 +917,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private async resolveSkillListing(): Promise<string> {
+    if (this.frozenSkillListing !== undefined) return this.frozenSkillListing;
     try {
       await this.skillCatalog.ready;
-      return this.skillCatalog.catalog.getModelSkillListing();
+      const listing = this.skillCatalog.catalog.getModelSkillListing();
+      this.frozenSkillListing = listing;
+      return listing;
     } catch {
       return '';
     }
   }
 
   private async resolvePluginSections(): Promise<string> {
+    if (this.frozenPluginSections !== undefined) return this.frozenPluginSections;
     const sections = await this.plugins.enabledSystemPrompts();
     const parts: string[] = [];
     const skipped: string[] = [];
@@ -930,21 +948,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const newlySkipped = skipped.filter((id) => !this.emittedPluginBudgetWarnings.has(id));
       if (newlySkipped.length > 0) {
         for (const id of newlySkipped) this.emittedPluginBudgetWarnings.add(id);
-        this.eventBus.publish({
-          type: 'warning',
-          message:
-            `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
-            `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,
-          code: 'plugin-sections-oversized',
-        });
+        void this.dispatcher.dispatch(
+          new WarningIssued({
+            agentId: this.scopeContext.agentId,
+            message:
+              `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
+              `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,
+            code: 'plugin-sections-oversized',
+          }),
+        );
       }
     }
-    return parts.join('\n\n');
-  }
-
-  private readConfiguredCwd(): string | undefined {
-    const cwd = this.optionsValue.cwd;
-    return typeof cwd === 'function' ? cwd() : cwd;
+    const resolved = parts.join('\n\n');
+    if (this.plugins.hasLoadedSnapshot()) this.frozenPluginSections = resolved;
+    return resolved;
   }
 }
 

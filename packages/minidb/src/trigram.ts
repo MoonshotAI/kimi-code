@@ -18,7 +18,7 @@
 //     deps); 2-grams and 3-grams carry distinct tag prefixes so their buckets
 //     never alias.
 
-import { crc32 } from './crc32.js';
+import { crc32 } from './crc32.ts';
 
 /** Tokenizer kinds that can be persisted in a text index definition
  *  (`db.textindexes.json`). A definition without the field (written before

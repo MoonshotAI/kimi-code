@@ -1,0 +1,138 @@
+import { Disposable } from '#/_base/di/lifecycle';
+import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
+import { defineState } from '#/state/state';
+import { TimeoutTimer } from '#/_base/utils/timer';
+import { subtreeWatchFilter } from '#/_base/utils/paths';
+import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/agent/profile/context';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IHostEnvironment, type HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
+import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+
+import {
+  IWorkspaceInstructionsService,
+  type WorkspaceInstructionsSnapshot,
+} from './workspaceInstructions';
+
+const WATCH_DEBOUNCE_MS = 200;
+
+export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructionsSnapshot>(
+  'workspaceInstructions.current',
+  () => ({ agentsMd: undefined, agentsMdWarning: undefined, agentsMdPaths: undefined }),
+);
+
+export class WorkspaceInstructionsService
+  extends Disposable
+  implements IWorkspaceInstructionsService
+{
+  declare readonly _serviceBrand: undefined;
+
+  readonly ready: Promise<void>;
+  private readonly onDidChangeEmitter = this._register(new Emitter<void>());
+  readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
+  private readonly watchDebounce = this._register(new TimeoutTimer());
+  private reloadTail: Promise<void> = Promise.resolve();
+
+  constructor(
+    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostEnvironment private readonly env: HostEnvironmentInfo,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
+    @ILogService private readonly log: ILogService,
+    @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+  ) {
+    super();
+    this.states.contributeState(workspaceInstructionsCurrentKey);
+    this.ready = this.reload();
+    void this.watchCandidateFiles();
+  }
+
+  private get current(): WorkspaceInstructionsSnapshot {
+    return this.states.get(workspaceInstructionsCurrentKey);
+  }
+
+  private set current(value: WorkspaceInstructionsSnapshot) {
+    this.states.set(workspaceInstructionsCurrentKey, value);
+  }
+
+  get snapshot(): WorkspaceInstructionsSnapshot {
+    return this.current;
+  }
+
+  reload(): Promise<void> {
+    const tail = this.reloadTail.catch(() => undefined).then(async () => {
+      const result = await loadAgentsMdForRoots(
+        { fs: this.fs, homeDir: this.env.homeDir },
+        this.bootstrap.homeDir,
+        [this.workspace.cwd],
+      );
+      const next: WorkspaceInstructionsSnapshot = {
+        agentsMd: result.content,
+        agentsMdWarning: result.warning,
+        agentsMdPaths: result.paths,
+      };
+      const changed =
+        next.agentsMd !== this.current.agentsMd ||
+        next.agentsMdWarning !== this.current.agentsMdWarning;
+      this.current = next;
+      if (changed) {
+        this.onDidChangeEmitter.fire();
+      }
+    });
+    this.reloadTail = tail;
+    return tail;
+  }
+
+  sessionProvider(): ISessionInstructionsProvider {
+    const currentAgentsMd = (): string | undefined => this.current.agentsMd;
+    const currentWarning = (): string | undefined => this.current.agentsMdWarning;
+    const currentPaths = (): readonly string[] | undefined => this.current.agentsMdPaths;
+    return {
+      _serviceBrand: undefined,
+      ready: this.ready,
+      onDidChange: this.onDidChange,
+      get agentsMd() {
+        return currentAgentsMd();
+      },
+      get agentsMdWarning() {
+        return currentWarning();
+      },
+      get agentsMdPaths() {
+        return currentPaths();
+      },
+    };
+  }
+
+  private async watchCandidateFiles(): Promise<void> {
+    const plan = await agentsMdWatchRoots(
+      { fs: this.fs, homeDir: this.env.homeDir },
+      this.workspace.cwd,
+      this.bootstrap.homeDir,
+    );
+    for (const { root, candidates } of plan) {
+      try {
+        const handle = this.fsWatch.watch(root, {
+          ignored: subtreeWatchFilter(root, candidates),
+        });
+        this._register(handle);
+        this._register(
+          handle.onDidChange(() => {
+            this.watchDebounce.cancelAndSet(() => {
+              void this.reload().catch((error) => {
+                this.log.warn(`AGENTS.md reload failed: ${String(error)}`);
+              });
+            }, WATCH_DEBOUNCE_MS);
+          }),
+        );
+      } catch (error) {
+        this.log.warn(`cannot watch instruction root ${root}: ${String(error)}`);
+      }
+    }
+  }
+}
+

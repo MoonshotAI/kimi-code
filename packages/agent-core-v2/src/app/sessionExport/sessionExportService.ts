@@ -1,21 +1,18 @@
-/**
- * `sessionExport` domain (L6) — `ISessionExportService` implementation.
- *
- * Coordinates live session flushing through `sessionLifecycle`, derives session
- * paths from `bootstrap`, reads persisted summaries through `sessionIndex`, and
- * packages diagnostic files through the local zip writer. Bound at App scope.
- */
-
 import { join, resolve } from 'pathe';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWorkspaceService } from '#/app/workspace/workspace';
+import {
+  sessionDirOf,
+  workspacePersistenceScope,
+} from '#/workspace/sessionLifecycle/internal/addressing';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -47,7 +44,7 @@ export class SessionExportService implements ISessionExportService {
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionIndex private readonly index: ISessionIndex,
-    @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -92,20 +89,23 @@ export class SessionExportService implements ISessionExportService {
           : undefined,
       webLog: options.webLog,
       signal: options.signal,
-      maxArchiveBytes: options.maxArchiveBytes,
     });
   }
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
     const workspace = await this.workspaces.get(summary.workspaceId);
-    const sessionDir = this.bootstrap.sessionDir(summary.workspaceId, summary.id);
+    const sessionDir = sessionDirOf(
+      this.bootstrap.homeDir,
+      workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
+      summary.id,
+    );
     let exportSummary: ExportSessionDirectorySummary = {
       id: summary.id,
       title: summary.title,
       workspaceDir: workspace?.root,
       sessionDir,
     };
-    const handle = this.lifecycle.get(summary.id);
+    const handle = this.liveSession(summary.id);
     if (handle === undefined) {
       return exportSummary;
     }
@@ -137,6 +137,10 @@ export class SessionExportService implements ISessionExportService {
     return exportSummary;
   }
 
+  private liveSession(sessionId: string): ISessionScopeHandle | undefined {
+    return this.sessions.get(sessionId);
+  }
+
   private async warnIfFails(
     message: string,
     operation: () => Promise<void>,
@@ -166,7 +170,6 @@ export async function exportSessionDirectory(input: {
   readonly desktopLogPath?: string | undefined;
   readonly webLog?: string;
   readonly signal?: AbortSignal;
-  readonly maxArchiveBytes?: number;
 }): Promise<ExportSessionResult> {
   input.signal?.throwIfAborted();
   const sessionDir = input.summary.sessionDir;
@@ -246,7 +249,6 @@ export async function exportSessionDirectory(input: {
       sessionFiles: selectedSessionFiles,
       extraEntries: extras,
       signal: input.signal,
-      maxArchiveBytes: input.maxArchiveBytes,
     });
     sessionLogSourceTransferred = sessionLogSource !== undefined;
     globalSourceTransferred = globalSource !== undefined;

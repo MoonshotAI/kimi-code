@@ -1,24 +1,14 @@
-/**
- * `gateway` domain (L7) — `IRestGateway` / `IWSGateway` implementations.
- *
- * Owns the REST/WS entry points; resolves sessions through `sessionLifecycle`,
- * agents through `agentLifecycle`, drives turns through `prompt` / `loop`,
- * and flushes logs through `log`. Bound at App scope.
- *
- * WS event fan-out (sequencing, journaling, replay, per-connection dispatch)
- * is a transport concern and lives in the edge package (`packages/kap-server`)
- * on top of `IEventService` + `IAgentRecordService` — not here.
- */
+import { LifecycleScope } from '#/app/scopes';
 
 import {
   type IAgentScopeHandle,
-  LifecycleScope,
   ScopeActivation,
   registerScopedService,
 } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
-import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
@@ -28,17 +18,29 @@ export class RestGateway implements IRestGateway {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @ISessionLifecycleService private readonly sessions: ISessionLifecycleService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @ILogService private readonly log: ILogService,
   ) { }
 
   private agent(sessionId: string, agentId: string): IAgentScopeHandle {
-    const session = this.sessions.get(sessionId);
-    if (session === undefined) throw new Error(`unknown session '${sessionId}'`);
+    const session = this.liveSession(sessionId);
+    if (session === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `unknown session '${sessionId}'`, {
+        details: { sessionId },
+      });
+    }
     const agents = session.accessor.get(IAgentLifecycleService);
-    const agent = agents.get(agentId);
-    if (agent === undefined) throw new Error(`unknown agent '${agentId}'`);
+    const agent = agents.list().find((handle) => handle.id === agentId);
+    if (agent === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `unknown agent '${agentId}'`, {
+        details: { agentId, sessionId },
+      });
+    }
     return agent;
+  }
+
+  private liveSession(sessionId: string) {
+    return this.sessions.get(sessionId);
   }
 
   async prompt(
@@ -78,11 +80,11 @@ export class RestGateway implements IRestGateway {
     return Promise.resolve();
   }
   getStatus(sessionId: string): Promise<unknown> {
-    return Promise.resolve(this.sessions.get(sessionId) !== undefined);
+    return Promise.resolve(this.liveSession(sessionId) !== undefined);
   }
 
   async flushLogs(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
+    const session = this.liveSession(sessionId);
     if (session === undefined) return;
     await session.accessor.get(ILogService).flush();
   }
@@ -95,10 +97,6 @@ export class RestGateway implements IRestGateway {
 export class WSGateway implements IWSGateway {
   declare readonly _serviceBrand: undefined;
   private readonly connections = new Set<string>();
-
-  constructor(
-    @ISessionLifecycleService _sessions: ISessionLifecycleService,
-  ) { }
 
   connect(connectionId: string): void {
     this.connections.add(connectionId);

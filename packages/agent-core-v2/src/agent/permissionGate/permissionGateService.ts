@@ -1,19 +1,6 @@
-/**
- * `permissionGate` domain (L3) — `IAgentPermissionGate` implementation.
- *
- * Runs the `permissionPolicy` chain for every tool execution as an
- * `onBeforeExecuteTool` veto listener: `deny` / `result` resolutions veto,
- * `approve` passes with its `executionMetadata`, and `ask` defers to a cold
- * `waitUntil` factory so the approval round-trip only starts once no other
- * listener vetoed or allowed the call. Reports `permission_policy_decision`
- * through `telemetry`, and delegates the ask round-trip (broker, events,
- * session-rule recording) to `toolApproval`. Harness constraints (plan
- * guard, swarm exclusivity, btw deny) live in their own domains as veto
- * listeners — this gate only adjudicates risk. Bound at Agent scope.
- */
-
-import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionData } from '#/agent/permissionPolicy/types';
@@ -29,7 +16,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { IAgentPermissionGate } from './permissionGate';
 
-export class AgentPermissionGate extends Disposable implements IAgentPermissionGate {
+export class AgentPermissionGate extends Service implements IAgentPermissionGate {
   declare readonly _serviceBrand: undefined;
   constructor(
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,

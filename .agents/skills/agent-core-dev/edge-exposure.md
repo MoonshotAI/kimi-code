@@ -6,10 +6,11 @@ The transport (`/api/v2` over HTTP + WS) lives in the **edge** layer (`gateway`/
 
 ## 1. The edge model
 
-Three scopes, three URL shapes, one dispatcher:
+Four scopes, four URL shapes, one dispatcher:
 
 ```text
 GET|POST /api/v2/:sa                                       Core
+GET|POST /api/v2/workspace/:workspace_id/:sa               Workspace
 GET|POST /api/v2/session/:session_id/:sa                   Session
 GET|POST /api/v2/session/:session_id/agent/:agent_id/:sa   Agent
 ```
@@ -26,9 +27,10 @@ GET|POST /api/v2/session/:session_id/agent/:agent_id/:sa   Agent
 ```ts
 // actionMap — the allowlist; hides internal domain names.
 const actionMap = {
-  core:    { 'sessions:list': { service: ISessionIndex, method: 'list' }, ... },
-  session: { 'session:read':  { service: ISessionMetadata, method: 'read' }, ... },
-  agent:   { 'profile:getModel': { service: IProfileService, method: 'getModel' }, ... },
+  core:      { 'sessions:list': { service: ISessionIndex, method: 'list' }, ... },
+  workspace: { 'skills:list':   { service: IWorkspaceSkillCatalog, method: 'list' }, ... },
+  session:   { 'session:read':  { service: ISessionMetadata, method: 'read' }, ... },
+  agent:     { 'profile:getModel': { service: IProfileService, method: 'getModel' }, ... },
 };
 ```
 
@@ -43,7 +45,7 @@ A Service method is directly exposable iff **all** hold:
 3. Errors are `KimiError` (coded).
 4. It is a command/query, not a factory, stream, byte-store, or sink.
 
-If any fail → wrap in a **facade** (a Service that takes ids, returns data, throws `KimiError`) and expose the facade. The repo already ships a wire-shaped facade in `rpc/core-api.ts` (`CoreAPI` / `SessionAPI` / `AgentAPI`) behind `IAgentRPCService` / `ISessionRPCService` — prefer building the HTTP edge on top of it rather than re-deriving a new one.
+If any fail → add a wire-safe orchestration method to the owning domain Service (e.g. `IAgentPromptService.submit` settles `{turn_id}` instead of returning the live `PromptHandle`) or compose several domain Services at the edge — kap-server's `routes/prompts.ts` is the reference for edge-side composition.
 
 ## 3. Per-scope `resource:action` map
 
@@ -53,9 +55,9 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 
 | resource | action | Service.method | verb |
 |---|---|---|---|
-| `sessions` | `list` | ISessionIndex.list | GET |
+| `sessions` | `listRecent` | ISessionIndex.listRecent | GET |
 | `sessions` | `get` | ISessionIndex.get | GET |
-| `sessions` | `countActive` | ISessionIndex.countActive | GET |
+| `sessions` | `count` | ISessionIndex.count | GET |
 | `workspaces` | `list` | IWorkspaceService.list | GET |
 | `workspaces` | `get` | IWorkspaceService.get | GET |
 | `workspaces` | `createOrTouch` | IWorkspaceService.createOrTouch | POST |
@@ -90,7 +92,7 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `questions` | `answer` | IQuestionService.answer | POST |
 | `interactions` | `listPending` | IInteractionService.listPending | GET |
 | `interactions` | `respond` | IInteractionService.respond | POST |
-| `workspace` | `setWorkDir` / `addAdditionalDir` / `removeAdditionalDir` / `resolve` | IWorkspaceContext.* | GET/POST |
+| `workspace` | `workDir` / `additionalDirs` / `resolve` | ISessionWorkspaceContext.* | GET |
 
 ### Agent (`/api/v2/session/:sid/agent/:aid/:resource:action`)
 
@@ -103,7 +105,7 @@ Read = `GET`, write = `POST`. `sid` = `session_id`, `aid` = `agent_id`.
 | `tasks` | `list` / `get` / `readOutput` | IBackgroundService.* | GET |
 | `tasks` | `stop` / `detach` | IBackgroundService.* | POST |
 | `usage` | `status` | IUsageService.status | GET |
-| `context` | `status` | IAgentContextSizeService.get | GET |
+| `context` | `status` | IAgentTokenCountingService.get | GET |
 | `swarm` | `isActive` | ISwarmService.isActive | GET |
 | `swarm` | `enter` / `exit` | ISwarmService.* | POST |
 | `permission` | `getMode` | IPermissionModeService.mode | GET |

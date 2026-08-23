@@ -1,20 +1,6 @@
-/**
- * `kosong/provider` domain (L2) — OpenAI Responses API wire base.
- *
- * Speaks the Responses wire format: `input` items, `instructions`,
- * `reasoning` blocks with encrypted content, and the native
- * `prompt_cache_key` field (a cache key is encoded directly — no hook
- * needed). Per-turn intents are encoded inline in the fixed contract order;
- * the base's only hook surface is the trait-composed `convertError` option,
- * consulted with each raw failure exactly once — the SDK error on HTTP
- * paths, the raw event on in-stream error paths — before the base's own
- * classification (already-converted errors crossing an outer catch pass
- * through without re-consulting). The developer-role model detection lives
- * here.
- */
-
 import OpenAI from 'openai';
 
+import { Error2 } from '#/_base/errors/errors';
 import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
@@ -41,6 +27,7 @@ import type {
 } from '#/kosong/contract/provider';
 import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 
 import {
   convertOpenAIError,
@@ -1092,7 +1079,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     let kwargs: Record<string, unknown> = { ...this._generationKwargs };
 
-    // Per-turn intent overlays in the fixed contract order.
     if (options?.cacheKey !== undefined) {
       kwargs = { ...kwargs, prompt_cache_key: options.cacheKey };
     }
@@ -1129,7 +1115,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     }
 
     const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete kwargs['reasoning_effort'];
 
     if (reasoningEffort !== undefined) {
@@ -1142,7 +1127,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
 
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete kwargs[key];
       }
     }
@@ -1171,7 +1155,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         !('responses' in client) ||
         typeof (client as { responses?: { create?: unknown } }).responses?.create !== 'function'
       ) {
-        throw new Error(
+        throw new Error2(
+          ProtocolErrors.codes.PROVIDER_API_ERROR,
           'OpenAI SDK version does not support Responses API. Upgrade to >=4.x with responses support.',
         );
       }
@@ -1201,6 +1186,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     const clientOpts: Record<string, unknown> = {
       apiKey,
       baseURL: this._baseUrl,
+      maxRetries: 0,
     };
     const defaultHeaders = mergeRequestHeaders(this._defaultHeaders, auth?.headers);
     if (defaultHeaders !== undefined) {
@@ -1212,11 +1198,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Base capability catalog — the final fallback of capability resolution.
-// `undefined` means the base knows nothing about the model.
-// ---------------------------------------------------------------------------
 
 export function getOpenAIResponsesModelCapability(modelName: string) {
   const normalized = modelName.toLowerCase();

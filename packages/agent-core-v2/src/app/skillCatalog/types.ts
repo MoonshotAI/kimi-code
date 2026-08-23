@@ -23,6 +23,8 @@ export interface SkillDefinition {
   readonly plugin?: SkillPluginContext;
   readonly mermaid?: string | undefined;
   readonly d2?: string;
+  readonly productSpecific?: boolean;
+  readonly experimentalFlag?: string;
 }
 
 export interface SkillSummary {
@@ -39,6 +41,7 @@ export interface SkillRoot {
   readonly path: string;
   readonly source: SkillSource;
   readonly plugin?: SkillPluginContext;
+  readonly scanMode?: 'directory' | 'root-skill-only';
 }
 
 export interface SkillPluginContext {

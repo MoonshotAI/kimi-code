@@ -32,6 +32,7 @@ export function isMaxStepsExceededError(error: unknown): boolean {
 export interface BeforeStepContext {
   readonly turnId: number;
   readonly step: number;
+  readonly firstStepOfTurn: boolean;
   readonly signal: AbortSignal;
 }
 
@@ -146,10 +147,10 @@ export interface IAgentLoopService {
 
   cancel(turnId?: number, reason?: unknown): boolean;
 
+  cancelFromUser(turnId?: number): void;
+
   tryAcquireQuiescence(): IDisposable | undefined;
 
-  /** Resolves once no turn is active and none are queued — the disposal drain
-   *  awaited by `agentLifecycle.remove`. */
   settled(): Promise<void>;
 
   hasPendingRequests(): boolean;

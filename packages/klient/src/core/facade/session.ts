@@ -2,31 +2,33 @@
  * The session facade — one `klient.session(id)` handle aggregating the
  * session-scope services (metadata, activity, approvals, questions,
  * interactions) plus the app-scope lifecycle service for close/archive/
- * restore/fork/createChild. `agents()` reads the metadata registry (agent
+ * restore/delete/fork/createChild. `agents()` reads the metadata registry (agent
  * handles are not serializable, so no agent-lifecycle channel exists on the
  * wire).
  */
 
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
-  AgentMeta,
-  SessionMeta,
-  SessionMetaPatch,
-} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type {
   ApprovalRequest,
   ApprovalResponse,
 } from '@moonshot-ai/agent-core-v2/session/approval/approval';
+import type {
+  Interaction,
+  InteractionKind,
+} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
 } from '@moonshot-ai/agent-core-v2/session/question/question';
 import type {
-  Interaction,
-  InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+  AgentMeta,
+  SessionMeta,
+  SessionMetaPatch,
+} from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
 
 import type { ScopeRef } from '../channel.js';
+import type { McpServerConfig } from '../../contract/mcp.js';
 import type { ScopedCaller } from './global.js';
 
 export type { ScopedCaller } from './global.js';
@@ -34,6 +36,17 @@ export type { ScopedCaller } from './global.js';
 /** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
 interface HandleWire {
   readonly id: string;
+}
+
+/**
+ * Options for `SessionFacade.restore` — mirrors the engine's
+ * `ResumeSessionOptions`. `mcpServers` injects ephemeral per-session MCP
+ * servers when restore re-materializes a cold session (ignored when the
+ * session is already live).
+ */
+export interface SessionRestoreOptions {
+  readonly additionalDirs?: readonly string[];
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 
 export interface SessionApprovalsFacade {
@@ -52,6 +65,15 @@ export interface SessionInteractionsFacade {
   respond(id: string, response: unknown): Promise<void>;
 }
 
+export interface SessionSkillsFacade {
+  /**
+   * Every skill in the session-merged catalog as a plain summary (the
+   * catalog's readiness is resolved engine-side). Subscribe to
+   * `session.events` `'skills.changed'` for updates.
+   */
+  list(): Promise<readonly SkillSummary[]>;
+}
+
 /**
  * Derived session lifecycle phase. The engine retired its `sessionActivity`
  * service (#1751) — busy is now derived from agent activity views — so the
@@ -63,21 +85,34 @@ export type SessionStatus = 'running' | 'idle' | 'awaiting_approval' | 'awaiting
 export interface SessionFacade {
   get(): Promise<SessionMeta>;
   setTitle(title: string): Promise<void>;
+  /**
+   * Generate and apply a title from the main agent's first prompts via the
+   * managed `chat_title` tool. `undefined` when generation is unavailable
+   * (no managed OAuth login, no prompt yet, or a custom title is set).
+   * `force` regenerates anyway, overwriting a generated or custom title.
+   * `source` picks the conversation excerpt: `user_prompts` (default),
+   * `first_turn` (opening prompt + first reply; strict), or `digest`
+   * (head+tail of a multi-turn conversation).
+   */
+  generateTitle(opts?: {
+    force?: boolean;
+    source?: 'user_prompts' | 'first_turn' | 'digest';
+  }): Promise<string | undefined>;
   update(patch: SessionMetaPatch): Promise<void>;
   setArchived(archived: boolean): Promise<void>;
   status(): Promise<SessionStatus>;
   close(): Promise<void>;
   archive(): Promise<void>;
   /** Re-materialize a closed session; `false` when it no longer exists. */
-  restore(): Promise<boolean>;
+  restore(opts?: SessionRestoreOptions): Promise<boolean>;
+  /** Permanently delete the session and its persisted data; throws when missing. */
+  delete(): Promise<void>;
   fork(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
-  createChild(input?: {
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<SessionMeta>;
+  createChild(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
   readonly approvals: SessionApprovalsFacade;
   readonly questions: SessionQuestionsFacade;
   readonly interactions: SessionInteractionsFacade;
+  readonly skills: SessionSkillsFacade;
   /** Agent id → metadata for every agent registered in this session. */
   agents(): Promise<Readonly<Record<string, AgentMeta>>>;
 }
@@ -90,7 +125,7 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     method: 'fork' | 'createChild',
     input: { title?: string; metadata?: Record<string, unknown> } = {},
   ): Promise<SessionMeta> => {
-    const handle = (await call({}, 'sessionLifecycleService', method, [
+    const handle = (await call({}, 'sessionManager', method, [
       { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
     ])) as HandleWire;
     return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
@@ -99,6 +134,10 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
   return {
     get: read,
     setTitle: (title) => call(scope, 'sessionMetadata', 'setTitle', [title]) as Promise<void>,
+    generateTitle: (opts) =>
+      call(scope, 'sessionTitleService', 'generateTitle', [opts]) as Promise<
+        string | undefined
+      >,
     update: (patch) => call(scope, 'sessionMetadata', 'update', [patch]) as Promise<void>,
     setArchived: (archived) =>
       call(scope, 'sessionMetadata', 'setArchived', [archived]) as Promise<void>,
@@ -127,14 +166,13 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       }
       return 'idle';
     },
-    close: () => call({}, 'sessionLifecycleService', 'close', [sessionId]) as Promise<void>,
-    archive: () => call({}, 'sessionLifecycleService', 'archive', [sessionId]) as Promise<void>,
-    restore: async () => {
-      const handle = (await call({}, 'sessionLifecycleService', 'restore', [
-        sessionId,
-      ])) as HandleWire | null;
-      return handle !== null;
+    close: () => call({}, 'sessionManager', 'close', [sessionId]) as Promise<void>,
+    archive: () => call({}, 'sessionManager', 'archive', [sessionId]) as Promise<void>,
+    restore: async (opts) => {
+      const handle = (await call({}, 'sessionManager', 'restore', [sessionId, opts])) as HandleWire | null;
+      return handle !== null && handle !== undefined;
     },
+    delete: () => call({}, 'sessionManager', 'delete', [sessionId]) as Promise<void>,
     fork: (input) => spawn('fork', input),
     createChild: (input) => spawn('createChild', input),
 
@@ -164,6 +202,11 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
         >,
       respond: (id, response) =>
         call(scope, 'sessionInteractionService', 'respond', [id, response]) as Promise<void>,
+    },
+
+    skills: {
+      list: () =>
+        call(scope, 'sessionSkillCatalog', 'list', []) as Promise<readonly SkillSummary[]>,
     },
 
     agents: async () => {

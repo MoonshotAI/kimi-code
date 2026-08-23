@@ -1,27 +1,3 @@
-/**
- * `kosong/provider` domain (L2) — Anthropic Messages wire base.
- *
- * Speaks the Anthropic Messages wire format: system blocks with ephemeral
- * cache control, tool-result user blocks, consecutive-user merging, beta
- * headers vs the beta endpoint, and the thinking profile matrix (budget vs
- * adaptive) from `anthropic-profile`.
- *
- * The hook surface is `withThinking` plus `convertError`. `withThinking`
- * lets a vendor dialect running over this transport re-encode the thinking
- * intent; when the per-turn thinking intent carries `keep`, the BASE
- * overlays the context-management edit uniformly on top of whatever
- * thinking encoding happened (hook or base path), so a trait never handles
- * `keep` itself.
- *
- * `convertAnthropicError`'s FIRST line is the contract's `throwIfAbortError`
- * guard: a user cancellation is THROWN as the standard abort DOMException at
- * the very front of the classification chain. After the guard,
- * already-converted `ChatProviderError`s pass through untouched; only then is
- * the trait-composed `convertError` hook consulted, so a vendor riding this
- * transport classifies each RAW SDK failure exactly once before the base
- * rules run.
- */
-
 import Anthropic, {
   APIError as AnthropicAPIError,
   APIConnectionError as AnthropicConnectionError,
@@ -516,9 +492,6 @@ export function convertAnthropicError(
   error: unknown,
   convertErrorHook?: (error: unknown) => ChatProviderError | undefined,
 ): ChatProviderError {
-  // Abort guard FIRST: throws (never returns) the standard abort DOMException
-  // for any abort shape, so a user cancellation is never misclassified as a
-  // retryable provider failure.
   throwIfAbortError(error);
   if (error instanceof ChatProviderError) {
     return error;
@@ -716,7 +689,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
           const blockEvt = evt as unknown as RawContentBlockStartEvent;
           const block = blockEvt.content_block;
           const blockIndex = blockEvt.index;
-          // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
           switch (block.type) {
             case 'text':
               yield { type: 'text', text: block.text };
@@ -746,7 +718,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
           const deltaEvt = evt as unknown as RawContentBlockDeltaEvent;
           const delta = deltaEvt.delta;
           const blockIndex = deltaEvt.index;
-          // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
           switch (delta.type) {
             case 'text_delta':
               yield { type: 'text', text: delta.text };
@@ -891,14 +862,11 @@ export class AnthropicChatProvider implements ChatProvider {
 
     injectCacheControlOnLastBlock(messages);
 
-    // Per-turn intent overlays in the fixed contract order:
-    // cacheKey → sampling → thinking → maxCompletionTokens.
     let kwargs: AnthropicGenerationKwargs = { ...this._generationKwargs };
     let useBetaApi = this._betaApi;
 
     let metadata = this._metadata;
     if (options?.cacheKey !== undefined) {
-      // The cache key is encoded as `metadata.user_id` on this transport.
       metadata = { ...metadata, user_id: options.cacheKey };
     }
 
@@ -923,8 +891,6 @@ export class AnthropicChatProvider implements ChatProvider {
       } else {
         kwargs = { ...kwargs, ...this._encodeThinking(thinking.effort, kwargs) };
       }
-      // The keep context-management edit is overlaid by the base on top of
-      // whatever thinking encoding happened — a trait never handles keep.
       if (thinking.keep !== undefined) {
         kwargs = { ...kwargs, ...applyThinkingKeep(kwargs, thinking.keep) };
         useBetaApi = true;
@@ -933,7 +899,6 @@ export class AnthropicChatProvider implements ChatProvider {
 
     if (options?.maxCompletionTokens !== undefined) {
       let cap = options.maxCompletionTokens;
-      // Window clamp first — it cannot be skipped.
       if (
         options.usedContextTokens !== undefined &&
         options.maxContextTokens !== undefined &&
@@ -1058,11 +1023,6 @@ export class AnthropicChatProvider implements ChatProvider {
     }
   }
 
-  /**
-   * The base thinking path: encode the per-turn effort against the model's
-   * thinking profile (budget vs adaptive). Runs only when no withThinking
-   * hook took over. Reads the seeded beta list from the current kwargs.
-   */
   private _encodeThinking(
     effort: ThinkingEffort,
     kwargs: AnthropicGenerationKwargs,
@@ -1162,15 +1122,11 @@ export class AnthropicChatProvider implements ChatProvider {
       authToken: null,
       baseURL: this._baseUrl ?? null,
       defaultHeaders: this._buildDefaultHeaders(apiKey),
+      maxRetries: 0,
     });
   }
 }
 
-/**
- * The keep context-management edit, overlaid by the base on top of any
- * thinking encoding: appends the context-management beta and replaces any
- * prior clear-thinking edit with one carrying this keep value.
- */
 function applyThinkingKeep(
   kwargs: AnthropicGenerationKwargs,
   keep: string,
@@ -1189,11 +1145,6 @@ function applyThinkingKeep(
     betaFeatures,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Base capability catalog — the final fallback of capability resolution.
-// `undefined` means the base knows nothing about the model.
-// ---------------------------------------------------------------------------
 
 const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
 

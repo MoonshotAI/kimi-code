@@ -319,6 +319,61 @@ describe('ensureRgPath download branch', () => {
     expect(new URL(url).protocol).toBe('https:');
   });
 
+  it('downloads from the overseas CDN when the env pins the overseas region', async () => {
+    const savedHost = process.env['KIMI_CODE_OAUTH_HOST'];
+    process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
+    try {
+      const body = bodyFromBuffer(Buffer.from('not a real archive', 'utf8'));
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body,
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await expect(ensureRgPath({ shareDir: fakeShare })).rejects.toThrow();
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toMatch(/^https:\/\/code\.kimi\.ai\/kimi-code\/rg\/ripgrep-/);
+    } finally {
+      if (savedHost === undefined) delete process.env['KIMI_CODE_OAUTH_HOST'];
+      else process.env['KIMI_CODE_OAUTH_HOST'] = savedHost;
+    }
+  });
+
+  it('downloads from the cn CDN by default (no env override, no install marker)', async () => {
+    const savedHost = process.env['KIMI_CODE_OAUTH_HOST'];
+    const savedLegacyHost = process.env['KIMI_OAUTH_HOST'];
+    const savedHome = process.env['KIMI_CODE_HOME'];
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+    // A home dir without a `region` marker file keeps the default resolution.
+    process.env['KIMI_CODE_HOME'] = fakeShare;
+    try {
+      const body = bodyFromBuffer(Buffer.from('not a real archive', 'utf8'));
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body,
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await expect(ensureRgPath({ shareDir: fakeShare })).rejects.toThrow();
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toMatch(/^https:\/\/code\.kimi\.com\/kimi-code\/rg\/ripgrep-/);
+    } finally {
+      if (savedHost === undefined) delete process.env['KIMI_CODE_OAUTH_HOST'];
+      else process.env['KIMI_CODE_OAUTH_HOST'] = savedHost;
+      if (savedLegacyHost === undefined) delete process.env['KIMI_OAUTH_HOST'];
+      else process.env['KIMI_OAUTH_HOST'] = savedLegacyHost;
+      if (savedHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = savedHome;
+    }
+  });
+
   it('rejects archives that do not match the pinned SHA-256 before extraction', async () => {
     const tarMock = vi.mocked(extractTar);
     tarMock.mockClear();

@@ -1,14 +1,8 @@
-/**
- * `bootstrap` test stubs — shared `IBootstrapService` stub for unit tests.
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../bootstrap/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import {
   IBootstrapService,
+  resolveHostArgs,
+  type HostArgsInput,
   type PersistenceScopeName,
 } from '#/app/bootstrap/bootstrap';
 
@@ -18,21 +12,20 @@ export const stubClientIdentity = {
   platform: 'test_platform',
 } as const;
 
-export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv = {}): IBootstrapService {
-  const sessionsScope = 'sessions';
+export function stubBootstrap(
+  homeDir = '/tmp/kimi-home',
+  env: NodeJS.ProcessEnv = {},
+  args: HostArgsInput = {},
+): IBootstrapService {
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',
-    sessions: sessionsScope,
+    sessions: 'sessions',
     blobs: 'blobs',
     store: 'store',
     logs: 'logs',
     cache: 'cache',
     credentials: 'credentials',
-    cron: 'cron',
   };
-  const sessionScope = (wsId: string, sId: string): string => `${sessionsScope}/${wsId}/${sId}`;
-  const agentScope = (wsId: string, sId: string, aId: string): string =>
-    `${sessionScope(wsId, sId)}/agents/${aId}`;
   return {
     _serviceBrand: undefined,
     platform: 'linux',
@@ -43,6 +36,7 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',
     clientIdentity: stubClientIdentity,
+    args: resolveHostArgs(args),
     sessionsDir: `${homeDir}/sessions`,
     blobsDir: `${homeDir}/blobs`,
     storeDir: `${homeDir}/store`,
@@ -50,10 +44,6 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     logsDir: `${homeDir}/logs`,
     getEnv: (name) => env[name],
     scope: (name) => scopes[name],
-    sessionScope,
-    agentScope,
-    sessionDir: (wsId, sId) => `${homeDir}/${sessionScope(wsId, sId)}`,
-    agentHomedir: (wsId, sId, aId) => `${homeDir}/${agentScope(wsId, sId, aId)}`,
   };
 }
 

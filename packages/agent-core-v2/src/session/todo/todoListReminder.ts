@@ -1,12 +1,3 @@
-/**
- * `todo` domain (L4) — pure stale-todo reminder logic.
- *
- * Computes the `todo_list_reminder` context injection from the agent's context
- * history (turns since the last `TodoList` write / last reminder) and the
- * current session todo list. No scoped state — `SessionTodoService` supplies
- * the inputs and registers the provider into each agent's context injector.
- */
-
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';

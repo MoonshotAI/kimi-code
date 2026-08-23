@@ -1,16 +1,3 @@
-/**
- * `toolSelect` domain (L4) — registers the `tool-select` experimental flag into
- * `flag`.
- *
- * Gates progressive tool disclosure: MCP tool schemas stay out of the
- * immutable top-level tools[] and are loaded on demand through the
- * `select_tools` tool. Off by default; enable via
- * `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT`, the master
- * `KIMI_CODE_EXPERIMENTAL_FLAG`, or the `[experimental]` config section.
- * Imported for its side effect (registers the definition) from the package
- * barrel.
- */
-
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const TOOL_SELECT_FLAG_ID = 'tool-select';
