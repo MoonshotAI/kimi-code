@@ -238,6 +238,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'compaction-model',
+    aliases: [],
+    description: 'Configure the model used for context compaction',
+    priority: 91,
+    availability: 'always',
+  },
+  {
     name: 'substitute-model',
     aliases: [],
     description: 'Configure the substitute model for rate-limit fallback',

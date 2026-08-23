@@ -173,6 +173,7 @@ export interface CompactionTranscriptData {
   readonly tokensBefore?: number;
   readonly tokensAfter?: number;
   readonly instruction?: string;
+  readonly model?: string;
 }
 
 export interface CronTranscriptData {

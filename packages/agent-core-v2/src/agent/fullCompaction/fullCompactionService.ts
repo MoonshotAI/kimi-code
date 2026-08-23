@@ -337,6 +337,20 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   begin(input: FullCompactionInput): boolean {
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
+    // Surface the model the compaction will use on the started event. Read
+    // `profile.data()` (non-throwing) rather than `resolveModelContext()`,
+    // which throws `model.not_configured` on model-less sessions — the begin
+    // path must not fail before the regular compaction validation runs.
+    const profileData = this.profile.data();
+    const currentModelAlias = profileData.modelAlias;
+    if (currentModelAlias !== undefined) {
+      const binding = compactionModelBindingFor(this.configService, this.flags, {
+        modelAlias: currentModelAlias,
+        thinkingLevel: profileData.thinkingLevel,
+      });
+      data.model = binding.model;
+      data.modelDisplay = compactionDisplayModel(this.configService, binding.model);
+    }
     if (!this.reserveCompactionSlot(data.source)) return false;
 
     const tokenCount = this.validateCompactionStart(data.source);

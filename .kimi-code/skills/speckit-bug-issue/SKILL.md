@@ -1,0 +1,1 @@
+../../../.specify/extensions/bug/.specify-dev/agent-commands/kimi/speckit-bug-issue/SKILL.md

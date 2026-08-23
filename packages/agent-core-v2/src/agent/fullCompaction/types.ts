@@ -14,4 +14,6 @@ export type CompactionSource = 'manual' | 'auto';
 export interface CompactionBeginData {
   instruction?: string;
   source: CompactionSource;
+  model?: string;
+  modelDisplay?: string;
 }

@@ -652,6 +652,73 @@ export async function handleVisualModelCommand(host: SlashCommandHost, args: str
 }
 
 // ---------------------------------------------------------------------------
+// Compaction model (`/compaction-model`) — persists `[compaction_model] default_model`
+// ---------------------------------------------------------------------------
+
+function showCompactionModelPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  currentValue: string,
+  selectedValue?: string,
+): void {
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue,
+      selectedValue,
+      currentThinkingEffort: 'off',
+      thinkingControl: false,
+      title: ' Select a compaction model (context summarization)',
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        void performCompactionModelSave(host, alias);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function performCompactionModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  try {
+    const config = await host.harness.getConfig({ reload: true });
+    const patch: { defaultModel: string } = {
+      defaultModel: alias,
+    };
+    await host.harness.setConfig({ compactionModel: patch });
+  } catch (error) {
+    host.showError(`Failed to save compaction model: ${formatErrorMessage(error)}`);
+    return;
+  }
+  host.showStatus(
+    `Compaction model set to ${displayName}. Context compaction will use it.`,
+    'success',
+  );
+}
+
+export async function handleCompactionModelCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const alias = args.trim();
+  await refreshModelsForPicker(host);
+  const models = pickerModelsForHost(host);
+  if (Object.keys(models).length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  if (alias.length > 0 && models[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  const compaction = (await host.harness.getConfig()).compactionModel;
+  const current = compaction?.defaultModel ?? compaction?.model ?? '';
+  showCompactionModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
+}
+
+// ---------------------------------------------------------------------------
 // Substitute model (`/substitute-model`) — persists `[substitute_model] default_model`
 // ---------------------------------------------------------------------------
 

@@ -2700,7 +2700,7 @@ export class KimiTUI {
   private createTranscriptComponent(entry: TranscriptEntry): Component | null {
     if (entry.compactionData !== undefined) {
       const data = entry.compactionData;
-      const block = new CompactionComponent(this.state.ui, data.instruction);
+      const block = new CompactionComponent(this.state.ui, data.instruction, undefined, data.model);
       if (data.result === 'cancelled') {
         block.markCanceled();
       } else {

@@ -926,10 +926,12 @@ export class AcpSession {
         if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return;
         if (event.type === 'compaction.started') {
           started = true;
+          const model = event.model_display ?? event.model;
+          const modelNote = model === undefined ? '' : ` using ${model}`;
           void this.emitLocalCommandMessage(
             instruction === undefined
-              ? 'Compacting conversation context…'
-              : `Compacting conversation context with instruction: ${instruction}`,
+              ? `Compacting conversation context${modelNote}…`
+              : `Compacting conversation context with instruction: ${instruction}${modelNote}`,
           );
           return;
         }

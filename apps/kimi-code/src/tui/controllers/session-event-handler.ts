@@ -1101,7 +1101,7 @@ export class SessionEventHandler {
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
     });
-    this.host.streamingUI.beginCompaction(event.instruction);
+    this.host.streamingUI.beginCompaction(event.instruction, event.model_display ?? event.model);
   }
 
   private handleCompactionEnd(

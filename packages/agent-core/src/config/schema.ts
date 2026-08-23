@@ -131,6 +131,20 @@ export const SubstituteModelConfigSchema = z.object({
 
 export type SubstituteModelConfig = z.infer<typeof SubstituteModelConfigSchema>;
 
+export const VisualModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+});
+
+export type VisualModelConfig = z.infer<typeof VisualModelConfigSchema>;
+
+export const CompactionModelConfigSchema = ModelAliasOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+  defaultModel: z.string().min(1).optional(),
+});
+
+export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;
+
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
   effort: z.string().optional(),
@@ -382,6 +396,8 @@ export const KimiConfigSchema = z.object({
   subagent: SubagentConfigSchema.optional(),
   secondaryModel: SecondaryModelConfigSchema.optional(),
   substituteModel: SubstituteModelConfigSchema.optional(),
+  visualModel: VisualModelConfigSchema.optional(),
+  compactionModel: CompactionModelConfigSchema.optional(),
   mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
@@ -433,6 +449,8 @@ export const KimiConfigPatchSchema = z
     subagent: SubagentConfigPatchSchema.optional(),
     secondaryModel: SecondaryModelConfigPatchSchema.optional(),
     substituteModel: SubstituteModelConfigPatchSchema.optional(),
+    visualModel: VisualModelConfigSchema.optional(),
+    compactionModel: CompactionModelConfigSchema.optional(),
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),

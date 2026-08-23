@@ -311,7 +311,7 @@ function mapLegacyWireEvent(
     case 'compaction.started':
       return {
         state,
-        event: { type: 'CompactionBegin', payload: {} },
+        event: { type: 'CompactionBegin', payload: { model: sdkEvent.model_display ?? sdkEvent.model } },
       };
     case 'compaction.blocked':
     case 'compaction.cancelled':

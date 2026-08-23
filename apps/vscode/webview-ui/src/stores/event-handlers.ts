@@ -361,8 +361,9 @@ const eventHandlers: Record<string, EventHandler> = {
     draft.isStreaming = true;
   },
 
-  CompactionBegin: (draft) => {
+  CompactionBegin: (draft, payload) => {
     draft.isCompacting = true;
+    draft.compactingModel = payload.model;
 
     const last = getLastAssistant(draft);
 
