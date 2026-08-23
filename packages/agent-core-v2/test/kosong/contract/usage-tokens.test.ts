@@ -1,11 +1,3 @@
-/**
- * `kosong/contract` usage + tokens — usage aggregation and token estimation.
- *
- * `TokenUsage` aggregates cache-aware input/output counters; the
- * `estimateTokens*` family sizes messages, tools, and content parts with the
- * ASCII/non-ASCII heuristic and the flat media estimate.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '#/kosong/contract/message';
@@ -55,7 +47,7 @@ describe('estimateTokens', () => {
 
   it('estimates non-ASCII at one token per character', () => {
     expect(estimateTokens('你好')).toBe(2);
-    expect(estimateTokens('ab你')).toBe(2); // ceil(2/4) + 1
+    expect(estimateTokens('ab你')).toBe(2);
   });
 });
 
@@ -81,8 +73,6 @@ describe('estimateTokensForMessage(s)', () => {
       toolCalls: [],
     };
     const first = estimateTokensForMessage(message);
-    // The WeakMap memo returns the cached estimate for the same object even
-    // when the content is later mutated.
     message.content.push({ type: 'text', text: 'mutated after the fact' });
     expect(estimateTokensForMessage(message)).toBe(first);
     expect(estimateTokensForMessages([message, message])).toBe(first * 2);

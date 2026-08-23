@@ -1,32 +1,3 @@
-/**
- * `media` domain — provider-accepted image formats, the single source
- * of truth.
- *
- * Model providers accept only PNG, JPEG, GIF, and WebP image blocks. An
- * `image_url` part carrying any other MIME (AVIF, HEIC, BMP, TIFF, ICO, …)
- * is rejected by the API — and because prompts and tool results persist in
- * the session history, that one part makes every subsequent request fail
- * too ("session poisoning"). Every ingestion point therefore refuses
- * unsupported formats instead of passing the bytes through.
- *
- * The policy is deliberately a closed set, not a denylist: a format is only
- * ever sent when it is known to be accepted. Supporting a new format means
- * adding it to {@link MODEL_ACCEPTED_IMAGE_MIMES}; tailoring the refusal
- * guidance for a newly-seen unsupported format means adding one row to
- * {@link UNSUPPORTED_IMAGE_FORMATS}.
- *
- * Inbound MIME strings are normalized for the DECISION
- * ({@link normalizeImageMime}: case, whitespace, `image/jpg`), but every
- * call site must forward the CANONICAL MIME into the session — strict
- * provider whitelists (e.g. Anthropic's) reject the raw alias, which would
- * re-create the very session poisoning this module exists to prevent.
- *
- * Scope: only inline `data:` images can be gated. A remote http(s) image URL
- * (an MCP `resource_link`, a REST `source.kind: 'url'` part) carries no
- * bytes to inspect, and providers that support URL images fetch them
- * server-side; those pass through unchanged.
- */
-
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 
 export const MODEL_ACCEPTED_IMAGE_MIMES: ReadonlySet<string> = new Set([

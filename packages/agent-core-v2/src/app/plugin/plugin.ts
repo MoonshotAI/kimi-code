@@ -1,17 +1,8 @@
-/**
- * `plugin` domain — App-scoped plugin management and consumption contract.
- *
- * Defines `IPluginService`, which manages installed plugins and exposes their
- * enabled commands, skills, session-start content, system-prompt sections,
- * MCP servers, and hooks. Successful reloads are announced through
- * `onDidReload`. Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { HookDef } from '#/agent/externalHooks/types';
-import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { HookDef } from '#/features/externalHooks/internal/types';
 import type { SkillRoot } from '#/app/skillCatalog/types';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 import type {
   EnabledPluginSessionStart,
@@ -19,6 +10,9 @@ import type {
   PluginAgentRoot,
   PluginCommandDef,
   PluginInfo,
+  PluginMcpServerEntry,
+  PluginMutationSummary,
+  PluginReloadEvent,
   PluginSummary,
   PluginUpdateStatus,
   ReloadSummary,
@@ -64,8 +58,11 @@ export interface IPluginService {
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]>;
   enabledSystemPrompts(): Promise<readonly EnabledPluginSystemPrompt[]>;
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
+  mcpServerEntries(): Promise<readonly PluginMcpServerEntry[]>;
   enabledHooks(): Promise<readonly HookDef[]>;
-  readonly onDidReload: Event<ReloadSummary>;
+  hasLoadedSnapshot(): boolean;
+  readonly onDidReload: Event<PluginReloadEvent>;
+  readonly onDidMutate: Event<PluginMutationSummary>;
 }
 
 export const IPluginService: ServiceIdentifier<IPluginService> =

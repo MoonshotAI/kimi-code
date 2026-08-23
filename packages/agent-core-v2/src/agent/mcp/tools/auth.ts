@@ -1,29 +1,3 @@
-/**
- * Synthetic `mcp__<server>__authenticate` tool.
- *
- * When a remote MCP server lands in the `needs-auth` state — i.e. its
- * initial connection failed with a 401 / `UnauthorizedError` and no static
- * bearer token is configured — the {@link ToolManager} swaps the real MCP
- * tool list for this single tool. Calling it:
- *
- *  1. Asks {@link McpOAuthService} to perform RFC 9728 / RFC 8414 / RFC 7591
- *     discovery and produce an authorization URL.
- *  2. Streams that URL back to the model via `onUpdate({kind:'status'})`
- *     and returns it in the tool output so the model can hand it to the
- *     human user.
- *  3. Blocks (up to {@link DEFAULT_AUTH_TIMEOUT_MS}) on the one-shot
- *     localhost callback listener owned by the OAuth service.
- *  4. Drives a manager-level `reconnect(name)` once tokens have been
- *     persisted, which flips the entry to `connected` and lets
- *     `ToolManager` swap the synthetic tool out for the real MCP tools.
- *
- * The blocking shape keeps the implementation
- * simple at the cost of holding one tool call open for the duration of
- * the human's browser flow. If the model ends up re-invoking the tool
- * mid-flow we just start a fresh flow; the new callback server supersedes
- * the old one.
- */
-
 import { z } from 'zod';
 
 import {
@@ -40,6 +14,7 @@ export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_
 export interface McpOAuthAuthorizationUrlUpdateData {
   readonly serverName: string;
   readonly authorizationUrl: string;
+  readonly expiresAt?: number;
 }
 
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
@@ -54,10 +29,10 @@ This server requires an OAuth login that has not yet been completed. ` +
 
   1. The tool prints an authorization URL.
   2. **You must show that URL to the user verbatim** and ask them to open it
-     in a browser, sign in, and approve the kimi-code client.
+     in a browser, sign in, and approve the client.
   3. The tool blocks (up to 15 minutes) until the browser redirects back to
      the local callback listener.
-  4. On success, kimi-code reconnects the MCP server and the real tools
+  4. On success, the client reconnects the MCP server and the real tools
      replace this synthetic tool.
 
 Take no arguments. Treat the URL as sensitive — do not modify it or strip
@@ -103,9 +78,11 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     }
 
     const urlText = flow.authorizationUrl.toString();
+    const waitTimeoutMs = timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
     const customData: McpOAuthAuthorizationUrlUpdateData = {
       serverName,
       authorizationUrl: urlText,
+      expiresAt: Date.now() + waitTimeoutMs,
     };
     onUpdate?.({
       kind: 'custom',
@@ -122,7 +99,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     });
 
     try {
-      await flow.complete({ signal, timeoutMs: timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS });
+      await flow.complete({ signal, timeoutMs: waitTimeoutMs });
     } catch (error) {
       return errorResult(serverName, error, urlText);
     }

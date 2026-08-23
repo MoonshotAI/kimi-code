@@ -191,6 +191,12 @@ export interface MCPServerConfig {
   headers?: Record<string, string>;
   auth?: 'oauth';
   bearerTokenEnvVar?: string;
+  /** Unified management view tags; absent on cores predating the management plane. */
+  source?: 'global' | 'plugin' | 'caller';
+  /** global: defining file path; plugin: plugin id. */
+  origin?: string;
+  /** false for plugin / project-layer entries — the panel hides mutating actions for them. */
+  mutable?: boolean;
 }
 
 export interface UpdateMCPServerRequest {

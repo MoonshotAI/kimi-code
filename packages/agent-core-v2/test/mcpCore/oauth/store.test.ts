@@ -1,7 +1,7 @@
 import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { describe, expect, it } from 'vitest';
 
-import { McpOAuthClientProvider } from '#/mcpCore/oauth/provider';
+import { McpOAuthClientProvider, type StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, sanitizeStoreKey } from '#/mcpCore/oauth/store';
 
@@ -81,6 +81,32 @@ describe('MCP OAuth credential identity', () => {
     await expect(service.hasTokens('linear', 'https://second.example.com/mcp')).resolves.toBe(false);
   });
 
+  it('stamps saved tokens with obtained_at, in cache and on disk', async () => {
+    const store = createMemoryMcpOAuthStore();
+    const provider = new McpOAuthClientProvider({
+      serverName: 'linear',
+      serverUrl: 'https://first.example.com/mcp',
+      store,
+    });
+    await provider.ready;
+
+    const before = Date.now();
+    await provider.saveTokens(token('stamped-token'));
+    const after = Date.now();
+
+    const stamped = (await provider.tokens()) as StoredMcpOAuthTokens | undefined;
+    expect(stamped?.obtained_at).toBeGreaterThanOrEqual(before);
+    expect(stamped?.obtained_at).toBeLessThanOrEqual(after);
+
+    const reloaded = new McpOAuthClientProvider({
+      serverName: 'linear',
+      serverUrl: 'https://first.example.com/mcp',
+      store,
+    });
+    await reloaded.ready;
+    await expect(reloaded.tokens()).resolves.toMatchObject({ obtained_at: stamped?.obtained_at });
+  });
+
   it('uses stored client redirect URI when no active OAuth callback is running', async () => {
     const provider = new McpOAuthClientProvider({
       serverName: 'notion',
@@ -113,3 +139,46 @@ function token(accessToken: string): OAuthTokens {
     token_type: 'Bearer',
   };
 }
+
+describe('McpOAuthClientProvider.invalidateStaleRegistration', () => {
+  function makeProvider() {
+    return new McpOAuthClientProvider({
+      serverName: 'srv',
+      serverUrl: 'https://mcp.example.com/mcp',
+      store: createMemoryMcpOAuthStore(),
+    });
+  }
+
+  const registration: OAuthClientInformationFull = {
+    client_id: 'c1',
+    redirect_uris: ['http://127.0.0.1:11111/callback'],
+  };
+
+  it('drops a registration whose redirect_uris miss the current callback', async () => {
+    const provider = makeProvider();
+    await provider.ready;
+    await provider.saveClientInformation(registration);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:22222/callback'),
+    ).resolves.toBe(true);
+    await expect(provider.clientInformation()).resolves.toBeUndefined();
+  });
+
+  it('keeps a registration that still covers the callback URI', async () => {
+    const provider = makeProvider();
+    await provider.ready;
+    await provider.saveClientInformation(registration);
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback'),
+    ).resolves.toBe(false);
+    await expect(provider.clientInformation()).resolves.toMatchObject({ client_id: 'c1' });
+  });
+
+  it('is a no-op without a stored registration', async () => {
+    const provider = makeProvider();
+    await provider.ready;
+    await expect(
+      provider.invalidateStaleRegistration('http://127.0.0.1:11111/callback'),
+    ).resolves.toBe(false);
+  });
+});

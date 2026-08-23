@@ -1,21 +1,8 @@
-/**
- * `profile` domain — `IAgentProfileService` contract.
- *
- * Owns the active agent's identity: bound profile, model alias, thinking
- * level, system prompt, and active-tool set. `bind()` takes an optional
- * `model`, falling back to the configured `defaultModel` so edges don't each
- * re-implement the fallback (a missing model everywhere throws
- * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
- * `thinking` as an explicit user request (edge input) rather than inherited
- * state, so the effort is validated against the model's supported efforts and
- * the bind rejects up front when unsupported — internal spawns pass inherited
- * thinking without the flag, and a persisted effort that drifted out of the
- * model's support list clamps instead of breaking the spawn. The profile
- * contract also owns live status re-publication for consumers that attach to
- * an agent after its initial model binding.
- */
-
-import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type {
+  AgentProfile,
+  AgentProfileContext,
+  EnvironmentDisclosureSnapshot,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelRequestParams } from '#/kosong/model/modelRequester';
@@ -54,14 +41,18 @@ export type AgentConfigUpdateData = Partial<{
 
 export interface SystemPromptContext extends AgentProfileContext {
   readonly agentsMdWarning?: string;
+  readonly agentsMdPaths?: readonly string[];
 }
 
 export type ResolvedAgentProfile = AgentProfile;
 
 export interface ProfileData extends AgentConfigData {
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
 }
 
 export type ProfileUpdateData = Partial<{
@@ -69,6 +60,8 @@ export type ProfileUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  environmentDisclosure: EnvironmentDisclosureSnapshot;
+  agentsMdPaths: readonly string[];
   disallowedTools: readonly string[];
   activeToolNames: readonly string[];
 }>;
@@ -78,6 +71,9 @@ export interface ProfileBindingSnapshot {
   readonly profileName?: string;
   readonly thinkingLevel: string;
   readonly systemPrompt: string;
+  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
+  readonly renderGeneration?: number;
+  readonly agentsMdPaths?: readonly string[];
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];

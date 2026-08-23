@@ -1,15 +1,3 @@
-/**
- * `git` domain — git integration for a repository on the local disk.
- *
- * Defines the `IGitService` that runs `git status` / `git diff` (plus `gh pr
- * view`) against a repository identified by an absolute `cwd`, and discovers
- * the enclosing git work tree of a directory (`findWorkTree`). App-scoped; it
- * spawns `git` / `gh` through the host process service rather than a
- * Session's execution environment, so it never depends on a Session. Path
- * confinement is the caller's responsibility — the service receives
- * already-resolved absolute `cwd` and repo-relative paths.
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

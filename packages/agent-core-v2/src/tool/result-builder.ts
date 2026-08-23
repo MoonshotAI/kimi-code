@@ -1,10 +1,4 @@
-/**
- * `tool` domain — buffered tool-result builder.
- *
- * Shared helper for tools that stream text into a bounded output buffer with
- * optional per-line and total-char truncation. Pure helper; no scoped
- * service.
- */
+import { BugIndicatingError } from '#/errors';
 
 import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from './toolContract';
 
@@ -41,7 +35,7 @@ export class ToolResultBuilder {
       options.maxLineLength === undefined ? DEFAULT_MAX_LINE_LENGTH : options.maxLineLength;
 
     if (this.maxLineLength !== null && this.maxLineLength <= TRUNCATION_MARKER.length) {
-      throw new Error('maxLineLength must be greater than the truncation marker length.');
+      throw new BugIndicatingError('maxLineLength must be greater than the truncation marker length.');
     }
   }
 

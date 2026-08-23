@@ -1,13 +1,3 @@
-/**
- * TranscriptStore — the session-level root.
- *
- * Owns one AgentTranscript per agent, created lazily. Per-agent granularity
- * subscriptions are a transport (L3) concern and deliberately absent here;
- * this layer only guarantees that an agent's transcript exists on demand and
- * that roster changes are observable (so the server can fan out, and clients
- * can render an agent picker).
- */
-
 import type { AgentId } from '../model/ids';
 import { AgentTranscript, type Disposable } from './agentTranscript';
 

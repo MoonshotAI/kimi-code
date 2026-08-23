@@ -1,15 +1,8 @@
-/**
- * `skillCatalog` domain — user/brand `ISkillSource` producer.
- *
- * Discovers user skills from the bootstrap home directories through
- * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /
- * builtin, below workspace). Bound at App scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 

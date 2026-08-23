@@ -1,15 +1,7 @@
-/**
- * `blob` domain — `IAgentBlobService` implementation.
- *
- * Offloads large inline media payloads into content-addressed blobs and
- * loads them back on read; persists bytes through `IBlobStore` under the
- * agent's `scope('blobs')` root, matching the v1 `<agentDir>/blobs/<sha256>`
- * layout. Bound at Agent scope.
- */
-
 import { createHash } from 'node:crypto';
 import type { ContentPart } from '#/kosong/contract/message';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {

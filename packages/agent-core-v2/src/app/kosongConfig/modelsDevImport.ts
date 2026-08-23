@@ -1,21 +1,5 @@
-/**
- * `kosongConfig` domain — `IModelsDevImportService`: import providers
- * from the third-party models.dev directory and models.dev-shaped private
- * registries.
- *
- * Browses the models.dev directory, imports a directory entry as a
- * configured provider, and imports a private registry (api.json, the same
- * document shape as models.dev) — owned here so edge servers never touch the
- * underlying directory/registry packages directly. This is a WRITE path
- * (external world → config → kosong registries via the persistence bridge);
- * the global default_provider/default_model pointers are never modified by
- * an import — except that a default_model is seeded from the first imported
- * model when none is configured at all (fresh setup).
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ProviderCatalogItem } from '#/kosong/model/catalog';
-
 
 export interface ModelsDevModelItem {
   readonly id: string;
@@ -36,7 +20,6 @@ export interface ModelsDevProviderItem {
   readonly env_key: string | null;
   readonly models: readonly ModelsDevModelItem[];
 }
-
 
 export const PROVIDER_ID_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}\-_ ]*$/u;
 

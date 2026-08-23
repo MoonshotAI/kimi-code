@@ -1,34 +1,13 @@
-/**
- * `agentProfileCatalog` domain — shared prompt helpers for builtin profiles.
- *
- * Keeps the base system-prompt template and the task-agent role prefix in the
- * registry domain.
- *
- * All system-prompt rendering — the builtin template, `SYSTEM.md`, and agent
- * files — shares one `${var}` substitution pass over one variable table
- * ({@link systemPromptVars}); unknown placeholders stay verbatim. Conditional
- * sections (Windows notes, additional directories, skills, plugin
- * instructions) are composed here
- * as pre-rendered blocks because the renderer has no conditional syntax. Raw
- * context fields render as empty strings when missing and the composed
- * `*_section` / `windows_notes` blocks are empty unless their content exists,
- * so templates can place them on their own line without leaving stray
- * headings behind. Host-identity blocks (`product_name`, `reply_style_guide`)
- * work the same way: the context may carry overrides seeded by the embedding
- * host (e.g. a desktop app), and the table falls back to the CLI defaults
- * ({@link DEFAULT_PRODUCT_NAME}, {@link DEFAULT_REPLY_STYLE_GUIDE}) when it
- * does not. `renderPromptTemplate` renders a user-owned template (an
- * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
- * bound to the default profile's prompt when a `basePrompt` is given,
- * resolved lazily and only when the template actually references it. Also
- * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
- * list — drives skills injection) and the `subagents`-allowlist helpers
- * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`).
- */
-
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
-import type { AgentProfile, AgentProfileContext } from './agentProfileCatalog';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  type AgentProfile,
+  type AgentProfileContext,
+  type EnvironmentDisclosureSnapshot,
+  type SystemPromptRenderResult,
+} from './agentProfileCatalog';
+import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from './builtinAgentProfileLoader';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
 
@@ -50,8 +29,68 @@ export function subagentAllowlistFor(
     readonly profileName?: string;
     readonly subagents?: readonly string[];
   },
+  extras?: readonly string[],
 ): readonly string[] | undefined {
-  return caller.profileName === undefined ? catalog.getDefault().subagents : caller.subagents;
+  const declared = caller.subagents ?? catalog.getDefault().subagents;
+  if (declared?.length === 1 && declared[0] === '*') return undefined;
+  if (extras === undefined || extras.length === 0) return declared;
+  return [...new Set([...(declared ?? []), ...extras])];
+}
+
+export function isDiscoveredAgentProfileSource(sourceId: string | undefined): boolean {
+  return (
+    sourceId !== undefined &&
+    sourceId !== BUILTIN_AGENT_PROFILE_SOURCE_ID &&
+    !sourceId.startsWith('feature:')
+  );
+}
+
+export function rootDelegationExtras(
+  catalog: {
+    inspect(name: string): { readonly sourceId: string } | undefined;
+  },
+  caller: {
+    readonly profileName?: string;
+    readonly subagents?: readonly string[];
+  },
+  profiles: readonly { readonly name: string }[],
+): readonly string[] | undefined {
+  if (
+    caller.profileName !== undefined &&
+    caller.profileName !== DEFAULT_AGENT_PROFILE_NAME &&
+    caller.subagents !== undefined
+  ) {
+    return undefined;
+  }
+  const discovered = profiles
+    .filter(
+      (profile) =>
+        profile.name !== DEFAULT_AGENT_PROFILE_NAME &&
+        isDiscoveredAgentProfileSource(catalog.inspect(profile.name)?.sourceId),
+    )
+    .map((profile) => profile.name);
+  return discovered.length === 0 ? undefined : discovered;
+}
+
+export function profileCanDelegate(
+  profile: Pick<AgentProfile, 'tools' | 'disallowedTools'>,
+): boolean {
+  const possesses = (name: string) =>
+    (profile.tools === undefined || profile.tools.includes(name)) &&
+    !(profile.disallowedTools ?? []).includes(name);
+  return possesses('Agent') || possesses('AgentSwarm');
+}
+
+export function withoutDelegatingTargets(
+  catalog: {
+    get(name: string): Pick<AgentProfile, 'tools' | 'disallowedTools'> | undefined;
+  },
+  allowlist: readonly string[],
+): readonly string[] {
+  return allowlist.filter((name) => {
+    const target = catalog.get(name);
+    return target === undefined || !profileCanDelegate(target);
+  });
 }
 
 export function subagentTypeNotAllowedMessage(
@@ -118,26 +157,86 @@ export function systemPromptVars(
   };
 }
 
-export function renderPromptTemplate(
+export function renderPromptTemplateResult(
   template: string,
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
-  basePrompt?: (context: AgentProfileContext) => string,
-): string {
+  basePrompt?: (context: AgentProfileContext) => SystemPromptRenderResult,
+): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
+  let baseResult: SystemPromptRenderResult | undefined;
   if (basePrompt !== undefined && template.includes('${base_prompt}')) {
-    vars['base_prompt'] = basePrompt(context);
+    baseResult = basePrompt(context);
+    vars['base_prompt'] = baseResult.text;
   }
-  return renderPrompt(template, vars);
+  return {
+    text: renderPrompt(template, vars),
+    environment: mergeEnvironmentDisclosure(
+      environmentForTemplate(template, context),
+      baseResult?.environment,
+    ),
+  };
 }
 
-export function renderSystemPrompt(
+export function renderSystemPromptResult(
   roleAdditional: string,
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
-): string {
-  return renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
-    ...systemPromptVars(context, options),
-    role_additional: roleAdditional,
-  });
+): SystemPromptRenderResult {
+  return {
+    text: renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
+      ...systemPromptVars(context, options),
+      role_additional: roleAdditional,
+    }),
+    environment: environmentForTemplate(SYSTEM_PROMPT_TEMPLATE, context),
+  };
+}
+
+function environmentForTemplate(
+  template: string,
+  context: AgentProfileContext,
+): EnvironmentDisclosureSnapshot {
+  const usesNow = template.includes('${now}');
+  const timeZone = context.timeZone ?? localTimeZone();
+  return {
+    cwd: context.cwd ?? '',
+    date: usesNow
+      ? {
+          disclosed: true,
+          value: {
+            localDate: localDateKey(context.now, timeZone),
+            timeZone,
+          },
+        }
+      : { disclosed: false },
+  };
+}
+
+function mergeEnvironmentDisclosure(
+  direct: EnvironmentDisclosureSnapshot,
+  base: EnvironmentDisclosureSnapshot | undefined,
+): EnvironmentDisclosureSnapshot {
+  if (base === undefined) return direct;
+  return {
+    cwd: direct.cwd || base.cwd,
+    date: direct.date.disclosed ? direct.date : base.date,
+  };
+}
+
+function localDateKey(now: string | undefined, timeZone: string): string {
+  const date = now === undefined ? new Date() : new Date(now);
+  if (Number.isNaN(date.getTime())) return localDateKey(undefined, timeZone);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function localTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }

@@ -260,6 +260,40 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills).toEqual([]);
   });
 
+  it('discovers only the root SKILL.md for a root-skill-only plugin root', async () => {
+    const { repoDir } = await makeWorkspace();
+    const pluginRoot = path.join(repoDir, 'plugin');
+    await writeSkill(pluginRoot, 'SKILL.md', [
+      '---',
+      'name: root-skill',
+      'description: At plugin root',
+      '---',
+      '',
+      'Root body.',
+    ]);
+    await writeSkill(pluginRoot, 'CHANGELOG.md', ['# Changelog']);
+    await writeSkill(pluginRoot, path.join('nested', 'SKILL.md'), [
+      '---',
+      'name: nested',
+      'description: Nested bundle',
+      '---',
+    ]);
+
+    const skills = await discoverSkills({
+      roots: [
+        {
+          path: pluginRoot,
+          source: 'extra',
+          plugin: { id: 'demo' },
+          scanMode: 'root-skill-only',
+        },
+      ],
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(['root-skill']);
+    expect(skills[0]?.plugin).toEqual({ id: 'demo' });
+  });
+
   it('lists flat skills with frontmatter name and description', async () => {
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
