@@ -1,0 +1,301 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { IAgentProfileService, ProfileError } from '#/agent/profile/profile';
+import { AgentProfileService } from '#/agent/profile/profileService';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/protocol';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+
+import { registerTestAgentWire, registerTestEventDispatcher, testWireScope } from '../../wire/stubs';
+
+const SCOPE = 'wire';
+const KEY = 'profile-compact-threshold-test';
+const MOCK_MODEL = 'kimi-code';
+
+function createTelemetryStub(): ITelemetryService {
+  return {
+    _serviceBrand: undefined,
+    track: () => undefined,
+    track2: () => undefined,
+  } as unknown as ITelemetryService;
+}
+
+function createConfigStub(): IConfigService {
+  return {
+    _serviceBrand: undefined,
+    onDidSectionChange: () => ({ dispose: () => {} }),
+    get: ((key: string) => configValues[key]) as unknown as IConfigService['get'],
+  } as unknown as IConfigService;
+}
+
+function createTestModel(): Model {
+  return {
+    id: MOCK_MODEL,
+    name: 'kimi-for-coding',
+    aliases: [],
+    protocol: 'openai',
+    baseUrl: 'https://example.test/v1',
+    headers: {},
+    capabilities: {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: true,
+      tool_use: false,
+      max_context_tokens: 1000,
+    },
+    maxContextSize: 1000,
+    alwaysThinking: false,
+    providerType: 'kimi',
+    providerName: 'kimi',
+    authProvider: { getAuth: async () => undefined },
+  };
+}
+
+function createModelCatalogStub(model: Model): IModelCatalog {
+  return {
+    _serviceBrand: undefined,
+    get: (id) => {
+      if (id !== model.id) throw new Error(`Unknown model: ${String(id)}`);
+      return model;
+    },
+    getRequester: () => {
+      throw new Error('not exercised');
+    },
+    inspect: () => {
+      throw new Error('not exercised');
+    },
+    ping: () => {
+      throw new Error('not exercised');
+    },
+    findByName: () => [],
+    listModels: () => {
+      throw new Error('not exercised');
+    },
+    listProviders: () => {
+      throw new Error('not exercised');
+    },
+    getProvider: () => {
+      throw new Error('not exercised');
+    },
+    setDefaultModel: () => {
+      throw new Error('not exercised');
+    },
+  };
+}
+
+function createProtocolRegistryStub(): IProtocolAdapterRegistry {
+  return {
+    _serviceBrand: undefined,
+    supportedProtocols: () => ['anthropic', 'openai', 'openai_responses', 'google-genai'],
+    resolveAdapterIdentity: (protocol: Protocol, providerType?: string) => ({
+      baseId: protocol,
+      traits:
+        providerType === 'kimi' && protocol === 'openai'
+          ? [
+              {
+                trait: { withThinking: () => undefined, strictThinkingValidation: true },
+                context: {},
+              },
+            ]
+          : [],
+    }),
+    resolveProviderBaseId: (protocol: Protocol) => protocol,
+    resolveCapability: () => {
+      throw new Error('not exercised');
+    },
+    createChatProvider: () => {
+      throw new Error('not exercised');
+    },
+  } as unknown as IProtocolAdapterRegistry;
+}
+
+function stubUnused<T>(): T {
+  return { _serviceBrand: undefined } as unknown as T;
+}
+
+function createSessionContextStub(): ISessionContext {
+  return {
+    _serviceBrand: undefined,
+    sessionId: 'session-test',
+    workspaceId: 'workspace-test',
+    sessionDir: '/tmp/session-test',
+    metaScope: 'sessions/workspace-test/session-test',
+    cwd: '/tmp',
+    scope: (subKey?: string) =>
+      subKey === undefined || subKey.length === 0
+        ? 'sessions/workspace-test/session-test'
+        : `sessions/workspace-test/session-test/${subKey}`,
+  };
+}
+
+let disposables: DisposableStore;
+let svc: IAgentProfileService;
+let configValues: Record<string, unknown>;
+
+function buildHost(key: string): IAgentProfileService {
+  const host = disposables.add(new TestInstantiationService());
+  host.stub(IFileSystemStorageService, new InMemoryStorageService());
+  host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  host.stub(ITelemetryService, createTelemetryStub());
+  host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+  host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
+  host.stub(IConfigService, createConfigStub());
+  host.stub(IModelCatalog, createModelCatalogStub(createTestModel()));
+  host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
+  host.stub(IHostEnvironment, stubUnused());
+  host.stub(IHostFileSystem, stubUnused());
+  host.stub(IBootstrapService, stubUnused());
+  host.stub(ISessionContext, createSessionContextStub());
+  host.stub(ISessionWorkspaceContext, stubUnused());
+  host.stub(ISessionAgentProfileCatalog, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    get: () => undefined,
+    getDefault: () => {
+      throw new Error('catalog resolution is not exercised');
+    },
+    list: () => [],
+    load: async () => {},
+    reload: async () => {},
+    onDidChange: () => ({ dispose: () => {} }),
+  });
+  host.stub(ISessionSkillCatalog, {
+    _serviceBrand: undefined,
+    onDidChange: () => ({ dispose: () => {} }),
+  });
+  host.stub(ISessionInstructionsProvider, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    agentsMd: undefined,
+    agentsMdWarning: undefined,
+    agentsMdPaths: undefined,
+    onDidChange: Event.None as Event<void>,
+  } satisfies ISessionInstructionsProvider);
+  host.stub(IAgentAgentsMdReminderService, {
+    _serviceBrand: undefined,
+    seedInjected: () => {},
+  });
+  host.stub(ISessionToolPolicy, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChange: () => ({ dispose: () => {} }),
+    disabledTools: () => [],
+    setDisabledTools: () => Promise.resolve(),
+  });
+  host.set(IAgentStateService, new AgentStateService());
+  host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
+  registerTestAgentWire(host, testWireScope(SCOPE, key), {
+    log: host.get(IAppendLogStore),
+  });
+  registerTestEventDispatcher(host);
+  return host.get(IAgentProfileService);
+}
+
+beforeEach(() => {
+  disposables = new DisposableStore();
+  configValues = {};
+  svc = buildHost(KEY);
+});
+
+afterEach(() => disposables.dispose());
+
+describe('AgentProfileService.setCompactionTriggerRatio', () => {
+  it('rejects values below 0.25 (the widened minimum)', () => {
+    expect(() => svc.setCompactionTriggerRatio(0.24)).toThrow(ProfileError);
+    expect(() => svc.setCompactionTriggerRatio(0.2499)).toThrow(ProfileError);
+  });
+
+  it('rejects values above 0.99 and non-finite values', () => {
+    expect(() => svc.setCompactionTriggerRatio(1)).toThrow(ProfileError);
+    expect(() => svc.setCompactionTriggerRatio(Number.NaN)).toThrow(ProfileError);
+    expect(() => svc.setCompactionTriggerRatio(Number.POSITIVE_INFINITY)).toThrow(ProfileError);
+  });
+
+  it('accepts the boundary values 0.25 and 0.99', () => {
+    svc.setCompactionTriggerRatio(0.25);
+    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.25);
+    svc.setCompactionTriggerRatio(0.99);
+    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.99);
+  });
+
+  it('clears the override when called with undefined', () => {
+    svc.setCompactionTriggerRatio(0.3);
+    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.3);
+    svc.setCompactionTriggerRatio(undefined);
+    expect(svc.getCompactionTriggerRatioOverride()).toBeUndefined();
+  });
+
+  it('getEffectiveCompactionTriggerRatio resolves precedence without a bound model', () => {
+    // getStatus reads this accessor on model-less sessions; it must not throw.
+    configValues['loopControl'] = { compactionTriggerRatio: 0.7 };
+    expect(svc.getEffectiveCompactionTriggerRatio()).toBe(0.7);
+    svc.setCompactionTriggerRatio(0.3);
+    expect(svc.getEffectiveCompactionTriggerRatio()).toBe(0.3);
+    svc.setCompactionTriggerRatio(undefined);
+    expect(svc.getEffectiveCompactionTriggerRatio()).toBe(0.7);
+  });
+});
+
+describe('AgentProfileService compaction trigger ratio precedence', () => {
+  beforeEach(() => {
+    // resolveModelContext requires a model to be configured; a plain state
+    // update is enough (no full bind / system-prompt rendering needed).
+    svc.update({ modelAlias: MOCK_MODEL });
+  });
+
+  it('uses the config value when no override is set', () => {
+    configValues['loopControl'] = { compactionTriggerRatio: 0.7 };
+    expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.7);
+  });
+
+  it('the session override takes precedence over the config value', () => {
+    configValues['loopControl'] = { compactionTriggerRatio: 0.7 };
+    svc.setCompactionTriggerRatio(0.3);
+    expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.3);
+  });
+
+  it('returns undefined when neither override nor config sets a value', () => {
+    expect(svc.resolveModelContext().compactionTriggerRatio).toBeUndefined();
+  });
+
+  it('falls back to the config value after the override is cleared', () => {
+    configValues['loopControl'] = { compactionTriggerRatio: 0.7 };
+    svc.setCompactionTriggerRatio(0.3);
+    svc.setCompactionTriggerRatio(undefined);
+    expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.7);
+    expect(svc.getCompactionTriggerRatioOverride()).toBeUndefined();
+  });
+
+  it('respects a config value at the new 0.25 minimum', () => {
+    configValues['loopControl'] = { compactionTriggerRatio: 0.25 };
+    expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.25);
+  });
+});

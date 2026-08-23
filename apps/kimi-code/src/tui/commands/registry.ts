@@ -344,6 +344,17 @@ export const BUILTIN_SLASH_COMMANDS = [
     argumentHint: '<instruction>',
   },
   {
+    name: 'compact-threshold',
+    aliases: [],
+    description: 'Show or set the per-session auto-compaction trigger ratio (0.25-0.99)',
+    priority: 80,
+    argumentHint: '[<ratio>|off]',
+    // Reading the effective threshold is always safe; changing it mid-turn
+    // would re-aim compaction under the running turn, so mutations wait for idle.
+    availability: (args) => (args.trim() === '' ? 'always' : 'idle-only'),
+    requiresEngineV2: true,
+  },
+  {
     name: 'goal',
     aliases: [],
     description: 'Start or manage an autonomous goal',

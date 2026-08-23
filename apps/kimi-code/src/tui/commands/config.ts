@@ -229,6 +229,78 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
   await session.compact({ instruction: customInstruction });
 }
 
+/** Accepted range for `/compact-threshold`; the engine re-validates authoritatively. */
+const COMPACT_THRESHOLD_MIN = 0.25;
+const COMPACT_THRESHOLD_MAX = 0.99;
+/** Built-in auto-compaction trigger ratio used when neither override nor config sets one. */
+const COMPACT_THRESHOLD_DEFAULT = 0.85;
+const COMPACT_THRESHOLD_USAGE =
+  'Usage: /compact-threshold [<ratio 0.25-0.99>|off] — with no argument, shows the current value.';
+
+export async function handleCompactThresholdCommand(
+  host: SlashCommandHost,
+  args: string,
+): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const value = args.trim();
+
+  // No argument: read-only display of the effective threshold and its source.
+  if (value.length === 0) {
+    try {
+      const status = await session.getStatus();
+      const effective = status.compactionTriggerRatio;
+      const source =
+        status.compactionTriggerRatioOverridden === true
+          ? 'session override — /compact-threshold off clears it'
+          : effective !== undefined
+            ? 'from config.toml [loop_control] compaction_trigger_ratio'
+            : 'built-in default (config.toml key not set)';
+      host.showNotice(`Auto-compact threshold: ${effective ?? COMPACT_THRESHOLD_DEFAULT}`, source);
+    } catch (error) {
+      host.showError(`Failed to read compaction threshold: ${formatErrorMessage(error)}`);
+    }
+    return;
+  }
+
+  // "off" clears the session override and returns to the global value.
+  if (value === 'off' || value === 'reset' || value === 'clear') {
+    try {
+      await session.setCompactionTriggerRatio(undefined);
+      host.showNotice(
+        'Auto-compact threshold override cleared',
+        'The config.toml [loop_control] compaction_trigger_ratio value (or built-in default) applies again.',
+      );
+    } catch (error) {
+      host.showError(`Failed to clear compaction threshold: ${formatErrorMessage(error)}`);
+    }
+    return;
+  }
+
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio) || ratio < COMPACT_THRESHOLD_MIN || ratio > COMPACT_THRESHOLD_MAX) {
+    host.showError(
+      `Invalid threshold "${value}": must be between ${COMPACT_THRESHOLD_MIN} and ${COMPACT_THRESHOLD_MAX}.`,
+    );
+    host.showStatus(COMPACT_THRESHOLD_USAGE);
+    return;
+  }
+
+  try {
+    await session.setCompactionTriggerRatio(ratio);
+    host.showNotice(
+      `Auto-compact threshold set to ${ratio} for this session`,
+      'Overrides config.toml [loop_control] compaction_trigger_ratio until the session ends.',
+    );
+  } catch (error) {
+    host.showError(`Failed to set compaction threshold: ${formatErrorMessage(error)}`);
+  }
+}
+
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {
   const command = args.trim();
   if (command.length === 0) {

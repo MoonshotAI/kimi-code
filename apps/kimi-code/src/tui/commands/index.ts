@@ -12,6 +12,7 @@ export { handleBtwCommand } from './btw';
 export { handleCopyCommand } from './copy';
 export {
   handleCompactCommand,
+  handleCompactThresholdCommand,
   handleEditorCommand,
   handleModelCommand,
   handlePlanCommand,

@@ -463,6 +463,28 @@ pattern = "Bash(rm *"
     );
   });
 
+  it('accepts compaction_trigger_ratio down to 0.25 and rejects values below it', () => {
+    const atMinimum = parseConfigString(
+      `
+[loop_control]
+compaction_trigger_ratio = 0.25
+`,
+      'threshold.toml',
+    );
+    expect(atMinimum.loopControl).toMatchObject({ compactionTriggerRatio: 0.25 });
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[loop_control]
+compaction_trigger_ratio = 0.24
+`,
+          'threshold.toml',
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
   it('parses hooks config from TOML arrays of tables', () => {
     const config = parseConfigString(
       `

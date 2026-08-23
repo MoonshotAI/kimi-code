@@ -901,6 +901,21 @@ describe('loopControl config section', () => {
     expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxAttemptsPerStep: 1.5 })).toThrow();
   });
 
+  it('accepts compactionTriggerRatio within 0.25-0.99 and rejects values outside the range', () => {
+    const registry = new ConfigRegistry();
+
+    expect(registry.validate(LOOP_CONTROL_SECTION, { compactionTriggerRatio: 0.25 })).toEqual({
+      compactionTriggerRatio: 0.25,
+    });
+    expect(registry.validate(LOOP_CONTROL_SECTION, { compactionTriggerRatio: 0.99 })).toEqual({
+      compactionTriggerRatio: 0.99,
+    });
+    expect(() =>
+      registry.validate(LOOP_CONTROL_SECTION, { compactionTriggerRatio: 0.24 }),
+    ).toThrow();
+    expect(() => registry.validate(LOOP_CONTROL_SECTION, { compactionTriggerRatio: 1 })).toThrow();
+  });
+
   it('re-applies loopControl env bindings on every get() and ignores invalid env', async () => {
     const env: Record<string, string> = {};
     const disposables = new DisposableStore();

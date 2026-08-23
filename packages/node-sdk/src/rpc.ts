@@ -124,6 +124,11 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly effort: string;
 }
 
+export interface SetSessionCompactionTriggerRatioRpcInput extends SessionIdRpcInput {
+  /** New session-scoped auto-compaction trigger ratio; `undefined` clears the override. */
+  readonly ratio?: number | undefined;
+}
+
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
 }
@@ -646,6 +651,21 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       effort: input.effort,
     });
+  }
+
+  /**
+   * Set (or clear, when `ratio` is undefined) a session-scoped override for
+   * the auto-compaction trigger ratio. Only the v2 client implements this
+   * (through the agent scope's `IAgentProfileService`); the v1 engine has no
+   * per-session compaction threshold and throws `not_implemented`.
+   */
+  setCompactionTriggerRatio(
+    _input: SetSessionCompactionTriggerRatioRpcInput,
+  ): Promise<void> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'This SDK client does not support setting the compaction trigger ratio.',
+    );
   }
 
   async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {

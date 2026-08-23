@@ -2122,6 +2122,73 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('auto-compacts at a session override threshold instead of the built-in default', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1_000_000,
+      },
+    });
+    // ~30% used (300k of a 1M window) plus the ~30k-token pending prompt
+    // crosses a 0.3 session override, but stays far below the built-in
+    // 0.85 default and the 0.85 block ratio — only the override can fire,
+    // and the answer runs before the (non-blocking) compaction.
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 300_000);
+    const pendingPrompt = `override-pending-verbatim:${'x'.repeat(120_000)}`;
+
+    await ctx.rpc.setCompactionTriggerRatio({ ratio: 0.3 });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer the override pending prompt.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Override compacted summary.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: pendingPrompt }] });
+    const events = await ctx.untilTurnEnd();
+
+    // The 0.3 override fired an auto compaction the built-in 0.85 default
+    // would never trigger at this context size (see the control test below).
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.started',
+        args: expect.objectContaining({ trigger: 'auto' }),
+      }),
+    );
+    // Answer first (non-blocking path), then the compaction request — which
+    // must summarize the oversized pending prompt.
+    expect(ctx.llmCalls).toHaveLength(2);
+    const [answerCall, compactionCall] = ctx.llmCalls;
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('override-pending-verbatim')),
+    ).toBe(true);
+    expect(
+      compactionCall?.history.map(messageText).some((text) => text.includes('override-pending-verbatim')),
+    ).toBe(true);
+  });
+
+  it('does not auto-compact at that context size without the session override (control)', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1_000_000,
+      },
+    });
+    // Same context size as the override test above, no override: 330k of a
+    // 1M window is far below the built-in 0.85 default, so nothing compacts.
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 300_000);
+    const pendingPrompt = `control-pending-verbatim:${'x'.repeat(120_000)}`;
+
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer the control pending prompt.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: pendingPrompt }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ event: 'compaction.started' }),
+    );
+  });
+
   it('compacts and retries when the provider reports context overflow', async () => {
     let callCount = 0;
     const inputs: string[][] = [];

@@ -280,6 +280,18 @@ export class Session {
     await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
+  /**
+   * Set a session-scoped override for the auto-compaction trigger ratio
+   * (context-utilization fraction at which auto-compaction triggers), or clear
+   * it by omitting `ratio`. The override takes precedence over the global
+   * `[loop_control] compaction_trigger_ratio` config value for the rest of the
+   * session and is never persisted. Only the v2 engine supports this.
+   */
+  async setCompactionTriggerRatio(ratio?: number): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setCompactionTriggerRatio({ sessionId: this.id, ratio });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {

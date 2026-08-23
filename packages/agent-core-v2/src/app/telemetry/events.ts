@@ -266,6 +266,11 @@ export interface ThinkingToggleEvent {
   from: string;
 }
 
+export interface CompactionThresholdOverrideEvent {
+  action: 'set' | 'clear';
+  ratio?: number;
+}
+
 export interface QuestionDismissedEvent {
   trace_id?: string;
 }
@@ -755,6 +760,14 @@ export const telemetryEventDefinitions = {
       enabled: 'Whether thinking is now enabled',
       effort: 'New thinking effort level',
       from: 'Previous thinking effort level',
+    },
+  }),
+  compaction_threshold_override: defineAgentTelemetryEvent<CompactionThresholdOverrideEvent>({
+    owner: 'kimi-code',
+    comment: 'The session-scoped auto-compaction trigger ratio override is set or cleared.',
+    properties: {
+      action: 'Whether the override was set or cleared',
+      ratio: 'The new trigger ratio; absent when clearing',
     },
   }),
   question_dismissed: defineAgentTelemetryEvent<QuestionDismissedEvent>({

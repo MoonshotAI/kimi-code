@@ -258,6 +258,7 @@ import {
   type SessionPromptWithSkillsRpcInput,
   type SetSessionModelRpcInput,
   type SetSessionModelRpcResult,
+  type SetSessionCompactionTriggerRatioRpcInput,
   type SetSessionPermissionRpcInput,
   type SetSessionPlanModeRpcInput,
   type SetSessionSwarmModeRpcInput,
@@ -1659,6 +1660,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     agent.accessor.get(IAgentProfileService).setThinking(input.effort);
   }
 
+  /**
+   * Through the agent scope (`IAgentProfileService.setCompactionTriggerRatio`),
+   * same shape as `setThinking`: no klient facade exists. The profile service
+   * validates the [0.25, 0.99] range and rejects with `model.config_invalid`.
+   */
+  override async setCompactionTriggerRatio(
+    input: SetSessionCompactionTriggerRatioRpcInput,
+  ): Promise<void> {
+    const agent = await this.agentScope(input.sessionId);
+    agent.accessor.get(IAgentProfileService).setCompactionTriggerRatio(input.ratio);
+  }
+
   override async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.setPermission(input.mode);
@@ -1739,7 +1752,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getPlan(),
       facade.getUsage(),
     ]);
-    const profile = agent.accessor.get(IAgentProfileService).data();
+    const profileService = agent.accessor.get(IAgentProfileService);
+    const profile = profileService.data();
     const capability = profile.modelCapabilities;
     const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextTokens = context.tokenCount;
@@ -1755,6 +1769,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       towerMode: agent.accessor.get(IAgentTowerService).isActive,
+      // Effective auto-compaction trigger ratio (override ?? config). Both new
+      // fields are spread conditionally so a session with neither override nor
+      // config keeps the exact v1 status shape — strict-equality getStatus
+      // parity tests must not see extra keys. Reads through the model-less
+      // accessors so getStatus keeps working on model-less sessions.
+      ...(profileService.getEffectiveCompactionTriggerRatio() !== undefined
+        ? { compactionTriggerRatio: profileService.getEffectiveCompactionTriggerRatio() }
+        : {}),
+      ...(profileService.getCompactionTriggerRatioOverride() !== undefined
+        ? { compactionTriggerRatioOverridden: true }
+        : {}),
       contextTokens,
       maxContextTokens,
       contextUsage,
