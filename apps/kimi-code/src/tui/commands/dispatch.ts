@@ -55,6 +55,7 @@ import {
 } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import { isUserActivatableSkill, type SkillListSession } from './skills';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 import { runSkillSelector } from './prompts';
 import {
   canRestoreSubmittedInput,
