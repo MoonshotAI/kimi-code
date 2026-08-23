@@ -22,6 +22,25 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString("C:\\Users\\O'Brien\\proj\\secret.txt")).toBe(REDACTED);
   });
 
+  it('redacts decomposed Unicode path segments including combining marks', () => {
+    expect(cleanTelemetryString('C:\\Users\\jose\u0301\\proj\\secret.txt')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/jose\u0301/proj/secret.txt')).toBe(REDACTED);
+  });
+
+  it('redacts spaces in final filenames without swallowing diagnostic text', () => {
+    expect(cleanTelemetryString('C:\\Users\\alice\\Secret File.txt could not be read')).toBe(
+      `${REDACTED} could not be read`,
+    );
+    expect(cleanTelemetryString('/home/alice/Secret File.txt could not be read')).toBe(
+      `${REDACTED} could not be read`,
+    );
+  });
+
+  it('redacts a trailing spaced directory when its separator marks the boundary', () => {
+    expect(cleanTelemetryString('C:\\Users\\alice\\Secret Folder\\')).toBe(REDACTED);
+    expect(cleanTelemetryString('/home/alice/Secret Folder/')).toBe(REDACTED);
+  });
+
   it('redacts UNC and long-path Windows spellings', () => {
     expect(cleanTelemetryString('\\\\fileserver\\home\\alice.chen\\proj\\secret.txt')).toBe(REDACTED);
     expect(cleanTelemetryString('\\\\?\\C:\\Users\\alice\\proj\\secret.txt')).toBe(REDACTED);
