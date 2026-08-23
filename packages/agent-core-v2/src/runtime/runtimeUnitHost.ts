@@ -305,9 +305,12 @@ class SharedRuntimeUnitHost implements RuntimeUnitHost {
           runtimeId: runtime.identity.runtimeId,
           update: (replacement) => this.updateRuntime(staged, replacement),
           remove: async () => {
-            await this.removeRuntime(staged);
-            const index = runtimes.indexOf(staged);
-            if (index >= 0) runtimes.splice(index, 1);
+            try {
+              await this.removeRuntime(staged);
+            } finally {
+              const index = runtimes.indexOf(staged);
+              if (index >= 0) runtimes.splice(index, 1);
+            }
           },
         };
         return handle;
