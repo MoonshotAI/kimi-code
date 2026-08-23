@@ -1,11 +1,3 @@
-/**
- * `sessionExport` domain — export manifest builder.
- *
- * Produces the diagnostic `manifest.json` included in every exported session
- * archive. The manifest combines persisted session metadata, host/runtime
- * version facts, and wire-log activity timestamps discovered during export.
- */
-
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 
 import type {

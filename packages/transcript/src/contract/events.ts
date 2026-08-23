@@ -1,28 +1,3 @@
-/**
- * Transcript WS event types — owned exclusively by this package (nothing
- * transcript-specific lives in `@moonshot-ai/protocol`).
- *
- * Transcript events ride the v1 WS envelope (`{ type, seq, epoch, volatile,
- * session_id, timestamp, payload }`), and the payloads below are exactly the
- * envelope `payload` shapes: flat events carrying their own `type`
- * discriminant, mirroring how core domain events sit in the envelope.
- *
- * Delivery contract (server-side): every transcript event is `volatile: true`
- * with the current durable watermark as the envelope `seq` — events are never
- * journaled into the durable log and never advance its seq. Reliability comes
- * from the transcript layer's own op-batch sequence (the payload `seq` —
- * consecutive per agent, see `transcriptSeqSchema`): sequenced servers keep a
- * bounded per-agent journal, so a client that detects a seq gap (or reconnects)
- * catches up point-to-point via `GET .../transcript/ops?since_seq=` or the
- * `transcript_since` subscription cursor; when the journal no longer covers
- * the gap (`complete: false`) the client falls back to a REST refresh +
- * re-subscribe, which resends `transcript.reset` naturally. Legacy peers omit
- * `seq` entirely and rely on loss signals (`resync_required`, append gaps,
- * reconnect acks) driving full refreshes. Convergence is guaranteed by the L2
- * rules (every op except `append` is idempotent state; the block/turn flush
- * upserts re-carry whole state).
- */
-
 import { z } from 'zod';
 
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '../ops/operation';

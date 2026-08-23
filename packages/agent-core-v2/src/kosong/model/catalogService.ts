@@ -1,53 +1,8 @@
-/**
- * `kosong/model` domain — `ModelCatalog`, the single place that builds
- * Models.
- *
- * Reads Model / Provider config, resolves the auth closure (provider-level
- * credential or Model-inline override), and assembles the pure-data
- * `Model` plus its `ModelRequester` — cached together by model id. Bound at
- * App scope; resolution is shared across sessions.
- *
- * Two config-driven paths (unchanged from the legacy resolver):
- *   - **Structured** — `Model.providerId` points at a `[providers.*]` entry.
- *     Auth comes from the Provider unless the Model carries an override
- *     (`apiKey` / `oauth`).
- *   - **Flat** — `Model.baseUrl` is inline; the catalog synthesizes a
- *     Provider record keyed by the URL's origin so multiple Models on the
- *     same host converge on the same Provider metadata. Auth comes from the
- *     Model itself.
- *
- * Everything vendor-shaped goes through the registries, never a hardcoded
- * switch: the wire protocol falls back from an explicit `protocol` to the
- * referenced provider vendor's declared `baseProtocol`; endpoint and
- * credential env fallbacks resolve through `resolveProviderEndpoint` against
- * the config env bag; host-header forwarding follows the vendor definition's
- * `hostHeaders`; capability detection is `resolveCapability(protocol, name,
- * providerType)`.
- *
- * Caching (load-bearing): assembled entries are invalidated ONLY by the
- * model/provider config-change events. Tests that mutate config
- * behind the services' backs (bypassing those events) must call
- * `notifyConfigChanged()` to drop the cache — otherwise `get` keeps serving
- * the previous generation's Model.
- *
- * Inspection: every assembly also captures a `ResolutionTraceCollector`
- * (provenance records + intermediate artifacts, reference-only) alongside the
- * Model in the same cache entry. `inspect(id)` assembles the god object from
- * that trace on demand — same pass, same generation, never a re-resolution.
- *
- * Enumeration & default pointer: `listModels` projects every configured
- * model from the SAME materialization `get` serves (falling back to the
- * config-only projection for models that fail to materialize, so broken
- * config stays visible); `listProviders` / `getProvider` project the
- * provider registry plus credential state. `setDefaultModel` writes the
- * global default-model pointer (through `IModelService`) after a
- * materialization gate — the catalog's only write.
- */
-
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderRequestAuth } from '#/kosong/contract/provider';
@@ -387,6 +342,8 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const declared = new Set((model.capabilities ?? []).map((c) => c.trim().toLowerCase()));
 
     trace.capture(TRACE.hostHeaders, this.hostRequestHeaders.headers);
+    trace.capture(TRACE.thirdPartyHeaders, this.hostRequestHeaders.thirdPartyHeaders);
+    trace.capture(TRACE.identitySlug, this.hostRequestHeaders.identitySlug);
     return {
       id,
       name: wireName,
@@ -396,7 +353,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       headers: resolveOutboundHeaders(
         providerConfig?.type,
         providerConfig?.customHeaders,
-        this.hostRequestHeaders.headers,
+        this.hostRequestHeaders,
       ),
       capabilities,
       maxContextSize: model.maxContextSize,
@@ -558,18 +515,13 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
-  hostHeaders: Readonly<Record<string, string>>,
+  host: Pick<IHostRequestHeaders, 'headers' | 'thirdPartyHeaders'>,
 ): Readonly<Record<string, string>> {
   const forwardsAll =
     providerType !== undefined &&
     getProviderDefinition(providerType)?.hostHeaders === 'full';
-  const hostLayer = forwardsAll ? hostHeaders : userAgentOnly(hostHeaders);
+  const hostLayer = forwardsAll ? host.headers : host.thirdPartyHeaders;
   return { ...parseKimiCodeCustomHeaders(), ...hostLayer, ...customHeaders };
-}
-
-function userAgentOnly(headers: Readonly<Record<string, string>>): Record<string, string> {
-  const userAgent = headers['User-Agent'];
-  return userAgent === undefined ? {} : { 'User-Agent': userAgent };
 }
 
 function resolveModelCapabilities(

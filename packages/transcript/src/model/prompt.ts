@@ -1,12 +1,3 @@
-/**
- * Prompt queue entities of one agent.
- *
- * The engine's prompt queue (the running prompt plus queued/blocked pending
- * ones) lives beside the timeline: prompts are global entities like tasks,
- * addressed by `promptId` and never paginated. `content` is the opaque
- * message content parts array — this layer never interprets it.
- */
-
 import type { PromptId } from './ids';
 
 export type TranscriptPromptStatus =

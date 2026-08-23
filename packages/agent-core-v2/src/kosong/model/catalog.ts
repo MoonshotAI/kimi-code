@@ -1,34 +1,3 @@
-/**
- * `kosong/model` domain — the pure-data `Model`, the auth-provider
- * contract, and the `IModelCatalog` interface.
- *
- * A `Model` is exactly the configuration-derived data the rest of v2 needs to
- * talk about one configured model: endpoint, auth closure, wire protocol,
- * wire-facing name, headers, capability matrix, and budget knobs. It is NOT
- * a request executor and carries no `with*` morphs — per-turn intent flows
- * through `ModelRequestParams` on `ModelRequester.request(...)` instead.
- * Construction happens exactly once per config generation, in `ModelCatalog`
- * — the only place that assembles Models.
- *
- * `IModelCatalog` is the single lookup the edge layers consume, in one of
- * two shapes:
- *   - want data    → `get(id)`          → the pure-data Model;
- *   - want requests → `getRequester(id)` → the ModelRequester;
- * `findByName` is the reverse map for many-to-many name/alias routing.
- *
- * Enumeration (`listModels` / `listProviders` / `getProvider`) projects the
- * SAME materialization `get` serves into the wire catalog shapes below, so
- * the management surface can never drift from what the runtime resolves.
- * `setDefaultModel` writes the global default-model pointer (through
- * `IModelService`); it is the catalog's only write, validated against
- * materialization so an unresolvable model can never become the default.
- *
- * The catalog caches assembled Models by id and invalidates on the
- * model/provider config-change events. Tests that mutate config
- * BEHIND the service's back (bypassing those events) must call
- * `ModelCatalog.notifyConfigChanged()` to drop the cache.
- */
-
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

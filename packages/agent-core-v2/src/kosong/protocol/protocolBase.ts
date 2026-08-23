@@ -1,16 +1,4 @@
-/**
- * `kosong/protocol` domain — protocol base identity, definition, and
- * the module-level base registry.
- *
- * A protocol base is the component that actually understands one wire
- * format: it implements `ChatProvider` and exposes a `hooks?` option through
- * which composed traits flow in. The base itself never knows this registry
- * exists.
- *
- * This module only holds the data structures and the registry functions; it
- * deliberately registers nothing on its own.
- */
-
+import { BugIndicatingError } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ChatProvider } from '#/kosong/contract/provider';
 
@@ -39,7 +27,7 @@ const protocolBases = new Map<ProtocolBaseId, ProtocolBaseDefinition>();
 
 export function registerProtocolBase(definition: ProtocolBaseDefinition): void {
   if (protocolBases.has(definition.id)) {
-    throw new Error(`protocol base '${definition.id}' is already registered`);
+    throw new BugIndicatingError(`protocol base '${definition.id}' is already registered`);
   }
   protocolBases.set(definition.id, definition);
 }

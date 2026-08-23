@@ -1,9 +1,3 @@
-/**
- * `provider` domain — in-memory `IProviderService` test double.
- *
- * Stores provider configuration by name for App-scope consumer tests.
- */
-
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 
 export function stubProviderService(

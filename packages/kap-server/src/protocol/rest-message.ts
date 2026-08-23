@@ -1,11 +1,6 @@
-/**
- *   GET /v1/sessions/{session_id}/messages
- *   GET /v1/sessions/{session_id}/messages/{message_id}
- */
-
 import { z } from 'zod';
 
-import { messageRoleSchema, messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { messageRoleSchema, messageSchema } from './message';
 
 import { cursorQuerySchema } from './pagination';
 

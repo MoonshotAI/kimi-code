@@ -1,13 +1,6 @@
-/**
- * `flag` domain — `IFlagService` implementation.
- *
- * Resolves experimental flags from the environment, the `[experimental]`
- * config section, and defaults; reads flag definitions from the registry, and
- * reads/watches config. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';

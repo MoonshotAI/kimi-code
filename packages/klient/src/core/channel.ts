@@ -12,6 +12,16 @@ export interface IDisposable {
   dispose(): void;
 }
 
+/** Optional per-call knobs a transport may honor. */
+export interface CallOptions {
+  /**
+   * Per-call deadline (ms). A transport with a default call timeout (ipc)
+   * takes it as an override — long-poll calls pass a deadline covering the
+   * engine-side wait; transports without a timeout (memory) ignore it.
+   */
+  readonly timeoutMs?: number;
+}
+
 /** Scope coordinates of a call/subscription. Empty object = core (app) scope. */
 export interface ScopeRef {
   readonly workspaceId?: string;
@@ -34,7 +44,13 @@ export type EventSourceRef =
 
 export interface KlientChannel {
   /** Invoke `service.method(...args)` in the given scope; resolves with the raw wire result. */
-  call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
+  call(
+    scope: ScopeRef,
+    service: string,
+    method: string,
+    args: unknown[],
+    options?: CallOptions,
+  ): Promise<unknown>;
   /**
    * Invoke `service.method(...args)` in the given scope and return a streaming
    * result. The callee must return an `AsyncIterable`; each yielded chunk is

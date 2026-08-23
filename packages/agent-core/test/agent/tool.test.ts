@@ -419,7 +419,7 @@ describe('Agent tools', () => {
     // The ProviderManager reads this live config; it starts with no model or
     // provider, so hasProvider is false at Agent construction and
     // initializeBuiltinTools() is skipped — the state the asynchronous
-    // free-tokens / OAuth model registration produces.
+    // OAuth / managed model registration produces.
     const liveConfig: KimiConfig = { providers: {}, models: {} };
     const ctx = testAgent({
       providerManager: new ProviderManager({ config: () => liveConfig }),

@@ -6,7 +6,11 @@ import { join } from 'pathe';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ErrorCodes, KimiError } from '../../src/errors';
-import { loadMcpServers, resolveMcpJsonPaths } from '../../src/mcp/config-loader';
+import {
+  loadMcpServers,
+  loadMcpServersDetailed,
+  resolveMcpJsonPaths,
+} from '../../src/mcp/config-loader';
 
 const tempDirs: string[] = [];
 
@@ -90,6 +94,33 @@ describe('loadMcpServers', () => {
       transport: 'http',
       url: 'http://localhost:8080/mcp',
     });
+  });
+
+  it('keeps a server named __proto__ as an own key across layers', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+
+    // Raw JSON text: a `{ __proto__: ... }` object literal would set the
+    // prototype instead of owning the key, and the test would never write it.
+    await mkdir(join(cwd, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(home, 'mcp.json'),
+      '{"mcpServers":{"__proto__":{"transport":"stdio","command":"user-proto"}}}',
+      'utf-8',
+    );
+    await writeFile(
+      join(cwd, '.kimi-code', 'mcp.json'),
+      '{"mcpServers":{"__proto__":{"transport":"stdio","command":"project-proto"}}}',
+      'utf-8',
+    );
+
+    const detailed = await loadMcpServersDetailed({ cwd, homeDir: home });
+    expect(Object.keys(detailed.servers)).toEqual(['__proto__']);
+    expect(detailed.servers['__proto__']).toEqual({
+      transport: 'stdio',
+      command: 'project-proto',
+    });
+    expect(detailed.origins['__proto__']).toBe(join(cwd, '.kimi-code', 'mcp.json'));
   });
 
   it('loads root .mcp.json from the repo root and lets project-local .kimi-code/mcp.json override it', async () => {

@@ -1,10 +1,6 @@
-/**
- * `contextMemory` domain helper — derives the v1-compatible full-compaction
- * handoff shape for live rewrites, wire replay, and snapshot reducers.
- */
-
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { ContentPart } from '#/kosong/contract/message';
+import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -14,6 +10,18 @@ export const COMPACT_USER_MESSAGE_HEAD_TOKENS = 2_000;
 export const COMPACTION_ELISION_VARIANT = 'compaction_elision';
 
 type MessageLike = ContextMessage;
+
+export interface TokenEstimate {
+  readonly text: (text: string) => number;
+  readonly message: (message: MessageLike) => number;
+  readonly messages: (messages: readonly MessageLike[]) => number;
+}
+
+export const defaultTokenEstimate: TokenEstimate = {
+  text: estimateTokens,
+  message: estimateTokensForMessage,
+  messages: estimateTokensForMessages,
+};
 
 export interface CompactionUserSelection<T> {
   readonly head: T[];
@@ -29,6 +37,8 @@ export interface ContextCompactionShapeInput {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter?: number;
+  readonly summaryOutputTokens?: number;
+  readonly requestOverheadTokens?: number;
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
@@ -50,6 +60,7 @@ export interface ContextCompactionShape {
 export function buildContextCompactionShape(
   history: readonly ContextMessage[],
   input: ContextCompactionShapeInput,
+  estimate: TokenEstimate = defaultTokenEstimate,
 ): ContextCompactionShape {
   if (usesLegacyTailShape(input)) {
     const contextSummary = input.contextSummary ?? input.summary;
@@ -62,7 +73,7 @@ export function buildContextCompactionShape(
       contextSummary,
       compactedCount: input.compactedCount,
       tokensBefore: input.tokensBefore,
-      tokensAfter: input.tokensAfter ?? estimateTokensForMessages(messages),
+      tokensAfter: input.tokensAfter ?? estimate.messages(messages),
       keptUserMessageCount: 0,
       droppedCount: input.droppedCount,
       messages,
@@ -70,7 +81,12 @@ export function buildContextCompactionShape(
   }
 
   const compactableUserMessages = collectCompactableUserMessages(history);
-  const selection = selectCompactionUserMessages(compactableUserMessages);
+  const selection = selectCompactionUserMessages(
+    compactableUserMessages,
+    COMPACT_USER_MESSAGE_MAX_TOKENS,
+    COMPACT_USER_MESSAGE_HEAD_TOKENS,
+    estimate.message,
+  );
   const elisionMessage = selection.elided
     ? createCompactionElisionMessage(selection.omittedTokens)
     : undefined;
@@ -79,7 +95,10 @@ export function buildContextCompactionShape(
     : [...selection.head, elisionMessage, ...selection.tail];
   const contextSummary = input.contextSummary ?? input.summary;
   const tokensAfter =
-    input.tokensAfter ?? estimateTokens(contextSummary) + estimateTokensForMessages(keptMessages);
+    input.tokensAfter ??
+    (input.requestOverheadTokens ?? 0) +
+      (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
+      estimate.messages(keptMessages);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -122,11 +141,9 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
 }
 
 export function buildCompactionElisionText(omittedTokens: number): string {
-  return [
-    '<system-reminder>',
+  return wrapSystemReminder(
     `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
-    '</system-reminder>',
-  ].join('\n');
+  );
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {
@@ -174,12 +191,13 @@ export function compactionUserMessageDisposition(
 export function selectRecentUserMessages<T extends MessageLike>(
   messages: readonly T[],
   maxTokens: number = COMPACT_USER_MESSAGE_MAX_TOKENS,
+  estimateMessage: (message: T) => number = estimateTokensForMessage,
 ): T[] {
   const selected: T[] = [];
   let remaining = maxTokens;
   for (let i = messages.length - 1; i >= 0 && remaining > 0; i--) {
     const message = messages[i]!;
-    const tokens = estimateTokensForMessage(message);
+    const tokens = estimateMessage(message);
     if (tokens <= remaining) {
       selected.push(message);
       remaining -= tokens;
@@ -196,10 +214,11 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   messages: readonly T[],
   maxTokens: number = COMPACT_USER_MESSAGE_MAX_TOKENS,
   headTokens: number = COMPACT_USER_MESSAGE_HEAD_TOKENS,
+  estimateMessage: (message: T) => number = estimateTokensForMessage,
 ): CompactionUserSelection<T> {
   let totalTokens = 0;
   for (const message of messages) {
-    totalTokens += estimateTokensForMessage(message);
+    totalTokens += estimateMessage(message);
   }
   if (totalTokens <= maxTokens) {
     return { head: [], tail: [...messages], elided: false, omittedTokens: 0 };
@@ -213,7 +232,7 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   let tailBoundaryDroppedPrefix: T | null = null;
   for (let i = messages.length - 1; i >= 0 && tailRemaining > 0; i--) {
     const message = messages[i]!;
-    const tokens = estimateTokensForMessage(message);
+    const tokens = estimateMessage(message);
     if (tokens <= tailRemaining) {
       tail.push(message);
       tailRemaining -= tokens;
@@ -240,7 +259,7 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   let headRemaining = headBudget;
   for (const message of headCandidates) {
     if (headRemaining <= 0) break;
-    const tokens = estimateTokensForMessage(message);
+    const tokens = estimateMessage(message);
     if (tokens <= headRemaining) {
       head.push(message);
       headRemaining -= tokens;
@@ -251,8 +270,8 @@ export function selectCompactionUserMessages<T extends MessageLike>(
   }
 
   let keptTokens = 0;
-  for (const message of head) keptTokens += estimateTokensForMessage(message);
-  for (const message of tail) keptTokens += estimateTokensForMessage(message);
+  for (const message of head) keptTokens += estimateMessage(message);
+  for (const message of tail) keptTokens += estimateMessage(message);
   return { head, tail, elided: true, omittedTokens: Math.max(0, totalTokens - keptTokens) };
 }
 

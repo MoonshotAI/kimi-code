@@ -1,12 +1,3 @@
-/**
- * `workspace` domain — process-wide catalog of known workspaces.
- *
- * Defines the `IWorkspaceService` used by the program side to remember the
- * folders the user has opened (backed by the app's own persistence). This is
- * a host-side catalog, not a session-scoped description of one Agent's active
- * work directory. App-scoped.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface Workspace {

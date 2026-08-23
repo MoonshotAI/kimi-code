@@ -3,9 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -19,6 +18,8 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
@@ -33,6 +34,7 @@ interface SessionIndexLine {
 describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
   let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
+  let published: Array<{ type: string; payload: unknown }>;
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -51,6 +53,7 @@ describe('WorkspaceService (file-backed)', () => {
       'workspace',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-registry-'));
+    published = [];
   });
 
   afterEach(async () => {
@@ -65,6 +68,15 @@ describe('WorkspaceService (file-backed)', () => {
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(IEventService, {
+        publish: (event: Event2<any>) => {
+          published.push({
+            type: event.type,
+            payload: (event as { readonly payload?: unknown }).payload,
+          });
+        },
+        subscribe: () => ({ dispose: () => {} }),
+      } as unknown as IEventService),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceService);
@@ -76,11 +88,6 @@ describe('WorkspaceService (file-backed)', () => {
     return build();
   }
 
-  /**
-   * hostFs stub that stats every path as an existing directory, so tests can
-   * exercise Windows-shaped roots on Linux CI — real-fs stat of `C:\...` is
-   * ENOENT there, and real fs case behavior must never be relied on.
-   */
   function allDirsHostFs(): IHostFileSystem {
     return {
       stat: () => Promise.resolve({ isFile: false, isDirectory: true, size: 0 }),
@@ -119,6 +126,29 @@ describe('WorkspaceService (file-backed)', () => {
     const list = await restart().list();
     expect(list.map((w) => w.id)).toContain(created.id);
     expect(list.find((w) => w.id === created.id)?.name).toBe('proj');
+  });
+
+  it('publishes lifecycle events on create, touch, rename, and delete', async () => {
+    const service = build();
+    const created = await service.createOrTouch(homeDir, 'proj');
+    await service.createOrTouch(homeDir);
+    await service.update(created.id, { name: 'renamed' });
+    await service.delete(created.id);
+
+    expect(published.map((event) => event.type)).toEqual([
+      'event.workspace.created',
+      'event.workspace.updated',
+      'event.workspace.updated',
+      'event.workspace.deleted',
+    ]);
+    expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: 'proj' } });
+    expect(published[2]?.payload).toMatchObject({ workspace: { id: created.id, name: 'renamed' } });
+    expect(published[3]?.payload).toEqual({ workspaceId: created.id, root: homeDir });
+  });
+
+  it('publishes no event when deleting an unknown workspace', async () => {
+    await build().delete('wd_missing_000000000000');
+    expect(published).toEqual([]);
   });
 
   it('rebuilds from session_index.jsonl when workspaces.json is absent', async () => {
@@ -183,13 +213,10 @@ describe('WorkspaceService (file-backed)', () => {
       [encodeWorkDirKey(work), encodeWorkDirKey(fromIndex)].toSorted(),
     );
     const existing = list.find((w) => w.id === encodeWorkDirKey(work));
-    // The registered entry keeps its persisted data; the merged entry only
-    // gets a basename-derived name.
     expect(existing?.name).toBe('existing');
     expect(existing?.lastOpenedAt).toBe(Date.parse('2024-01-02T00:00:00.000Z'));
     expect(list.find((w) => w.id === encodeWorkDirKey(fromIndex))?.name).toBe('from-index');
 
-    // The merge is persisted, so a restart sees the same catalog.
     expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
       list.map((w) => w.id).toSorted(),
     );
@@ -241,12 +268,10 @@ describe('WorkspaceService (file-backed)', () => {
     await registry.delete(a.id);
     expect((await registry.list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
 
-    // The tombstone is on disk in the v1-compatible field.
     const onDisk = await readWorkspacesJson();
     expect(onDisk.deleted_workspace_ids).toEqual([a.id]);
     expect(onDisk.workspaces[a.id]).toBeUndefined();
 
-    // Sessions referencing the deleted workDir must not resurrect it.
     await seedSessionIndex([
       {
         sessionId: 's1',
@@ -280,8 +305,6 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     await registry.createOrTouch(dirA);
 
-    // Simulate a v1 writer touching the file after the v2 registry already
-    // ran an operation: a new workspace entry plus an unrelated tombstone.
     const onDisk = await readWorkspacesJson();
     onDisk.workspaces[encodeWorkDirKey(dirB)] = {
       root: dirB,
@@ -306,7 +329,6 @@ describe('WorkspaceService (file-backed)', () => {
       [encodeWorkDirKey(dirA), encodeWorkDirKey(dirB), encodeWorkDirKey(dirC)].toSorted(),
     );
     expect(after.deleted_workspace_ids).toEqual(['wd_external_tombstone']);
-    // Reads also see the external entry without a restart.
     expect((await registry.list()).map((w) => w.id)).toContain(encodeWorkDirKey(dirB));
   });
 
@@ -342,7 +364,6 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const a = await registry.createOrTouch(dirA);
 
-    // External rename on disk: the update must start from it, not stale state.
     const onDisk = await readWorkspacesJson();
     const entry = onDisk.workspaces[a.id];
     if (entry === undefined) throw new Error('seed entry missing');
@@ -357,7 +378,6 @@ describe('WorkspaceService (file-backed)', () => {
     expect(renamed?.name).toBe('local-name');
     expect(renamed?.lastOpenedAt).toBe(Date.parse(entry.last_opened_at));
 
-    // External removal: update reports the id as gone instead of resurrecting.
     await fsp.writeFile(
       join(homeDir, 'workspaces.json'),
       JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [] }),
@@ -441,15 +461,11 @@ describe('WorkspaceService (file-backed)', () => {
 
     expect(cased.id).toBe(first.id);
     expect(slashed.id).toBe(first.id);
-    // Folding never rewrites the stored root/name — the first spelling stays;
-    // only lastOpenedAt advances.
     expect(cased.root).toBe('C:\\Users\\Foo\\Proj');
     expect(cased.name).toBe(first.name);
     expect(cased.lastOpenedAt).toBeGreaterThanOrEqual(first.lastOpenedAt);
     expect(await registry.list()).toHaveLength(1);
 
-    // ...and the fold persists: a fresh instance over the same homeDir still
-    // lists one entry under the first-seen spelling.
     const reloaded = await restart().list();
     expect(reloaded).toHaveLength(1);
     expect(reloaded[0]?.root).toBe('C:\\Users\\Foo\\Proj');
@@ -467,7 +483,6 @@ describe('WorkspaceService (file-backed)', () => {
       last_opened_at: '2026-01-01T00:00:00.000Z',
     });
     await writeWorkspacesJson({
-      // Legacy first so the canonical entry must actively replace it.
       [legacyId]: entry(typedRoot),
       [canonicalId]: entry(lowerRoot),
     });
@@ -479,8 +494,6 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   it('rebuild folds session-index workDir variants into one workspace', async () => {
-    // UNC paths are Windows-shaped (so they case-fold) yet still `isAbsolute`
-    // on POSIX hosts, so this exercises case folding on Linux CI.
     const firstSeen = '//Host/Share/Proj';
     await seedSessionIndex([
       { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: firstSeen },
@@ -489,7 +502,6 @@ describe('WorkspaceService (file-backed)', () => {
     ]);
 
     const list = await build().list();
-    // First seen wins: the id is minted from the first-seen workDir string.
     expect(list).toHaveLength(1);
     expect(list[0]?.id).toBe(encodeWorkDirKey(firstSeen));
     expect(list[0]?.root).toBe(firstSeen);
@@ -509,8 +521,6 @@ describe('WorkspaceService (file-backed)', () => {
 
 
   it('delete tombstones every folded alias so a legacy split cannot resurface', async () => {
-    // Split legacy state: two registered spellings of one Windows root, plus a
-    // third spelling remembered only by the session index.
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
     const aliasRoot = 'c:\\Users\\Foo\\Proj';
@@ -540,9 +550,6 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     await registry.delete(typedId);
 
-    // The directory itself is gone (unrelated entries survive); nothing
-    // identity-matching the deleted root remains, and every id that could
-    // carry it is tombstoned so the merge cannot resurrect it.
     const stillListed = (await registry.list()).filter(
       (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
     );
@@ -554,8 +561,6 @@ describe('WorkspaceService (file-backed)', () => {
       [typedId, aliasId, indexOnlyId].toSorted(),
     );
 
-    // A fresh process (merge re-runs against the session index) does not
-    // bring the directory back either.
     const reopened = restart();
     const relisted = (await reopened.list()).filter(
       (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
@@ -574,7 +579,6 @@ describe('workspaceRootKey', () => {
   });
 
   it('folds drive roots before separator stripping can mask the shape', () => {
-    // `C:\` would strip to `C:` and stop reading as Windows-shaped.
     expect(workspaceRootKey('C:\\')).toBe('c:');
     expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:\\'));
     expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:/'));

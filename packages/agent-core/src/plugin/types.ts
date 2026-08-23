@@ -33,6 +33,13 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[]; // resolved absolute paths
+  /**
+   * True when `skills` was not declared in the manifest and `skills` was filled
+   * by the root SKILL.md fallback. Consumers must treat those roots as a single
+   * skill bundle, not as a generic skill directory — an explicit `"skills":
+   * "./"` keeps directory semantics.
+   */
+  readonly rootSkillFallback?: boolean;
   readonly agents?: readonly string[]; // resolved absolute paths
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
@@ -62,6 +69,20 @@ export interface PluginMcpServerInfo {
   readonly url?: string;
   readonly envKeys?: readonly string[];
   readonly headerKeys?: readonly string[];
+}
+
+/**
+ * One plugin-declared MCP server with its final effective config, as consumed
+ * by the MCP server registry. `name` is the runtime name
+ * (`plugin-<pluginId>:<serverName>`); `config` already carries the rename-time
+ * transforms (env injection, cwd constraint, folded enabled flag).
+ */
+export interface PluginMcpServerEntry {
+  readonly name: string;
+  readonly config: McpServerConfig;
+  readonly pluginId: string;
+  /** Manifest-local server name (without the runtime prefix). */
+  readonly serverName: string;
 }
 
 export interface PluginCommandDef {

@@ -1,18 +1,3 @@
-/**
- * `telemetry` domain — outbound PII cleaning for telemetry properties.
- *
- * Redacts user-identifying content from string property values before events
- * leave the process: URLs, emails, common token formats, and absolute file
- * paths become labeled `<REDACTED: ...>` placeholders, while `node_modules/`
- * path tails are kept because they carry diagnostic value without user data.
- * App-scoped, no collaborators.
- *
- * Path matching is Unicode-aware (`\p{L}` / `\p{M}` / `\p{N}`) so non-ASCII home
- * directory names, apostrophes, UNC shares, `\\?\` long paths, and
- * drive-letter paths spelled with `/` are redacted the same way as the
- * ASCII `C:\…` / `/home/…` forms.
- */
-
 const REDACTED_PATH = '<REDACTED: user-file-path>';
 const NODE_MODULES_MARKER = 'node_modules/';
 

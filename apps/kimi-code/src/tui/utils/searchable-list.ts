@@ -38,7 +38,7 @@ export interface SearchableListView<T> {
 }
 
 export class SearchableList<T> {
-  private readonly items: readonly T[];
+  private items: readonly T[];
   private readonly toSearchText: (item: T) => string;
   private readonly pageSize: number;
   private readonly searchable: boolean;
@@ -51,6 +51,15 @@ export class SearchableList<T> {
     this.pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
     this.searchable = opts.searchable ?? false;
     this.cursor = Math.max(opts.initialIndex ?? 0, 0);
+  }
+
+  /**
+   * Replaces the item set (e.g. after another page was appended), keeping the
+   * active query; the cursor is clamped into the new range.
+   */
+  setItems(items: readonly T[]): void {
+    this.items = items;
+    this.cursor = Math.min(this.cursor, Math.max(0, items.length - 1));
   }
 
   filtered(): readonly T[] {

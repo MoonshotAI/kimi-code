@@ -1,19 +1,6 @@
-/**
- * `workspaceSkillCatalog` domain — extra `ISkillSource` producer.
- *
- * Discovers user-configured extra skill directories (`extraSkillDirs`) through
- * `ISkillDiscovery`, contributing them at priority 10 (above plugin / builtin,
- * below user / workspace). Relative paths resolve against the workspace root;
- * `~` and `~/...` resolve against the bootstrap home dir. Re-fires
- * `onDidChange` when the `extraSkillDirs` config section changes so the
- * catalog re-scans THIS source only. Bound at Workspace scope so every
- * session of the handler shares one scan.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -67,10 +54,3 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
   }
 }
 
-registerScopedService(
-  LifecycleScope.Workspace,
-  IExtraFileSkillSource,
-  ExtraFileSkillSource,
-  ScopeActivation.OnScopeCreated,
-  'workspaceSkillCatalog',
-);

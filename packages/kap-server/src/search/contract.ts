@@ -1,24 +1,3 @@
-/**
- * `search` module — global message search contract (temporary feature, lives
- * in kap-server until it graduates into agent-core-v2).
- *
- * The API shape borrows from Lark/Feishu's IM message endpoints:
- *   - a `container` concept (`container_id_type` + `container_id`) — here a
- *     message hangs under a session (and optionally one agent inside it);
- *     omitting `container` searches globally;
- *   - opaque cursor pagination (`pageSize` + `pageToken` + `hasMore`) where
- *     the query conditions may NOT change mid-pagination — the token encodes
- *     a fingerprint of the conditions and a mismatch is a parameter error;
- *   - POST + JSON body for search (a query operation, not a resource fetch);
- *   - an explicit sort enum (`sort_type`) and a time-range filter.
- *
- * This file is the single source of truth for the request/response shapes,
- * shared by the Service interface (`searchService.ts`) and the REST zod
- * schemas (`protocol/rest-search.ts`).
- */
-
-// ---- request ---------------------------------------------------------------
-
 export interface GlobalSearchQuery {
   /** Keyword(s), required. */
   readonly query: string;
@@ -49,7 +28,26 @@ export interface GlobalSearchQuery {
   readonly pageToken?: string;
 }
 
-// ---- response --------------------------------------------------------------
+export type GlobalSearchErrorReason =
+  | 'invalid_query'
+  | 'invalid_page_token'
+  | 'readonly_index'
+  | 'index_unavailable';
+
+/**
+ * Service-level error with a machine-readable reason. Lives in the contract
+ * (not the service module) so the search-index core — which also runs inside
+ * the search worker thread — can raise it without importing the service.
+ */
+export class GlobalSearchError extends Error {
+  constructor(
+    readonly reason: GlobalSearchErrorReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GlobalSearchError';
+  }
+}
 
 export interface GlobalSearchHit {
   readonly sessionId: string;
@@ -87,16 +85,30 @@ export interface GlobalSearchHit {
 
 export interface GlobalSearchIndexState {
   /**
-   * building — the first full sync has not finished yet, results may be
-   * incomplete; ready — a full sync completed in this process;
+   * building — the first full sync has not finished yet, or the index base
+   * is (re)building after a no-generation fallback recovery — results may
+   * be incomplete; ready — a full sync completed in this process;
    * readonly — another process holds the index write lock, this process only
-   * reads (incrementally catching up from the WAL before each search).
+   * reads (catching up from the WAL in the background).
    */
   readonly state: 'building' | 'ready' | 'readonly';
   /** Progress counters behind `state`. */
   readonly indexedSessions: number;
   readonly totalSessions: number;
   readonly documents: number;
+  /**
+   * True when the served page comes from a generation the service already
+   * knows to be behind: a newer index version was detected on disk
+   * (read-only refresh pending) or a background sync is in flight/queued.
+   * The results are still valid — just potentially not the freshest.
+   */
+  readonly stale?: boolean;
+  /**
+   * Set when the last background refresh/sync/reindex FAILED and the page is
+   * served from the previous (stale) generation: the error message, for
+   * observability. Absent when the last refresh succeeded.
+   */
+  readonly degraded?: string;
 }
 
 /**
@@ -109,16 +121,26 @@ export interface GlobalSearchIndexState {
  */
 export type GlobalSearchSource = 'live' | 'index';
 
+/**
+ * Why a page may miss real hits (the query was bounded, never silently
+ * truncated):
+ *   - 'candidate_cap' — the candidate set exceeded the confirmation cap, so
+ *     confirmation stopped at the cap;
+ *   - 'postings_budget' — the postings-visit budget stopped the index-side
+ *     candidate scan early (hot term/n-gram), so candidates are a subset;
+ *   - 'deadline' — the query's work budget (wall-clock deadline or processed
+ *     text volume) ran out during matching/confirmation.
+ * A page token from a changed index generation is NOT reported here — it
+ * fails the request with `invalid_page_token` (see the file header).
+ */
+export type GlobalSearchIncomplete = 'candidate_cap' | 'postings_budget' | 'deadline';
+
 export interface GlobalSearchPage {
   readonly items: GlobalSearchHit[];
   readonly hasMore: boolean;
   /** Present iff `hasMore`. */
   readonly pageToken?: string;
-  /**
-   * 'candidate_cap' — the literal-mode candidate set exceeded the cap, so
-   * confirmation was truncated and the page may miss real hits.
-   */
-  readonly incomplete?: 'candidate_cap';
+  readonly incomplete?: GlobalSearchIncomplete;
   readonly indexState: GlobalSearchIndexState;
   /**
    * The route that produced this page. The page token's fingerprint covers

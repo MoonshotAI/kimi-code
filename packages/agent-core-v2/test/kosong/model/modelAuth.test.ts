@@ -1,17 +1,3 @@
-/**
- * `kosong/model` modelAuth tests — credential precedence, env-bag resolution
- * through the provider-definition registry, and the effective-config fold:
- *
- *  - precedence: model apiKey > model oauth > provider apiKey/env > provider
- *    oauth; apiKey+oauth on the same
- *    level is a config error;
- *  - the env-bag fallback reads the vendor's declared `apiKeyEnv` chain via
- *    `resolveProviderEndpoint` (kimi / anthropic / openai / google-genai
- *    chain) — no per-protocol table;
- *  - `effectiveModelConfig` applies `overrides` and the Anthropic effort
- *    profile — inferred only for vendors whose thinking is not trait-driven.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ConfigErrors } from '#/app/config/errors';
@@ -84,8 +70,6 @@ describe('resolveModelAuthMaterial', () => {
         provider: { type: 'openai', env: { OPENAI_API_KEY: 'openai-env-key' } },
       }),
     ).toEqual({ apiKey: 'openai-env-key' });
-    // The google-genai chain keeps the legacy vertex precedence: VERTEXAI_API_KEY
-    // first, GOOGLE_API_KEY as fallback.
     expect(
       authMaterial({
         model: { model: 'm' },
@@ -138,8 +122,6 @@ describe('effectiveModelConfig', () => {
     expect(inferred.defaultEffort).toBe('high');
     expect(inferred.capabilities).toContain('thinking');
 
-    // Trait-driven (kimi) vendor over the anthropic transport: catalog-
-    // declared metadata only, no inference.
     const kimiRouted = effectiveModelConfig({ model: 'kimi-k2', protocol: 'anthropic' }, 'kimi');
     expect(kimiRouted.supportEfforts).toBeUndefined();
     expect(kimiRouted.capabilities).toBeUndefined();

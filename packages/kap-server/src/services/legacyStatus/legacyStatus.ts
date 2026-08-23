@@ -1,31 +1,13 @@
-/**
- * `LegacyStatus` — kap-server-layer projection of the v1-style
- * combined `agent.status.updated` payload from the agent's native v2 services.
- *
- * v1 emits a single `agent.status.updated` carrying usage + contextTokens +
- * maxContextTokens + model together. v2 splits those into independent Models /
- * Ops (`usage.record`, `context_size.measured`, `config.update` …), so the
- * partial events reach clients separately and a usage-only event can overwrite
- * a previously-known contextTokens with a stale zero. The v1 edge re-reads the
- * authoritative services when a native status or context change arrives, so it
- * always forwards a real, consistent context-window value.
- *
- * Temporary bridge while the v2 wire contract still exposes the slices
- * separately — defined at the kap-server edge rather than in agent-core-v2 so
- * the core engine stays free of v1 wire-compatibility concerns.
- */
-
 import {
-  IAgentContextSizeService,
+  agentContextOf,
   IAgentProfileService,
-  IAgentUsageService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IModelCatalog,
-  IWireService,
-  SECONDARY_DERIVED_MODEL_ID,
+  IModelService,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
-import { ContextSizeModel } from '@moonshot-ai/agent-core-v2';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
@@ -100,7 +82,8 @@ export type AgentPhase =
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
   readonly contextTokens: number;
-  readonly maxContextTokens: number;
+  /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
+  readonly maxContextTokens?: number;
   readonly model: string;
 }
 
@@ -109,54 +92,44 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const profile = agent.accessor.get(IAgentProfileService) as
     | IAgentProfileService
     | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as
-    | IAgentUsageService
+  const usageService = agent.accessor.get(ISessionUsageService) as
+    | ISessionUsageService
     | undefined;
-  const contextSize = agent.accessor.get(IAgentContextSizeService) as
-    | IAgentContextSizeService
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
-  const wire = agent.accessor.get(IWireService) as IWireService | undefined;
-  if (
-    profile === undefined ||
-    usageService === undefined ||
-    contextSize === undefined ||
-    wire === undefined
-  ) {
+  if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
-  const usage = usageService.status();
-  // Live (measured + estimated) context size — mirrors the REST status rollup
-  // (`ISessionLegacyService.status`) and v1's `context.tokenCount`, which
-  // reflect the context even before the first measured exchange completes.
-  // `size` alone can transiently dip below the last measured total while a
-  // post-step fold/rewrite leaves the context shorter than the measured
-  // prefix (the estimate then excludes the system prompt); the measured total
-  // is the better reading there. Every REAL shrink (undo / clear / compaction)
-  // rebases the measured model first, so the max only wins in that window.
-  const measured = wire.getModel(ContextSizeModel);
-  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
+  const context = agentContextOf(agent);
+  const usage = usageService.status(context);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
-  const model = displayModelAlias(agent, profile.getModel());
-  return { usage, contextTokens, maxContextTokens, model };
+  let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  if (maxContextTokens === 0 && profile.getModel() === '') {
+    maxContextTokens = defaultModelContextTokens(agent) ?? 0;
+  }
+  const model = profile.getModel();
+  return {
+    usage,
+    contextTokens,
+    maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
+    model,
+  };
 }
 
-/**
- * The wire `model` is normally the bound alias, which clients resolve against
- * the model listing into a display name. The secondary-model derived entry is
- * synthesized runtime state hidden from that listing, so resolve it here to
- * the pointed entry's display string (the client's own
- * `displayName ?? wireName` priority) instead of leaking the reserved id.
- */
-function displayModelAlias(agent: IAgentScopeHandle, alias: string): string {
-  if (alias !== SECONDARY_DERIVED_MODEL_ID) return alias;
+function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
+  const models = agent.accessor.get(IModelService) as IModelService | undefined;
   const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-  if (catalog === undefined) return alias;
+  const defaultModel = models?.getDefaultModel();
+  if (defaultModel === undefined || defaultModel.length === 0 || catalog === undefined) {
+    return undefined;
+  }
   try {
-    const model = catalog.get(alias);
-    return model.displayName ?? model.name;
+    const capabilities = catalog.get(defaultModel).capabilities;
+    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   } catch {
-    return alias;
+    return undefined;
   }
 }
 
@@ -255,6 +228,5 @@ export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined
     }
   }
 
-  // `disposing` / `disposed` — no v1 concept.
   return undefined;
 }

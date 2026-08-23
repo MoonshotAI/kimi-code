@@ -1,24 +1,3 @@
-/**
- * `kosong/model` thinking tests — effort/keep resolution and the
- * registry-driven vendor verdicts:
- *
- *  - `drivesThinkingThroughTraits` answers through the definition registry:
- *    true once the kimi definitions are registered (their traits declare
- *    `withThinking`), false for the endpoint-only canonical vendors and for
- *    unregistered ones;
- *  - `usesTraitDrivenThinking` answers through the adapter registry's one
- *    resolution point — true for kimi on its native transport AND for kimi
- *    over anthropic (the `(kimi, anthropic)` pair registration), false for
- *    plain openai and for pairs kimi never registered;
- *  - `requiresStrictThinkingValidation` narrows that verdict to the strict
- *    effort-validation gate (v1 `provider.type === 'kimi'` parity): true only
- *    when the pair's thinking driver marks `strictThinkingValidation`, false
- *    for kimi over anthropic;
- *  - effort resolution folds request/config/model metadata with the
- *    trait-driven normalization rules; keep resolution honors off-values and
- *    precedence.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
@@ -52,16 +31,10 @@ describe('registry-driven vendor verdicts', () => {
     expect(usesTraitDrivenThinking(registry, 'openai', 'openai')).toBe(false);
     expect(usesTraitDrivenThinking(registry, 'openai', undefined)).toBe(false);
     expect(usesTraitDrivenThinking(registry, 'anthropic', 'anthropic')).toBe(false);
-    // Kimi registers no google-genai definition — the pair contributes nothing.
     expect(usesTraitDrivenThinking(registry, 'google-genai', 'kimi')).toBe(false);
   });
 
   it('requiresStrictThinkingValidation: only the strict-validation thinking driver', () => {
-    // The strict effort gate (v1 `provider.type === 'kimi'` parity): kimi on
-    // its native openai transport qualifies (kimiOpenAITrait marks
-    // `strictThinkingValidation`); kimi over anthropic does NOT — the foreign
-    // backend may accept unlisted efforts, so the profile stays lenient there
-    // and warns instead of rejecting.
     expect(requiresStrictThinkingValidation(registry, 'openai', 'kimi')).toBe(true);
     expect(requiresStrictThinkingValidation(registry, 'anthropic', 'kimi')).toBe(false);
     expect(requiresStrictThinkingValidation(registry, 'openai', 'openai')).toBe(false);
