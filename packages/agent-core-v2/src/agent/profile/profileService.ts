@@ -504,6 +504,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     };
   }
 
+  resolveModelContextFor(modelAlias: string): ProfileModelContext {
+    const model = this.modelCatalog.get(modelAlias);
+    const loopControl = this.config.get<LoopControl>('loopControl');
+    return {
+      modelAlias,
+      modelCapabilities: model.capabilities,
+      maxOutputSize: model.maxOutputSize,
+      alwaysThinking: model.alwaysThinking || undefined,
+      thinkingLevel: this.resolveThinkingState(model).effective,
+      reservedContextSize: loopControl?.reservedContextSize,
+      compactionTriggerRatio: loopControl?.compactionTriggerRatio,
+    };
+  }
+
   resolveRequestParams(): ModelRequestParams {
     const model = this.tryResolveRawModel();
     const thinking = this.resolveThinkingState(model);

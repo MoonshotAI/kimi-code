@@ -175,6 +175,7 @@ export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
 import '#/app/kosongConfig/envOverlay';
 import '#/app/kosongConfig/visualModelOverlay';
+import '#/app/kosongConfig/compactionModelOverlay';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
@@ -190,7 +191,7 @@ export {
   ModelCatalogConfigSchema,
   type ModelCatalogConfig,
 } from '#/app/kosongConfig/configSection';
-export type { SecondaryModelConfig, VisualModelConfig } from '#/app/kosongConfig/configSection';
+export type { SecondaryModelConfig, VisualModelConfig, CompactionModelConfig } from '#/app/kosongConfig/configSection';
 export {
   SECONDARY_MODEL_SECTION,
   SECONDARY_MODEL_ENV,
@@ -202,12 +203,22 @@ export {
   VISUAL_MODEL_EFFORT_ENV,
   VisualModelConfigSchema,
   visualModelEnvBindings,
+  COMPACTION_MODEL_SECTION,
+  COMPACTION_MODEL_ENV,
+  COMPACTION_MODEL_EFFORT_ENV,
+  CompactionModelConfigSchema,
+  compactionModelEnvBindings,
 } from '#/app/kosongConfig/configSection';
 export {
   VISUAL_DERIVED_MODEL_ID,
   visualModelOverlay,
   visualModelPatch,
 } from '#/app/kosongConfig/visualModelOverlay';
+export {
+  COMPACTION_DERIVED_MODEL_ID,
+  compactionModelOverlay,
+  compactionModelPatch,
+} from '#/app/kosongConfig/compactionModelOverlay';
 export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
 export * from '#/kosong/model/modelOAuth';
@@ -492,6 +503,8 @@ export * from '#/session/subagent/mirrorAgentRun';
 import '#/session/subagent/configSection';
 import '#/session/visual/flag';
 import '#/session/visual/configSection';
+import '#/session/compaction/flag';
+import '#/session/compaction/configSection';
 import '#/session/substitute/flag';
 import '#/session/substitute/configSection';
 export {
@@ -509,6 +522,16 @@ export {
   VISUAL_MODEL_CHOICE_SCHEMA,
   type VisualModelChoice,
 } from '#/session/visual/configSection';
+export {
+  COMPACTION_MODEL_FLAG_ID,
+  COMPACTION_MODEL_FLAG_ENV,
+  compactionModelFlag,
+} from '#/session/compaction/flag';
+export {
+  resolveCompactionModel,
+  resolveCompactionBinding,
+  compactionModelBindingFor,
+} from '#/session/compaction/configSection';
 export {
   SUBSTITUTE_MODEL_FLAG_ID,
   SUBSTITUTE_MODEL_FLAG_ENV,

@@ -335,6 +335,28 @@ registerConfigSection(VISUAL_MODEL_SECTION, VisualModelConfigSchema, {
 });
 
 
+export const COMPACTION_MODEL_SECTION = 'compactionModel';
+
+export const COMPACTION_MODEL_ENV = 'KIMI_COMPACTION_MODEL';
+export const COMPACTION_MODEL_EFFORT_ENV = 'KIMI_COMPACTION_EFFORT';
+
+export const CompactionModelConfigSchema = ModelOverrideSchema.extend({
+  model: z.string().min(1).optional(),
+});
+
+export type CompactionModelConfig = z.infer<typeof CompactionModelConfigSchema>;
+
+export const compactionModelEnvBindings = envBindings(CompactionModelConfigSchema, {
+  model: { env: COMPACTION_MODEL_ENV, parse: parseNonEmptyEnv },
+  defaultEffort: { env: COMPACTION_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
+});
+
+registerConfigSection(COMPACTION_MODEL_SECTION, CompactionModelConfigSchema, {
+  env: compactionModelEnvBindings,
+  stripEnv: stripEnvBoundFields(compactionModelEnvBindings),
+});
+
+
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 
 export const ModelCatalogConfigSchema = z.object({

@@ -18,6 +18,13 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import {
+  compactionDisplayModel,
+  compactionModelBindingFor,
+  wrapCompactionModelError,
+} from '#/session/compaction/configSection';
 import {
   agentContextOfScope,
   IAgentScopeContext,
@@ -152,6 +159,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IConfigService private readonly configService: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
@@ -634,11 +643,40 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       const resolvedModel = this.profile.resolveModelContext();
       thinkingEffort = resolvedModel.thinkingLevel;
       const maxContextTokens = resolvedModel.modelCapabilities.max_context_tokens;
+      const currentModelAlias = resolvedModel.modelAlias;
       const defaultCompactionCap =
         maxContextTokens > 0
           ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
           : undefined;
       const compactionMaxOutputSize = resolvedModel.maxOutputSize ?? defaultCompactionCap;
+
+      const binding = compactionModelBindingFor(this.configService, this.flags, {
+        modelAlias: currentModelAlias,
+        thinkingLevel: thinkingEffort,
+      });
+      const dedicatedModelAlias = binding.model;
+      let hasDedicatedModel = dedicatedModelAlias !== currentModelAlias;
+      let usingFallbackModel = false;
+      let boundModel = resolvedModel;
+      if (hasDedicatedModel) {
+        try {
+          boundModel = this.profile.resolveModelContextFor(dedicatedModelAlias);
+        } catch (error) {
+          this.log.warn(
+            `compaction model "${dedicatedModelAlias}" is not configured; falling back to current model "${currentModelAlias}"`,
+            { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+          );
+          hasDedicatedModel = false;
+          boundModel = resolvedModel;
+        }
+      }
+      const boundMaxOutputSize = boundModel.maxOutputSize ?? defaultCompactionCap;
+      let compactionRequestModel = hasDedicatedModel ? dedicatedModelAlias : undefined;
+      let effectiveModelAlias = hasDedicatedModel ? dedicatedModelAlias : currentModelAlias;
+      const effectiveMaxOutputSize = Math.min(
+        compactionMaxOutputSize ?? DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS,
+        boundMaxOutputSize ?? DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS,
+      );
 
       const customInstruction = data.instruction?.trim() ?? '';
       const instruction = renderPrompt(compactionInstructionTemplate, {
@@ -661,7 +699,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           const request = this.llmRequester.start(
             {
               messages,
-              maxOutputSize: compactionMaxOutputSize,
+              maxOutputSize: effectiveMaxOutputSize,
+              model: compactionRequestModel,
               source: {
                 type: 'operation',
                 turnId: active.originTurnId,
@@ -716,6 +755,22 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             retryCount = 0;
             continue;
           }
+          if (
+            hasDedicatedModel &&
+            !usingFallbackModel &&
+            (isRetryableGenerateError(unwrappedError) ||
+              !(error instanceof CompactionTruncatedError))
+          ) {
+            usingFallbackModel = true;
+            effectiveModelAlias = currentModelAlias;
+            compactionRequestModel = undefined;
+            this.log.warn(
+              `compaction model "${dedicatedModelAlias}" failed; falling back to current model "${currentModelAlias}"`,
+              { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
+            );
+            retryCount = 0;
+            continue;
+          }
           if (!isRetryableGenerateError(unwrappedError)) {
             throw error;
           }
@@ -764,6 +819,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         round: 1,
         thinking_effort: thinkingEffort,
         trace_id: attempt.traceId,
+        model: effectiveModelAlias,
+        model_display: compactionDisplayModel(this.configService, effectiveModelAlias),
         ...usageTelemetry(attempt.usage),
       };
       this.telemetry.track2('compaction_finished', properties);

@@ -127,6 +127,7 @@ export interface IAgentProfileService {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
+  resolveModelContextFor(modelAlias: string): ProfileModelContext;
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;

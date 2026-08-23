@@ -208,6 +208,8 @@ export interface CompactionFinishedEvent {
   input_cache_read?: number;
   input_cache_creation?: number;
   trace_id?: string;
+  model?: string;
+  model_display?: string;
 }
 
 export interface CompactionFailedEvent {
@@ -676,6 +678,8 @@ export const telemetryEventDefinitions = {
       input_cache_creation: 'Cache-creation input tokens',
       trace_id:
         'Trace id of the final compaction request round; absent for non-Kimi protocols',
+      model: 'Model alias that produced the compaction summary (dedicated compaction model when configured, otherwise the active conversation model)',
+      model_display: 'User-facing model alias for the compaction summary producer',
     },
   }),
   compaction_failed: defineAgentTelemetryEvent<CompactionFailedEvent>({

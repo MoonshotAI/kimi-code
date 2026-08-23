@@ -582,7 +582,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
-    const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
+    const resolved =
+      overrides.model !== undefined
+        ? this.profile.resolveModelContextFor(overrides.model)
+        : turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
