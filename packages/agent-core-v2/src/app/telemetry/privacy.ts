@@ -14,11 +14,11 @@ const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 const SEGMENT_ATOM = String.raw`[\p{L}\p{M}\p{N}._'~+-]+`;
 const SEGMENT_DIR = String.raw`${SEGMENT_ATOM}(?: ${SEGMENT_ATOM})*`;
 const FINAL_WITH_EXTENSION = String.raw`${SEGMENT_ATOM}(?: ${SEGMENT_ATOM})*?\.[\p{L}\p{M}\p{N}]{1,16}`;
-const FINAL_SEGMENT = String.raw`(?:${FINAL_WITH_EXTENSION}|${SEGMENT_ATOM})`;
+const FINAL_SEGMENT = String.raw`(?:${FINAL_WITH_EXTENSION}|${SEGMENT_DIR})`;
 const WINDOWS_TAIL = String.raw`(?:(?:[\\/]${SEGMENT_DIR})+[\\/]|(?:[\\/]${SEGMENT_DIR})*[\\/]${FINAL_SEGMENT})`;
 const PATH_BOUNDARY = String.raw`(?![\p{L}\p{M}\p{N}._'~+\\/-])`;
 
-const WINDOWS_UNC_OR_LONG = String.raw`(?:\\\\\?(?:\\(?:UNC\\[^\s\\/]+\\[^\s\\/]+|[A-Za-z]:))|\\\\[^\s\\/]+\\[^\s\\/]+)${WINDOWS_TAIL}${PATH_BOUNDARY}`;
+const WINDOWS_UNC_OR_LONG = String.raw`(?:\\\\\?(?:\\(?:UNC\\[^\s\\/]+\\${SEGMENT_DIR}|[A-Za-z]:))|\\\\[^\s\\/]+\\${SEGMENT_DIR})${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const POSIX_PATH = String.raw`(?:(?:\/${SEGMENT_DIR}){2,}\/|(?:\/${SEGMENT_DIR})+\/${FINAL_SEGMENT})${PATH_BOUNDARY}`;
 const ABSOLUTE_PATH = new RegExp(`${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}|${POSIX_PATH}`, 'gu');
