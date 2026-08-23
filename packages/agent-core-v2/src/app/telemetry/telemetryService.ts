@@ -1,14 +1,6 @@
-/**
- * `telemetry` domain — `ITelemetryService` implementation.
- *
- * Owns the appender set, enabled flag, and root context, and creates forwarding
- * context views that merge scoped properties at emission time. Views retain no
- * transport state, so appender and enablement changes remain controlled by the
- * App-scoped root. Has no cross-domain collaborators.
- */
-
 import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 
 import type {

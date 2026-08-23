@@ -1,11 +1,4 @@
-/**
- * `kosong/provider` domain — tool-call id rewrite machinery.
- *
- * The shared `ToolCallIdPolicy` implementation: id sanitization plus
- * history-wide id normalization that rewrites every `toolCalls[].id` /
- * `toolCallId` pair consistently and keeps rewritten ids unique.
- */
-
+import { BugIndicatingError } from '#/_base/errors/errors';
 import type { Message, ToolCall } from '#/kosong/contract/message';
 import type { ToolCallIdPolicy } from '#/kosong/contract/provider';
 
@@ -123,7 +116,9 @@ function truncateToolCallId(base: string, maxLength: number | undefined, suffix:
   if (maxLength === undefined) return `${base}${suffix}`;
   const baseLength = maxLength - suffix.length;
   if (baseLength <= 0) {
-    throw new Error(`Tool call id maxLength ${maxLength} is too small for suffix ${suffix}.`);
+    throw new BugIndicatingError(
+      `Tool call id maxLength ${maxLength} is too small for suffix ${suffix}.`,
+    );
   }
   return `${base.slice(0, baseLength)}${suffix}`;
 }

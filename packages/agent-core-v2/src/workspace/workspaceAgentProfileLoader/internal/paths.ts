@@ -1,13 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — shared path primitives for agent-file
- * discovery.
- *
- * `~` expansion, base-relative resolution, and `hostFs` type probes. Callers
- * pick the resolution base: discovery roots resolve against the
- * project root, explicit files against the session workDir. Pure helpers; no
- * scoped state.
- */
-
 import { isAbsolute, join, resolve } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';

@@ -1,14 +1,3 @@
-/**
- * `kosong/contract` domain — the generation driver.
- *
- * `generate()` is the single place that orchestrates "call
- * `ChatProvider.generate` and normalize the event stream": it merges streamed
- * deltas into a complete assistant `Message`, fires the caller's callbacks,
- * enforces the abort contract (standard abort DOMException, stream cancelled
- * on abort), and rejects empty or thinking-only responses with
- * `APIEmptyResponseError`.
- */
-
 import { APIEmptyResponseError, createAbortError } from './errors';
 import {
   isContentPart,

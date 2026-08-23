@@ -1,16 +1,6 @@
-/**
- * `workspace` domain — `FileWorkspacePersistence` implementation.
- *
- * File backend of `IWorkspacePersistence`. Persists the catalog as a single
- * v1-compatible `workspaces.json` document at the storage root
- * (`<homeDir>/workspaces.json`, via `scope = ''`) through the
- * `IAtomicDocumentStore` access-pattern Store. The `deleted_workspace_ids`
- * tombstone list round-trips with the catalog so soft deletions survive
- * regardless of which engine (v1 or v2) last wrote the file. Bound at App
- * scope.
- */
+import { LifecycleScope } from '#/app/scopes';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import type { Workspace } from './workspace';

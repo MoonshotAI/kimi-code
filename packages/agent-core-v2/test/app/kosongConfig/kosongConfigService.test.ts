@@ -1,27 +1,3 @@
-/**
- * `kosongConfig` bridge tests — `KosongConfigService`, the two-way sync
- * between `IConfigService` (persistence) and kosong's in-memory
- * provider/model registries:
- *
- *  - startup hydration: after `config.ready` the registries are loaded from
- *    the effective config view (records + default pointers) and become
- *    `ready` themselves;
- *  - kosong → config: registry mutations (`set` / `setDefaultModel` / ...)
- *    persist through `config.replace`, serialized in event order; an awaited
- *    mutation only resolves after the persist has landed, and a failed
- *    persist is retried with backoff before being logged;
- *  - config → kosong: section writes (`config.set` / `config.replace`) land
- *    in the registries;
- *  - loop termination: equal writes are silent on the registry side and the
- *    persist handlers skip writes when config already matches, so neither
- *    direction echoes back into the other;
- *  - deleting the default provider clears the pointer and persists the
- *    cleared pointer.
- *
- * The bridge is instantiated directly with the real registries, the shared
- * `StubConfigService`, and a stub log — no DI involved.
- */
-
 import { describe, expect, it, vi } from 'vitest';
 
 import { ILogService, type LogPayload } from '#/_base/log/log';
@@ -77,7 +53,6 @@ async function createBridge(sections: Record<string, unknown> = {}): Promise<Bri
   return { config, providers, models, log, bridge };
 }
 
-/** Let the bridge's serialized persist chain (and event handlers) run out. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 10; i += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -102,7 +77,6 @@ describe('KosongConfigService startup hydration', () => {
     expect(providers.getDefaultProvider()).toBe('kimi');
     expect(models.list()).toEqual({ k1: K1_MODEL });
     expect(models.getDefaultModel()).toBe('k1');
-    // Both registries are hydrated — `ready` has resolved.
     await expect(providers.ready).resolves.toBeUndefined();
     await expect(models.ready).resolves.toBeUndefined();
   });
@@ -179,7 +153,6 @@ describe('KosongConfigService awaited-mutation semantics', () => {
   it('an awaited registry mutation resolves only after the write has landed in config', async () => {
     const { config, providers, models, bridge } = await createBridge(seededSections);
     try {
-      // No flush(): the mutation's own await already covers persistence.
       await providers.set('openai', { type: 'openai', apiKey: 'sk-o' });
       expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
         kimi: KIMI_PROVIDER,
@@ -209,7 +182,6 @@ describe('KosongConfigService awaited-mutation semantics', () => {
       vi.useFakeTimers();
       try {
         const pending = providers.set('openai', { type: 'openai' });
-        // The first backoff is ~500ms; advancing past it lets the retry run.
         await vi.advanceTimersByTimeAsync(1000);
         await pending;
       } finally {
@@ -234,9 +206,7 @@ describe('KosongConfigService awaited-mutation semantics', () => {
       vi.useFakeTimers();
       try {
         const pending = providers.set('openai', { type: 'openai' });
-        // Two backoffs (~500ms + ~1000ms, plus jitter) before the budget is spent.
         await vi.advanceTimersByTimeAsync(2500);
-        // The caller is never rejected: the in-memory change stands.
         await pending;
       } finally {
         vi.useRealTimers();
@@ -249,7 +219,6 @@ describe('KosongConfigService awaited-mutation semantics', () => {
       expect(log.warnings).toHaveLength(1);
       expect(log.warnings[0]?.message).toBe('kosong config persist failed');
 
-      // A poisoned task must not stall the persists queued behind it.
       replaceSpy.mockRestore();
       await providers.set('mistral', { type: 'mistral' });
       expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
@@ -300,11 +269,7 @@ describe('KosongConfigService loop termination', () => {
       await providers.setDefaultProvider('openai');
       await flush();
 
-      // Exactly one event per mutation; the config write the persist caused
-      // synced back equal values, which are silent.
       expect(events).toEqual(['providers', 'defaultProvider']);
-      // And the persist did not re-persist after the echo: exactly one
-      // providers-section replace plus one pointer replace.
       expect(
         replaceSpy.mock.calls.filter(([domain]) => domain === PROVIDERS_SECTION),
       ).toHaveLength(1);
@@ -328,8 +293,6 @@ describe('KosongConfigService loop termination', () => {
 
       expect(providers.get('openai')).toEqual({ type: 'openai' });
       expect(models.get('k2')).toEqual({ provider: 'openai', model: 'gpt-5' });
-      // The registry diffs fired, but the persist handlers saw config already
-      // matching and skipped the write-back.
       expect(replaceSpy).not.toHaveBeenCalled();
     } finally {
       bridge.dispose();
@@ -349,8 +312,6 @@ describe('KosongConfigService default-provider deletion', () => {
       await providers.delete('kimi');
       await flush();
 
-      // The registry cleared the dangling pointer, and the cleared pointer
-      // persisted.
       expect(providers.getDefaultProvider()).toBeUndefined();
       expect(replaceSpy).toHaveBeenCalledWith(PROVIDERS_SECTION, {
         openai: { type: 'openai' },
@@ -364,11 +325,6 @@ describe('KosongConfigService default-provider deletion', () => {
 });
 
 describe('KosongConfigService env-pinned default pointer', () => {
-  /**
-   * Emulates an effective-overlay pin (e.g. `KIMI_MODEL_NAME` →
-   * `defaultModel`): user-layer writes are accepted, but the effective read
-   * (`get`) keeps returning the pinned value and no change event fires.
-   */
   class PinnedConfigService extends StubConfigService {
     constructor(
       private readonly pinnedDomain: string,
@@ -391,15 +347,12 @@ describe('KosongConfigService env-pinned default pointer', () => {
     const bridge = new KosongConfigService(config, providers, models, stubLogService());
     await bridge.ready;
     try {
-      // Hydration reads the effective view: the pinned value, not the seeded one.
       expect(models.getDefaultModel()).toBe('env-model');
       const replaceSpy = vi.spyOn(config, 'replace');
 
       await models.setDefaultModel('k1');
       await flush();
 
-      // The write landed in the user layer, but the pinned effective view
-      // did not move, and the bridge reconciled the registry back to the pin.
       expect(replaceSpy).toHaveBeenCalledWith(DEFAULT_MODEL_SECTION, 'k1');
       expect(models.getDefaultModel()).toBe('env-model');
     } finally {

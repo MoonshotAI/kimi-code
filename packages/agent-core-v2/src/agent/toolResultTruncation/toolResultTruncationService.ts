@@ -1,15 +1,6 @@
-/**
- * `toolResultTruncation` domain — `IAgentToolResultTruncationService` implementation.
- *
- * Persists complete oversized text tool results through `storage`, addressed
- * under the current `scopeContext` agent root, and renders a model-visible
- * preview with an absolute file path rooted at `bootstrap.homeDir`. Bound at
- * Agent scope.
- */
-
 import { randomUUID } from 'node:crypto';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';

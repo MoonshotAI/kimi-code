@@ -1,13 +1,3 @@
-/**
- * `kosong/provider` domain — side-effect module: registers the Anthropic
- * Messages base (`id: 'anthropic'`).
- *
- * The factory aggregates construction-time trait declarations and composes
- * the Anthropic hook set. No apiKey suppression is needed here: the
- * Anthropic base never reads shell API-key environment variables, so there
- * is no base env fallback to suppress.
- */
-
 import { registerProtocolBase } from '#/kosong/protocol/protocolBase';
 import { traitDefaultHeaders } from '#/kosong/protocol/protocolTrait';
 

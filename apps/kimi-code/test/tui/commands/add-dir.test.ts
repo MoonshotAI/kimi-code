@@ -187,4 +187,26 @@ describe('handleAddDirCommand', () => {
     expect(host.refreshSlashCommandAutocomplete).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
+
+  it('re-checks the busy gate after lazy session creation (v2)', async () => {
+    const { host, session, getMountedPanel } = makeHost();
+    // Session-less v2: the path-adding form lazy-creates via ensureSession.
+    Object.assign(host, {
+      session: undefined,
+      engineV2: true,
+      ensureSession: vi.fn(async () => {
+        // A first prompt starts a turn while the session is being created.
+        host.state.appState.streamingPhase = 'waiting';
+        return session;
+      }),
+    });
+
+    await handleAddDirCommand(host, '../shared');
+
+    expect(host.showError).toHaveBeenCalledWith(
+      'Cannot /add-dir while streaming — press Esc or Ctrl-C first.',
+    );
+    expect(getMountedPanel()).toBeNull();
+    expect(session.addAdditionalDir).not.toHaveBeenCalled();
+  });
 });

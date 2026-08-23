@@ -1,21 +1,3 @@
-/**
- * `kosong/provider` domain — the ONLY composition point from resolved
- * traits to the OpenAI Chat Completions hook set, plus the construction-time
- * declaration aggregators.
- *
- * Composition rules:
- *
- *  - Pipeline hooks (`convertMessage` / `mergeHistory` / `buildParams`) chain
- *    in trait order, each stage receiving the previous stage's output;
- *    `convertMessage` returning `null` at any stage drops the message.
- *  - Single-value hooks are bound in trait order — last declarer wins.
- *  - `endpoint` / `provides` are construction-time declarations, aggregated
- *    separately (`traitEndpoint` / `traitProvides`); they never enter the
- *    hook set.
- *  - Zero declared per-request hooks → `undefined`, so the base bypasses all
- *    hook logic.
- */
-
 import type { GenerateOptions, VideoUploadInput } from '#/kosong/contract/provider';
 import type { Tool } from '#/kosong/contract/tool';
 import type { ProtocolEndpoint, ResolvedTrait } from '#/kosong/protocol/protocolTrait';

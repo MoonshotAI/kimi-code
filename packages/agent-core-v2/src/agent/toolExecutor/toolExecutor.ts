@@ -1,12 +1,3 @@
-/**
- * `toolExecutor` domain — Agent-scope tool execution contract.
- *
- * Defines the public execution surface for provider tool calls, the
- * before/will execution-interception events, the did execution hook,
- * tool-call result settlement, duplicate-call tagging for telemetry, and
- * preflight description extension points. Bound at Agent scope.
- */
-
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';

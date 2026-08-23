@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ICronCreateTool` contract.
- *
- * Public contract of the CronCreate tool: the input zod schema (5-field cron
- * expression + prompt + recurring flag), the output record shape reported
- * back to the model, and the per-session job cap shared with the session cron
- * service. The tool schedules a prompt to be re-injected into this session at
- * a future wall-clock time, either once (`recurring: false`) or on a cron
- * cadence (`recurring: true`, the default). Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

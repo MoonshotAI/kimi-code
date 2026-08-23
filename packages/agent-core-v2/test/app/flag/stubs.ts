@@ -1,9 +1,3 @@
-/**
- * `flag` test stubs — minimal `IFlagService` for unit tests.
- *
- * Lives under `test/` (not `src/`). Import from a relative path.
- */
-
 import { IFlagService } from '#/app/flag/flag';
 import type {
   ExperimentalFeatureState,

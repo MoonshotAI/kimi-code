@@ -3,9 +3,7 @@
 // Do NOT add local interfaces that duplicate upstream shapes.
 
 export type {
-  AgentRecord,
   AgentRecordEvents,
-  AgentRecordOf,
   AgentConfigUpdateData,
   CompactionBeginData,
   CompactionResult,
@@ -30,7 +28,28 @@ export type { Message, ContentPart, ToolCall, TokenUsage } from '@moonshot-ai/ko
 // Local bindings for the upstream types referenced by the vis-only DTOs
 // below. The `export type { … }` re-export above forwards the names to
 // consumers but does NOT bring them into this module's scope.
-import type { AgentRecord, BackgroundTaskInfo } from '@moonshot-ai/agent-core';
+import type {
+  AgentRecord as UpstreamAgentRecord,
+  BackgroundTaskInfo,
+} from '@moonshot-ai/agent-core';
+
+/**
+ * The wire record union vis projects, widened with the v2-engine tower-mode
+ * records (`tower_mode.enter` / `tower_mode.exit`, empty payloads). The
+ * upstream v1 union is frozen ahead of its deprecation and does not carry
+ * them; the local widening keeps the context projector's exhaustiveness
+ * check covering tower session wires.
+ */
+export type AgentRecord =
+  | UpstreamAgentRecord
+  | { readonly type: 'tower_mode.enter'; readonly time?: number }
+  | { readonly type: 'tower_mode.exit'; readonly time?: number };
+
+/** Extract one record kind from the (locally widened) union. */
+export type AgentRecordOf<K extends AgentRecord['type']> = Extract<
+  AgentRecord,
+  { readonly type: K }
+>;
 
 /**
  * Persistent representation of a cron task.

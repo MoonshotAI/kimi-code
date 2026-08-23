@@ -32,6 +32,9 @@ if (externalUrl !== undefined && externalUrl.length > 0) {
   const inherited = process.env[MARKETPLACE_ENV]?.trim();
   marketplaceServer = await startPluginMarketplaceServer();
   env[MARKETPLACE_ENV] = marketplaceServer.marketplaceUrl;
+  // Marks the URL as the dev server's own (serving this repo's catalog), so
+  // the CLI can tell it apart from a user-configured marketplace override.
+  env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] = '1';
   console.error(`Plugin marketplace dev server: ${marketplaceServer.marketplaceUrl}`);
   if (inherited !== undefined && inherited.length > 0 && inherited !== marketplaceServer.marketplaceUrl) {
     console.error(
