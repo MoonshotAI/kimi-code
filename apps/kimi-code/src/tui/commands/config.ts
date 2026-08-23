@@ -362,12 +362,17 @@ function activeSessionsForBulk(host: SlashCommandHost, listed: readonly SessionS
   if (current === undefined) return [...listed];
   const ids = new Set(listed.map((s) => s.id));
   if (ids.has(current.id)) return [...listed];
+  // A session the listing does not know yet (e.g. freshly created, nothing
+  // persisted) is still switched: synthesize a summary. `workDir` is normally
+  // a non-empty string, but fall back to the session id so a missing/empty
+  // value can never leak `undefined`/blank fields into downstream handling.
+  const dir = current.workDir && current.workDir.length > 0 ? current.workDir : current.id;
   return [
     ...listed,
     {
       id: current.id,
-      workDir: current.workDir,
-      sessionDir: current.workDir,
+      workDir: dir,
+      sessionDir: dir,
       createdAt: 0,
       updatedAt: 0,
       title: 'Current session',
@@ -462,7 +467,12 @@ function showBulkConfirm(host: SlashCommandHost, alias: string, sessions: readon
           host.showStatus('Cancelled — no sessions were changed.', 'textDim');
           return;
         }
-        void applyModelToAllSessions(host, alias, sessions);
+        // The apply loop is long-running (resume/setModel per session); the
+        // `.catch` is the last line of defense — the CLI's unhandled-rejection
+        // handler exits the whole TUI, so nothing may escape this call.
+        void applyModelToAllSessions(host, alias, sessions).catch((error) => {
+          host.showError(`Failed to update session models: ${formatErrorMessage(error)}`);
+        });
       },
     }),
   );
@@ -485,7 +495,14 @@ async function applyModelToAllSessions(
       if (id === currentId) {
         session = host.session;
       } else {
-        session = host.harness.getSession(id);
+        // `getSession` is a map lookup in practice, but any throw here must
+        // not escape the loop: classify the session as failed and keep going.
+        try {
+          session = host.harness.getSession(id);
+        } catch (error) {
+          results.push({ id, status: 'failed', reason: formatErrorMessage(error) });
+          continue;
+        }
         if (session === undefined) {
           try {
             session = await host.harness.resumeSession({ id });
@@ -508,11 +525,17 @@ async function applyModelToAllSessions(
       }
     }
 
-    if (currentId !== undefined) {
-      const currentResult = results.find((r) => r.id === currentId);
-      if (currentResult?.status === 'succeeded') {
-        host.setAppState({ model: alias });
-      }
+    // Reflect the chosen model in the footer. It follows the pick for the
+    // current session — including a 'skipped' outcome (model-availability
+    // classification on the session side; the alias itself came from the
+    // picker's available models) — and for session-less startup, where
+    // appState.model is the model the yet-to-be-created session will use
+    // (/model updates it in that mode too). Only a hard 'failed' outcome
+    // keeps the old model displayed so the footer never lies.
+    const currentResult =
+      currentId === undefined ? undefined : results.find((r) => r.id === currentId);
+    if (currentResult?.status !== 'failed') {
+      host.setAppState({ model: alias });
     }
     try {
       await host.harness.setConfig({ defaultModel: alias });
@@ -521,6 +544,11 @@ async function applyModelToAllSessions(
     }
 
     reportBulkResult(host, displayName, results);
+  } catch (error) {
+    // Nothing in the apply loop may escape as an unhandled rejection — the
+    // CLI's unhandled-rejection handler exits the whole TUI (this is the
+    // "kimi is thrown back to the terminal" crash). Report and keep running.
+    host.showError(`Failed to update session models: ${formatErrorMessage(error)}`);
   } finally {
     for (const id of resumedSessions) {
       const session = host.harness.getSession(id);

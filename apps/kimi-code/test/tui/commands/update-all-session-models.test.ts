@@ -176,3 +176,110 @@ describe('handleUpdateAllSessionModelsCommand', () => {
     expect(host.showStatus).toHaveBeenCalled();
   });
 });
+
+describe('handleUpdateAllSessionModelsCommand — crash safety and UI reflection', () => {
+  it('surfaces an internal apply error instead of an unhandled rejection', async () => {
+    // The CLI's unhandled-rejection handler exits the whole TUI; nothing may
+    // escape the apply step. reportBulkResult runs unguarded inside the try,
+    // so a throwing showStatus exercises the outer catch.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const { host } = makeHost();
+      host.showStatus.mockImplementationOnce(() => {
+        throw new Error('render exploded');
+      });
+
+      await handleUpdateAllSessionModelsCommand(host, '');
+      picker(host).onSelect(SELECTION);
+      confirmDialog(host).onResolve(true);
+
+      await vi.waitFor(() => {
+        expect(host.showError).toHaveBeenCalled();
+      });
+      expect(host.showError.mock.calls[0]![0]).toContain('render exploded');
+      // Give any escaped rejection a tick to surface, then assert none did.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('reports a throwing getSession as a failed session and still applies the rest', async () => {
+    const { host, current } = makeHost();
+    host.harness.getSession.mockImplementationOnce(() => {
+      throw new Error('session index corrupted');
+    });
+
+    await handleUpdateAllSessionModelsCommand(host, '');
+    picker(host).onSelect(SELECTION);
+    confirmDialog(host).onResolve(true);
+
+    await vi.waitFor(() => {
+      expect(current.setModel).toHaveBeenCalledWith('cheap');
+    });
+    await vi.waitFor(() => {
+      expect(host.showNotice).toHaveBeenCalled();
+    });
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('reflects the chosen model in app state when the current session is skipped', async () => {
+    const { host, current } = makeHost();
+    vi.mocked(current.setModel).mockRejectedValueOnce(new Error('model cheap is unknown to this session'));
+
+    await handleUpdateAllSessionModelsCommand(host, '');
+    picker(host).onSelect(SELECTION);
+    confirmDialog(host).onResolve(true);
+
+    await vi.waitFor(() => {
+      expect(host.showNotice).toHaveBeenCalled();
+    });
+    // 'skipped' classification — the footer still follows the pick.
+    expect(host.setAppState).toHaveBeenCalledWith({ model: 'cheap' });
+  });
+
+  it('keeps the old model displayed when the current session hard-fails', async () => {
+    const { host, current } = makeHost();
+    vi.mocked(current.setModel).mockRejectedValueOnce(new Error('engine exploded'));
+
+    await handleUpdateAllSessionModelsCommand(host, '');
+    picker(host).onSelect(SELECTION);
+    confirmDialog(host).onResolve(true);
+
+    await vi.waitFor(() => {
+      expect(host.showNotice).toHaveBeenCalled();
+    });
+    expect(host.setAppState).not.toHaveBeenCalled();
+  });
+
+  it('updates app state from session-less startup (no current session yet)', async () => {
+    const { host } = makeHost();
+    (host as { session: Session | undefined }).session = undefined;
+
+    await handleUpdateAllSessionModelsCommand(host, '');
+    picker(host).onSelect(SELECTION);
+    confirmDialog(host).onResolve(true);
+
+    await vi.waitFor(() => {
+      expect(host.setAppState).toHaveBeenCalledWith({ model: 'cheap' });
+    });
+  });
+
+  it('tolerates an empty workDir on a fresh current session', async () => {
+    const { host, current } = makeHost({ listed: [] });
+    (current as { workDir?: string }).workDir = '';
+
+    await handleUpdateAllSessionModelsCommand(host, '');
+    picker(host).onSelect(SELECTION);
+
+    // No throw: the synthesized summary falls back to the session id, and the
+    // confirm dialog still reports the current session in its count.
+    const dialog = confirmDialog(host);
+    expect(dialog.title).toContain('1 active session');
+  });
+});

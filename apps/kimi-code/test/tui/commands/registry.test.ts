@@ -216,6 +216,13 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
+  it('gates update-all-session-models behind the update-all-session-models experiment', () => {
+    const command = findBuiltInSlashCommand('update-all-session-models');
+    expect(command).toBeDefined();
+    expect((command as KimiSlashCommand).experimentalFlag).toBe('update-all-session-models');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+  });
+
   it('gates tower behind the tower experiment and the v2 engine', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();

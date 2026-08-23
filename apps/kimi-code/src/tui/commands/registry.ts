@@ -221,6 +221,9 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Switch the model for all active sessions at once',
     priority: 100,
     availability: 'always',
+    // Bulk session mutation is strictly opt-in until the experiment graduates;
+    // hidden from the palette and unresolvable while the flag is off.
+    experimentalFlag: 'update-all-session-models',
   },
   {
     name: 'secondary-model',
