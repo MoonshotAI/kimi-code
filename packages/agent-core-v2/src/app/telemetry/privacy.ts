@@ -16,7 +16,7 @@ const EXTENSION_BOUNDARY = String.raw`(?=$|[\s'",;:!?) }])`;
 const WINDOWS_COMPONENT = String.raw`[^\\/:*?"<>|\u0000-\u001F]+`;
 const WINDOWS_FINAL_WITH_EXTENSION = String.raw`${WINDOWS_COMPONENT}?\.[\p{L}\p{M}\p{N}]{1,16}`;
 const WINDOWS_EXTENSION_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})*[\\/]${WINDOWS_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
-const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})+[\\/]?(?=$|['"])`;
+const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]${WINDOWS_COMPONENT})+[\\/]?(?=$|[:*?"<>|\u0000-\u001F])`;
 const WINDOWS_TAIL = String.raw`(?:${WINDOWS_EXTENSION_TAIL}|${WINDOWS_GENERIC_TAIL})`;
 
 const WINDOWS_LONG_BASE = String.raw`\\\\\?\\(?:UNC\\[^\s\\/]+\\${WINDOWS_COMPONENT}|[A-Za-z]:)`;

@@ -99,6 +99,12 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('failure at /home/alice/file.txt, retrying now')).toBe(
       `failure at ${REDACTED}, retrying now`,
     );
+    expect(cleanTelemetryString('failed at C:\\Users\\alice\\cache: permission denied')).toBe(
+      `failed at ${REDACTED}: permission denied`,
+    );
+    expect(cleanTelemetryString('failed at C:\\Users\\alice\\cache\npermission denied')).toBe(
+      `failed at ${REDACTED}\npermission denied`,
+    );
   });
 
   it('leaves non-path text alone', () => {
