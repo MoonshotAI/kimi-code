@@ -44,6 +44,7 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   it('redacts extensionless spaced final path components', () => {
     expect(cleanTelemetryString('C:\\Users\\alice\\Secret Folder')).toBe(REDACTED);
     expect(cleanTelemetryString('/home/alice/Secret Folder')).toBe(REDACTED);
+    expect(cleanTelemetryString('C:\\Users\\Alice  Smith\\project\\secret.txt')).toBe(REDACTED);
   });
 
   it('redacts UNC and long-path Windows spellings', () => {
@@ -56,6 +57,8 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
     expect(cleanTelemetryString('\\\\?\\UNC\\server\\Shared Files\\alice\\secret.txt')).toBe(
       REDACTED,
     );
+    expect(cleanTelemetryString('\\\\fileserver\\alice')).toBe(REDACTED);
+    expect(cleanTelemetryString('\\\\fileserver\\alice\\')).toBe(REDACTED);
   });
 
   it('redacts drive-letter paths spelled with forward slashes', () => {
@@ -74,6 +77,9 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   it('does not swallow trailing diagnostic text after a spaced Windows path', () => {
     expect(cleanTelemetryString('C:\\Program Files\\a.txt could not be read')).toBe(
       `${REDACTED} could not be read`,
+    );
+    expect(cleanTelemetryString("failure at '/home/alice/file.txt' could not be read")).toBe(
+      `failure at '${REDACTED}' could not be read`,
     );
   });
 
