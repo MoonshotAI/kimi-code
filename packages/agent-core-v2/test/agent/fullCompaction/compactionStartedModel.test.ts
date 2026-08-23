@@ -98,4 +98,16 @@ describe('FullCompaction started model', () => {
     expect(model).toBe('kimi/compaction');
     expect(model_display).toBe('kimi/compaction');
   });
+
+  it('honors the legacy default_model pointer written by an older TUI', async () => {
+    // The buggy TUI persisted `default_model` instead of `model`; the resolver
+    // treats it as a fallback pointer so those configs become live.
+    vi.stubEnv(COMPACTION_MODEL_FLAG_ENV, 'true');
+    const ctx = makeAgent({ compactionModel: { defaultModel: 'kimi/compaction' } });
+    await runCompaction(ctx);
+
+    const { model, model_display } = findStartedModel(ctx);
+    expect(model).toBe('kimi/compaction');
+    expect(model_display).toBe('kimi/compaction');
+  });
 });

@@ -98,6 +98,26 @@ describe('resolveCompactionBinding', () => {
     // displayModel resolves the derived id back to the recipe's base alias
     expect(binding.displayModel).toBe('kimi/compaction');
   });
+
+  it('binds the legacy default_model pointer when model is unset', () => {
+    // An older TUI wrote default_model; the resolver honors it as a fallback
+    // so those configs start working instead of staying dead.
+    const { config, flags } = makeServices({
+      [COMPACTION_MODEL_SECTION]: { defaultModel: 'kimi/compaction' },
+    });
+    expect(resolveCompactionBinding(config, flags, own)).toEqual({
+      model: 'kimi/compaction',
+      thinking: undefined,
+      displayModel: 'kimi/compaction',
+    });
+  });
+
+  it('prefers model over the legacy default_model when both are set', () => {
+    const { config, flags } = makeServices({
+      [COMPACTION_MODEL_SECTION]: { model: 'kimi/new', defaultModel: 'kimi/legacy' },
+    });
+    expect(resolveCompactionBinding(config, flags, own).model).toBe('kimi/new');
+  });
 });
 
 describe('compactionModelBindingFor', () => {

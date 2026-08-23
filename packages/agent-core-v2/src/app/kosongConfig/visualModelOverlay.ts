@@ -49,7 +49,10 @@ export function visualModelPatch(
   visual: VisualModelConfig | undefined,
 ): ModelOverride | undefined {
   if (visual === undefined) return undefined;
-  const { model: _model, ...patch } = visual;
+  // `model` and the legacy `defaultModel` pointer are not patch fields —
+  // stripping both keeps a pointer-only config patch-free so it binds the
+  // pointed entry directly instead of synthesizing the derived override.
+  const { model: _model, defaultModel: _defaultModel, ...patch } = visual;
   return Object.keys(patch).length > 0 ? patch : undefined;
 }
 

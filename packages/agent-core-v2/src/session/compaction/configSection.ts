@@ -71,10 +71,14 @@ export function resolveCompactionBinding(
   own: { modelAlias: string; thinkingLevel: string },
 ): CompactionBinding {
   const compaction = resolveCompactionModel(config, flags);
-  if (compaction?.model !== undefined) {
+  // `model` is the engine-contract pointer; `defaultModel` is the legacy
+  // field an older TUI wrote — honored as a fallback so those configs start
+  // working instead of staying dead. `model` wins when both are set.
+  const pointer = compaction?.model ?? compaction?.defaultModel;
+  if (compaction !== undefined && pointer !== undefined) {
     const model =
       compactionModelPatch(compaction) === undefined
-        ? compaction.model
+        ? pointer
         : COMPACTION_DERIVED_MODEL_ID;
     return {
       model,

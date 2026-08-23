@@ -85,9 +85,13 @@ export function resolveVisualBinding(
   requested?: VisualModelChoice,
 ): { model: string; thinking?: string; displayModel: string } {
   const visual = resolveVisualModel(config, flags);
-  if (requested !== 'primary' && visual?.model !== undefined) {
+  // `model` is the engine-contract pointer; `defaultModel` is the legacy
+  // field an older TUI wrote — honored as a fallback so those configs start
+  // working instead of staying dead. `model` wins when both are set.
+  const pointer = visual?.model ?? visual?.defaultModel;
+  if (requested !== 'primary' && visual !== undefined && pointer !== undefined) {
     const model =
-      visualModelPatch(visual) === undefined ? visual.model : VISUAL_DERIVED_MODEL_ID;
+      visualModelPatch(visual) === undefined ? pointer : VISUAL_DERIVED_MODEL_ID;
     return {
       model,
       thinking: visual.defaultEffort,
