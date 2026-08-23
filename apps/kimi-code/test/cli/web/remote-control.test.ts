@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +23,7 @@ import {
   startRemoteControl,
   type RemoteControlHandle,
 } from '#/cli/sub/web/remote-control';
+import { remoteControlLockPath } from '#/cli/sub/web/remote-control-lock';
 
 const TOKEN: TokenInfo = {
   accessToken: 'access-token',
@@ -422,6 +425,121 @@ describe('Remote Control tunnel', () => {
           (value as { payload?: { reason?: string } }).payload?.reason === 'local_server_stopped',
       ),
     );
+  });
+});
+
+describe('Remote Control single-instance lock', () => {
+  async function deadPid(): Promise<number> {
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()));
+    return child.pid!;
+  }
+
+  it('refuses a second instance on the same home and reports the running link', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    let first: RemoteControlHandle | undefined;
+    cleanups.push(async () => first?.close());
+    first = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+    });
+
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:58628',
+        localServerToken: 'local-server-token',
+        relayOrigin: `http://127.0.0.1:${relay.port}`,
+        stderr: { write: () => true },
+      }),
+    ).rejects.toThrow(/already running[\s\S]*127\.0\.0\.1:58627[\s\S]*\/devices\//);
+    expect(relay.requests).toHaveLength(2);
+  });
+
+  it('reaps a stale lock left by a dead process', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    await mkdir(join(homeDir, 'server'), { recursive: true });
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: await deadPid(),
+        nonce: 'stale',
+        local_origin: 'http://127.0.0.1:1',
+        device_id: 'dead-device',
+        url: 'https://code-rc.kimi.com/devices/dead-device/',
+        started_at: 0,
+      }),
+    );
+    const relay = await startAuthRelay();
+    let handle: RemoteControlHandle | undefined;
+    cleanups.push(async () => handle?.close());
+
+    handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+    });
+
+    const lock = JSON.parse(await readFile(remoteControlLockPath(homeDir), 'utf8')) as {
+      pid: number;
+    };
+    expect(lock.pid).toBe(process.pid);
+  });
+
+  it('releases the lock on close so a new instance can start', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    const options = {
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+    };
+    const first = await startRemoteControl(options);
+    await first.close();
+
+    let second: RemoteControlHandle | undefined;
+    cleanups.push(async () => second?.close());
+    second = await startRemoteControl(options);
+    expect(second.url).toContain('/devices/');
+  });
+
+  it('does not remove a successor lock when closing', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    const relay = await startAuthRelay();
+    const handle = await startRemoteControl({
+      homeDir,
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: 'local-server-token',
+      relayOrigin: `http://127.0.0.1:${relay.port}`,
+      stderr: { write: () => true },
+    });
+    cleanups.push(async () => handle?.close());
+    await writeFile(
+      remoteControlLockPath(homeDir),
+      JSON.stringify({
+        pid: process.pid,
+        nonce: 'successor',
+        local_origin: 'http://127.0.0.1:58628',
+        device_id: 'device-2',
+        url: 'https://code-rc.kimi.com/devices/device-2/',
+        started_at: Date.now(),
+      }),
+    );
+
+    await handle.close();
+
+    const lock = JSON.parse(await readFile(remoteControlLockPath(homeDir), 'utf8')) as {
+      nonce: string;
+    };
+    expect(lock.nonce).toBe('successor');
   });
 });
 

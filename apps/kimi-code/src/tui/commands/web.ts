@@ -2,6 +2,10 @@ import chalk from 'chalk';
 
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
 import { buildRemoteControlUrl, startRemoteControl } from '#/cli/sub/web/remote-control';
+import {
+  formatRemoteControlAlreadyRunning,
+  inspectRemoteControlLock,
+} from '#/cli/sub/web/remote-control-lock';
 import { formatReadyBanner, startServerForeground } from '#/cli/sub/web/run';
 import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared';
 import { openUrl } from '#/utils/open-url';
@@ -33,9 +37,12 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
 }
 
 export async function handleRemoteControlCommand(host: SlashCommandHost): Promise<void> {
+  await host.waitForLazyCreation();
   const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+
+  const holder = await inspectRemoteControlLock(getDataDir());
+  if (holder !== undefined) {
+    host.showError(formatRemoteControlAlreadyRunning(holder));
     return;
   }
 
@@ -53,7 +60,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
             localOrigin: origin,
             localServerToken: token,
           });
-          const url = buildRemoteControlUrl(remoteControl.deviceId, session.id);
+          const url = buildRemoteControlUrl(remoteControl.deviceId, session?.id);
           const qrCode = await generateRemoteControlQr(url, dataDir);
           process.stdout.write(formatReadyBanner(origin, options.host));
           process.stdout.write(`\n  ${sessionLine(url, 'Remote Control (experimental): ')}\n`);

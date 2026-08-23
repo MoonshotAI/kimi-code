@@ -116,8 +116,12 @@ export function buildWebUrl(origin: string, token: string): string {
 }
 
 /** Build the `web` command, mounting the runner action on `cmd` itself. */
-export function buildWebCommand(cmd: Command): Command {
-  return cmd
+export function buildWebCommand(
+  cmd: Command,
+  opts: { forceRemoteControl?: boolean } = {},
+): Command {
+  const forceRemoteControl = opts.forceRemoteControl === true;
+  const withServerOptions = cmd
     .option(
       '--port <port>',
       `Bind port (default ${DEFAULT_SERVER_PORT})`,
@@ -158,19 +162,24 @@ export function buildWebCommand(cmd: Command): Command {
     .option(
       '--web-title <title>',
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
-    )
-    .addOption(
+    );
+  if (!forceRemoteControl) {
+    withServerOptions.addOption(
       new Option(
         '--rc, --remote-control',
         'Expose the web UI through Kimi Remote Control (experimental).',
       )
         .default(false)
         .hideHelp(!isRemoteControlEnabled()),
-    )
+    );
+  }
+  return withServerOptions
     .option('--no-open', 'Do not open the web UI in the default browser.', true)
     .action(async (opts: WebCliOptions) => {
       try {
-        await handleWebCommand(opts);
+        await handleWebCommand(
+          forceRemoteControl ? { ...opts, remoteControl: true } : opts,
+        );
       } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);

@@ -12,6 +12,7 @@ import {
 import { WebSocket, type RawData } from 'ws';
 
 import { getVersion } from '../../version';
+import { acquireRemoteControlLock } from './remote-control-lock';
 
 export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://code-rc.kimi.com';
 
@@ -221,17 +222,31 @@ export async function startRemoteControl(
   }
   const relayOrigin = options.relayOrigin ?? REMOTE_CONTROL_RELAY_ORIGIN;
   const deviceId = createKimiDeviceId(options.homeDir);
+  const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);
+  const lock = await acquireRemoteControlLock(options.homeDir, {
+    localOrigin: options.localOrigin.replace(/\/+$/, ''),
+    deviceId,
+    url,
+  });
   const client = new RemoteControlClient({
     ...options,
     relayOrigin,
     deviceId,
     refreshToken: token.refreshToken,
   });
-  await client.start();
+  try {
+    await client.start();
+  } catch (error) {
+    await lock.release();
+    throw error;
+  }
   return {
     deviceId,
-    url: buildRemoteControlUrl(deviceId, undefined, relayOrigin),
-    close: () => client.close(),
+    url,
+    close: async () => {
+      await client.close();
+      await lock.release();
+    },
   };
 }
 

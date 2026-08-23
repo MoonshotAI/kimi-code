@@ -431,7 +431,7 @@ describe('`kimi web` opens the browser', () => {
       'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli';
     const pngPath = join(dataDir, 'rc-qrcode.png');
     const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const { generateRemoteControlQr } = await import('#/utils/remote-control-qr');
+    const { generateRemoteControlQr, renderTerminalQr } = await import('#/utils/remote-control-qr');
     const QRCode = await import('qrcode');
     const { isAbsolute } = await import('node:path');
     await generateRemoteControlQr('https://example.test/previous', dataDir);
@@ -468,15 +468,8 @@ describe('`kimi web` opens the browser', () => {
       expect(openUrl).toHaveBeenCalledWith(publicUrl);
       const written = readStdout();
       expect(written).toContain('Kimi Remote Control (experimental):');
-      expect(written).toContain(
-        await QRCode.toString(publicUrl, { type: 'terminal', small: true }),
-      );
-      expect(written).not.toContain(
-        await QRCode.toString('http://127.0.0.1:58627', {
-          type: 'terminal',
-          small: true,
-        }),
-      );
+      expect(written).toContain(renderTerminalQr(publicUrl));
+      expect(written).not.toContain(renderTerminalQr('http://127.0.0.1:58627'));
       expect(isAbsolute(pngPath)).toBe(true);
       expect(written).toContain(`QR code PNG: ${pngPath}`);
       const png = readFileSync(pngPath);
@@ -516,6 +509,57 @@ describe('`kimi web` opens the browser', () => {
     expect(remoteControlOption()?.hidden).toBe(true);
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
     expect(remoteControlOption()?.hidden).toBe(false);
+  });
+});
+
+describe('kimi rc', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('registers `rc` with the `remote` alias and the web server options, without a --remote-control flag', () => {
+    const program = makeProgram();
+    const rc = program.commands.find((c) => c.name() === 'rc');
+    expect(rc).toBeDefined();
+    expect(rc!.alias()).toBe('remote');
+    const longs = rc!.options.map((o) => o.long).filter(Boolean);
+    expect(longs).toContain('--port');
+    expect(longs).toContain('--host');
+    expect(longs).toContain('--no-open');
+    expect(longs).not.toContain('--remote-control');
+  });
+
+  it('hides `rc` from help unless the experimental flag is on', () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
+    expect(makeProgram().helpInformation()).not.toContain('rc|remote');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+    expect(makeProgram().helpInformation()).toContain('rc|remote');
+  });
+
+  it('forces Remote Control for both `rc` and `remote`', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');
+    for (const name of ['rc', 'remote']) {
+      const program = makeProgram();
+      let stderr = '';
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr += String(chunk);
+        return true;
+      });
+      const exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
+      try {
+        await program.parseAsync(['node', 'kimi', name]);
+      } finally {
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+      // The flag-off experimental error proves remoteControl was forced before
+      // the runner could start.
+      expect(stderr).toContain('--remote-control is experimental:');
+    }
   });
 });
 

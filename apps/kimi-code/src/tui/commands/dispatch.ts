@@ -428,7 +428,6 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'goal',
   'init',
   'plan',
-  'remote-control',
   'swarm',
   'undo',
   'web',
