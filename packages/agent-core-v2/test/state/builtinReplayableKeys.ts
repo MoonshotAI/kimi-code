@@ -16,7 +16,6 @@ import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { promptAdmissionKey } from '#/agent/prompt/promptOps';
 import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import { runtimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingOps';
-import { skillKey } from '#/agent/skill/skillOps';
 import { taskKey } from '#/agent/task/taskOps';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
 import { userToolKey } from '#/agent/userTool/userToolOps';
@@ -40,7 +39,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   profileKey,
   profileActiveToolsKey,
   runtimeBindingKey,
-  skillKey,
   taskKey,
   taskNotificationDeliveryKey,
   userToolKey,

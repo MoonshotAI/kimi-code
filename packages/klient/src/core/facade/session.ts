@@ -25,7 +25,7 @@ import type {
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 
 import type { ScopeRef } from '../channel.js';
 import type { McpServerConfig } from '../../contract/mcp.js';

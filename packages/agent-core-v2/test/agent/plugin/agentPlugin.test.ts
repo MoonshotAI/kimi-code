@@ -14,10 +14,10 @@ import type {
   PluginMutationSummary,
   PluginReloadEvent,
 } from '#/app/plugin/types';
-import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
-import { summarizeSkill } from '#/app/skillCatalog/types';
-import type { SkillDefinition } from '#/app/skillCatalog/types';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { summarizeSkill } from '#/features/skill/catalog/types';
+import type { SkillDefinition } from '#/features/skill/catalog/types';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 
 import { agentService, appService, createTestAgent, skillServices, type TestAgentContext } from '../../harness';
 import { stubPluginService } from '../../app/plugin/stubs';

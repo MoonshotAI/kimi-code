@@ -30,7 +30,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';

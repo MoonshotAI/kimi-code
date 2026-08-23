@@ -27,22 +27,22 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 79 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 78 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
 //     workspaceDirs.fileDirs               src/workspace/workspaceDirs/workspaceDirsService.ts
 //     workspaceInstructions.current        src/workspace/workspaceInstructions/workspaceInstructionsService.ts
-//     workspaceSkillCatalog.contributions  src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
-//     workspaceSkillCatalog.merged         src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
+//     workspaceSkillCatalog.contributions  src/features/skill/workspace/workspaceSkillCatalogService.ts
+//     workspaceSkillCatalog.merged         src/features/skill/workspace/workspaceSkillCatalogService.ts
 //     workspaceTrust.trusted               src/workspace/workspaceTrust/workspaceTrustService.ts
 //   Session
 //     sessionActivity.current            src/session/sessionActivity/sessionActivityService.ts
 //     sessionActivity.folds              src/session/sessionActivity/sessionActivityService.ts
 //     sessionLog.rootLevel               src/session/sessionLog/sessionLogService.ts
 //     sessionMetadata.data               src/session/sessionMetadata/sessionMetadataService.ts
-//     sessionSkillCatalog.contributions  src/session/sessionSkillCatalog/skillCatalogService.ts
-//     sessionSkillCatalog.merged         src/session/sessionSkillCatalog/skillCatalogService.ts
+//     sessionSkillCatalog.contributions  src/features/skill/session/skillCatalogService.ts
+//     sessionSkillCatalog.merged         src/features/skill/session/skillCatalogService.ts
 //     sessionToolPolicy.state            src/session/sessionToolPolicy/sessionToolPolicyService.ts
 //     workspaceContext.additionalDirs    src/session/workspaceContext/workspaceContextService.ts
 //     workspaceContext.workDir           src/session/workspaceContext/workspaceContextService.ts
@@ -100,7 +100,6 @@
 //     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
 //     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
-//     skill                                           src/agent/skill/skillOps.ts
 //     staleGuard                                      src/features/staleGuard/staleGuardOps.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
@@ -135,25 +134,16 @@ export type AppStateKey = keyof AppStateSnapshot;
 
 /** Workspace-scope keys registered into IWorkspaceStateService. */
 export interface WorkspaceStateSnapshot {
-  // src/workspace/workspaceDirs/workspaceDirsService.ts
-  'workspaceDirs.ephemeralDirs': readonly string[];
-  'workspaceDirs.fileDirs': readonly string[];
-  // src/workspace/workspaceInstructions/workspaceInstructionsService.ts
-  'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
-    readonly agentsMd: string | undefined;
-    readonly agentsMdWarning: string | undefined;
-    readonly agentsMdPaths: readonly string[] | undefined;
-  };
-  // src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
+  // src/features/skill/workspace/workspaceSkillCatalogService.ts
   'workspaceSkillCatalog.contributions': Map<string, {
-    readonly c: /* SkillContribution — packages/agent-core-v2/src/app/skillCatalog/skillSource.ts */ {
-      readonly skills: readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    readonly c: /* SkillContribution — packages/agent-core-v2/src/features/skill/catalog/skillSource.ts */ {
+      readonly skills: readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name: string;
         readonly description: string;
         readonly path: string;
         readonly dir: string;
         readonly content: string;
-        readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+        readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
           readonly name?: string;
           readonly description?: string;
           readonly type?: string;
@@ -164,8 +154,8 @@ export interface WorkspaceStateSnapshot {
           readonly arguments?: string | readonly unknown[];
           [key: string]: unknown;
         };
-        readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-        readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+        readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+        readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
           readonly id: string;
           readonly instructions?: string;
         };
@@ -174,7 +164,7 @@ export interface WorkspaceStateSnapshot {
         readonly productSpecific?: boolean;
         readonly experimentalFlag?: string;
       }[];
-      readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly path: string;
         readonly type: string;
         readonly reason: string;
@@ -183,14 +173,14 @@ export interface WorkspaceStateSnapshot {
     };
     readonly priority: number;
   }>;
-  'workspaceSkillCatalog.merged': /* InMemorySkillCatalog — packages/agent-core-v2/src/app/skillCatalog/registry.ts */ {
-    registerBuiltinSkill: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+  'workspaceSkillCatalog.merged': /* InMemorySkillCatalog — packages/agent-core-v2/src/features/skill/catalog/registry.ts */ {
+    registerBuiltinSkill: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -201,8 +191,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -211,13 +201,13 @@ export interface WorkspaceStateSnapshot {
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
     }) => void;
-    register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    register: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -228,8 +218,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -240,19 +230,19 @@ export interface WorkspaceStateSnapshot {
     }, options?: {
       readonly replace?: boolean;
     }) => void;
-    recordSkipped: (skills: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    recordSkipped: (skills: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly path: string;
       readonly type: string;
       readonly reason: string;
     }[]) => void;
     addRoots: (roots: readonly string[]) => void;
-    getSkill: (name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    getSkill: (name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -263,8 +253,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -273,13 +263,13 @@ export interface WorkspaceStateSnapshot {
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
     } | undefined;
-    getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -290,8 +280,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -300,13 +290,13 @@ export interface WorkspaceStateSnapshot {
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
     } | undefined;
-    renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -317,8 +307,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -329,13 +319,13 @@ export interface WorkspaceStateSnapshot {
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
-    listSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    listSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -346,8 +336,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -356,13 +346,13 @@ export interface WorkspaceStateSnapshot {
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
     }[];
-    listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
       readonly description: string;
       readonly path: string;
       readonly dir: string;
       readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly name?: string;
         readonly description?: string;
         readonly type?: string;
@@ -373,8 +363,8 @@ export interface WorkspaceStateSnapshot {
         readonly arguments?: string | readonly unknown[];
         [key: string]: unknown;
       };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
       };
@@ -384,13 +374,22 @@ export interface WorkspaceStateSnapshot {
       readonly experimentalFlag?: string;
     }[];
     getSkillRoots: () => readonly string[];
-    getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
+    getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly path: string;
       readonly type: string;
       readonly reason: string;
     }[];
     getKimiSkillsDescription: () => string;
     getModelSkillListing: () => string;
+  };
+  // src/workspace/workspaceDirs/workspaceDirsService.ts
+  'workspaceDirs.ephemeralDirs': readonly string[];
+  'workspaceDirs.fileDirs': readonly string[];
+  // src/workspace/workspaceInstructions/workspaceInstructionsService.ts
+  'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
+    readonly agentsMd: string | undefined;
+    readonly agentsMdWarning: string | undefined;
+    readonly agentsMdPaths: readonly string[] | undefined;
   };
   // src/workspace/workspaceTrust/workspaceTrustService.ts
   'workspaceTrust.trusted': boolean;
@@ -400,6 +399,254 @@ export type WorkspaceStateKey = keyof WorkspaceStateSnapshot;
 
 /** Session-scope keys registered into ISessionStateService. */
 export interface SessionStateSnapshot {
+  // src/features/skill/session/skillCatalogService.ts
+  'sessionSkillCatalog.contributions': Map<string, {
+    readonly c: /* SkillContribution — packages/agent-core-v2/src/features/skill/catalog/skillSource.ts */ {
+      readonly skills: readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly path: string;
+        readonly dir: string;
+        readonly content: string;
+        readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+          readonly name?: string;
+          readonly description?: string;
+          readonly type?: string;
+          readonly whenToUse?: string;
+          readonly disableModelInvocation?: boolean;
+          readonly isSubSkill?: boolean;
+          readonly safe?: boolean;
+          readonly arguments?: string | readonly unknown[];
+          [key: string]: unknown;
+        };
+        readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+        readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+          readonly id: string;
+          readonly instructions?: string;
+        };
+        readonly mermaid?: string;
+        readonly d2?: string;
+        readonly productSpecific?: boolean;
+        readonly experimentalFlag?: string;
+      }[];
+      readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly path: string;
+        readonly type: string;
+        readonly reason: string;
+      }[];
+      readonly scannedRoots?: readonly string[];
+    };
+    readonly priority: number;
+  }>;
+  'sessionSkillCatalog.merged': /* InMemorySkillCatalog — packages/agent-core-v2/src/features/skill/catalog/registry.ts */ {
+    registerBuiltinSkill: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    }) => void;
+    register: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    }, options?: {
+      readonly replace?: boolean;
+    }) => void;
+    recordSkipped: (skills: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly path: string;
+      readonly type: string;
+      readonly reason: string;
+    }[]) => void;
+    addRoots: (roots: readonly string[]) => void;
+    getSkill: (name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    } | undefined;
+    getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    } | undefined;
+    renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    }, rawArgs: string, context?: {
+      readonly sessionId?: string;
+    }) => string;
+    listSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    }[];
+    listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly path: string;
+      readonly dir: string;
+      readonly content: string;
+      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly name?: string;
+        readonly description?: string;
+        readonly type?: string;
+        readonly whenToUse?: string;
+        readonly disableModelInvocation?: boolean;
+        readonly isSubSkill?: boolean;
+        readonly safe?: boolean;
+        readonly arguments?: string | readonly unknown[];
+        [key: string]: unknown;
+      };
+      readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+        readonly id: string;
+        readonly instructions?: string;
+      };
+      readonly mermaid?: string;
+      readonly d2?: string;
+      readonly productSpecific?: boolean;
+      readonly experimentalFlag?: string;
+    }[];
+    getSkillRoots: () => readonly string[];
+    getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
+      readonly path: string;
+      readonly type: string;
+      readonly reason: string;
+    }[];
+    getKimiSkillsDescription: () => string;
+    getModelSkillListing: () => string;
+  };
   // src/session/sessionActivity/sessionActivityService.ts
   'sessionActivity.current': /* SessionActivityState — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ {
     readonly busy: boolean;
@@ -440,254 +687,6 @@ export interface SessionStateSnapshot {
     readonly custom?: Record<string, unknown>;
     readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   } | undefined;
-  // src/session/sessionSkillCatalog/skillCatalogService.ts
-  'sessionSkillCatalog.contributions': Map<string, {
-    readonly c: /* SkillContribution — packages/agent-core-v2/src/app/skillCatalog/skillSource.ts */ {
-      readonly skills: readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name: string;
-        readonly description: string;
-        readonly path: string;
-        readonly dir: string;
-        readonly content: string;
-        readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-          readonly name?: string;
-          readonly description?: string;
-          readonly type?: string;
-          readonly whenToUse?: string;
-          readonly disableModelInvocation?: boolean;
-          readonly isSubSkill?: boolean;
-          readonly safe?: boolean;
-          readonly arguments?: string | readonly unknown[];
-          [key: string]: unknown;
-        };
-        readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-        readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-          readonly id: string;
-          readonly instructions?: string;
-        };
-        readonly mermaid?: string;
-        readonly d2?: string;
-        readonly productSpecific?: boolean;
-        readonly experimentalFlag?: string;
-      }[];
-      readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly path: string;
-        readonly type: string;
-        readonly reason: string;
-      }[];
-      readonly scannedRoots?: readonly string[];
-    };
-    readonly priority: number;
-  }>;
-  'sessionSkillCatalog.merged': /* InMemorySkillCatalog — packages/agent-core-v2/src/app/skillCatalog/registry.ts */ {
-    registerBuiltinSkill: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    }) => void;
-    register: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    }, options?: {
-      readonly replace?: boolean;
-    }) => void;
-    recordSkipped: (skills: readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly path: string;
-      readonly type: string;
-      readonly reason: string;
-    }[]) => void;
-    addRoots: (roots: readonly string[]) => void;
-    getSkill: (name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    } | undefined;
-    getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    } | undefined;
-    renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    }, rawArgs: string, context?: {
-      readonly sessionId?: string;
-    }) => string;
-    listSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    }[];
-    listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly name: string;
-      readonly description: string;
-      readonly path: string;
-      readonly dir: string;
-      readonly content: string;
-      readonly metadata: /* SkillMetadata — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly name?: string;
-        readonly description?: string;
-        readonly type?: string;
-        readonly whenToUse?: string;
-        readonly disableModelInvocation?: boolean;
-        readonly isSubSkill?: boolean;
-        readonly safe?: boolean;
-        readonly arguments?: string | readonly unknown[];
-        [key: string]: unknown;
-      };
-      readonly source: /* SkillSource — packages/agent-core-v2/src/app/skillCatalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
-      readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-        readonly id: string;
-        readonly instructions?: string;
-      };
-      readonly mermaid?: string;
-      readonly d2?: string;
-      readonly productSpecific?: boolean;
-      readonly experimentalFlag?: string;
-    }[];
-    getSkillRoots: () => readonly string[];
-    getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/app/skillCatalog/types.ts */ {
-      readonly path: string;
-      readonly type: string;
-      readonly reason: string;
-    }[];
-    getKimiSkillsDescription: () => string;
-    getModelSkillListing: () => string;
-  };
   // src/session/sessionToolPolicy/sessionToolPolicyService.ts
   'sessionToolPolicy.state': /* SessionToolPolicyState — packages/agent-core-v2/src/session/sessionToolPolicy/sessionToolPolicyService.ts */ {
     readonly disabledTools: readonly string[];
@@ -1308,9 +1307,6 @@ export interface AgentStateSnapshot {
   };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
-  // src/agent/skill/skillOps.ts
-  // replayable · transient — folds: SkillActivate
-  'skill': null;
   // src/agent/stepRetry/stepRetryService.ts
   'stepRetry.failedAttempts': number;
   'stepRetry.lastFailedDriverId': string | undefined;

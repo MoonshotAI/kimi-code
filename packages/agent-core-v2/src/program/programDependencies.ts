@@ -10,7 +10,7 @@ import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import type { IPluginService } from '#/app/plugin/plugin';
 import type { ISessionManager } from '#/app/sessionManager/sessionManager';
-import type { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -25,7 +25,7 @@ import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentPro
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;

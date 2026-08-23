@@ -200,7 +200,12 @@ export class AgentRuntimeSet {
       },
     };
     try {
-      const actor = createActor(descriptor.logic, { input: descriptor.input ?? entry.context });
+      const logic = descriptor.logic;
+      if (logic === undefined) {
+        if (entry.status === 'registered') entry.status = 'materialized';
+        return;
+      }
+      const actor = createActor(logic, { input: descriptor.input ?? entry.context });
       entry.actor = actor;
       entry.listeners = listeners;
       let previous: unknown;

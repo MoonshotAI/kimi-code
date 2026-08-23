@@ -17,10 +17,10 @@ import {
 } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, PluginMutation } from '#/app/plugin/types';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
-import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
+import type { SkillCatalog, SkillDefinition } from '#/features/skill/catalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentPluginService } from './agentPlugin';

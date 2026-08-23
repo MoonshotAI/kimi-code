@@ -290,4 +290,36 @@ describe('AgentRuntimeSet', () => {
     expect(firstStopped).toBe(1);
     expect(secondStopped).toBe(1);
   });
+
+  it('materializes a logic-less runtime as a plain API facade', async () => {
+    const stateless = defineAgentRuntimeContract<{ read(): number }>('stateless');
+    const provider = defineAgentRuntimeProvider(stateless, {
+      id: 'stateless',
+      createApi: () => ({ read: () => 7 }),
+    });
+    const set = new AgentRuntimeSet(agent, accessor);
+    set.apply({ definition: stateless, provider, generation: 1, active: true });
+
+    expect(set.resolve(stateless).read()).toBe(7);
+    expect(set.inspect()[0]).toMatchObject({ id: 'stateless', status: 'materialized', state: undefined });
+    await set.close();
+    expect(set.inspect()[0]).toMatchObject({ id: 'stateless', status: 'retired' });
+  });
+
+  it('rejects a durable definition without logic at define time', () => {
+    const definition = defineAgentRuntimeContract('durable-without-logic');
+    expect(() =>
+      defineAgentRuntimeProvider(definition, {
+        id: 'durable-without-logic',
+        durable: {
+          events: [],
+          undoable: false,
+          transition: () => undefined,
+          read: () => null,
+          commit: () => {},
+        },
+        createApi: () => ({}),
+      }),
+    ).toThrow("Agent runtime 'durable-without-logic' declares durable state without logic");
+  });
 });

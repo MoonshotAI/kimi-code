@@ -10,19 +10,19 @@
 
 # Index (25 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
-#   builtinProductSkills     src/app/skillCatalog/configSection.ts
+#   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
-#   extraSkillDirs           src/app/skillCatalog/configSection.ts
+#   extraSkillDirs           src/features/skill/catalog/configSection.ts
 #   hooks                    src/features/externalHooks/configSection.ts
 #   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
 #   loopControl              src/agent/loop/configSection.ts
 #   mcp                      src/app/mcpConfig/configSection.ts
-#   mergeAllAvailableSkills  src/app/skillCatalog/configSection.ts
+#   mergeAllAvailableSkills  src/features/skill/catalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
 #   models                   src/app/kosongConfig/configSection.ts
 #   permission               src/agent/permissionRules/configSection.ts
@@ -59,7 +59,7 @@
 
 # ##########################################################################
 # builtinProductSkills (config.toml: builtin_product_skills)
-#   owner: src/app/skillCatalog/configSection.ts
+#   owner: src/features/skill/catalog/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:
@@ -127,7 +127,7 @@ extra_agent_dirs = []
 
 # ##########################################################################
 # extraSkillDirs (config.toml: extra_skill_dirs)
-#   owner: src/app/skillCatalog/configSection.ts
+#   owner: src/features/skill/catalog/configSection.ts
 #   scope: core
 # ##########################################################################
 
@@ -211,7 +211,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # mergeAllAvailableSkills (config.toml: merge_all_available_skills)
-#   owner: src/app/skillCatalog/configSection.ts
+#   owner: src/features/skill/catalog/configSection.ts
 #   scope: core
 # ##########################################################################
 

@@ -49,7 +49,7 @@ export interface AgentRuntimeDefinition<StateOrRuntime, Runtime = StateOrRuntime
 
 export interface AgentRuntimeDescriptor<State, Runtime> {
   readonly id: string;
-  readonly logic: ActorLogic<any, any, any>;
+  readonly logic?: ActorLogic<any, any, any>;
   readonly input?: unknown;
   readonly durable?: AgentRuntimeDurableDefinition<State>;
   readonly eager?: boolean;
@@ -77,10 +77,17 @@ export function defineAgentRuntimeProvider<State, Runtime>(
   contract: AgentRuntimeDefinition<Runtime>,
   descriptor: AgentRuntimeDescriptor<State, Runtime>,
 ): AgentRuntimeProvider<Runtime> {
+  assertLogicPresent(descriptor);
   for (const cls of descriptor.durable?.events ?? []) registerEvent2Class(cls);
   const provider = Object.freeze({ contract }) as AgentRuntimeProvider<Runtime>;
   descriptors.set(provider, descriptor);
   return provider;
+}
+
+function assertLogicPresent(descriptor: AgentRuntimeDescriptor<any, any>): void {
+  if (descriptor.durable !== undefined && descriptor.logic === undefined) {
+    throw new Error(`Agent runtime '${descriptor.id}' declares durable state without logic`);
+  }
 }
 
 export function getAgentRuntimeDefinitionId(

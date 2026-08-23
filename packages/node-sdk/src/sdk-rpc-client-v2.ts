@@ -58,7 +58,7 @@
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
- *   `IAgentSkillService` through the agent scope (the engine settles
+ *   the main agent's `AgentSkill` runtime (the engine settles
  *   `{turn_id}` and applies v1's main-only metadata update itself);
  *   `generateAgentsMd` →
  *   `ISessionInitService` through the session scope; `getSessionWarnings` →
@@ -176,7 +176,7 @@ import {
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
   IAgentProfileService,
-  IAgentSkillService,
+  AgentSkill,
   IAgentSwarmService,
   IAgentTaskService,
   ISessionTokenCountingService,
@@ -1951,7 +1951,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentSkillService.activate`) — the direct call
+   * Through the target agent's `AgentSkill` runtime facade — the direct call
    * keeps v1's semantics: validate first (`skill.not_found` /
    * `skill.type_unsupported` reject synchronously), then render the skill
    * prompt and launch a turn with it. The engine updates title/lastPrompt for
@@ -1962,7 +1962,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentSkillService).activate({ name: input.name, args: input.args });
+    await agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentSkill)
+      .activate({ name: input.name, args: input.args });
   }
 
   /**

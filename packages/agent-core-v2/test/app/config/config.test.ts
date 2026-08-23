@@ -36,12 +36,12 @@ import {
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
-import '#/app/skillCatalog/configSection';
-import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
+import '#/features/skill/catalog/configSection';
+import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
-} from '#/app/skillCatalog/configSection';
+} from '#/features/skill/catalog/configSection';
 import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import '#/agent/media/configSection';

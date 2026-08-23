@@ -39,7 +39,7 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
+import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -70,10 +70,10 @@ import {
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
-import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';

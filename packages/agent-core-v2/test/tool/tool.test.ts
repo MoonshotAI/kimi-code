@@ -104,6 +104,7 @@ import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRu
 import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
+import { AgentSkill, skillAgentRuntimeProvider } from '#/features/skill/skillAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -474,6 +475,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentGoal,
           provider: goalAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentSkill,
+          provider: skillAgentRuntimeProvider,
           generation: 1,
           active: true,
         },
