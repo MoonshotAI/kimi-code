@@ -29,13 +29,21 @@ export interface TowerRoster {
   readonly agents: TowerRosterEntry[];
 }
 
+/**
+ * Lifecycle of a mission. `merged` (landed) and `abandoned` (given up without
+ * merging) are the two closed states: a closed mission stops reserving its
+ * scope, counts as satisfied for dependents, and drops out of merge-conflict
+ * checks. Abandoning is tower-only; the mission stays visible as the audit
+ * trail.
+ */
 export type TowerMissionStatus =
   | 'planned'
   | 'active'
   | 'completed'
   | 'blocked'
   | 'paused'
-  | 'merged';
+  | 'merged'
+  | 'abandoned';
 
 /**
  * `build` missions change code: their scope reserves write access (plan-time

@@ -71,6 +71,11 @@ export class TowerInitTool implements ITowerInitTool {
                   ]
                 : []),
               'workspace: .tower/ (comms under .tower/comms/, worktrees under .tower/worktrees/)',
+              ...(result.openMissions.length > 0
+                ? [
+                    `carried-over open missions: ${result.openMissions.join(', ')} — their scopes are still reserved. Continue them (TowerSpawn fresh workers), or — when they belong to an unrelated earlier task — abandon them first (TowerMission status=abandoned) so a new plan can use those files.`,
+                  ]
+                : []),
               ...(result.retiredAgents.length > 0
                 ? [
                     `adopted from a previous session — retired its stale roster entries: ${result.retiredAgents.join(', ')}. ` +

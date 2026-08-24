@@ -75,6 +75,12 @@ export interface TowerInitResult {
    * a different base — re-init never resets recorded state.
    */
   readonly ignoredBase?: string;
+  /**
+   * Ids of missions still holding their scope (not merged, not abandoned) —
+   * on re-init these are the carried-over missions a new plan must either
+   * continue or abandon. Empty on creation.
+   */
+  readonly openMissions: readonly string[];
 }
 
 export interface TowerPlanInput {
@@ -134,7 +140,12 @@ const STATUS_EMOJI: Record<TowerMissionStatus, string> = {
   blocked: '🔴',
   paused: '⏸️',
   merged: '✅',
+  abandoned: '🚫',
 };
+
+function isOpenMission(mission: Pick<TowerMission, 'status'>): boolean {
+  return mission.status !== 'merged' && mission.status !== 'abandoned';
+}
 
 export class TowerStore {
   /** Absolute path of the main checkout (the session working directory). */
@@ -178,6 +189,7 @@ export class TowerStore {
         retiredAgents,
         checkout: await this.checkedOutBranch(),
         ignoredBase: base !== undefined && base !== state.base ? base : undefined,
+        openMissions: state.missions.filter(isOpenMission).map((m) => m.id),
       };
     }
 
@@ -217,7 +229,7 @@ export class TowerStore {
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
     await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base: resolvedBase }, MISSIONS_INDEX);
-    return { base: resolvedBase, created: true, retiredAgents: [], checkout };
+    return { base: resolvedBase, created: true, retiredAgents: [], checkout, openMissions: [] };
   }
 
   /** Branch checked out in the main worktree, or 'HEAD' when detached. */
@@ -384,7 +396,7 @@ export class TowerStore {
       }
     }
     this.assertScopesDisjoint([
-      ...state.missions.filter((m) => m.status !== 'merged'),
+      ...state.missions.filter(isOpenMission),
       ...missions,
     ]);
 
@@ -430,7 +442,7 @@ export class TowerStore {
         if (a.id === b.id) continue;
         if (a.stem === b.stem || a.stem.startsWith(`${b.stem}/`) || b.stem.startsWith(`${a.stem}/`)) {
           throw new TowerProtocolError(
-            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") — split the shared files into exactly one mission`,
+            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") — split the shared files into exactly one mission; if one of them is stale finished work, abandon it first (TowerMission status=abandoned)`,
           );
         }
       }
@@ -482,12 +494,19 @@ export class TowerStore {
         );
       }
       this.assertScopesDisjoint([
-        ...state.missions.filter((m) => m.id !== id && m.status !== 'merged'),
+        ...state.missions.filter((m) => m.id !== id && isOpenMission(m)),
         { ...mission, scope: [...patch.scope] },
       ]);
       mission.scope = [...patch.scope];
     }
-    if (patch.status !== undefined) mission.status = patch.status;
+    if (patch.status !== undefined) {
+      if (patch.status === 'abandoned' && callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot abandon mission ${id} — abandoning releases the mission scope, so only the tower does it`,
+        );
+      }
+      mission.status = patch.status;
+    }
     if (patch.note !== undefined) mission.notes.push(patch.note);
     if (patch.blocker !== undefined) {
       mission.blockers.push(patch.blocker);
@@ -777,7 +796,7 @@ export class TowerStore {
 
     const unmergedDeps = mission.deps.filter((dep) => {
       const depMission = state.missions.find((m) => m.id === dep);
-      return depMission !== undefined && depMission.status !== 'merged';
+      return depMission !== undefined && isOpenMission(depMission);
     });
     if (unmergedDeps.length > 0) {
       throw await block(
@@ -857,7 +876,7 @@ export class TowerStore {
     const changedSet = new Set(changed);
     const conflictsWith: Array<{ readonly branch: string; readonly files: readonly string[] }> = [];
     for (const other of state.missions) {
-      if (other.branch === branch || other.status === 'merged') continue;
+      if (other.branch === branch || !isOpenMission(other)) continue;
       if (!(await branchExists(this.repoRoot, other.branch))) continue;
       const otherChanged = await diffNameOnly(this.repoRoot, state.base, other.branch);
       const overlap = otherChanged.filter((file) => changedSet.has(file));
@@ -933,7 +952,7 @@ export class TowerStore {
       '| -- | ------- | ------ | -------- | ------ | ----- |',
       ...rows,
       '',
-      'Status: 🟡 planned · 🔵 active · 🟢 completed · 🔴 blocked · ⏸️ paused · ✅ merged',
+      'Status: 🟡 planned · 🔵 active · 🟢 completed · 🔴 blocked · ⏸️ paused · ✅ merged · 🚫 abandoned',
       `Mode: ${state.mode} — Base: ${state.base}`,
       '',
       '## Dependency Flow',
