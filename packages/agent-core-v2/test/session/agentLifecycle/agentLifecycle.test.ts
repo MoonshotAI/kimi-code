@@ -29,7 +29,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/kosong/model/catalog';
@@ -98,6 +98,7 @@ import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { ScopeUnits } from '#/_base/di/fiber';
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -540,6 +541,52 @@ describe('AgentLifecycleService', () => {
           main,
         ),
       ).toThrow("Agent event 'agent.activity.updated' has no active lifecycle context");
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('remove deactivates after scope-units contributed units are torn down', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const bus = ix.get(ISessionEventBus);
+    const seen: string[] = [];
+    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+
+    class DisposeBeacon {
+      constructor(
+        @ISessionEventBus private readonly eventBus: ISessionEventBus,
+        @IAgentScopeContext private readonly scope: IAgentScopeContext,
+      ) {}
+
+      dispose(): void {
+        this.eventBus.publish(
+          new AgentActivityUpdated({
+            lifecycle: 'disposed',
+            background: [],
+            agentId: this.scope.agentId,
+          }),
+          this.scope.agentContext,
+        );
+      }
+    }
+
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
+      'test',
+      new Ledger('test'),
+      DisposeBeacon,
+    );
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const main = await svc.create({ agentId: 'main' });
+      await svc.remove(main);
+      expect(seen).toEqual(['disposed']);
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);

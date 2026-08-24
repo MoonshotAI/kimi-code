@@ -237,7 +237,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             }],
           ],
           configureContainer: (container) => {
-            container.anchorKernelEntry(() => {
+            container.anchorKernelFinalizer(() => {
               eventBus?.deactivateAgent(agent);
             }, 'agent-event-bus-deactivate');
             this.adopt({

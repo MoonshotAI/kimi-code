@@ -487,6 +487,10 @@ export class InstantiationService implements IInstantiationService {
     return this._ledger.register(disposer, label);
   }
 
+  anchorKernelFinalizer(disposer: Disposer, label: string): LedgerEntry {
+    return this._ledger.registerFinalizer(disposer, label);
+  }
+
   private _getFiberHost(): FiberHost {
     this._fiberHost ??= {
       mintUid: () => ++this._root()._nextUnitUid,
