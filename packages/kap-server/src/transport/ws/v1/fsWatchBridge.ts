@@ -1,30 +1,23 @@
+import { isAbsolute, relative, sep } from 'node:path';
+
 import {
   type IDisposable,
-  type ISessionScopeHandle,
   ISessionWorkspaceContext,
   ISessionContext,
-  IRuntimeResolver,
   IWorkspaceInstanceManager,
   getLiveSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { Runtime, RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
-import { RuntimeWorkspaceView } from '@moonshot-ai/agent-core-v2/runtime/runtimeWorkspaceView';
-import type { IHostFsWatchHandle, HostFsChange } from '@moonshot-ai/agent-core-v2/os/interface/hostFsWatch';
-import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsWatch';
+import type { Program } from '@moonshot-ai/agent-core-v2/program/program';
+import type {
+  FsChangeEntry,
+  FsChangeEvent,
+  IWorkspaceFsWatchSubscription,
+} from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsWatch';
 
 import type { EventEnvelope, JournalLogger } from './sessionEventJournal';
 
 const MAX_PATHS_PER_CONNECTION = 100;
-const DEFAULT_DEBOUNCE_MS = 200;
-const DEFAULT_MAX_CHANGES_PER_WINDOW = 500;
-
-function readPositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return fallback;
-  const value = Number.parseInt(raw, 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
 
 function sessionRuntimeKey(sessionId: string, runtimeId: string): string {
   return `${sessionId}\0${runtimeId}`;
@@ -67,23 +60,15 @@ interface SessionWatch {
   readonly id: string;
   readonly runtimeId: string;
   readonly workspaceId: string;
-  readonly generation: string;
-  readonly session: ISessionScopeHandle;
-  readonly runtime: Runtime;
-  readonly view: RuntimeWorkspaceView;
-  readonly handle: IHostFsWatchHandle;
-  readonly lease: RuntimeLease;
   readonly workspace: ISessionWorkspaceContext;
+  readonly program: Program;
+  readonly programSub: IDisposable;
+  programGeneration: string | undefined;
+  watchSub: IWorkspaceFsWatchSubscription | undefined;
+  watchEventSub: IDisposable | undefined;
   readonly conns: Map<string, ConnEntry>;
   union: Set<string>;
   seq: number;
-  sub: IDisposable | undefined;
-  pending: FsChangeEntry[];
-  rawCount: number;
-  truncated: boolean;
-  debounceTimer: NodeJS.Timeout | undefined;
-  readonly debounceMs: number;
-  readonly maxChangesPerWindow: number;
 }
 
 export class FsWatchBridge {
@@ -91,8 +76,6 @@ export class FsWatchBridge {
   private readonly logger: JournalLogger | undefined;
   private readonly bySession = new Map<string, SessionWatch>();
   private readonly connPathCount = new Map<string, number>();
-  private readonly rebuilding = new Map<string, Promise<SessionWatch | undefined>>();
-  private readonly registrySubscriptions = new Map<string, IDisposable>();
 
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
@@ -105,11 +88,15 @@ export class FsWatchBridge {
     rawPaths: readonly string[],
     runtimeId: string,
   ): Promise<FsWatchAck> {
-    const resolved = await this.resolveSession(sessionId, runtimeId);
-    if (resolved === undefined) {
+    const sw = this.resolveSession(sessionId, runtimeId);
+    if (sw === undefined) {
       return { code: FS_WATCH_CODE.SESSION_NOT_FOUND, msg: 'session not found' };
     }
-    const sw = resolved;
+    const watchSub = sw.watchSub;
+    if (watchSub === undefined) {
+      if (sw.conns.size === 0) this.teardownSession(sw);
+      return { code: 1, msg: 'fs watch unavailable' };
+    }
 
     const normalized: string[] = [];
     for (const raw of rawPaths) {
@@ -138,6 +125,16 @@ export class FsWatchBridge {
     for (const rel of toAdd) entry.paths.add(rel);
     this.connPathCount.set(conn.id, current + toAdd.length);
     this.recomputeAndApply(sw);
+    try {
+      await watchSub.ready;
+    } catch (error) {
+      for (const rel of toAdd) entry.paths.delete(rel);
+      if (entry.paths.size === 0) sw.conns.delete(conn.id);
+      this.connPathCount.set(conn.id, current);
+      this.recomputeAndApply(sw);
+      if (sw.conns.size === 0) this.teardownSession(sw);
+      throw error;
+    }
 
     return this.ok(sw, conn);
   }
@@ -181,124 +178,69 @@ export class FsWatchBridge {
   }
 
   dispose(): void {
-    for (const subscription of this.registrySubscriptions.values()) subscription.dispose();
-    this.registrySubscriptions.clear();
     for (const sw of this.bySession.values()) this.teardownSession(sw);
   }
 
-  private async resolveSession(sessionId: string, runtimeId: string): Promise<SessionWatch | undefined> {
+  private resolveSession(sessionId: string, runtimeId: string): SessionWatch | undefined {
     const key = sessionRuntimeKey(sessionId, runtimeId);
-    const pending = this.rebuilding.get(key);
-    if (pending !== undefined) return pending;
     const existing = this.bySession.get(key);
-    if (existing !== undefined) {
-      if (this.isCurrentGeneration(existing)) return existing;
-      return this.rebuild(existing);
-    }
-    return this.createSessionWatch(sessionId, runtimeId, undefined);
-  }
+    if (existing !== undefined) return existing;
 
-  private async createSessionWatch(
-    sessionId: string,
-    runtimeId: string,
-    carried: { readonly conns: Map<string, ConnEntry>; readonly seq: number } | undefined,
-  ): Promise<SessionWatch | undefined> {
-    const key = sessionRuntimeKey(sessionId, runtimeId);
     const session = getLiveSessionById(this.core.accessor, sessionId);
     if (session === undefined) return undefined;
-    const context = session.accessor.get(ISessionWorkspaceContext);
-    const sessionContext = session.accessor.get(ISessionContext);
-    const lease = this.core.accessor.get(IRuntimeResolver).acquire(
-      { workspaceId: sessionContext.workspaceId, runtimeId },
-      ['watch'],
-    );
-    try {
-      const view = new RuntimeWorkspaceView(lease.runtime, context);
-      const handle = lease.track(lease.runtime.watch!.watch(view.workDir, { recursive: true }));
-      await handle.ready;
-      const sw: SessionWatch = {
-        id: sessionId,
-        runtimeId,
-        workspaceId: sessionContext.workspaceId,
-        generation: lease.runtime.identity.generation,
-        session,
-        runtime: lease.runtime,
-        view,
-        handle,
-        lease,
-        workspace: context,
-        conns: carried?.conns ?? new Map(),
-        union: new Set(),
-        seq: carried?.seq ?? 0,
-        sub: undefined,
-        pending: [],
-        rawCount: 0,
-        truncated: false,
-        debounceTimer: undefined,
-        debounceMs: readPositiveIntEnv('KIMI_CODE_FS_WATCH_DEBOUNCE_MS', DEFAULT_DEBOUNCE_MS),
-        maxChangesPerWindow: readPositiveIntEnv('KIMI_CODE_FS_WATCH_MAX_CHANGES_PER_WINDOW', DEFAULT_MAX_CHANGES_PER_WINDOW),
-      };
-      sw.sub = handle.onDidChange((event) => this.onRuntimeEvent(key, event));
-      this.recomputeAndApply(sw);
-      this.bySession.set(key, sw);
-      this.subscribeRegistry(sessionContext.workspaceId);
-      return sw;
-    } catch (error) {
-      lease.dispose();
-      throw error;
-    }
+    if (runtimeId !== 'local') throw new Error(`fs watch unavailable for runtime "${runtimeId}"`);
+    const workspace = session.accessor.get(ISessionWorkspaceContext);
+    const workspaceId = session.accessor.get(ISessionContext).workspaceId;
+    const instance = this.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (instance === undefined) throw new Error(`workspace "${workspaceId}" unavailable`);
+    const program = instance.program;
+
+    const sw: SessionWatch = {
+      id: sessionId,
+      runtimeId,
+      workspaceId,
+      workspace,
+      program,
+      programSub: program.onDidChange(() => {
+        this.onProgramChange(sw);
+      }),
+      programGeneration: undefined,
+      watchSub: undefined,
+      watchEventSub: undefined,
+      conns: new Map(),
+      union: new Set(),
+      seq: 0,
+    };
+    this.bySession.set(key, sw);
+    this.attachWatch(sw);
+    return sw;
   }
 
-  private async rebuild(sw: SessionWatch): Promise<SessionWatch | undefined> {
-    const key = sessionRuntimeKey(sw.id, sw.runtimeId);
-    const pending = this.rebuilding.get(key);
-    if (pending !== undefined) return pending;
-    const task = (async () => {
-      const { conns, seq } = sw;
-      this.teardownSession(sw);
-      return this.createSessionWatch(sw.id, sw.runtimeId, { conns, seq });
-    })();
-    this.rebuilding.set(key, task);
+  private attachWatch(sw: SessionWatch): void {
+    sw.watchEventSub?.dispose();
+    sw.watchEventSub = undefined;
+    sw.watchSub?.dispose();
+    sw.watchSub = undefined;
+    let service;
     try {
-      return await task;
-    } finally {
-      this.rebuilding.delete(key);
-    }
-  }
-
-  private async refreshIfStale(sw: SessionWatch): Promise<void> {
-    const key = sessionRuntimeKey(sw.id, sw.runtimeId);
-    const pending = this.rebuilding.get(key);
-    if (pending !== undefined) await pending.catch(() => undefined);
-    const current = this.bySession.get(key);
-    if (current === undefined || this.isCurrentGeneration(current)) return;
-    try {
-      await this.rebuild(current);
-    } catch (error) {
-      this.logger?.warn({ sessionId: sw.id, err: String(error) }, 'fs-watch rebuild after runtime generation change failed');
-    }
-  }
-
-  private isCurrentGeneration(sw: SessionWatch): boolean {
-    try {
-      const runtime = this.core.accessor.get(IRuntimeResolver).inspect({ workspaceId: sw.workspaceId, runtimeId: sw.runtimeId });
-      return runtime.identity.generation === sw.generation;
+      service = sw.program.watch;
     } catch {
-      return false;
+      sw.programGeneration = undefined;
+      return;
     }
+    sw.programGeneration = sw.program.snapshot().generation;
+    const sub = service.subscribe();
+    sw.watchSub = sub;
+    sw.watchEventSub = sub.onDidChangeFiles((event) => {
+      this.onWatchEvent(sw, event);
+    });
+    this.applyUnion(sw);
   }
 
-  private subscribeRegistry(workspaceId: string): void {
-    if (this.registrySubscriptions.has(workspaceId)) return;
-    const workspace = this.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
-    if (workspace === undefined) return;
-    const subscription = workspace.runtimes.onDidChange((change) => {
-      for (const sw of this.bySession.values()) {
-        if (sw.workspaceId !== workspaceId || sw.runtimeId !== change.runtimeId) continue;
-        void this.refreshIfStale(sw);
-      }
-    });
-    this.registrySubscriptions.set(workspaceId, subscription);
+  private onProgramChange(sw: SessionWatch): void {
+    if (!this.bySession.has(sessionRuntimeKey(sw.id, sw.runtimeId))) return;
+    if (sw.program.snapshot().generation === sw.programGeneration) return;
+    this.attachWatch(sw);
   }
 
   private recomputeAndApply(sw: SessionWatch): void {
@@ -307,57 +249,27 @@ export class FsWatchBridge {
       for (const p of paths) union.add(p);
     }
     sw.union = union;
+    this.applyUnion(sw);
+  }
+
+  private applyUnion(sw: SessionWatch): void {
+    if (sw.watchSub === undefined) return;
+    try {
+      sw.watchSub.setWatchedPaths([...sw.union]);
+    } catch (error) {
+      this.logger?.warn({ sessionId: sw.id, err: String(error) }, 'fs-watch apply watched paths failed');
+    }
   }
 
   private teardownSession(sw: SessionWatch): void {
-    sw.sub?.dispose();
-    sw.sub = undefined;
-    if (sw.debounceTimer !== undefined) clearTimeout(sw.debounceTimer);
-    sw.debounceTimer = undefined;
-    sw.handle.dispose();
-    sw.lease.dispose();
+    sw.programSub.dispose();
+    sw.watchEventSub?.dispose();
+    sw.watchSub?.dispose();
     this.bySession.delete(sessionRuntimeKey(sw.id, sw.runtimeId));
   }
 
-  private onRuntimeEvent(key: string, event: HostFsChange): void {
-    const sw = this.bySession.get(key);
-    if (sw === undefined) return;
-    const relative = sw.runtime.path.relative(sw.view.workDir, event.path);
-    const path = relative === '' ? '.' : relative.split(sw.runtime.path.separator).join('/');
-    if (!isUnderAny(path, sw.union)) return;
-    sw.pending.push({ path, change: event.action, kind: event.kind });
-    sw.rawCount += 1;
-    if (sw.pending.length > sw.maxChangesPerWindow) {
-      sw.truncated = true;
-      sw.pending = [];
-    }
-    if (sw.debounceTimer === undefined) {
-      sw.debounceTimer = setTimeout(() => this.flush(key), sw.debounceMs);
-      sw.debounceTimer.unref?.();
-    }
-  }
-
-  private flush(key: string): void {
-    const sw = this.bySession.get(key);
-    if (sw === undefined) return;
-    sw.debounceTimer = undefined;
-    if (sw.rawCount === 0) return;
-    const truncated = sw.truncated;
-    const count = sw.rawCount;
-    const changes = truncated ? [] : sw.pending;
-    sw.pending = [];
-    sw.rawCount = 0;
-    sw.truncated = false;
-    this.onSessionEvent(key, {
-      changes,
-      coalesced_window_ms: sw.debounceMs,
-      ...(truncated ? { truncated: true, count } : {}),
-    });
-  }
-
-  private onSessionEvent(key: string, ev: FsChangeEvent): void {
-    const sw = this.bySession.get(key);
-    if (sw === undefined) return;
+  private onWatchEvent(sw: SessionWatch, ev: FsChangeEvent): void {
+    if (!this.bySession.has(sessionRuntimeKey(sw.id, sw.runtimeId))) return;
     for (const { conn, paths } of sw.conns.values()) {
       let changes: FsChangeEntry[];
       if (ev.truncated === true) {
@@ -389,15 +301,17 @@ export class FsWatchBridge {
   /** Lexical confinement + workspace-relative normalization (no `stat`). */
   private normalize(sw: SessionWatch, raw: string): string | undefined {
     if (raw === '' || raw === '/') return undefined;
-    if (sw.runtime.path.isAbsolute(raw)) return undefined;
+    if (isAbsolute(raw)) return undefined;
     if (raw.split(/[/\\]+/).some((s) => s === '..')) return undefined;
+    let absolute: string;
     try {
-      const absolute = sw.view.resolve(raw);
-      const relative = sw.runtime.path.relative(sw.view.workDir, absolute);
-      return relative === '' ? '.' : relative.split(sw.runtime.path.separator).join('/');
+      absolute = sw.workspace.resolve(raw);
     } catch {
       return undefined;
     }
+    if (!sw.workspace.isWithin(absolute)) return undefined;
+    const rel = relative(sw.workspace.workDir, absolute);
+    return rel === '' ? '.' : rel.split(sep).join('/');
   }
 
   private ok(sw: SessionWatch, conn: FsWatchConnection): FsWatchAck {
