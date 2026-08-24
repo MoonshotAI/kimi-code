@@ -93,7 +93,7 @@ async function cleanReview(reviewer: string, target: string): Promise<void> {
 describe('init', () => {
   it('creates the directory skeleton, state.json, and the git exclude entry', async () => {
     const result = await store.init();
-    expect(result).toEqual({ base: 'main', created: true, retiredAgents: [] });
+    expect(result).toEqual({ base: 'main', created: true, retiredAgents: [], checkout: 'main' });
 
     for (const sub of ['inbox', 'findings', 'reviews', 'missions', 'log']) {
       expect((await stat(join(repo, '.tower/comms', sub))).isDirectory()).toBe(true);
@@ -119,7 +119,7 @@ describe('init', () => {
     await store.plan([{ title: 'kept mission', scope: ['src/kept/**'] }]);
 
     const second = await store.init();
-    expect(second).toEqual({ base: 'main', created: false, retiredAgents: [] });
+    expect(second).toEqual({ base: 'main', created: false, retiredAgents: [], checkout: 'main' });
     const state = await store.load();
     expect(state.missions).toHaveLength(1);
   });
@@ -130,7 +130,7 @@ describe('init', () => {
 
     const second = await store.init('session-a');
 
-    expect(second).toEqual({ base: 'main', created: false, retiredAgents: [] });
+    expect(second).toEqual({ base: 'main', created: false, retiredAgents: [], checkout: 'main' });
     const state = await store.load();
     expect(state.roster.agents.map((agent) => agent.name)).toEqual(['agent-build']);
   });
@@ -147,6 +147,7 @@ describe('init', () => {
       base: 'main',
       created: false,
       retiredAgents: ['agent-build', 'reviewer-a'],
+      checkout: 'main',
     });
     const state = await store.load();
     expect(state.sessionId).toBe('session-b');
@@ -154,6 +155,59 @@ describe('init', () => {
     expect(state.missions).toHaveLength(1);
     const log = await store.recentLog(5);
     expect(log.some((line) => line.includes(' adopt ') && line.includes('session=session-b') && line.includes('previous=session-a') && line.includes('retired=agent-build,reviewer-a'))).toBe(true);
+  });
+
+  it('records an explicit local base branch instead of the checked-out one', async () => {
+    await git(repo, 'branch', 'develop');
+
+    const result = await store.init(undefined, 'develop');
+
+    expect(result).toEqual({ base: 'develop', created: true, retiredAgents: [], checkout: 'main' });
+    const state = await store.load();
+    expect(state.base).toBe('develop');
+  });
+
+  it('rejects a base that is not a local branch and stays uninitialized', async () => {
+    await expect(store.init(undefined, 'origin/main')).rejects.toThrow(
+      /base branch "origin\/main" does not exist as a local branch/,
+    );
+    await expect(store.init(undefined, 'no-such-branch')).rejects.toThrow(
+      /base branch "no-such-branch" does not exist as a local branch/,
+    );
+
+    expect(await store.isInitialized()).toBe(false);
+  });
+
+  it('allows a detached HEAD when the base is given explicitly', async () => {
+    await git(repo, 'checkout', '--detach', 'HEAD');
+
+    const result = await store.init(undefined, 'main');
+
+    expect(result).toEqual({ base: 'main', created: true, retiredAgents: [], checkout: 'HEAD' });
+  });
+
+  it('refuses a detached HEAD without an explicit base', async () => {
+    await git(repo, 'checkout', '--detach', 'HEAD');
+
+    await expect(store.init()).rejects.toThrow(/detached HEAD/);
+    expect(await store.isInitialized()).toBe(false);
+  });
+
+  it('ignores a conflicting base on re-init and keeps the recorded one', async () => {
+    await git(repo, 'branch', 'develop');
+    await store.init();
+
+    const second = await store.init(undefined, 'develop');
+
+    expect(second).toEqual({
+      base: 'main',
+      created: false,
+      retiredAgents: [],
+      checkout: 'main',
+      ignoredBase: 'develop',
+    });
+    const state = await store.load();
+    expect(state.base).toBe('main');
   });
 });
 

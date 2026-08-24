@@ -14,6 +14,7 @@ import {
   isInsideRepo,
   isWorktreeDirty,
   mergeNoFf,
+  tryGit,
   worktreeAdd,
   worktreeRemove,
 } from './git';
@@ -64,6 +65,16 @@ export interface TowerInitResult {
    * different session. Empty on creation and on same-session re-init.
    */
   readonly retiredAgents: readonly string[];
+  /**
+   * The branch checked out in the main worktree at init time ('HEAD' when
+   * detached). Merges stay blocked while this differs from `base`.
+   */
+  readonly checkout: string;
+  /**
+   * The base argument dropped because the existing workspace already records
+   * a different base — re-init never resets recorded state.
+   */
+  readonly ignoredBase?: string;
 }
 
 export interface TowerPlanInput {
@@ -147,7 +158,7 @@ export class TowerStore {
    * session's freshly issued `agent-N` ids), missions/worktrees survive, and
    * an `adopt` line marks the session boundary in the activity log.
    */
-  async init(sessionId?: string): Promise<TowerInitResult> {
+  async init(sessionId?: string, base?: string): Promise<TowerInitResult> {
     if (!(await isInsideRepo(this.repoRoot))) {
       throw new TowerProtocolError(
         'tower needs a git repository (the session working directory is not inside one)',
@@ -161,7 +172,31 @@ export class TowerStore {
     if (await this.isInitialized()) {
       const state = await this.load();
       const retiredAgents = await this.adoptForeignRoster(state, sessionId);
-      return { base: state.base, created: false, retiredAgents };
+      return {
+        base: state.base,
+        created: false,
+        retiredAgents,
+        checkout: await this.checkedOutBranch(),
+        ignoredBase: base !== undefined && base !== state.base ? base : undefined,
+      };
+    }
+
+    const checkout = await this.checkedOutBranch();
+    let resolvedBase: string;
+    if (base !== undefined) {
+      if (!(await branchExists(this.repoRoot, base))) {
+        throw new TowerProtocolError(
+          `base branch "${base}" does not exist as a local branch — merges land on a local branch, so remote-tracking refs and tags are not accepted; create a local branch first`,
+        );
+      }
+      resolvedBase = base;
+    } else {
+      if (checkout === 'HEAD') {
+        throw new TowerProtocolError(
+          'cannot determine the base branch from a detached HEAD — pass the base branch explicitly',
+        );
+      }
+      resolvedBase = checkout;
     }
 
     for (const dir of [INBOX_DIR, FINDINGS_DIR, REVIEWS_DIR, MISSIONS_DIR, LOG_DIR, WORKTREES_DIR]) {
@@ -169,10 +204,9 @@ export class TowerStore {
     }
     await this.ensureGitExclude();
 
-    const base = await currentBranch(this.repoRoot);
     const state: TowerState = {
       version: 1,
-      base,
+      base: resolvedBase,
       mode: 'branch',
       createdAt: new Date().toISOString(),
       sessionId,
@@ -182,8 +216,13 @@ export class TowerStore {
     await this.save(state);
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
-    await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
-    return { base, created: true, retiredAgents: [] };
+    await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base: resolvedBase }, MISSIONS_INDEX);
+    return { base: resolvedBase, created: true, retiredAgents: [], checkout };
+  }
+
+  /** Branch checked out in the main worktree, or 'HEAD' when detached. */
+  private async checkedOutBranch(): Promise<string> {
+    return (await tryGit(this.repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])) ?? 'HEAD';
   }
 
   /**
