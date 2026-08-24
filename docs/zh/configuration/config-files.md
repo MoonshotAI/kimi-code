@@ -242,7 +242,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 - 接受池中任意别名，或 `"primary"`——调用方自己正在运行的模型，始终合法，即使不在池中。
 - `default_model` 与 `models` 都未配置时该参数不存在，subagent 继承调用方模型。
-- 绑定池中别名时不继承调用方的 Thinking 档位，subagent 的档位按以下顺序解析：本节的 `default_effort`、所绑定模型条目的 `default_effort`、全局 `[thinking]` 配置、所绑定模型 `support_efforts` 的中间项。
+- 绑定池中别名时不继承调用方的 Thinking 档位。本节设置了 `default_effort` 时以它为准；否则，`[thinking].enabled = false` 会保持关闭 Thinking；开启 Thinking 时，再依次使用所绑定模型条目的 `default_effort`、全局 `[thinking].effort`、所绑定模型 `support_efforts` 的中间项。
 - `"primary"` 则连模型带档位一起继承调用方。
 - 传入的值既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
 

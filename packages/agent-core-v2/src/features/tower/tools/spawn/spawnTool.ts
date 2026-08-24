@@ -23,7 +23,6 @@ import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
-import { declaredDefaultEffortForModel } from '#/kosong/model/thinking';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   type ExecutableToolContext,
@@ -36,6 +35,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentBinding,
+  resolveSubagentThinking,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -285,7 +285,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         binding: {
           profile: TOWER_WORKER_PROFILE,
           model: binding?.model,
-          thinking: binding?.thinking ?? declaredDefaultEffortForModel(model),
+          thinking: resolveSubagentThinking(this.config, model, binding?.thinking),
         },
         labels: subagentLabels(this.callerAgentId),
       });
@@ -406,4 +406,3 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     );
   }
 }
-

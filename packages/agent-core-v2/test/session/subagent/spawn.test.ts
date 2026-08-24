@@ -331,6 +331,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           models: { 'provider/fast': 'fast model' },
           defaultEffort: 'max',
         },
+        thinking: { enabled: false },
       },
       true,
     );
@@ -388,6 +389,29 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
 
     expect(plan.thinking).toBe('max');
+  });
+
+  it('leaves thinking unset for global resolution when thinking is disabled', async () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    });
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast model' },
+        },
+        thinking: { enabled: false },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan.thinking).toBeUndefined();
   });
 
   it('leaves the subagent thinking unset when the bound model declares no valid default_effort', async () => {

@@ -242,7 +242,7 @@ Rules for the `model` parameter:
 
 - It accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when not in the pool.
 - When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model.
-- Binding a pool alias does not inherit the caller's thinking effort. The subagent's effort resolves in this order: the section's `default_effort`, the bound model entry's `default_effort`, the global `[thinking]` config, then the middle of the bound model's `support_efforts`.
+- Binding a pool alias does not inherit the caller's thinking effort. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
 - `"primary"` inherits both the model and the effort level from the caller.
 - A value that is neither a pool alias nor `"primary"` fails the spawn with an error listing the available choices.
 

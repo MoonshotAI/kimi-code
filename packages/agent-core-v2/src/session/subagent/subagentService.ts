@@ -25,7 +25,6 @@ import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { declaredDefaultEffortForModel } from '#/kosong/model/thinking';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
@@ -42,7 +41,11 @@ import {
   type RunAgentOptions,
 } from './subagent';
 import { runAgentTurn } from './runAgentTurn';
-import { resolveSubagentBinding, wrapSubagentModelError } from './configSection';
+import {
+  resolveSubagentBinding,
+  resolveSubagentThinking,
+  wrapSubagentModelError,
+} from './configSection';
 import {
   DEFAULT_PROFILE_NAME,
   FORK_CONTEXT_NOTICE,
@@ -143,7 +146,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     return {
       profileName: profile?.name ?? requestedProfileName,
       model: binding.model,
-      thinking: binding.thinking ?? declaredDefaultEffortForModel(model),
+      thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
     };
   }

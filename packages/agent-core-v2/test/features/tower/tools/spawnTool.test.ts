@@ -77,6 +77,7 @@ describe('TowerSpawnTool', () => {
   let completion: Deferred<{ readonly summary: string }>;
   let secondaryFlagOn: boolean;
   let secondaryModel: { readonly model: string; readonly defaultEffort?: string } | undefined;
+  let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
 
@@ -102,6 +103,7 @@ describe('TowerSpawnTool', () => {
     completion = deferred();
     secondaryFlagOn = false;
     secondaryModel = undefined;
+    thinkingEnabled = undefined;
     modelMeta = {};
     createdSetMode = vi.fn();
     createAgent = vi.fn(async () => stubAgentContext('agent-7', 1));
@@ -174,7 +176,11 @@ describe('TowerSpawnTool', () => {
     } as unknown as IAgentProfileService);
     ix.stub(IConfigService, {
       get: ((domain: string) =>
-        domain === SECONDARY_MODEL_SECTION ? secondaryModel : undefined) as IConfigService['get'],
+        domain === SECONDARY_MODEL_SECTION
+          ? secondaryModel
+          : domain === 'thinking' && thinkingEnabled !== undefined
+            ? { enabled: thinkingEnabled }
+            : undefined) as IConfigService['get'],
     });
     ix.stub(IFlagService, {
       enabled: (id: string) => id === SECONDARY_MODEL_FLAG_ID && secondaryFlagOn,
@@ -353,6 +359,25 @@ describe('TowerSpawnTool', () => {
     expect(result.isError).toBeUndefined();
     expect(createAgent).toHaveBeenCalledWith({
       binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: 'max' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('leaves thinking unset for global resolution when thinking is disabled', async () => {
+    secondaryFlagOn = true;
+    secondaryModel = { model: 'cheap/fast' };
+    thinkingEnabled = false;
+    modelMeta['cheap/fast'] = {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    };
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
       labels: { parentAgentId: 'main' },
     });
   });
