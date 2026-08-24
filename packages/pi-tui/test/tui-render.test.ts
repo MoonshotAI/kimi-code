@@ -1190,4 +1190,40 @@ describe("TUI above-viewport in-place changes", () => {
 		assert.ok(tui.fullRedraws > initialRedraws, "layout shift above the viewport must full-redraw");
 		tui.stop();
 	});
+
+	it("preserves the skipped-row marker across render-state capture/restore", async () => {
+		await withEnv({ TERMUX_VERSION: "1" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = makeLines(30);
+			tui.start();
+			await terminal.waitForRender();
+
+			// Take the skip path so a scrollback row is left stale.
+			const lines = makeLines(30);
+			lines[15] = "spinner frame 0";
+			component.lines = lines;
+			tui.requestRender();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			// Simulate an alt-screen round-trip between the skip and the resize.
+			const state = tui.captureRenderState();
+			tui.restoreRenderState(state);
+
+			terminal.resize(40, 24);
+			await terminal.waitForRender();
+
+			assert.ok(!terminal.getWrites().includes("\x1b[2J"), "must not clear the screen");
+			assert.ok(!terminal.getWrites().includes("\x1b[3J"), "must not clear scrollback");
+			const viewport = terminal.getViewport();
+			assert.ok(
+				viewport.join("\n").includes("spinner frame 0"),
+				"re-exposed stale row must be repainted even after a capture/restore round-trip",
+			);
+			tui.stop();
+		});
+	});
 });
