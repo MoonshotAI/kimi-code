@@ -1,6 +1,6 @@
 # 服务 API
 
-`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考。如何启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web) 参考；端到端的上手流程见 [本地服务与 API](../guides/server.md)。
+`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考。如何启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web) 参考；端到端的上手流程见 [本地服务与 API](../guides/server.md)。
 
 本页是一份经过整理、面向人阅读的参考：下文逐一记录每个端点的参数、请求体与响应结构。每个端点精确的机器可读 schema 以服务的在线规范文档为准：`GET /openapi.json`（OpenAPI）与 `GET /asyncapi.json`（AsyncAPI），两者都由服务运行时实际执行的校验 schema 生成。两者都需要鉴权；当本页与在线规范不一致时，以在线规范为准。
 
@@ -2039,6 +2039,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `GET /api/v2/sessions` | 新一代会话列表，见下文 |
 | `POST /api/v2/sessions:archive` | 批量归档会话，见下文 |
 | `POST /api/v2/sessions:restore` | 批量恢复已归档会话，见下文 |
+| `/api/v2/mcp/*` | 统一的 MCP 管理面，见下文 |
 | `/api/v1/debug/*` | 反射式调试 RPC，仅 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
 
 #### `POST /api/v1/search`
@@ -2136,6 +2137,108 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
   "request_id": "req_..."
 }
 ```
+
+### MCP 管理（`/api/v2/mcp`）
+
+`/api/v2/mcp/*` 路由是服务的统一 MCP 管理面：独立于任何会话，直接管理 MCP server 注册表本身——全局（用户级）CRUD 与逐条校验、连接测试探测、locator 寻址的检查目录、按 server 的授权状态列表，以及完整的 OAuth 流程生命周期。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v2/mcp/servers` | 列出所有已知 MCP server |
+| `GET /api/v2/mcp/servers/{name}` | 按运行时名称获取单个 server |
+| `POST /api/v2/mcp/servers` | 向用户级 `mcp.json` 添加 server |
+| `PUT /api/v2/mcp/servers/{name}` | 替换一个用户级条目 |
+| `DELETE /api/v2/mcp/servers/{name}` | 删除一个用户级条目 |
+| `POST /api/v2/mcp/servers:test` | 对单个 server 发起真实连接探测 |
+| `POST /api/v2/mcp/servers:inspect` | locator 寻址的目录及批量连接探测 |
+| `GET /api/v2/mcp/auth-statuses` | 目录中各 server 的 OAuth 状态 |
+| `POST /api/v2/mcp/auth:begin` | 开始一次交互式 OAuth 流程 |
+| `POST /api/v2/mcp/auth:complete` | 等待浏览器回调并完成 code 交换 |
+| `POST /api/v2/mcp/auth:cancel` | 终止已开始的 OAuth 流程 |
+| `POST /api/v2/mcp/auth:reset` | 清除某个 server 已存储的凭据 |
+
+该管理面有两种寻址方式。CRUD 路由与 `servers:test` 使用普通的运行时 `name`；检查与 OAuth 路由使用 **locator**——文件层条目用 `{ "source": "global", "name" }`，插件清单条目用 `{ "source": "plugin", "pluginId", "serverName" }`——因为插件条目和文件条目可能共用同一个运行时名称。检查条目还带有一个稳定的 `serverId` 线上标识：`global:<name>` 或 `plugin:<pluginId>:<serverName>`（URL 编码）。
+
+大多数路由接受可选的 `cwd`（查询参数，`:`-action 路由则为请求体字段）。不传时目录只覆盖用户级文件与插件清单；传入后，该目录的项目根层与项目本地层会并入——但仅当工作区受信任时，否则项目层会被跳过。对 stdio server 执行 `servers:test` 时，`cwd` 同时是子进程的工作目录。连接探测与 OAuth 调用会等待服务配置加载完成后再执行。
+
+#### `GET /api/v2/mcp/servers` 与 `GET /api/v2/mcp/servers/{name}`
+
+列出管理面已知的全部 MCP server；第二个路由返回该运行时名称对应的单个条目。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `name` | path | string | **必填（仅 get）。** server 的运行时名称 |
+| `cwd` | query | string | 并入该（受信任）目录的项目层 |
+
+成功时 `data` 是受管 server 数组（get 路由为单个对象），每项为 `{ name, config, source, origin, mutable, plugin? }`：
+
+- `source`：`global`（配置文件层）或 `plugin`（插件清单）
+- `origin`：条目的定义位置——文件路径或插件 id
+- `mutable`：只有用户级条目可变；插件与项目层条目均为只读
+- `config`：可变条目携带完整配置，便于编辑界面预填；只读条目被脱敏为排序后的键名列表（`envKeys` / `headerKeys`），绝不泄露密钥值
+- `plugin`：`{ id, name }`，仅插件条目携带
+
+- `40001`：校验失败
+- `40408`：不存在该名称的 server
+
+#### `POST` / `PUT` / `DELETE /api/v2/mcp/servers`
+
+针对用户级 `mcp.json` 的全局 CRUD。新增请求体是包含 `name` 的完整 server 配置——`transport`（`stdio` / `http` / `sse`）决定配置形状，每条配置写入前都会校验。更新请求体携带同样的配置但不含 `name`（由路径指定条目）；删除无请求体。三者都在 `data` 中返回刷新后的 server 列表。若写入与项目层的同名条目冲突，会因只读被拒绝——请改为编辑定义它的文件；与同名的插件条目冲突并不阻止写入，新的文件条目会将其遮蔽。
+
+- `40001`：校验失败，或目标条目为只读
+- `40408`：（更新/删除）不存在该名称的 server
+
+#### `POST /api/v2/mcp/servers:test`
+
+对单个 server 发起真实连接探测，不持久化任何内容。传 `name` 探测注册表条目（含插件与受信任的项目层），或传 `server`（包含 `name` 的完整内联配置）按原样探测；两者都传或都不传会报 `40001`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `name` | body | string | 注册表条目的运行时名称 |
+| `server` | body | object | 按原样探测的内联 server 配置 |
+| `cwd` | body | string | 项目层并入解析；同时是 stdio 的工作目录 |
+
+成功时 `data` 为 `{ success, output }`：连接成功时 `output` 列出该 server 的可用工具，否则携带失败信息。
+
+- `40001`：两种目标形式都传或都不传、内联配置无效，或运行时名称被多个启用的 server 共用
+- `40408`：不存在该名称的 server
+
+#### `POST /api/v2/mcp/servers:inspect`
+
+locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批量真实连接探测。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `targets` | body | array | 缩小目录范围的 locator 数组；不传则检查全部 server |
+| `cwd` | body | string | 并入该（受信任）目录的项目层 |
+
+成功时 `data` 是检查结果数组，每项为 `{ serverId, locator, runtimeName, canonicalUrl?, origin, config, enabled, editable, authStatus, checkedAt?, error? }`：`canonicalUrl` 是远程 server 的凭据 URL，`config` 为脱敏视图，`authStatus` 取值为 `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable` 之一。运行时名称被多个启用的 server 共用时无法无歧义地探测，会报告 `unavailable` 并在 `error` 中给出说明。探测遇到过期授权时，可能刷新或作废已存储的凭据。
+
+- `40001`：校验失败
+- `40408`：`targets` 中有 locator 未匹配到任何条目
+
+#### `GET /api/v2/mcp/auth-statuses`
+
+注册表目录中各 server 的 OAuth 状态——只需要授权维度时，这是比 `servers:inspect` 更轻量的选择。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `cwd` | query | string | 并入该（受信任）目录的项目层 |
+| `verify` | query | string | `true` 对每个 OAuth 候选发起真实连接验证；`false` 完全离线（仅凭配置与已存储 token 分类）；缺省保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程 server |
+
+成功时 `data` 是 `{ name, authStatus }` 数组，`authStatus` 取值与 `servers:inspect` 相同。验证探测可能刷新或作废已存储的凭据。
+
+#### `POST /api/v2/mcp/auth:begin` / `:complete` / `:cancel` / `:reset`
+
+远程 server 的 OAuth 流程生命周期。`auth:begin` 接受 locator 请求体（外加可选的 `cwd` 查询参数），返回 `data` 为 `{ status: "authorization-required", flowId, authorizationUrl }`——在浏览器中打开该 URL 完成授权——或当授权已存在时返回 `{ status: "already-authorized" }`。目标 server 必须使用远程传输（`http` / `sse`）且不含静态 bearer token；静态请求头仅当配置显式设置 `auth: "oauth"` 时允许。
+
+`auth:complete` 等待已开始流程的浏览器回调并完成 code 交换。请求体为 `{ flowId, timeoutMs? }`：等待默认 15 分钟（`timeoutMs` 可覆盖），空闲流程无论如何都会在 15 分钟后过期，关闭 HTTP 连接会中止等待。成功时 `data` 为 `null`。
+
+`auth:cancel` 在未完成的情况下终止已开始的流程（`{ flowId }`）；未知流程会被忽略。`auth:reset` 接受 locator 请求体，清除该 server 已存储的凭据——失效事件会送达存活的会话。
+
+- `40001`：校验失败——包括 `:complete` 的 `flowId` 未知，或 `:begin` 的 server 无法使用 OAuth（stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）
+- `40408`：（`:begin` / `:reset`）locator 未匹配到任何条目
+- `40929`：OAuth 流程本身失败
 
 ## WebSocket 协议
 
