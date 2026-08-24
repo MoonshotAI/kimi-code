@@ -11,6 +11,10 @@ function toProtocolRole(role: ContextMessage['role']): MessageRole {
   return role as MessageRole;
 }
 
+function isRenderableMediaUrl(url: string): boolean {
+  return /^(https?:|data:|blob:)/i.test(url);
+}
+
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
   switch (part.type) {
     case 'text':
@@ -23,19 +27,37 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
     }
     case 'image_url': {
       const ref = parseDaemonFileUrl(part.imageUrl.url);
-      return ref !== undefined
-        ? { type: 'image', source: { kind: 'session_media', file_id: ref.fileId } }
-        : { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } };
+      if (ref !== undefined) {
+        return { type: 'image', source: { kind: 'session_media', file_id: ref.fileId } };
+      }
+      return isRenderableMediaUrl(part.imageUrl.url)
+        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
+        : { type: 'text', text: `[image:${part.imageUrl.url}]` };
     }
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
     case 'video_url': {
       const ref = parseDaemonFileUrl(part.videoUrl.url);
-      return ref !== undefined
-        ? { type: 'video', source: { kind: 'session_media', file_id: ref.fileId } }
-        : { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } };
+      if (ref !== undefined) {
+        return { type: 'video', source: { kind: 'session_media', file_id: ref.fileId } };
+      }
+      return isRenderableMediaUrl(part.videoUrl.url)
+        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
+        : { type: 'text', text: `[video:${part.videoUrl.url}]` };
     }
   }
+}
+
+function sanitizeToolMediaPart(part: ContentPart): ContentPart {
+  if (part.type !== 'image_url' && part.type !== 'video_url' && part.type !== 'audio_url') {
+    return part;
+  }
+  if (daemonFileRefFromPart(part) !== undefined) return part;
+  const holder =
+    part.type === 'image_url' ? part.imageUrl : part.type === 'video_url' ? part.videoUrl : part.audioUrl;
+  if (isRenderableMediaUrl(holder.url)) return part;
+  const kind = part.type === 'image_url' ? 'image' : part.type === 'video_url' ? 'video' : 'audio';
+  return { type: 'text', text: `[${kind}:${holder.url}]` };
 }
 
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
@@ -47,7 +69,7 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
       (p) => p.type === 'image_url' || p.type === 'video_url' || p.type === 'audio_url',
     );
     const output: unknown = hasMediaPart
-      ? msg.content
+      ? msg.content.map((p) => sanitizeToolMediaPart(p))
       : msg.content.map((p) => (p.type === 'text' ? p.text : '')).join('');
     const part: MessageContent =
       msg.isError === true

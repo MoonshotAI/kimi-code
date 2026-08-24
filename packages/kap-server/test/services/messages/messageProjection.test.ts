@@ -108,7 +108,7 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
-  it('projects a provider video url to a structured url source carrying its id', () => {
+  it('degrades a provider video url to a text placeholder instead of leaking the scheme', () => {
     const msg: ContextMessage = {
       role: 'user',
       content: [{ type: 'video_url', videoUrl: { url: 'ms://prov-7', id: 'prov-7' } }],
@@ -116,7 +116,19 @@ describe('toProtocolMessage', () => {
     };
 
     expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'video', source: { kind: 'url', url: 'ms://prov-7', id: 'prov-7' } },
+      { type: 'text', text: '[video:ms://prov-7]' },
+    ]);
+  });
+
+  it('degrades a non-renderable image url scheme to a text placeholder', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: 'ms://prov-9', id: 'prov-9' } }],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '[image:ms://prov-9]' },
     ]);
   });
 
@@ -164,6 +176,48 @@ describe('toProtocolMessage', () => {
 
     expect(toProtocolMessage(SESSION_ID, 0, result, 0).content).toEqual([
       { type: 'tool_result', tool_call_id: 'call_media', output: result.content },
+    ]);
+  });
+
+  it('keeps daemon-ref media parts raw in the tool_result output', () => {
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'text', text: '<video path="/tmp/clip.mp4">' },
+        { type: 'video_url', videoUrl: { url: 'kimi-file://f_abc', id: 'f_abc' } },
+        { type: 'text', text: '</video>' },
+      ],
+      toolCalls: [],
+      toolCallId: 'call_video',
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, result, 0).content).toEqual([
+      { type: 'tool_result', tool_call_id: 'call_video', output: result.content },
+    ]);
+  });
+
+  it('replaces non-renderable media url schemes in the tool_result output with text', () => {
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'text', text: '<video path="/tmp/clip.mp4">' },
+        { type: 'video_url', videoUrl: { url: 'ms://prov-7', id: 'prov-7' } },
+        { type: 'text', text: '</video>' },
+      ],
+      toolCalls: [],
+      toolCallId: 'call_video',
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, result, 0).content).toEqual([
+      {
+        type: 'tool_result',
+        tool_call_id: 'call_video',
+        output: [
+          { type: 'text', text: '<video path="/tmp/clip.mp4">' },
+          { type: 'text', text: '[video:ms://prov-7]' },
+          { type: 'text', text: '</video>' },
+        ],
+      },
     ]);
   });
 

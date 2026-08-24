@@ -3,11 +3,15 @@ import type { ContentPart } from '#/kosong/contract/message';
 import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { Readable } from 'node:stream';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IFileService } from '#/app/file/fileService';
+import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   ToolAccesses,
   type AgentTool,
@@ -172,6 +176,11 @@ function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boo
   return isVideoUploadAuthError(error);
 }
 
+export interface ReadMediaSessionMediaDeps {
+  readonly files: IFileService;
+  readonly mediaStore: ISessionMediaStore;
+}
+
 export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   declare readonly _serviceBrand: undefined;
   readonly name = 'ReadMediaFile' as const;
@@ -186,6 +195,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     private readonly videoUploader?: VideoUploader,
     telemetry?: ITelemetryService,
     inlineVideoSupported?: boolean,
+    private readonly sessionMedia?: ReadMediaSessionMediaDeps,
   ) {
     this.description = buildDescription(capabilities);
     this.compressTelemetry =
@@ -198,6 +208,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     mimeType: string,
     safePath: string,
   ): Promise<ContentPart> {
+    const daemonPart = await this.daemonVideoPart(data, mimeType, safePath);
+    if (daemonPart !== undefined) return daemonPart;
     if (this.videoUploader !== undefined) {
       try {
         return await this.videoUploader({
@@ -210,6 +222,30 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       }
     }
     return inlineVideoPart(data, mimeType);
+  }
+
+  private async daemonVideoPart(
+    data: Buffer,
+    mimeType: string,
+    safePath: string,
+  ): Promise<ContentPart | undefined> {
+    const deps = this.sessionMedia;
+    if (deps === undefined) return undefined;
+    const name = safePath.split(/[\\/]/).at(-1) ?? 'video';
+    try {
+      const meta = await deps.files.save(Readable.from(data), name, { mimeType });
+      const fileId = await deps.mediaStore.materialize({
+        fileId: meta.id,
+        size: data.length,
+        name,
+        mimeType,
+        stream: () => Readable.from(data),
+      });
+      if (fileId === undefined) return undefined;
+      return { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(meta.id), id: meta.id } };
+    } catch {
+      return undefined;
+    }
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {

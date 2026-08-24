@@ -7,7 +7,7 @@ import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
+import { ReadMediaFileTool, type ReadMediaSessionMediaDeps } from '#/agent/tools/read-media-file/readMediaFileTool';
 import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
 
 export interface RegisterMediaToolsDeps {
@@ -17,6 +17,7 @@ export interface RegisterMediaToolsDeps {
   readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
   readonly inlineVideoSupported?: boolean;
+  readonly sessionMedia?: ReadMediaSessionMediaDeps;
 }
 
 export function registerMediaTools(
@@ -37,6 +38,7 @@ export function registerMediaTools(
       deps.videoUploader,
       deps.telemetry,
       deps.inlineVideoSupported,
+      deps.sessionMedia,
     ),
   );
 }

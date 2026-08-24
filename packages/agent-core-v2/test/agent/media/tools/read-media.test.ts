@@ -16,12 +16,17 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
+import type { IFileService } from '#/app/file/fileService';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   ReadMediaFileInputSchema,
   type ReadMediaFileInput,
   type VideoUploader,
 } from '#/agent/tools/read-media-file/read-media-file';
-import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
+import {
+  ReadMediaFileTool,
+  type ReadMediaSessionMediaDeps,
+} from '#/agent/tools/read-media-file/readMediaFileTool';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
@@ -196,12 +201,41 @@ function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()
   };
 }
 
+function stubSessionMedia(options?: { failMaterialize?: boolean }): ReadMediaSessionMediaDeps {
+  const files: IFileService = {
+    _serviceBrand: undefined,
+    save: async (_source, filename) => ({
+      id: 'f_test-video',
+      name: filename,
+      media_type: 'video/mp4',
+      size: 0,
+      created_at: new Date(0).toISOString(),
+    }),
+    get: async () => {
+      throw new Error('not implemented');
+    },
+    delete: async () => {},
+  };
+  const mediaStore: ISessionMediaStore = {
+    _serviceBrand: undefined,
+    pathFor: () => undefined,
+    resolveDisplayPath: async () => undefined,
+    read: async () => undefined,
+    open: async () => undefined,
+    materialize: vi.fn(async () =>
+      options?.failMaterialize === true ? undefined : '/session/media/f_test-video.mp4',
+    ),
+  };
+  return { files, mediaStore };
+}
+
 function makeTool(
   files: Record<string, FakeFile>,
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
   telemetry?: ITelemetryService,
   inlineVideoSupported?: boolean,
+  sessionMedia?: ReadMediaSessionMediaDeps,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
     runtimeFor(createTestFs(files)),
@@ -210,6 +244,7 @@ function makeTool(
     videoUploader,
     telemetry,
     inlineVideoSupported,
+    sessionMedia,
   );
 }
 
@@ -714,6 +749,53 @@ describe('ReadMediaFileTool', () => {
     expect(parts[1]).toEqual(uploadResult);
   });
 
+  it('returns a daemon file reference when the session media store is available', async () => {
+    const videoUploader = vi.fn<VideoUploader>();
+    const sessionMedia = stubSessionMedia();
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: 'kimi-file://f_test-video', id: 'f_test-video' },
+    });
+    expect(sessionMedia.mediaStore.materialize).toHaveBeenCalledOnce();
+    expect(videoUploader).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the video uploader when session media materialization fails', async () => {
+    const uploadResult = {
+      type: 'video_url' as const,
+      videoUrl: { url: 'https://example.com/uploaded.mp4' },
+    };
+    const videoUploader = vi.fn<VideoUploader>().mockResolvedValue(uploadResult);
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        undefined,
+        stubSessionMedia({ failMaterialize: true }),
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(videoUploader).toHaveBeenCalledOnce();
+    expect(parts[1]).toEqual(uploadResult);
+  });
+
   it('falls back to an inline base64 video part when the upload fails', async () => {
     const videoUploader = vi.fn<VideoUploader>().mockRejectedValue(new Error('404 route not found'));
     const result = await execute(
@@ -903,6 +985,8 @@ describe('AgentMediaToolsRegistrar', () => {
       workspaceCtx,
       recordingTelemetry([]),
       new AgentStateService(),
+      stubSessionMedia().files,
+      stubSessionMedia().mediaStore,
     );
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;

@@ -7,7 +7,7 @@ export interface SecurityHeadersOptions {
 
 const HSTS_VALUE = 'max-age=31536000';
 const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
+  "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
 
 /**
  * Build the `onSend` hook. Returns the payload unchanged so Fastify continues
