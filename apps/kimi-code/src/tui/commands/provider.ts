@@ -95,7 +95,6 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
     // to the marker/default profile, not the logged-out region.
     refreshKimiRegion();
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
     return;
   }
 
@@ -104,7 +103,6 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
   const config = await host.harness.removeProvider(providerId);
   if (activeProvider === providerId) {
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     host.setAppState({
       availableProviders: config.providers ?? {},

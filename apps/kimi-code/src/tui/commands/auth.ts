@@ -241,7 +241,6 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
 
   if (target === currentProvider) {
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     const updated = await host.harness.getConfig({ reload: true });
     host.setAppState({
