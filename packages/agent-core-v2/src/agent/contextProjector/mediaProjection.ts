@@ -8,20 +8,20 @@ export const MEDIA_DEGRADE_KEEP_RECENT = 2;
 
 const MEDIA_DEGRADED_PLACEHOLDERS = {
   image_url:
-    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    '[An image attached to an earlier message was removed to fit the provider request size limit. You have NOT seen this image — do not describe or guess its contents. If it matters, ask the user to re-send it or to point you at the file so you can read it with ReadMediaFile.]',
   audio_url:
-    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
+    '[An audio clip attached to an earlier message was removed to fit the provider request size limit. You have NOT heard it — do not describe or guess its contents.]',
   video_url:
-    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    '[A video attached to an earlier message was removed to fit the provider request size limit. You have NOT seen it — do not describe or guess its contents.]',
 } as const;
 
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
   image_url:
-    '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
+    '[An image attached to this message was removed before sending because the provider could not accept it (unsupported or unreadable image data). You have NOT seen this image — do not describe or guess its contents. Tell the user the image failed to reach you and suggest re-sending it as PNG or JPEG.]',
   audio_url:
-    '[audio omitted for provider compatibility; re-read the file to hear it]',
+    '[An audio clip attached to this message was removed before sending because the provider could not accept it. You have NOT heard it — do not describe or guess its contents.]',
   video_url:
-    '[video omitted for provider compatibility; re-read the file to view it]',
+    '[A video attached to this message was removed before sending because the provider could not accept it. You have NOT seen it — do not describe or guess its contents.]',
 } as const;
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;

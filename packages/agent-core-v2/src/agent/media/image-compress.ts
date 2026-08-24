@@ -2,17 +2,13 @@ import type { ContentPart } from '#/kosong/contract/message';
 
 import { sniffImageDimensions } from './file-type';
 import {
-  buildMalformedImageNotice,
-  buildUnsupportedImageNotice,
-  decodeBase64Prefix,
-  isDataUrl,
-  isModelAcceptedImageMime,
+  gateImageFormatParts,
   normalizeImageMime,
   parseImageDataUrl,
-  resolveEffectiveImageMime,
-  unsupportedImageMimeFromUrl,
 } from './image-format-policy';
 import { decodeWebp, isAnimatedWebp } from './webp-decode';
+
+export { gateImageFormatParts };
 
 export const MAX_IMAGE_EDGE_PX = 2000;
 
@@ -278,46 +274,6 @@ export async function compressBase64ForModel(
 export interface CompressedContentParts {
   readonly parts: ContentPart[];
   readonly captions: readonly string[];
-}
-
-export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
-  const out: ContentPart[] = [];
-  for (const part of parts) {
-    if (part.type === 'image_url') {
-      const parsed = parseImageDataUrl(part.imageUrl.url);
-      if (parsed === null) {
-        if (isDataUrl(part.imageUrl.url)) {
-          out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
-          continue;
-        }
-        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
-        if (extMime !== null) {
-          out.push({
-            type: 'text',
-            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
-          });
-          continue;
-        }
-        out.push(part);
-        continue;
-      }
-      const effectiveMime = resolveEffectiveImageMime(
-        parsed.mimeType,
-        decodeBase64Prefix(parsed.base64),
-      );
-      if (!isModelAcceptedImageMime(effectiveMime)) {
-        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
-        continue;
-      }
-      const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
-      if (part.imageUrl.url !== canonicalUrl) {
-        out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
-        continue;
-      }
-    }
-    out.push(part);
-  }
-  return out;
 }
 
 export async function compressImageContentParts(

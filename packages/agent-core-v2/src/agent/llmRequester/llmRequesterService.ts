@@ -461,6 +461,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (signal?.aborted === true) return undefined;
     const raw = unwrapErrorCause(error);
     const media = policy?.media;
+    // Strip is the last-resort recovery: when it fires, the provider never saw
+    // any of the images, so the warn carries the rejection's status/message
+    // (the classification chain swallows both).
+    const reportMediaStripped = (message: string): void => {
+      const statusCode = raw instanceof APIStatusError ? raw.statusCode : undefined;
+      const errorMessage = (raw instanceof Error ? raw.message : String(raw)).slice(0, 300);
+      this.log.warn(message, {
+        model: request.model.name,
+        statusCode,
+        errorMessage,
+        ...request.logFields,
+      });
+    };
     if (
       raw instanceof APIRequestTooLargeError &&
       (media === undefined || media === 'degraded')
@@ -474,23 +487,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
         return { ...policy, media: 'degraded' };
       }
-      this.log.warn(
+      reportMediaStripped(
         'provider rejected degraded-media request as too large; resending with rejected media stripped',
-        {
-          model: request.model.name,
-          ...request.logFields,
-        },
       );
       return { ...policy, media: captureMediaStripPolicy() };
     }
     if (typeof media !== 'object' && isImageFormatError(raw)) {
       signal?.throwIfAborted();
-      this.log.warn(
+      reportMediaStripped(
         'provider rejected an image in the request; resending with rejected media stripped',
-        {
-          model: request.model.name,
-          ...request.logFields,
-        },
       );
       return { ...policy, media: captureMediaStripPolicy() };
     }
