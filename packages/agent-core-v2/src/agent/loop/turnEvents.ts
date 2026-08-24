@@ -71,6 +71,10 @@ export function turnPromptAttachments(
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
   if (origin.kind === 'user') return true;
+  // Goal continuations surface as a visible prompt bubble in chat UIs (like a
+  // cron fire), so the prompt text must travel with turn.started for the live
+  // view to render it — history already carries it on the persisted message.
+  if (origin.kind === 'system_trigger') return origin.name === 'goal_continuation';
   return (
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
