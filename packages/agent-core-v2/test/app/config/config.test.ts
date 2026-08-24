@@ -1814,7 +1814,7 @@ describe('subagent config section', () => {
     });
     expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/fast',
-      thinking: undefined,
+      thinking: 'low',
     });
     expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
@@ -1890,6 +1890,25 @@ describe('subagent config section', () => {
     const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
     expect(after?.defaultEffort).toBe('low');
     expect(after?.maxOutputSize).toBe(8192);
+
+    disposables.dispose();
+  });
+
+  it('binds [secondary_model].default_effort as the subagent thinking', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\ndefault_effort = "max"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: 'max',
+    });
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
 
     disposables.dispose();
   });

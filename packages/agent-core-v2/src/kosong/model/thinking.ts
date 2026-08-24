@@ -125,6 +125,15 @@ export function defaultThinkingEffortForModel(
   return 'on';
 }
 
+export function declaredDefaultEffortForModel(
+  model: ModelThinkingMetadata | undefined,
+): ThinkingEffort | undefined {
+  if (!modelSupportsThinking(model)) return undefined;
+  const declared = nonEmpty(model?.defaultEffort);
+  if (declared === undefined) return undefined;
+  return effortsFor(model).includes(declared) ? (declared as ThinkingEffort) : undefined;
+}
+
 export function modelSupportsThinkingEffort(
   effort: ThinkingEffort,
   model: ModelThinkingMetadata | undefined,

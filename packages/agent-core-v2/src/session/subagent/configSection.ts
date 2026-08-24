@@ -240,7 +240,7 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: forcedModel };
+    return { model: forcedModel, thinking: section.defaultEffort };
   }
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     return { model: own.modelAlias, thinking: own.thinkingLevel };
@@ -279,7 +279,7 @@ export function resolveSubagentBinding(
       { details: { model: choice, availableModels: available } },
     );
   }
-  return { model: choice };
+  return { model: choice, thinking: section?.defaultEffort };
 }
 
 export function buildSubagentModelDescriptions(
