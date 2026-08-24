@@ -241,8 +241,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
     process.exit(1);
   };
-  process.on('unhandledRejection', onUnhandledRejection);
-  process.on('uncaughtException', onUncaughtException);
   const authFailureLimiter =
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
@@ -639,6 +637,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       'provider-model catalog auto-refresh failed to start',
     );
   });
+
+  process.on('unhandledRejection', onUnhandledRejection);
+  process.on('uncaughtException', onUncaughtException);
 
   return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
 }
