@@ -222,6 +222,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     eventBus?.activateAgent(agent);
     let managed: ManagedAgent | undefined;
     let didCreate = false;
+    let finalizerArmed = false;
     try {
       const handle = createScopedChildHandle(
         this.instantiation,
@@ -240,6 +241,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             container.anchorKernelFinalizer(() => {
               eventBus?.deactivateAgent(agent);
             }, 'agent-event-bus-deactivate');
+            finalizerArmed = true;
             this.adopt({
               id: agentId,
               kind: LifecycleScope.Agent,
@@ -280,7 +282,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
           managed.handle.dispose();
         } catch { }
       }
-      eventBus?.deactivateAgent(agent);
+      if (!finalizerArmed) eventBus?.deactivateAgent(agent);
       if (didCreate) this.onDidCloseEmitter.fire(agent);
       throw error;
     }

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
+import { IInstantiationService } from '#/_base/di/instantiation';
+import { InstantiationService } from '#/_base/di/instantiationService';
 import { LifecycleScope } from '#/app/scopes';
 import { type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -547,27 +549,17 @@ describe('AgentLifecycleService', () => {
     }
   });
 
-  it('remove deactivates after scope-units contributed units are torn down', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    const bus = ix.get(ISessionEventBus);
-    const seen: string[] = [];
-    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
-
+  function contributeDisposeBeacon(
+    dispose: (eventBus: ISessionEventBus, scope: IAgentScopeContext) => void | Promise<void>,
+  ): void {
     class DisposeBeacon {
       constructor(
         @ISessionEventBus private readonly eventBus: ISessionEventBus,
         @IAgentScopeContext private readonly scope: IAgentScopeContext,
       ) {}
 
-      dispose(): void {
-        this.eventBus.publish(
-          new AgentActivityUpdated({
-            lifecycle: 'disposed',
-            background: [],
-            agentId: this.scope.agentId,
-          }),
-          this.scope.agentContext,
-        );
+      dispose(): void | Promise<void> {
+        return dispose(this.eventBus, this.scope);
       }
     }
 
@@ -577,6 +569,26 @@ describe('AgentLifecycleService', () => {
       new Ledger('test'),
       DisposeBeacon,
     );
+  }
+
+  function publishDisposed(eventBus: ISessionEventBus, scope: IAgentScopeContext): void {
+    eventBus.publish(
+      new AgentActivityUpdated({
+        lifecycle: 'disposed',
+        background: [],
+        agentId: scope.agentId,
+      }),
+      scope.agentContext,
+    );
+  }
+
+  it('remove deactivates after scope-units contributed units are torn down', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const bus = ix.get(ISessionEventBus);
+    const seen: string[] = [];
+    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+
+    contributeDisposeBeacon(publishDisposed);
 
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
@@ -586,6 +598,52 @@ describe('AgentLifecycleService', () => {
     try {
       const main = await svc.create({ agentId: 'main' });
       await svc.remove(main);
+      expect(seen).toEqual(['disposed']);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('create failure after scope creation keeps the context active through async teardown', async () => {
+    registerAgent.mockRejectedValueOnce(new Error('boom'));
+    const svc = ix.get(IAgentLifecycleService);
+    const bus = ix.get(ISessionEventBus);
+    const seen: string[] = [];
+    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+
+    class GatedBeacon {
+      constructor(
+        @ISessionEventBus private readonly eventBus: ISessionEventBus,
+        @IAgentScopeContext private readonly scope: IAgentScopeContext,
+        @IInstantiationService instantiation: IInstantiationService,
+      ) {
+        (instantiation as InstantiationService).anchorKernelEntry(
+          () => new Promise<void>((resolve) => setTimeout(resolve, 20)),
+          'beacon-gate',
+        );
+      }
+
+      dispose(): void {
+        publishDisposed(this.eventBus, this.scope);
+      }
+    }
+
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
+      'test',
+      new Ledger('test'),
+      GatedBeacon,
+    );
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(svc.create({ agentId: 'main' })).rejects.toThrow('boom');
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(seen).toEqual(['disposed']);
       expect(unhandled).toEqual([]);
     } finally {
