@@ -942,6 +942,8 @@ export class AgentTranscriptProjector {
       usage: prev?.usage,
       error: prev?.error,
       stateReason: prev?.stateReason,
+      model: prev?.model,
+      thinkingEffort: prev?.thinkingEffort,
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     if (event.type === 'task.started') {
@@ -1347,11 +1349,12 @@ export class AgentTranscriptProjector {
   }
 
   private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {
-    const prompt = this.upsertPrompt(event.promptId, () => ({
+    const prompt = this.upsertPrompt(event.promptId, (prev) => ({
       promptId: event.promptId,
       status: 'queued',
+      userMessageId: prev?.userMessageId,
       content: projectPromptContentParts(event.content),
-      createdAt: nowIso(),
+      createdAt: prev?.createdAt ?? nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
   }
