@@ -533,6 +533,25 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     });
   });
 
+  it("keeps an xhigh pick session-only when the default comes from the Anthropic profile inference", async () => {
+    // claude-opus-4-7 declares no efforts; the profile inference supplies
+    // [low, medium, high, xhigh, max] and resolves the default to "high".
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "custom/claude",
+      models: { "custom/claude": { provider: "custom", model: "claude-opus-4-7" } },
+    } as never);
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "custom/claude", thinking: true, effort: "xhigh" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "custom/claude",
+      thinking: { enabled: true },
+    });
+  });
+
   it("persists the concrete effort when the model's levels are unknown", async () => {
     host.harness.getConfig.mockResolvedValue({ defaultModel: "other/model", models: {} });
 

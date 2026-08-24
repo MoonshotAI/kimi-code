@@ -79,6 +79,27 @@ describe('thinkingEffortToConfig', () => {
       }),
     ).toEqual({ enabled: true });
   });
+
+  it.each([
+    ['low', { enabled: true, effort: 'low' }],
+    ['medium', { enabled: true, effort: 'medium' }],
+    ['high', { enabled: true, effort: 'high' }],
+    // Above the effective default: session-only.
+    ['xhigh', { enabled: true }],
+    ['max', { enabled: true }],
+  ] as const)(
+    // The shape the Anthropic profile inference hands the gate for the
+    // latest Claude models: five tiers with the default resolved to 'high'.
+    'maps %s → %o for [low, medium, high, xhigh, max] with default high',
+    (effort, expected) => {
+      expect(
+        thinkingEffortToConfig(effort, {
+          supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          defaultEffort: 'high',
+        }),
+      ).toEqual(expected);
+    },
+  );
 });
 
 describe('isThinkingOn', () => {

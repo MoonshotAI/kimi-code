@@ -11,14 +11,18 @@ export function isThinkingOn(effort: ThinkingEffort): boolean {
  * on-signal rather than a declared effort, so it only persists `enabled` —
  * boolean models resolve back to `'on'` at runtime via
  * `defaultThinkingEffortFor`. A concrete effort persists as the global
- * default, EXCEPT when it ranks above the model's own default effort:
- * `support_efforts` is ordered by strength (the same assumption the
- * `middleOf` default-effort resolution makes), and a pick more expensive
- * than the delivered `default_effort` stays session-only and records just
- * `enabled`, so it never becomes the global default for every new session.
- * When the model declares no default effort, its highest declared level
- * stays session-only (the historical rule). Undeclared values persist
- * as-is — the configured provider validates them.
+ * default, EXCEPT when it ranks above the model's effective default
+ * effort: `support_efforts` is ordered by strength (the same assumption
+ * the `middleOf` default-effort resolution makes), and a pick more
+ * expensive than the default stays session-only and records just
+ * `enabled`, so it never becomes the global default for every new
+ * session. The default here is the effective model's, however it arose —
+ * declared via the catalog or `[models.*.overrides]`, or synthesized by
+ * the protocol-profile inference (`withAnthropicProfile` resolves Claude
+ * models to 'high', so an 'xhigh' pick stays session-only there). When
+ * the effective model carries no default effort at all, its highest
+ * declared level stays session-only (the historical rule). Undeclared
+ * values persist as-is — the configured provider validates them.
  */
 export function thinkingEffortToConfig(
   effort: ThinkingEffort,

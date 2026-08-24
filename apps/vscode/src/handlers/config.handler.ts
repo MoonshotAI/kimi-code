@@ -160,13 +160,16 @@ function sessionConfigEffort(config: SessionConfig): ThinkingEffort {
  * config.toml — mirrors the TUI's thinkingEffortToConfig. "off" disables
  * thinking; "on" is the boolean-model on-signal, so it only persists
  * `enabled`. A concrete effort persists as the global default, EXCEPT when it
- * ranks above the model's own default effort: `support_efforts` is ordered by
- * strength, and a pick more expensive than the delivered `default_effort`
- * stays session-only and records just `enabled`, so it never becomes the
- * global default for every new session. When the model declares no default
- * effort, its highest declared level stays session-only (the historical
- * rule). When the model's levels are unknown the concrete effort is
- * persisted as-is.
+ * ranks above the model's effective default effort: `support_efforts` is
+ * ordered by strength, and a pick more expensive than the default stays
+ * session-only and records just `enabled`, so it never becomes the global
+ * default for every new session. The default here is the effective model's,
+ * however it arose — declared via the catalog or overrides, or synthesized
+ * by the protocol-profile inference (`withAnthropicProfile` resolves Claude
+ * models to "high", so an "xhigh" pick stays session-only there). When the
+ * effective model carries no default effort at all, its highest declared
+ * level stays session-only (the historical rule). When the model's levels
+ * are unknown the concrete effort is persisted as-is.
  */
 function thinkingConfig(
   effort: ThinkingEffort,
