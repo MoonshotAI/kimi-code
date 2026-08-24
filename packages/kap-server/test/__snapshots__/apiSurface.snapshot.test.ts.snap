@@ -346,6 +346,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/fs:suggest",
+    ],
+    [
+      "POST",
       "/api/v1/gui/store/clear",
     ],
     [
