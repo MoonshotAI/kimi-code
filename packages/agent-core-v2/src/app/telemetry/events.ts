@@ -325,6 +325,16 @@ export interface ToolCallRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallTurnRepeatEvent {
+  turn_id?: number;
+  step_no: number;
+  tool_call_id: string;
+  tool_name: string;
+  turn_repeat_count: number;
+  args_hash: string;
+  trace_id?: string;
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -826,6 +836,20 @@ export const telemetryEventDefinitions = {
       tool_name: 'Registered tool name',
       repeat_count: 'Length of the repeat streak',
       action: 'Intervention action taken',
+      trace_id:
+        'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
+    },
+  }),
+  tool_call_turn_repeat: defineAgentTelemetryEvent<ToolCallTurnRepeatEvent>({
+    owner: 'kimi-code',
+    comment: 'A tool call reappears within the same turn.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      step_no: 'Step index within the turn',
+      tool_call_id: 'Provider-assigned tool call id',
+      tool_name: 'Registered tool name',
+      turn_repeat_count: 'Number of prior-step tool-call reappearances counted in the turn',
+      args_hash: 'Hash of the tool call arguments',
       trace_id:
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },

@@ -5,7 +5,11 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
-import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
+import type {
+  ToolCallDedupDetectedEvent,
+  ToolCallRepeatEvent,
+  ToolCallTurnRepeatEvent,
+} from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
@@ -75,6 +79,11 @@ interface CheckedToolCall {
   readonly syntheticResult: ToolDedupeResult | null;
 }
 
+interface TurnCallRecord {
+  count: number;
+  lastStep: number;
+}
+
 function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
   const output = result.output;
   let newOutput: string | ContentPart[];
@@ -128,6 +137,14 @@ export const toolDedupeActiveTurnIdKey = defineState<number | undefined>(
   () => undefined as number | undefined,
 );
 export const toolDedupeActiveStepKey = defineState<number>('toolDedupe.activeStep', () => 0);
+export const toolDedupeTurnCallRecordsKey = defineState<Map<string, TurnCallRecord>>(
+  'toolDedupe.turnCallRecords',
+  () => new Map(),
+);
+export const toolDedupeTurnRepeatCountKey = defineState<number>(
+  'toolDedupe.turnRepeatCount',
+  () => 0,
+);
 
 export class AgentToolDedupeService extends Service implements IAgentToolDedupeService {
   declare readonly _serviceBrand: undefined;
@@ -148,6 +165,8 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.contributeState(toolDedupeConsecutiveCountKey);
     this.states.contributeState(toolDedupeActiveTurnIdKey);
     this.states.contributeState(toolDedupeActiveStepKey);
+    this.states.contributeState(toolDedupeTurnCallRecordsKey);
+    this.states.contributeState(toolDedupeTurnRepeatCountKey);
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();
@@ -241,11 +260,25 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.set(toolDedupeActiveStepKey, value);
   }
 
+  private get turnCallRecords(): Map<string, TurnCallRecord> {
+    return this.states.get(toolDedupeTurnCallRecordsKey);
+  }
+
+  private get turnRepeatCount(): number {
+    return this.states.get(toolDedupeTurnRepeatCountKey);
+  }
+
+  private set turnRepeatCount(value: number) {
+    this.states.set(toolDedupeTurnRepeatCountKey, value);
+  }
+
   private beginStep(turnId?: number, step?: number): void {
     if (turnId !== undefined && turnId !== this.activeTurnId) {
       this.activeTurnId = turnId;
       this.consecutiveKey = null;
       this.consecutiveCount = 0;
+      this.turnCallRecords.clear();
+      this.turnRepeatCount = 0;
     }
     if (step !== undefined) {
       this.activeStep = step;
@@ -275,6 +308,35 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     }
   }
 
+  private recordTurnRepeat(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    key: string,
+    trace: LLMRequestTrace | undefined,
+  ): void {
+    const record = this.turnCallRecords.get(key);
+    if (record === undefined) {
+      this.turnCallRecords.set(key, { count: 0, lastStep: this.activeStep });
+      return;
+    }
+    if (record.lastStep === this.activeStep) return;
+
+    record.count += 1;
+    record.lastStep = this.activeStep;
+    this.turnRepeatCount += 1;
+    const properties: ToolCallTurnRepeatEvent = {
+      turn_id: this.activeTurnId,
+      step_no: this.activeStep,
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      turn_repeat_count: this.turnRepeatCount,
+      args_hash: argsHash(args),
+      trace_id: trace?.traceId,
+    };
+    this.telemetry.track2('tool_call_turn_repeat', properties);
+  }
+
   private checkToolCall(
     toolCallId: string,
     toolName: string,
@@ -292,6 +354,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
       this.recordDupType(toolCallId, toolName, args, 'same_step', trace);
       return { syntheticResult: DEDUPE_PLACEHOLDER_RESULT };
     }
+    this.recordTurnRepeat(toolCallId, toolName, args, key, trace);
     this.stepDeferreds.set(key, makeDeferred<ToolDedupeResult>());
     this.originalCallIndex.set(toolCallId, index);
     if (this.consecutiveKey === key && this.consecutiveCount > 0) {

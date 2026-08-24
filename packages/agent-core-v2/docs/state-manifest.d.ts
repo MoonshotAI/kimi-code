@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 78 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 80 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -118,6 +118,8 @@
 //     toolDedupe.originalCallIndex                    src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.stepCalls                            src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.syntheticCallIds                     src/agent/toolDedupe/toolDedupeService.ts
+//     toolDedupe.turnCallRecords                      src/agent/toolDedupe/toolDedupeService.ts
+//     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
@@ -1415,6 +1417,11 @@ export interface AgentStateSnapshot {
   'toolDedupe.originalCallIndex': Map<string, number>;
   'toolDedupe.stepCalls': string[];
   'toolDedupe.syntheticCallIds': Set<string>;
+  'toolDedupe.turnCallRecords': Map<string, /* TurnCallRecord — packages/agent-core-v2/src/agent/toolDedupe/toolDedupeService.ts */ {
+    count: number;
+    lastStep: number;
+  }>;
+  'toolDedupe.turnRepeatCount': number;
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
