@@ -9,6 +9,7 @@ import {
   IAgentContextInjectorService,
 } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
+import { IAgentFullCompactionService, type FullCompactionTask } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -59,6 +60,11 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
   return part?.type === 'text' ? part.text : undefined;
 }
 
+const compactionStub = {
+  compacting: null as FullCompactionTask | null,
+  cancel() {},
+};
+
 describe('AgentContextInjectorService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -77,12 +83,14 @@ describe('AgentContextInjectorService', () => {
         reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
+        reg.defineInstance(IAgentFullCompactionService, compactionStub as unknown as IAgentFullCompactionService);
       },
     });
     context = ix.get(IAgentContextMemoryService);
   });
 
   afterEach(() => {
+    compactionStub.compacting = null;
     disposables.dispose();
   });
 
@@ -461,5 +469,26 @@ describe('AgentContextInjectorService', () => {
 
     expect(context.get()).toHaveLength(1);
     expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('does not append reminders while a compaction is in flight, then resumes after', async () => {
+    const seen: string[] = [];
+    injector(ix).register('todolist_reminder', () => {
+      seen.push('called');
+      return 'todo list reminder';
+    });
+
+    compactionStub.compacting = {} as FullCompactionTask;
+    await runInjectionStep();
+
+    expect(seen).toEqual([]);
+    expect(context.get()).toHaveLength(0);
+
+    compactionStub.compacting = null;
+    await runInjectionStep();
+
+    expect(seen).toEqual(['called']);
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('todo list reminder');
   });
 });

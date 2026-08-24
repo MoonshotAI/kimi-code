@@ -3,11 +3,13 @@ import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { IInstantiationService } from '#/_base/di/instantiation';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -29,6 +31,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
   private compactionRearmPending = false;
+  private fullCompactionService: IAgentFullCompactionService | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -36,6 +39,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this._register(
@@ -65,6 +69,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   }
 
   async reconcileWhenIdle(name: string): Promise<void> {
+    if (this.fullCompaction.compacting !== null) return;
     const quiescence = this.loopService.tryAcquireQuiescence();
     if (quiescence === undefined) return;
     try {
@@ -75,6 +80,15 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     } finally {
       quiescence.dispose();
     }
+  }
+
+  private get fullCompaction(): IAgentFullCompactionService {
+    if (this.fullCompactionService === undefined) {
+      this.fullCompactionService = this.instantiation.invokeFunction((accessor) =>
+        accessor.get(IAgentFullCompactionService),
+      );
+    }
+    return this.fullCompactionService;
   }
 
   private async reconcileAroundStep(
@@ -97,6 +111,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   }
 
   private async inject(isNewTurn: boolean): Promise<void> {
+    if (this.fullCompaction.compacting !== null) return;
     for (const entry of this.entries) {
       await this.injectEntry(entry, isNewTurn);
     }
