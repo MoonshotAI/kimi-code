@@ -30,6 +30,7 @@ import header from './zh/header';
 import sideChat from './zh/sideChat';
 import shortcuts from './zh/shortcuts';
 import terminal from './zh/terminal';
+import prPreview from './zh/prPreview';
 
 export default {
   common,
@@ -64,4 +65,5 @@ export default {
   sideChat,
   shortcuts,
   terminal,
+  prPreview,
 };

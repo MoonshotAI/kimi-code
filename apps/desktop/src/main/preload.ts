@@ -201,6 +201,62 @@ export type NativeTerminalInfo = { id: string; shell: string; cwd: string };
 
 export type NativeTerminalCreateOptions = { cwd?: string; cols?: number; rows?: number };
 
+/** PR preview state mirror (main/pr-preview.ts, dev-only). */
+export type PrPreviewState = {
+  phase: 'idle' | 'fetching' | 'installing' | 'building' | 'active' | 'error';
+  pr?: number;
+  message?: string;
+  /** Live output tail of the in-flight stage (throttled pushes). */
+  logTail?: string;
+  /** PR whose build the window is actually serving right now, independent of
+   *  the display phase (a failed rebuild keeps the previous preview serving). */
+  servingPr?: number;
+  /** Stage a stage failure came from, for the dialog's localized stage line. */
+  errorStage?: 'fetch' | 'install' | 'build';
+  /** The stage was killed by the no-output watchdog (not a plain failure). */
+  errorHung?: boolean;
+};
+
+function asPrPreviewState(value: unknown): PrPreviewState | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as {
+    phase?: unknown;
+    pr?: unknown;
+    message?: unknown;
+    logTail?: unknown;
+    servingPr?: unknown;
+    errorStage?: unknown;
+    errorHung?: unknown;
+  };
+  switch (candidate.phase) {
+    case 'idle':
+    case 'fetching':
+    case 'installing':
+    case 'building':
+    case 'active':
+    case 'error':
+      break;
+    default:
+      return null;
+  }
+  const state: PrPreviewState = { phase: candidate.phase };
+  if (typeof candidate.pr === 'number' && Number.isInteger(candidate.pr)) state.pr = candidate.pr;
+  if (typeof candidate.message === 'string') state.message = candidate.message;
+  if (typeof candidate.logTail === 'string') state.logTail = candidate.logTail;
+  if (typeof candidate.servingPr === 'number' && Number.isInteger(candidate.servingPr)) {
+    state.servingPr = candidate.servingPr;
+  }
+  if (
+    candidate.errorStage === 'fetch' ||
+    candidate.errorStage === 'install' ||
+    candidate.errorStage === 'build'
+  ) {
+    state.errorStage = candidate.errorStage;
+  }
+  if (candidate.errorHung === true) state.errorHung = true;
+  return state;
+}
+
 function asNativeTerminalInfo(value: unknown): NativeTerminalInfo | null {
   if (typeof value !== 'object' || value === null) {
     return null;
@@ -338,6 +394,18 @@ export type KimiDesktopApi = {
   closeNativeTerminal: (id: string) => void;
   onNativeTerminalOutput: (cb: (id: string, data: string) => void) => () => void;
   onNativeTerminalExit: (cb: (id: string, exitCode: number | null) => void) => () => void;
+  /** PR preview (dev-only): build a code-app PR's renderer in an isolated
+   *  worktree and swap the window onto it. getPrPreviewState resolves null in
+   *  packaged builds — the renderer hides the entry point on that signal.
+   *  Transitions stream via onPrPreviewEvent. */
+  getPrPreviewState: () => Promise<PrPreviewState | null>;
+  prPreviewStart: (pr: number) => Promise<PrPreviewState>;
+  prPreviewStop: () => Promise<PrPreviewState>;
+  prPreviewCancel: () => Promise<PrPreviewState>;
+  /** Manual cache reclaim: removes every preview worktree except the
+   *  served/in-flight ones. Resolves with the number of removed dirs. */
+  prPreviewCleanup: () => Promise<number>;
+  onPrPreviewEvent: (cb: (state: PrPreviewState) => void) => () => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -560,6 +628,45 @@ export const api: KimiDesktopApi = {
     };
     ipcRenderer.on('kimi:terminal-exit', listener);
     return () => ipcRenderer.removeListener('kimi:terminal-exit', listener);
+  },
+  getPrPreviewState: async () => asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-get-state')),
+  prPreviewStart: async (pr) => {
+    if (typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1 || pr > 999999) {
+      throw new Error('pr-preview-start: invalid PR number');
+    }
+    const state = asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-start', pr));
+    if (state === null) {
+      throw new Error('pr-preview-start: invalid response from main process');
+    }
+    return state;
+  },
+  prPreviewStop: async () => {
+    const state = asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-stop'));
+    if (state === null) {
+      throw new Error('pr-preview-stop: invalid response from main process');
+    }
+    return state;
+  },
+  prPreviewCancel: async () => {
+    const state = asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-cancel'));
+    if (state === null) {
+      throw new Error('pr-preview-cancel: invalid response from main process');
+    }
+    return state;
+  },
+  prPreviewCleanup: async () => {
+    const removed: unknown = await ipcRenderer.invoke('kimi:pr-preview-cleanup');
+    return typeof removed === 'number' && Number.isInteger(removed) && removed >= 0 ? removed : 0;
+  },
+  onPrPreviewEvent: (cb) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      const state = asPrPreviewState(payload);
+      if (state !== null) {
+        cb(state);
+      }
+    };
+    ipcRenderer.on('kimi:pr-preview-event', listener);
+    return () => ipcRenderer.removeListener('kimi:pr-preview-event', listener);
   },
 };
 

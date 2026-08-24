@@ -5,6 +5,7 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { getMainWindow, showMainWindow, applyWindowVibrancy, sendToRenderer } from './window';
+import { connect } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import { getTerminalManager, initTerminalManager } from './terminal';
 import { startShellEnvProbe } from './shell-env';
@@ -23,6 +24,16 @@ import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended, se
 import { setGlobalShortcut, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, setDockIconChoice } from './dock-icon';
+import {
+  cancelPreview,
+  cleanupPreviews,
+  getActiveDistRoot as getPrPreviewDistRoot,
+  getState as getPrPreviewState,
+  onStateChange as onPrPreviewStateChange,
+  startPreview,
+  stopPreview,
+  whenBuildSettled,
+} from './pr-preview';
 import { log, redactUrlForLog } from './log';
 import { updateServerRegionToken } from './region';
 import { createRendererLogWriter } from './renderer-log';
@@ -354,4 +365,45 @@ export function registerIpcHandlers(): void {
     if (typeof id !== 'string' || id === '') return;
     getTerminalManager().close(id);
   });
+  // PR preview (dev-only, main/pr-preview.ts): build a code-app PR's renderer
+  // in an isolated worktree and swap the window onto it. The feature reports
+  // itself unavailable in packaged builds by answering get-state with null —
+  // the renderer hides the entry point on that signal (and on a missing
+  // bridge, i.e. plain web).
+  onPrPreviewStateChange((state) => sendToRenderer(IPC.prPreviewEvent, state));
+  ipcMain.handle(IPC.prPreviewGetState, () => (app.isPackaged ? null : getPrPreviewState()));
+  ipcMain.handle(IPC.prPreviewStart, async (_event, pr: unknown) => {
+    if (typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1 || pr > 999999) {
+      throw new Error('pr-preview-start: invalid PR number');
+    }
+    const distRootBefore = getPrPreviewDistRoot();
+    const state = await startPreview(pr);
+    // Reload only when a NEW build actually swapped the served dist: a cancel
+    // restores phase 'active' with the old root, and reloading then would
+    // needlessly nuke the preview renderer's transient UI state.
+    if (state.phase === 'active' && getPrPreviewDistRoot() !== distRootBefore) {
+      const win = getMainWindow();
+      if (win !== null && !win.isDestroyed()) await connect(win);
+    }
+    return state;
+  });
+  ipcMain.handle(IPC.prPreviewStop, async () => {
+    stopPreview();
+    // The state flips at signal time, but `running` clears only when the
+    // killed child's close settles — wait for it, or an immediate restart
+    // hits 'already in flight', and reload only after the dust has settled.
+    await whenBuildSettled();
+    const win = getMainWindow();
+    if (win !== null && !win.isDestroyed()) await connect(win);
+    return getPrPreviewState();
+  });
+  ipcMain.handle(IPC.prPreviewCancel, async () => {
+    cancelPreview();
+    await whenBuildSettled();
+    return getPrPreviewState();
+  });
+  // Manual cache reclaim (the dialog's cleanup button): removes every preview
+  // worktree of this clone bucket except the served/in-flight ones. Resolves
+  // with the number of removed dirs.
+  ipcMain.handle(IPC.prPreviewCleanup, () => (app.isPackaged ? 0 : cleanupPreviews()));
 }

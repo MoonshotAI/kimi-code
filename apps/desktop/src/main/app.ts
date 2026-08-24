@@ -13,6 +13,7 @@ import { buildMenu } from './menu';
 import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { killAllTerminals } from './terminal';
+import { killActiveBuild, sweepStalePreviews } from './pr-preview';
 import { initAutoUpdater } from './updater';
 import { parseLaunchArgs } from './jump-list';
 import { handleDeepLink, extractDeepLink, registerDeepLinkScheme } from './deep-link';
@@ -119,6 +120,7 @@ export function main(): void {
       finalizeWindowLifecycle,
       stopShellEnvProbe,
       killAllTerminals,
+      killActiveBuild,
       destroyTray,
       unregisterGlobalShortcuts,
       closeServerHandle,
@@ -180,6 +182,13 @@ export function main(): void {
     // static .icns for Finder etc.
     initDockIcon();
     registerRendererProtocol(rendererDistRoot);
+    // Boot-time PR-preview hygiene: sweep worktrees previous runs left
+    // behind (fire-and-forget; see pr-preview.ts sweepStalePreviews).
+    try {
+      sweepStalePreviews();
+    } catch (error) {
+      log.error('[kimi-desktop] PR preview boot sweep failed', error);
+    }
     // No startup global-shortcut registration: the renderer replays the saved
     // binding over IPC on boot (shortcuts.ts is push-driven), so nothing is
     // grabbed before the user's setting is known.

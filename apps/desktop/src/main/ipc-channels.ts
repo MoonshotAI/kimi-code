@@ -46,6 +46,12 @@ export const IPC = {
   terminalClose: 'kimi:terminal-close',
   terminalOutput: 'kimi:terminal-output',
   terminalExit: 'kimi:terminal-exit',
+  prPreviewStart: 'kimi:pr-preview-start',
+  prPreviewStop: 'kimi:pr-preview-stop',
+  prPreviewCancel: 'kimi:pr-preview-cancel',
+  prPreviewGetState: 'kimi:pr-preview-get-state',
+  prPreviewCleanup: 'kimi:pr-preview-cleanup',
+  prPreviewEvent: 'kimi:pr-preview-event',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -72,4 +78,5 @@ export type RendererEventChannel =
   | typeof IPC.launchAction
   | typeof IPC.deepLinkAuth
   | typeof IPC.terminalOutput
-  | typeof IPC.terminalExit;
+  | typeof IPC.terminalExit
+  | typeof IPC.prPreviewEvent;

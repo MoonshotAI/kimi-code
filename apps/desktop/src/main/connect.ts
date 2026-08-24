@@ -39,7 +39,18 @@ type ConnectFailurePhase = NonNullable<StartupConnectResultEvent['failure_phase'
 // time; later runs see the handle the first one established.
 let connectQueue: Promise<void> = Promise.resolve();
 
+// PR preview (pr-preview.ts, dev-only): while set, this worktree desktop-dist
+// wins over the default dist root — rendererDistRoot() serves it through the
+// `app://renderer` protocol and connectOnce suppresses the Vite dev base so
+// the window loads the preview build instead of the HMR server.
+let previewDistRoot: string | null = null;
+
+export function setPreviewDistRoot(root: string | null): void {
+  previewDistRoot = root;
+}
+
 export function rendererDistRoot(): string {
+  if (previewDistRoot !== null) return previewDistRoot;
   return app.isPackaged
     ? join(process.resourcesPath, 'desktop-dist')
     : join(app.getAppPath(), 'desktop-dist');
@@ -117,8 +128,11 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     // Renderer HMR (scripts/dev.mjs sets KIMI_RENDERER_DEV_URL): load the
     // renderer from the Vite dev server instead of the built desktop-dist, and
     // allow that origin through the embedded server's CORS allowlist. Packaged
-    // builds always use `app://renderer`.
-    const devBase = app.isPackaged ? undefined : rendererDevBase(process.env['KIMI_RENDERER_DEV_URL']);
+    // builds always use `app://renderer` — and so does an active PR preview
+    // (previewDistRoot): the preview build is served by the protocol, so the
+    // dev base must not win.
+    const devBase =
+      app.isPackaged || previewDistRoot !== null ? undefined : rendererDevBase(process.env['KIMI_RENDERER_DEV_URL']);
     // Wait for the shell env probe (warmed up in index.ts) before anything
     // resolves KIMI_CODE_HOME — the probe may be what imports it:
     // readServerToken reads <home>/server.token, and the embedded server plus

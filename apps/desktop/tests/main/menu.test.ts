@@ -214,6 +214,59 @@ describe('menuTemplate', () => {
     expect(closeItem).toBeUndefined();
   });
 
+  it('shows the PR-preview exit entry only while a preview is active (it must survive the renderer swap)', () => {
+    // No preview → no entry, in either menu template.
+    for (const template of [menuTemplate(true, 'en'), windowsMenuTemplate('en', {}, false, true)]) {
+      const view = template.find((item) => item.label === 'View');
+      expect(submenuItems(view as MenuItemConstructorOptions).some((item) => item.id === 'exit-pr-preview')).toBe(
+        false,
+      );
+    }
+    // Active preview → bilingual entry with the PR number, wired click.
+    const zhView = menuTemplate(true, 'zh', {}, false, false, 306).find((item) => item.label === '视图');
+    const zhEntry = submenuItems(zhView as MenuItemConstructorOptions).find(
+      (item) => item.id === 'exit-pr-preview',
+    );
+    expect(zhEntry).toMatchObject({ label: '退出 PR 预览（#306）', accelerator: 'CommandOrControl+Alt+Shift+P' });
+    expect(typeof zhEntry?.click).toBe('function');
+
+    const enView = windowsMenuTemplate('en', {}, false, true, false, 306).find((item) => item.id === 'view-menu');
+    const enEntry = submenuItems(enView as MenuItemConstructorOptions).find(
+      (item) => item.id === 'exit-pr-preview',
+    );
+    expect(enEntry).toMatchObject({ label: 'Exit PR Preview (#306)' });
+    expect(typeof enEntry?.click).toBe('function');
+  });
+
+  it('keeps the PR-preview exit accelerator armed under terminal suspension (it is the escape hatch)', () => {
+    // Every other non-role accelerator goes silent under terminal focus; the
+    // exit entry is exempt in both template paths.
+    for (const template of [
+      menuTemplate(false, 'en', {}, 'terminal', false, 306),
+      windowsMenuTemplate('en', {}, 'terminal', true, false, 306),
+    ]) {
+      const view = template.find((item) => item.id === 'view-menu' || item.label === 'View');
+      const entry = submenuItems(view as MenuItemConstructorOptions).find(
+        (item) => item.id === 'exit-pr-preview',
+      );
+      expect(entry).toMatchObject({ accelerator: 'CommandOrControl+Alt+Shift+P' });
+    }
+  });
+
+  it('keeps the PR-preview exit fully wired under recording suspension', () => {
+    for (const template of [
+      menuTemplate(false, 'en', {}, 'recording', false, 306),
+      windowsMenuTemplate('en', {}, 'recording', true, false, 306),
+    ]) {
+      const view = template.find((item) => item.id === 'view-menu' || item.label === 'View');
+      const entry = submenuItems(view as MenuItemConstructorOptions).find(
+        (item) => item.id === 'exit-pr-preview',
+      );
+      expect(entry).toMatchObject({ accelerator: 'CommandOrControl+Alt+Shift+P' });
+      expect(typeof entry?.click).toBe('function');
+    }
+  });
+
   it('localizes the File menu into English', () => {
     const template = menuTemplate(true, 'en');
     const fileMenu = template.find((item) => item.label === 'File');

@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 44 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 50 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意三点：
 
@@ -28,6 +28,13 @@
   - i18n：`settings.tabs.plugins` + `settings.plugins.*` 在共享包 app-i18n（web 不使用无副作用）。
   - 测试：`tests/renderer/usePlugins.test.ts`（44 用例：分组/两级不支持降级/加载错误重试/能力行合并与目录吞并/已安装区/安装刷新/行内错误与忙碌串行/能力安装进度·失败·note/跟随进行中安装/移除与启停）。
   - 未做：卸载流（capability 二进制卸载）；web 端展示。
+
+- [x] **PR 预览（全局按钮切 PR 号预览界面，desktop dev 专属）**
+  - 实现（2026-08）：侧栏 header `ch-tail` 的 `PrPreviewIndicator.vue` pill（desktop-only 新文件，不同步 web，照 UpdateIndicator 模式）→ 输入本仓 PR 号 → 主进程 `src/main/pr-preview.ts` 在 `<userData>/pr-previews/preview-<克隆哈希>-<pid>` 的**单份**预览 worktree 里 `fetch refs/pull/<n>/head`（按规范仓库 URL 拉取、只落 FETCH_HEAD 不写持久 ref、不经 origin remote、带 `--no-tags`，fork 场景不会拉错也不污染本地仓库）→ `pnpm install --ignore-scripts` → `pnpm --filter kimi-code-app run build:renderer`（状态机 fetching/installing/building/active/error；构建永远写入两个交替 dist 目录中未被服务的那个，成功才翻转 override，失败保留上一份预览连同文件；取消/退出走 SIGTERM+SIGKILL 升级、win32 走 `taskkill /T /F` 整树终止，before-quit 经 `killActiveBuild` 扫尾）。**隔离靠构造不靠锁**：worktree 路径按克隆+进程分桶且每个实例只有一份（换 PR 用 `reset --hard` 复用同一目录、含 node_modules 缓存），多实例不共享可变状态，无跨进程锁。**清理三层**：启动时自动扫掉所有死 pid 遗留与 legacy 目录；下次预览 fetch 后按 kill(pid,0) 再扫一次；对话框 idle/active 态有「清理预览缓存」按钮（确认后删除除当前服务/构建目录外的全部缓存，其他活实例目录自动跳过，主进程返回删除数）。成功后 `connect.ts` 的 `previewDistRoot` override 生效——`rendererDistRoot()` 指向 worktree 的 dist、`connectOnce` 抑制 Vite devBase，ipc handler 重跑 `connect(win)` 把窗口切到 `app://renderer` 加载预览产物（内嵌 server 不动、复用 handle；worktree 的 pnpm workspace 需要 kimi-code submodule，`ensureWorktree` 带 `--reference` 复用主 checkout 的对象）。退出预览/取消后再跑 `connect(win)` 回到 HMR dev。**退出入口在原生 View 菜单**（`menu.ts` 的 `exit-pr-preview` 项，带全局快捷键 CmdOrCtrl+Alt+Shift+P 且在终端聚焦/快捷键录制两种 suspension 中都豁免，按状态的 `servingPr` 而非 phase 显示——预览产物会替换整个 renderer，预览 PR 未必带侧栏退出按钮）；renderer 侧 error 态在仍有预览服务时也显示「退出预览」。仅 dev：`app.isPackaged` 时 `kimi:pr-preview-get-state` 应答 null，renderer 据此（连同无桥）隐藏入口。
+  - 分叉块（整目录 re-copy 时需保留）：desktop-only 新文件 `components/PrPreviewIndicator.vue`、`lib/prPreview.ts`；`Sidebar.vue` 的 import + `ch-tail` 挂载块（带分叉注释）。web 零改动。
+  - IPC：`kimi:pr-preview-{start,stop,cancel,get-state}` + 推送 `kimi:pr-preview-event`（RendererEventChannel 已登记）；preload 白名单加 `getPrPreviewState`/`prPreviewStart`/`prPreviewStop`/`prPreviewCancel`/`onPrPreviewEvent`（`tests/main/preload.test.ts` 同步，含双向校验断言）。
+  - i18n：`prPreview.*` namespace 在共享包 app-i18n（web 不使用无副作用，同 terminal.* 先例）。
+  - 主进程零用户可见字符串：进度推送全是结构化状态，文案全在 renderer i18n，天然满足双语约束。
 
 - [x] **New workspace 用原生目录选择器**（已完成，desktop 专属）
   - 实现：`src/renderer/lib/nativeWorkspacePicker.ts`（`properties: ['openDirectory', 'createDirectory']`，复用主进程早已注册的 `kimi:dialog-open`）。desktop renderer 恒在 Electron 内运行，桥恒存在，所以唯一判断是 `canPickWorkspaceDirectory()`（`window.kimiDesktop` 在不在）；`pickWorkspaceDirectory()` 无任何存在性检查，缺桥/IPC 异常统一由 try/catch 归到 `{status:'error'}`。流程逻辑在 `createAddWorkspaceEntry(deps)`（可注入依赖、带重入防护）：native 选中 → `addWorkspace`；用户取消 → 丢 pending；桥故障或 daemon 拒绝 → 报错并回退原 `AddWorkspaceDialog`；无桥 → 直接回退。`App.vue` 只做绑定，所有 add-workspace 入口统一走它。
@@ -270,5 +277,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（36 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（50 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

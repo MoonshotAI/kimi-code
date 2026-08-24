@@ -41,12 +41,18 @@ const WHITELIST = [
   'onMenuAction',
   'onNativeTerminalExit',
   'onNativeTerminalOutput',
+  'onPrPreviewEvent',
   'popupWindowsMenu',
   'onShortcut',
   'onTraySelectSession',
   'onUpdateStatus',
   'openExternal',
   'openInApp',
+  'getPrPreviewState',
+  'prPreviewCancel',
+  'prPreviewCleanup',
+  'prPreviewStart',
+  'prPreviewStop',
   'setDockIconChoice',
   'setGlobalShortcut',
   'setGlobalShortcutSuspended',
@@ -489,5 +495,79 @@ describe('kimiDesktop preload bridge', () => {
     expect(exitCb).toHaveBeenCalledWith('t1', null);
     listeners.get('kimi:terminal-exit')?.({}, { exitCode: 1 });
     expect(exitCb).toHaveBeenCalledTimes(2);
+  });
+
+  it('wires the pr-preview methods and validates both directions', async () => {
+    await import('../../src/main/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    // get-state: a null main response (packaged = feature unavailable) and
+    // junk both resolve null; a valid state passes through.
+    invoke.mockResolvedValueOnce(null);
+    await expect(exposed.getPrPreviewState()).resolves.toBeNull();
+    invoke.mockResolvedValueOnce({ phase: 'bogus' });
+    await expect(exposed.getPrPreviewState()).resolves.toBeNull();
+    invoke.mockResolvedValueOnce({ phase: 'active', pr: 42 });
+    await expect(exposed.getPrPreviewState()).resolves.toEqual({ phase: 'active', pr: 42 });
+    expect(invoke).toHaveBeenCalledWith('kimi:pr-preview-get-state');
+
+    // start: positive integers invoke; junk numbers reject before IPC; a
+    // malformed main response rejects instead of leaking junk.
+    invoke.mockResolvedValueOnce({ phase: 'building', pr: 123 });
+    await expect(exposed.prPreviewStart(123)).resolves.toEqual({ phase: 'building', pr: 123 });
+    expect(invoke).toHaveBeenCalledWith('kimi:pr-preview-start', 123);
+    await expect(exposed.prPreviewStart(0)).rejects.toThrow('pr-preview-start');
+    await expect(exposed.prPreviewStart(-1)).rejects.toThrow('pr-preview-start');
+    await expect(exposed.prPreviewStart(1.5)).rejects.toThrow('pr-preview-start');
+    await expect(exposed.prPreviewStart('123' as unknown as number)).rejects.toThrow('pr-preview-start');
+    invoke.mockResolvedValueOnce({ phase: 'bogus' });
+    await expect(exposed.prPreviewStart(123)).rejects.toThrow('pr-preview-start');
+
+    // stop/cancel: the returned state passes through after validation.
+    invoke.mockResolvedValueOnce({ phase: 'idle' });
+    await expect(exposed.prPreviewStop()).resolves.toEqual({ phase: 'idle' });
+    expect(invoke).toHaveBeenCalledWith('kimi:pr-preview-stop');
+    invoke.mockResolvedValueOnce({ phase: 'active', pr: 7 });
+    await expect(exposed.prPreviewCancel()).resolves.toEqual({ phase: 'active', pr: 7 });
+    expect(invoke).toHaveBeenCalledWith('kimi:pr-preview-cancel');
+    invoke.mockResolvedValueOnce(null);
+    await expect(exposed.prPreviewStop()).rejects.toThrow('pr-preview-stop');
+
+    // cleanup: a valid count passes through; junk coerces to 0.
+    invoke.mockResolvedValueOnce(3);
+    await expect(exposed.prPreviewCleanup()).resolves.toBe(3);
+    expect(invoke).toHaveBeenCalledWith('kimi:pr-preview-cleanup');
+    invoke.mockResolvedValueOnce('junk');
+    await expect(exposed.prPreviewCleanup()).resolves.toBe(0);
+
+    // Events forward after structural validation; junk is dropped.
+    const eventCb = vi.fn();
+    exposed.onPrPreviewEvent(eventCb);
+    listeners.get('kimi:pr-preview-event')?.({}, { phase: 'fetching', pr: 42 });
+    expect(eventCb).toHaveBeenCalledWith({ phase: 'fetching', pr: 42 });
+    listeners.get('kimi:pr-preview-event')?.({}, { phase: 'error', pr: 42, message: 'build failed' });
+    expect(eventCb).toHaveBeenCalledWith({ phase: 'error', pr: 42, message: 'build failed' });
+    // The live output tail and served-PR marker pass through when present.
+    listeners.get('kimi:pr-preview-event')?.({}, { phase: 'building', pr: 42, logTail: 'vite v6 building…' });
+    expect(eventCb).toHaveBeenCalledWith({ phase: 'building', pr: 42, logTail: 'vite v6 building…' });
+    listeners.get('kimi:pr-preview-event')?.({}, { phase: 'error', pr: 42, message: 'build failed', servingPr: 42 });
+    expect(eventCb).toHaveBeenCalledWith({ phase: 'error', pr: 42, message: 'build failed', servingPr: 42 });
+    // Stage failure metadata passes through (hung flag only when true).
+    listeners.get('kimi:pr-preview-event')?.(
+      {},
+      { phase: 'error', pr: 42, errorStage: 'build', errorHung: true, message: 'vite build (exit code 1)' },
+    );
+    expect(eventCb).toHaveBeenCalledWith({
+      phase: 'error',
+      pr: 42,
+      errorStage: 'build',
+      errorHung: true,
+      message: 'vite build (exit code 1)',
+    });
+    listeners.get('kimi:pr-preview-event')?.({}, { phase: 'error', pr: 42, errorStage: 'bogus', errorHung: 'yes' });
+    expect(eventCb).toHaveBeenCalledWith({ phase: 'error', pr: 42 });
+    listeners.get('kimi:pr-preview-event')?.({}, { phase: 'bogus' });
+    listeners.get('kimi:pr-preview-event')?.({}, 'active');
+    expect(eventCb).toHaveBeenCalledTimes(6);
   });
 });

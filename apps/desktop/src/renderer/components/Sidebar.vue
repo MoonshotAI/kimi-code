@@ -36,6 +36,8 @@ import {
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
+// Desktop-only (not synced to web — docs/native-todos.md): PR preview pill.
+import PrPreviewIndicator from './PrPreviewIndicator.vue';
 import UserMenu from './UserMenu.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
@@ -1354,6 +1356,9 @@ onBeforeUnmount(() => {
             <Icon name="panel-collapse" />
           </IconButton>
           <UpdateIndicator />
+          <!-- Desktop-only (not synced to web — docs/native-todos.md): PR
+               preview pill; renders only in dev builds with the bridge. -->
+          <PrPreviewIndicator />
         </div>
       </div>
 

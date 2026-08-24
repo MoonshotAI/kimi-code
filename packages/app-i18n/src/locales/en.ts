@@ -30,6 +30,7 @@ import header from './en/header';
 import sideChat from './en/sideChat';
 import shortcuts from './en/shortcuts';
 import terminal from './en/terminal';
+import prPreview from './en/prPreview';
 
 export default {
   common,
@@ -64,4 +65,5 @@ export default {
   sideChat,
   shortcuts,
   terminal,
+  prPreview,
 };

@@ -3,6 +3,11 @@ import type { MenuItemConstructorOptions } from 'electron';
 
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
+import {
+  onStateChange as onPrPreviewStateChange,
+  stopPreview,
+  whenBuildSettled,
+} from './pr-preview';
 import { getTraceRecorder } from './trace';
 import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from './region';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall, UPDATE_CHECK_TIMED_OUT } from './updater';
@@ -37,6 +42,7 @@ interface MenuStrings {
   settings: string;
   checkForUpdates: string;
   retryConnection: string;
+  exitPrPreview: string;
   updateCheckTitle: string;
   updateAvailable: string;
   updateAutoDownloading: string;
@@ -78,6 +84,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     settings: '设置…',
     checkForUpdates: '检查更新…',
     retryConnection: '重试连接',
+    exitPrPreview: '退出 PR 预览（#{pr}）',
     updateCheckTitle: '检查更新',
     updateAvailable: '发现新版本 {version},可立即下载更新。',
     updateAutoDownloading: '发现新版本 {version},正在后台下载,完成后重启即可更新。',
@@ -117,6 +124,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     settings: 'Settings…',
     checkForUpdates: 'Check for Updates…',
     retryConnection: 'Retry Connection',
+    exitPrPreview: 'Exit PR Preview (#{pr})',
     updateCheckTitle: 'Check for Updates',
     updateAvailable: 'Version {version} is available.',
     updateAutoDownloading: 'Version {version} is downloading in the background; restart to update once it finishes.',
@@ -416,6 +424,33 @@ async function runTraceToggle(): Promise<void> {
   }
 }
 
+// --- PR preview exit entry ---------------------------------------------------
+//
+// The exit entry for a PR preview lives in the NATIVE menu, not the sidebar:
+// the preview replaces the whole renderer with the PR's build, whose sidebar
+// may not carry the in-app exit button at all (any PR branched before that
+// entry existed) — without a native escape hatch the only way back to the
+// normal dev renderer would be restarting the app. Dev-only in practice: the
+// preview can never become active in packaged builds (startPreview throws),
+// and buildMenu additionally gates inclusion on !app.isPackaged.
+let previewMenuPr: number | undefined;
+onPrPreviewStateChange((state) => {
+  // servingPr, not phase: a failed rebuild publishes `error` while the
+  // previous preview keeps serving — the exit entry must stay put for as
+  // long as the window is actually on a preview build. Log-tail pushes ride
+  // the same channel, so rebuild only when the served PR actually changes.
+  const pr = state.servingPr;
+  if (pr === previewMenuPr) return;
+  previewMenuPr = pr;
+  buildMenu();
+});
+
+/** Currently previewed PR number while a preview is being served; undefined
+    otherwise (and always in packaged builds — the preview can't start there). */
+function currentPreviewPr(): number | undefined {
+  return app.isPackaged ? undefined : previewMenuPr;
+}
+
 // Pure template builder, so tests can cover it without Electron. macOS spells
 // the Window submenu out: the `windowMenu` role expands to Minimize / Zoom /
 // Bring All to Front with NO Close item — Close lives in the File menu
@@ -423,13 +458,15 @@ async function runTraceToggle(): Promise<void> {
 // Other platforms keep the role, whose expansion already ends with Close.
 // `shortcutOverrides` carries the renderer's customizable bindings (canonical
 // keymap format, keyed by action id); convertible ones show as accelerators
-// on the matching menu items.
+// on the matching menu items. `previewPr` carries the active PR-preview
+// number (undefined = no preview → no exit entry).
 export function menuTemplate(
   isMac: boolean,
   locale: TrayLocale,
   shortcutOverrides: Record<string, string | null> = {},
   suspension: MenuSuspension = false,
   tracing = false,
+  previewPr?: number,
 ): MenuItemConstructorOptions[] {
   const strings = MENU_STRINGS[locale];
   const appMenu: MenuItemConstructorOptions = {
@@ -521,6 +558,35 @@ export function menuTemplate(
   const viewMenu: MenuItemConstructorOptions = {
     label: strings.view,
     submenu: [
+      // See the "PR preview exit entry" section above: this is the one exit
+      // hatch the preview build can't swap away.
+      ...(previewPr === undefined
+        ? []
+        : [
+            {
+              id: 'exit-pr-preview',
+              label: strings.exitPrPreview.replace('{pr}', String(previewPr)),
+              // Works with the menu bar hidden (Windows keeps it hidden and
+              // the preview build's own titlebar may not offer the native
+              // menu buttons) — the accelerator is processed app-wide
+              // regardless of menu bar visibility.
+              accelerator: 'CommandOrControl+Alt+Shift+P',
+              click: () => {
+                // Same settle discipline as the IPC stop handler: reconnect
+                // only once the killed build has fully wound down, so an
+                // immediate restart can't hit 'already in flight'.
+                void (async () => {
+                  stopPreview();
+                  await whenBuildSettled();
+                  const win = getMainWindow();
+                  if (win !== null) {
+                    await connect(win);
+                  }
+                })();
+              },
+            } as MenuItemConstructorOptions,
+            { type: 'separator' } as MenuItemConstructorOptions,
+          ]),
       { role: 'reload' },
       { role: 'forceReload' },
       { role: 'toggleDevTools' },
@@ -680,6 +746,10 @@ export function menuTemplate(
       items.map((item) => {
         if (item.type === 'separator') return item;
         if (item.id === 'edit-menu') return item;
+        // The PR-preview exit stays fully wired even mid-recording: it is the
+        // escape hatch for previews whose renderer has no exit of its own,
+        // and its chord is nothing a shortcut recorder would capture.
+        if (item.id === 'exit-pr-preview') return item;
         return {
           label: item.label,
           submenu: Array.isArray(item.submenu) ? silence(item.submenu as MenuItemConstructorOptions[]) : undefined,
@@ -719,10 +789,14 @@ export function menuTemplate(
   // items themselves stay fully functional: roles keep their native click
   // behavior, explicit clicks keep theirs. (registerAccelerator:false leaves
   // the shortcut text displayed but unregistered; our custom items instead
-  // drop the dead display.)
+  // drop the dead display.) The PR-preview exit is exempt: it is the one
+  // escape hatch that must stay live even terminal-focused (the preview
+  // renderer may offer no exit of its own), and its chord is no shell
+  // control key.
   const deregister = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
     items.map((item) => {
       if (item.type === 'separator') return item;
+      if (item.id === 'exit-pr-preview') return item;
       const next: MenuItemConstructorOptions = {
         ...item,
         registerAccelerator: false,
@@ -742,8 +816,9 @@ export function windowsMenuTemplate(
   suspension: MenuSuspension = false,
   isDev = !app.isPackaged,
   tracing = false,
+  previewPr?: number,
 ): MenuItemConstructorOptions[] {
-  const base = menuTemplate(false, locale, shortcutOverrides, false, tracing);
+  const base = menuTemplate(false, locale, shortcutOverrides, false, tracing, previewPr);
   const appItems = (base[0]?.submenu ?? []) as MenuItemConstructorOptions[];
   const fileItems = (base[1]?.submenu ?? []) as MenuItemConstructorOptions[];
   const edit = base[2] as MenuItemConstructorOptions;
@@ -790,6 +865,9 @@ export function windowsMenuTemplate(
     const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
       items.map((item) => {
         if (item.type === 'separator' || item.id === 'edit-menu') return item;
+        // Same exemption as menuTemplate's recording branch: the PR-preview
+        // exit must stay wired even mid-recording.
+        if (item.id === 'exit-pr-preview') return item;
         return {
           id: item.id,
           label: item.label,
@@ -803,10 +881,13 @@ export function windowsMenuTemplate(
   // Terminal focus on Windows: deregister every accelerator INCLUDING the
   // edit menu's Ctrl-chords (they would otherwise shadow the PTY's control
   // keys). Roles keep their native click behavior, explicit clicks keep
-  // theirs — only the key equivalents go silent.
+  // theirs — only the key equivalents go silent. The PR-preview exit is
+  // exempt (see menuTemplate's terminal branch): the escape hatch must stay
+  // live even with the terminal focused.
   const deregister = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
     items.map((item) => {
       if (item.type === 'separator') return item;
+      if (item.id === 'exit-pr-preview') return item;
       const next: MenuItemConstructorOptions = {
         ...item,
         registerAccelerator: false,
@@ -893,6 +974,7 @@ export function popupWindowsMenu(
 
 export function buildMenu(): void {
   const suspension = currentSuspension();
+  const previewPr = currentPreviewPr();
   applicationMenu = Menu.buildFromTemplate(
     process.platform === 'win32'
       ? windowsMenuTemplate(
@@ -901,6 +983,7 @@ export function buildMenu(): void {
           suspension,
           !app.isPackaged,
           getTraceRecorder().isRecording(),
+          previewPr,
         )
       : menuTemplate(
           process.platform === 'darwin',
@@ -908,6 +991,7 @@ export function buildMenu(): void {
           menuShortcutOverrides,
           suspension,
           getTraceRecorder().isRecording(),
+          previewPr,
         ),
   );
   Menu.setApplicationMenu(applicationMenu);
