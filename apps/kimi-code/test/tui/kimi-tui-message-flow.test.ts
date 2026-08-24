@@ -3642,6 +3642,38 @@ command = "vim"
     ]);
   });
 
+  it('steers the compaction backlog ahead of fresh input once compaction ends mid-turn', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.towerMode = true;
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.isCompacting = true;
+    driver.handleUserInput('objective one');
+    expect(driver.state.queuedMessages).toHaveLength(1);
+
+    driver.state.appState.isCompacting = false;
+    driver.handleUserInput('objective two');
+
+    expect(session.steer).toHaveBeenCalledWith('objective one\n\nobjective two');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('queues fresh input behind a non-steerable backlog instead of jumping ahead', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.towerMode = true;
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'make build', agentId: 'main', mode: 'bash' }];
+
+    driver.handleUserInput('objective two');
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'make build', agentId: 'main', mode: 'bash' },
+      { text: 'objective two', agentId: 'main' },
+    ]);
+  });
+
   it('resets the streaming phase when steering mid-goal input fails', async () => {
     const session = makeSession({
       steer: vi.fn(async () => {
