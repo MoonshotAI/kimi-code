@@ -49,7 +49,7 @@ import '#/agent/tools/skill/skillTool';
 import '#/agent/tools/task/task-list/taskListTool';
 import '#/agent/tools/task/task-output/taskOutputTool';
 import '#/agent/tools/task/task-stop/taskStopTool';
-import '#/agent/tools/todo-list/todoListTool';
+import '#/features/todo/tools/todo-list/todoListTool';
 import '#/agent/tools/web-search/webSearchTool';
 
 class StubTool implements AgentTool {

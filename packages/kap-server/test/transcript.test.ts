@@ -7,10 +7,11 @@ import {
   IAgentLifecycleService,
   IWireService,
   IEventBus,
-  ISessionInteractionService,
   ISessionQuestionService,
   closeSessionById,
+  enqueueSessionInteraction,
   getLiveSessionById,
+  respondSessionInteraction,
   resumeSessionById,
   IModelCatalog,
   type ContextMessage,
@@ -189,14 +190,14 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    if (session.accessor.get(IAgentLifecycleService).findAgentHandle('main') === undefined) {
+    if (session.accessor.get(IAgentLifecycleService).handleOf('main') === undefined) {
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     }
   }
 
   function mainAgentBus(sessionId: string): IEventBus {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const agent = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     return agent!.accessor.get(IEventBus);
   }
 
@@ -205,7 +206,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     messages: readonly ContextMessage[],
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const agent = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     agent!.accessor.get(IAgentContextMemoryService).append(...messages);
     await agent!.accessor.get(IWireService).flush();
   }
@@ -286,8 +287,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
       id: 'apr-1',
       kind: 'approval',
       payload: {
@@ -310,7 +310,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    interactions.respond('apr-1', { decision: 'approved' });
+    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-1', { decision: 'approved' });
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
     expect(body.data.pending_interactions).toEqual([]);
     expect(body.data.interactions).toContainEqual(
@@ -442,7 +442,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
       .append(
@@ -473,7 +474,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
       .append(
@@ -489,7 +491,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(
       getLiveSessionById(server!.core.accessor, id)!
         .accessor.get(IAgentLifecycleService)
-        .findAgentHandle('sub-1'),
+        .handleOf('sub-1'),
     ).toBeUndefined();
 
     const { body } = await getJson<TranscriptContract>(
@@ -508,9 +510,10 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor
+    await session!.accessor
       .get(IAgentLifecycleService)
       .create({ agentId: 'sub-1', labels: { parentAgentId: 'main' } });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
       .append(
@@ -539,7 +542,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    session!.accessor.get(ISessionInteractionService).enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
       id: 'apr-1',
       kind: 'approval',
       payload: { toolCallId: 'call_9', toolName: 'Bash', action: 'run' },
@@ -557,7 +560,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    session!.accessor.get(ISessionInteractionService).respond('apr-1', { decision: 'approved' });
+    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-1', { decision: 'approved' });
     const after = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const turnAfter = after.body.data.items.find(
       (item): item is TurnContract => item.kind === 'turn' && item.turnId === 't0',
@@ -583,7 +586,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
       .append(
@@ -729,7 +733,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
 
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
@@ -918,7 +923,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
@@ -972,7 +978,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       } as ContextMessage,
     ]);
     const session = getLiveSessionById(server!.core.accessor, id);
-    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
@@ -1114,8 +1121,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       options: [{ label: 'Approach A', description: 'fast' }],
     };
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1126,7 +1132,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       origin: { agentId: 'main', turnId: 1 },
     });
-    interactions.respond('apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
+    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
@@ -1244,8 +1250,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1256,12 +1261,12 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       origin: { agentId: 'main', turnId: 0 },
     });
-    interactions.respond('apr-plan', {
+    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-plan', {
       decision: 'rejected',
       selectedLabel: 'Revise',
       feedback: 'split it up',
     });
-    const agent = session!.accessor.get(IAgentLifecycleService).findAgentHandle('main');
+    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     await agent!.accessor.get(IWireService).flush();
 
     await server!.close();
@@ -1351,8 +1356,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const interactions = session!.accessor.get(ISessionInteractionService);
-    interactions.enqueue({
+    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
       id: 'apr-final',
       kind: 'approval',
       payload: {
@@ -1363,7 +1367,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       origin: { agentId: 'main', turnId: 1 },
     });
-    interactions.respond('apr-final', { decision: 'approved' });
+    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-final', { decision: 'approved' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main`,

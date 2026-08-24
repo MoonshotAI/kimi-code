@@ -2,6 +2,11 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type {
+  AgentRuntimeDefinition,
+  AgentRuntimeSnapshot,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput } from '#/agent/profile/profile';
 
@@ -35,17 +40,46 @@ export interface IAgentLifecycleService {
 
   readonly onDidCreate: Event<AgentContext>;
   readonly onDidCreateScope: Event<AgentScopeCreatedEvent>;
-  readonly onDidDispose: Event<AgentContext>;
+  readonly onWillClose: Event<AgentContext>;
+  readonly onDidClose: Event<AgentContext>;
 
-  create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
+  create(opts?: CreateAgentOptions): Promise<AgentContext>;
 
-  fork(source: AgentContext, opts?: ForkAgentOptions): Promise<IAgentScopeHandle>;
+  fork(source: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext>;
 
-  get(context: AgentContext): IAgentScopeHandle | undefined;
-  findAgentHandle(agentId: string): IAgentScopeHandle | undefined;
-  list(filter?: AgentListFilter): readonly IAgentScopeHandle[];
+  get(agentId: string): AgentContext | undefined;
+  list(filter?: AgentListFilter): readonly AgentContext[];
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    agent: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition>;
+  inspect(agent: AgentContext): AgentRuntimeSnapshot;
   broadcastPermissionMode(mode: PermissionMode): void;
-  remove(context: AgentContext): Promise<void>;
+  remove(agent: AgentContext): Promise<void>;
+
+  /**
+   * Transitional bridge to the compatibility Agent scope (removed in M6):
+   * the scope handle for a live agent, or `undefined` when the agent is
+   * unknown or already closing.
+   */
+  handleOf(agentId: string): IAgentScopeHandle | undefined;
+
+  /**
+   * Transitional bridge for hosts that materialize the compatibility Agent
+   * scope out of band (removed in M6): registers an existing scope as a
+   * managed agent, applying the registered runtime definitions. Durable
+   * participants attach through `attachRuntimes` once the scope is fully
+   * materialized. Returns the scope's `AgentContext`.
+   */
+  adopt(handle: IAgentScopeHandle): AgentContext;
+
+  /**
+   * Transitional bridge (removed in M6): attaches the agent's durable
+   * runtime participants to its event dispatcher and, on the first call,
+   * marks the agent active and fires `onDidCreate` / `onDidCreateScope`.
+   * Must run before the dispatcher restores; idempotent.
+   */
+  attachRuntimes(agent: AgentContext): void;
 }
 
 export const IAgentLifecycleService: ServiceIdentifier<IAgentLifecycleService> =

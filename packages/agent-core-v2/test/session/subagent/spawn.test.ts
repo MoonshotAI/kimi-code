@@ -19,8 +19,8 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import type { RuntimeLease } from '#/runtime/runtime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
+import type { RuntimeLease } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -51,6 +51,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let profiles: AgentProfile[];
   let modelIds: Set<string>;
   let caller: IAgentScopeHandle;
+  let createdHandles: Map<string, IAgentScopeHandle>;
   let createAgent: ReturnType<typeof vi.fn>;
   let forkAgent: ReturnType<typeof vi.fn>;
   let acquireRuntime: ReturnType<typeof vi.fn>;
@@ -156,19 +157,28 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       } as IAgentScopeHandle['accessor'],
       dispose: () => {},
     };
-    createAgent = vi.fn(async (input: { readonly agentId?: string } = {}) =>
-      createdHandle(input.agentId ?? 'agent-child'),
-    );
-    forkAgent = vi.fn(async () => createdHandle('agent-fork'));
+    createdHandles = new Map();
+    createAgent = vi.fn(async (input: { readonly agentId?: string } = {}) => {
+      const agentId = input.agentId ?? 'agent-child';
+      createdHandles.set(agentId, createdHandle(agentId));
+      return stubAgentContext(agentId, 1);
+    });
+    forkAgent = vi.fn(async () => {
+      createdHandles.set('agent-fork', createdHandle('agent-fork'));
+      return stubAgentContext('agent-fork', 1);
+    });
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       onDidCreate: Event.None,
-      onDidDispose: Event.None,
+      onDidCreateScope: Event.None,
+      onWillClose: Event.None,
+      onDidClose: Event.None,
       create: createAgent,
       fork: forkAgent,
-      get: (agentId: string) => (agentId === CALLER_ID ? caller : undefined),
-      findAgentHandle: (agentId: string) => (agentId === CALLER_ID ? caller : undefined),
-      list: () => [caller],
+      get: (agentId: string) => (agentId === CALLER_ID ? stubAgentContext(CALLER_ID, 1) : undefined),
+      handleOf: (agentId: string) =>
+        agentId === CALLER_ID ? caller : createdHandles.get(agentId),
+      list: () => [stubAgentContext(CALLER_ID, 1)],
       remove: async () => {},
       broadcastPermissionMode: () => {},
     } as unknown as IAgentLifecycleService);
@@ -409,7 +419,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(lease.dispose).toHaveBeenCalled();
   });
 
-  it('delegates to lifecycle.fork with the caller labels when the plan is a fork', async () => {
+  it('delegates to manager.fork with the caller labels when the plan is a fork', async () => {
     const svc = service();
 
     await spawnForkChild(svc);

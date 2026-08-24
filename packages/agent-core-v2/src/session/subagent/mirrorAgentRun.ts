@@ -98,7 +98,7 @@ export function emitAgentRunSpawned(
 ): void {
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
-    .findAgentHandle(targetAgentId)
+    .handleOf(targetAgentId)
     ?.accessor.get(IAgentProfileService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
@@ -202,7 +202,7 @@ function childContextTokens(
   agentLifecycle: IAgentLifecycleService,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.findAgentHandle(agentId);
+  const child = agentLifecycle.handleOf(agentId);
   if (child === undefined) return undefined;
   const context = tryAgentContextOf(child);
   if (context === undefined) return undefined;

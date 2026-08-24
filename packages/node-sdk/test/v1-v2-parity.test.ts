@@ -19,6 +19,7 @@ import {
   IAgentLifecycleService,
   ISessionApprovalService,
   ISessionQuestionService,
+  ensureMainAgent,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -5027,6 +5028,7 @@ describe('v1↔v2 event & interaction parity', () => {
       const sessionId = 'session_parity_events_approval';
       const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
+      await ensureMainAgent(v2Session!);
       const v2Approvals = v2Session!.accessor.get(ISessionApprovalService);
       const requestInput = {
         turnId: 1,
@@ -5106,6 +5108,7 @@ describe('v1↔v2 event & interaction parity', () => {
       const sessionId = 'session_parity_events_question';
       const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
+      await ensureMainAgent(v2Session!);
       const v2Questions = v2Session!.accessor.get(ISessionQuestionService);
       const requestInput = {
         turnId: 1,

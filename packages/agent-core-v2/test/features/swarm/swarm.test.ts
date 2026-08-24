@@ -12,17 +12,16 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 import type { IFlagService } from '#/app/flag/flag';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { IAgentStateService } from '#/agent/state/agentState';
+import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import {
@@ -236,20 +235,22 @@ function realSubagents(
     },
     dispose: () => {},
   } as unknown as IAgentScopeHandle;
-  const lifecycle = {
+  const agentLifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
-    onDidDispose: Event.None,
+    onDidCreateScope: Event.None,
+    onWillClose: Event.None,
+    onDidClose: Event.None,
     create: async (): Promise<never> => {
       throw new Error('AgentSwarmTool tests do not reach spawn');
     },
     fork: async (): Promise<never> => {
       throw new Error('AgentSwarmTool tests do not reach spawn');
     },
-    get: (context: AgentContext) =>
-      context.agentId === callerHandle.id ? callerHandle : undefined,
-    findAgentHandle: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
-    list: () => [callerHandle],
+    get: (agentId: string) =>
+      agentId === callerHandle.id ? stubAgentContext(callerHandle.id, 1) : undefined,
+    handleOf: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
+    list: () => [stubAgentContext(callerHandle.id, 1)],
     remove: async () => {},
     broadcastPermissionMode: () => {},
   } as unknown as IAgentLifecycleService;
@@ -268,7 +269,7 @@ function realSubagents(
   } as unknown as IModelCatalog;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
   return new SessionSubagentService(
-    lifecycle,
+    agentLifecycle,
     catalog,
     config,
     flags,

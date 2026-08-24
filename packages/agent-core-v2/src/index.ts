@@ -109,7 +109,22 @@ export * from '#/state/errors';
 export * from '#/state/state';
 export * from '#/state/stateContribution';
 export * from '#/state/agentModel';
-export * from '#/state/agentEffect';
+export {
+  AgentRuntimeContributionPoint,
+  AgentRuntimeOverrideContributionPoint,
+  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
+} from '#/agent/runtime/agentRuntime';
+export type {
+  AgentRuntimeContributionSnapshot,
+  AgentRuntimeDefinition,
+  AgentRuntimeIdentity,
+  AgentRuntimeProvider,
+  AgentRuntimeSnapshot,
+  AgentRuntimeStatus,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
 export * from '#/state/eventDispatcher';
 import '#/state/eventDispatcherService';
 export * from '#/_base/state/stateRegistry';
@@ -382,8 +397,8 @@ export * from '#/features/goal/tools/update-goal/update-goal';
 import '#/features/goal/tools/update-goal/updateGoalTool';
 export * from '#/features/goal/goalDeadlineScheduler';
 export * from '#/features/goal/goal';
+export * from '#/features/goal/goalAgentRuntime';
 export * from '#/features/goal/goalOps';
-export * from '#/features/goal/goalService';
 export * from '#/features/goal/types';
 import '#/features/goal/goalFeature';
 import '#/features/staleGuard/staleGuardFeature';
@@ -451,21 +466,15 @@ import '#/agent/tools/task/task-wait/taskWaitTool';
 export * from '#/agent/task/task';
 export * from '#/agent/task/taskOps';
 export * from '#/agent/task/taskService';
-import '#/app/cron/configSection';
-export * from '#/app/cron/cronTask';
-export * from '#/app/cron/cron-expr';
-export * from '#/app/cron/format';
-export * from '#/app/cron/jitter';
-export * from '#/app/cron/clock';
-export * from '#/app/cron/configSection';
-export * from '#/session/cron/sessionCronService';
-export * from '#/session/cron/sessionCronServiceImpl';
-export * from '#/agent/tools/cron/cron-create/cron-create';
-import '#/agent/tools/cron/cron-create/cronCreateTool';
-export * from '#/agent/tools/cron/cron-list/cron-list';
-import '#/agent/tools/cron/cron-list/cronListTool';
-export * from '#/agent/tools/cron/cron-delete/cron-delete';
-import '#/agent/tools/cron/cron-delete/cronDeleteTool';
+import '#/features/cron/configSection';
+export * from '#/features/cron/cronTask';
+export * from '#/features/cron/configSection';
+export * from '#/features/cron/cronAgentRuntime';
+export * from '#/features/cron/cronOps';
+import '#/features/cron/cronFeature';
+export * from '#/features/cron/tools/cron-create/cron-create';
+export * from '#/features/cron/tools/cron-list/cron-list';
+export * from '#/features/cron/tools/cron-delete/cron-delete';
 
 import '#/session/agentLifecycle/profile/profiles';
 export * from '#/session/agentLifecycle/agentLifecycle';
@@ -572,9 +581,11 @@ export * from '#/app/sessionExport/wire-scan';
 export * from '#/app/sessionExport/zip';
 export * from '#/app/sessionLegacy/sessionLegacy';
 export * from '#/app/sessionLegacy/sessionLegacyService';
-export * from '#/session/interaction/interaction';
-export * from '#/session/interaction/interactionOps';
-export * from '#/session/interaction/interactionService';
+export * from '#/features/interaction/interaction';
+export * from '#/features/interaction/interactionAgentRuntime';
+export * from '#/features/interaction/interactionOps';
+export * from '#/features/interaction/sessionInteractions';
+import '#/features/interaction/interactionFeature';
 export * from '#/session/sessionContext/sessionContext';
 
 import '#/session/approval/approval';
@@ -797,13 +808,10 @@ export * from '#/features/sessionInit/sessionInit';
 export * from '#/features/sessionInit/sessionInitService';
 export * from '#/features/sessionInit/profile/init';
 import '#/features/sessionInit/sessionInitFeature';
-export * from '#/session/todo/todoItem';
-export * from '#/session/todo/todoListReminder';
-export * from '#/session/todo/sessionTodo';
-export * from '#/session/todo/todoAgentModel';
-export * from '#/session/todo/todoAgentEffect';
-export * from '#/session/todo/sessionTodoService';
-export * from '#/agent/tools/todo-list/todo-list';
+export * from '#/features/todo/todoItem';
+export * from '#/features/todo/todoListReminder';
+export * from '#/features/todo/todoAgentRuntime';
+export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
 export * from '#/tool/toolContract';
 export * from '#/agent/toolExecutor/toolHooks';

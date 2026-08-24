@@ -7,7 +7,6 @@ import {
   ISessionIndex,
   IWireService,
   createContextTranscriptReducer,
-  ensureMainAgent,
   resumeSessionById,
   type ContextMessage,
   type ContextTranscript,
@@ -16,6 +15,7 @@ import {
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
 
+import { ensureMainAgent } from '../../transport/mainAgent';
 import type { Message, MessageRole } from '../../protocol/message';
 import { toProtocolMessage } from './messageProjection';
 
