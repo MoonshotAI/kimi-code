@@ -317,13 +317,13 @@ async function setDefaultModel(
   // Resolve efforts the same way the /model path does (effectiveModelForHost
   // applies overrides and the protocol-profile inference): catalog entries for
   // e.g. Anthropic models declare no support_efforts on the alias, and without
-  // the inference a top-tier pick would slip through as a persisted effort.
+  // the inference an above-default pick would slip through as a persisted effort.
   const model = host.state.appState.availableModels[alias];
   await host.harness.setConfig({
     defaultModel: alias,
     thinking: thinkingEffortToConfig(
       effort,
-      model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+      model === undefined ? undefined : effectiveModelForHost(host, model),
     ),
   });
   await host.authFlow.refreshConfigAfterLogin();

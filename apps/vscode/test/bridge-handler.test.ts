@@ -502,7 +502,7 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     });
   });
 
-  it("keeps the model's top declared tier session-only", async () => {
+  it("keeps a pick above the model's delivered default session-only", async () => {
     mockConfig();
 
     await bridge.handle(
@@ -513,6 +513,23 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     expect(host.harness.setConfig).toHaveBeenCalledWith({
       defaultModel: "kimi/reasoning",
       thinking: { enabled: true },
+    });
+  });
+
+  it("persists the top tier when the model's delivered default is the top tier", async () => {
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi/reasoning",
+      models: { "kimi/reasoning": { ...effortModel, defaultEffort: "max" } },
+    } as never);
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "max" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "kimi/reasoning",
+      thinking: { enabled: true, effort: "max" },
     });
   });
 
