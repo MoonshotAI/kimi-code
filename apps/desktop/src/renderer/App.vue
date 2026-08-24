@@ -2141,7 +2141,6 @@ function openPr(url: string): void {
         @open-agent="openAgentPanel"
         @open-file="openFilePreview"
         @open-media="onOpenMedia"
-        @open-turn-diff="openTurnDiff($event)"
       />
       <SideChatPanel
         ref="sideChatPanelRef"

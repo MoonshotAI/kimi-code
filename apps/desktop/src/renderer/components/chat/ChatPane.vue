@@ -247,9 +247,11 @@ const streamingTurnId = computed<string | null>(() => {
 // rebuilds via turnFileChangesCached (the turns array is rebuilt on every
 // streamed event; the LCS diffs behind the stats must not be re-synthesized
 // for every old turn each time). Keyed by turn id; turns without changes are
-// simply absent.
+// simply absent. Inspector mode (sub-agent detail) never renders the summary
+// card, so the diffs are not synthesized at all.
 const turnFileChangesById = computed(() => {
   const map = new Map<string, ReturnType<typeof turnFileChangesCached>>();
+  if (props.inspector) return map;
   for (const turn of props.turns) {
     if (turn.role !== 'assistant' || turn.id === streamingTurnId.value) continue;
     const changes = turnFileChangesCached(turn);
@@ -261,9 +263,11 @@ const turnFileChangesById = computed(() => {
 // Trailing working indicator: shown while the main conversation has an
 // unfinished prompt. `working` is the union of the optimistic submit window
 // and the main turn's liveness (restored from the snapshot's inFlightTurn
-// after a refresh); background agents and BTW side chats never show here —
-// the indicator belongs to the main conversation only.
-const showWorking = computed(() => props.working);
+// after a refresh); BTW side chats never show here. In inspector mode
+// (sub-agent detail panel) the indicator instead follows the inspected
+// agent's own live turn (`turnActive`), so the panel shows the same
+// "Working…" tail while that agent is still running.
+const showWorking = computed(() => (props.inspector ? props.turnActive : props.working));
 
 // Phase label: "requesting" until the turn produces its first output. The
 // pending assistant bubble is created at turn.step.started — before any
@@ -1152,8 +1156,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="onOpenMedia" @open-file="onOpenFile" @open-agent="onOpenAgent" />
           <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
         </template>
+        <!-- Per-turn file-change summary — suppressed in inspector mode: the
+             sub-agent detail view stays a pure trajectory, no diff card. -->
         <TurnFilesSummary
-          v-if="turnFileChangesById.get(turn.id)"
+          v-if="!inspector && turnFileChangesById.get(turn.id)"
           :changes="turnFileChangesById.get(turn.id)!"
           :cwd="props.cwd"
           :interactive="turnFilesInteractive"

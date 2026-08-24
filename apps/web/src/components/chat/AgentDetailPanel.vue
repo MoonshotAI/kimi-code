@@ -6,7 +6,6 @@ import { Badge, Icon, IconButton, Menu, MenuItem, PanelHeader, openDialogCount }
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useFollowScroll } from '@moonshot-ai/app-client/composables';
 import type { AgentMember, ChatTurn, FilePreviewRequest, OpenMediaRequest } from '../../types';
-import type { TurnFileChange } from '../chatTurnRendering';
 import ChatPane from './ChatPane.vue';
 import OutputPanel from './tool-calls/OutputPanel.vue';
 
@@ -26,7 +25,6 @@ const emit = defineEmits<{
   openAgent: [agentId: string];
   openFile: [target: FilePreviewRequest];
   openMedia: [payload: OpenMediaRequest];
-  openTurnDiff: [change: TurnFileChange];
 }>();
 const { t } = useI18n();
 
@@ -397,7 +395,6 @@ const subtitle = computed(() => {
           @open-agent="emit('openAgent', $event)"
           @open-file="emit('openFile', $event)"
           @open-media="emit('openMedia', $event)"
-          @open-turn-diff="emit('openTurnDiff', $event)"
         />
       </template>
     </div>
