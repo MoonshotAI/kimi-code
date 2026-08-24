@@ -6,7 +6,8 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentScopeContext, agentContextOfScope } from '#/agent/scopeContext/scopeContext';
+import { AgentSkill } from '#/features/skill/skillAgentRuntime';
 import { SkillActivated } from '#/features/skill/skillOps';
 import { ISkillActivationDataService } from '#/features/skill/skillActivationData';
 import { ContextUndone } from '#/agent/undo/undoService';
@@ -24,6 +25,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { DeepReadonly } from '#/state/state';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import {
   DEFAULT_FLOW_JUMP_POLICY,
@@ -84,6 +86,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISkillActivationDataService private readonly activationData: ISkillActivationDataService,
     @IAgentContextMemoryService private readonly contextMemory: IAgentContextMemoryService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IConfigService config: IConfigService,
   ) {
     super();
@@ -197,7 +200,12 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         const flagNow = this.flags.enabled(FLOW_FLAG_ID);
         if (flagNow === flagWas) return;
         flagWas = flagNow;
-        if (!flagNow) this.pendingActivations.clear();
+        if (!flagNow) {
+          this.pendingActivations.clear();
+          if (this.scopeContext.agentId === 'main') {
+            this.agentLifecycle.resolve(agentContextOfScope(this.scopeContext), AgentSkill).abortQueuedFlowPrompts();
+          }
+        }
         if (this.scopeContext.agentId !== 'main') return;
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({

@@ -8,6 +8,7 @@ import {
   ContextAppendMessage,
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -88,6 +89,7 @@ describe('AgentFlowService', () => {
   let activationDataStore: Map<string, unknown>;
   let contextMessages: ContextMessage[];
   let configHandlers: ((e: ConfigChangedEvent) => void)[];
+  let abortQueuedFlowPrompts: Mock;
   let flowToolSource: 'builtin' | 'user';
   let runtimeText: string | undefined;
   let hostFsText: string | undefined;
@@ -180,6 +182,10 @@ describe('AgentFlowService', () => {
       setModeAndBroadcast: () => {},
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
+    abortQueuedFlowPrompts = vi.fn();
+    ix.stub(IAgentLifecycleService, {
+      resolve: () => ({ abortQueuedFlowPrompts }),
+    } as unknown as IAgentLifecycleService);
     registerTestAgentWire(ix, testWireScope('wire', 'flow-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
@@ -810,6 +816,18 @@ describe('AgentFlowService', () => {
       for (const handler of configHandlers) handler({} as ConfigChangedEvent);
       expect(seen.at(-1)).toMatchObject({ flowId: 'issue-fix', stageId: 'triage' });
       sub.dispose();
+    });
+
+    it('clears pending activations and aborts queued flow prompts when the live flag turns off', async () => {
+      await activateFlowSkill({ appendPrompt: false, reconcile: false });
+      expect(service.hasPendingActivation()).toBe(true);
+      flowFlagOn = false;
+      for (const handler of configHandlers) handler({} as ConfigChangedEvent);
+      expect(service.hasPendingActivation()).toBe(false);
+      expect(abortQueuedFlowPrompts).toHaveBeenCalledTimes(1);
+      flowFlagOn = true;
+      for (const handler of configHandlers) handler({} as ConfigChangedEvent);
+      expect(abortQueuedFlowPrompts).toHaveBeenCalledTimes(1);
     });
 
 
