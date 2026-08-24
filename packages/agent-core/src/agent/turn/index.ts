@@ -77,7 +77,7 @@ interface PromptHookEndResult {
 const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
-const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
+export const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
 const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
 const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = 'Paused after provider connection error';
 const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = 'Paused after provider authentication error';
@@ -91,7 +91,7 @@ const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy
  * autonomous stand-in for the user typing "continue". The model decides when to
  * stop by calling `UpdateGoal`; otherwise the driver runs another turn.
  */
-const GOAL_CONTINUATION_PROMPT = [
+export const GOAL_CONTINUATION_PROMPT = [
   'Continue working toward the active goal.',
   'Keep the self-audit brief. Do not explore unrelated interpretations once the goal can be',
   'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',

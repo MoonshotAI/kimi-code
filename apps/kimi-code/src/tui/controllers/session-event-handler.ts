@@ -41,6 +41,7 @@ import {
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
 import {
+  GOAL_COMPACTION_PAUSE_REASON,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
@@ -785,6 +786,18 @@ export class SessionEventHandler {
     } else if (change.kind === 'lifecycle') {
       this.pendingModelBlockedFallback = undefined;
     }
+    // A goal parked for the in-flight compaction also annotates the live
+    // compaction block — covers the goal.updated event racing ahead of
+    // compaction.started. The reason match keeps a user pause during a
+    // compaction from promising an auto-resume.
+    if (
+      change.kind === 'lifecycle' &&
+      change.status === 'paused' &&
+      change.reason === GOAL_COMPACTION_PAUSE_REASON &&
+      this.host.state.appState.isCompacting
+    ) {
+      this.host.streamingUI.noteGoalPausedForCompaction();
+    }
     const marker = buildGoalMarker(change, state.toolOutputExpanded, change.actor);
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);
@@ -1102,6 +1115,17 @@ export class SessionEventHandler {
       streamingStartTime: Date.now(),
     });
     this.host.streamingUI.beginCompaction(event.instruction, event.model_display ?? event.model);
+    // An auto compaction parks an active goal until it finishes — say so on
+    // the compaction block itself. The paused-with-reason shape covers the
+    // goal.updated event landing before compaction.started. (Manual
+    // compaction runs on an idle loop and never races the goal driver.)
+    const goal = this.host.state.appState.goal;
+    const goalParkedForCompaction =
+      goal?.status === 'active' ||
+      (goal?.status === 'paused' && goal.terminalReason === GOAL_COMPACTION_PAUSE_REASON);
+    if (event.trigger === 'auto' && goalParkedForCompaction) {
+      this.host.streamingUI.noteGoalPausedForCompaction();
+    }
   }
 
   private handleCompactionEnd(

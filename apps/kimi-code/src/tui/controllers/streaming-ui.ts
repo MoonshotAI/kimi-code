@@ -761,6 +761,16 @@ export class StreamingUIController {
     this.host.state.ui.requestRender();
   }
 
+  /**
+   * Annotates the in-progress compaction block once the engine parks the
+   * active goal for it ("goal paused, will resume when done"). No-op when no
+   * compaction block is live (e.g. the goal event raced ahead of the
+   * compaction event) — the compaction.started path annotates that case.
+   */
+  noteGoalPausedForCompaction(): void {
+    this._activeCompactionBlock?.setGoalPaused();
+  }
+
   // ---------------------------------------------------------------------------
   // Tool call grouping
   // ---------------------------------------------------------------------------

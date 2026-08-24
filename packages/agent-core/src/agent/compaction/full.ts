@@ -205,6 +205,13 @@ export class FullCompaction {
       model: this.agent.config.modelAlias,
       model_display: this.agent.config.modelAlias,
     });
+    // Auto compaction blocks the live turn's step; park an active goal so the
+    // continuation driver stops launching turns until the compaction finishes
+    // (the goal driver itself must not abort the turn the compaction blocks
+    // on). Manual compaction runs on an idle loop and never races the driver.
+    if (data.source === 'auto') {
+      void this.agent.goal.pauseForCompaction();
+    }
     const abortController = new AbortController();
     this.compacting = {
       abortController,
@@ -361,6 +368,11 @@ export class FullCompaction {
       const { contextSummary: _contextSummary, ...eventResult } = result;
       void _contextSummary;
       this.agent.emitEvent({ type: 'compaction.completed', result: eventResult });
+      // The compaction finished: re-activate a goal parked for it. The goal
+      // driver picks the next continuation up naturally when its turn is still
+      // live (blocking compaction); a fresh continuation turn is launched when
+      // the loop has gone idle (non-blocking compaction configs).
+      void this.agent.goal.resumeAfterCompaction();
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (isAbortError(error)) return;

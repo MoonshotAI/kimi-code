@@ -4,6 +4,8 @@
  * Lifecycle:
  *   - constructed on `compaction.started` → blinking white bullet +
  *     "Compacting context..." and optional custom instruction
+ *   - `setGoalPaused()` when the engine parks the active goal for this
+ *     compaction → running header gains "(goal paused, will resume when done)"
  *   - `markDone()` on `compaction.completed` → solid green bullet +
  *     "Compaction complete (X → Y tokens)"
  *   - `markCanceled()` on `compaction.cancelled` → solid warning bullet +
@@ -32,6 +34,7 @@ export class CompactionComponent extends Container {
   private blinkTimer: ReturnType<typeof setInterval> | null = null;
   private done = false;
   private canceled = false;
+  private goalPaused = false;
   private tokensBefore: number | undefined;
   private tokensAfter: number | undefined;
   private summary: string | undefined;
@@ -110,6 +113,18 @@ export class CompactionComponent extends Container {
     this.ui?.requestRender();
   }
 
+  /**
+   * Flags that the engine parked the active goal for this compaction: the
+   * running header explains the pause and the promised auto-resume. The note
+   * only ever applies to the in-progress state — done/canceled headers drop it.
+   */
+  setGoalPaused(): void {
+    if (this.done || this.canceled || this.goalPaused) return;
+    this.goalPaused = true;
+    this.headerText.setText(this.buildHeader());
+    this.ui?.requestRender();
+  }
+
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
@@ -170,8 +185,11 @@ export class CompactionComponent extends Container {
     const label = this.model
       ? currentTheme.boldFg('primary', `Compacting context using ${this.model}...`)
       : currentTheme.boldFg('primary', 'Compacting context...');
+    const goalNote = this.goalPaused
+      ? currentTheme.fg('textDim', ' (goal paused, will resume when done)')
+      : '';
     const tip = this.tip ? currentTheme.fg('textDim', ` · Tip: ${this.tip}`) : '';
-    return `${bullet}${label}${tip}`;
+    return `${bullet}${label}${goalNote}${tip}`;
   }
 
   private startBlink(): void {
