@@ -651,6 +651,33 @@ describe('AgentLifecycleService', () => {
     }
   });
 
+  it('remove awaits asynchronous contributed-unit teardown before deactivating', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const bus = ix.get(ISessionEventBus);
+    const seen: string[] = [];
+    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+
+    contributeDisposeBeacon(async (eventBus, scope) => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      publishDisposed(eventBus, scope);
+    });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const main = await svc.create({ agentId: 'main' });
+      await svc.remove(main);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(seen).toEqual(['disposed']);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('remove stops the agent background tasks before disposal', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
