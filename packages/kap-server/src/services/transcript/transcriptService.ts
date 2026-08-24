@@ -9,7 +9,9 @@ import {
   IAgentLoopService,
   followSessionLifecycles,
   getLiveSessionById,
+  isUndoAnchor,
   reduceContextTranscript,
+  type ContextMessage,
   type IDisposable,
   type Scope,
   type SessionMeta,
@@ -546,13 +548,36 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
+    const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
+    let anchorFloor = 0;
     let sawTurnPrompt = false;
     for (const record of records) {
+      if (record.type === 'context.undo') {
+        const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
+        for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
+          const popped = anchorStack.pop()!;
+          taskOriginTurnTaskIds.clear();
+          for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
+        }
+        continue;
+      }
+      if (record.type === 'context.clear') {
+        anchorFloor = anchorStack.length;
+        continue;
+      }
+      if (record.type === 'context.append_message') {
+        const message = (record as { message?: ContextMessage }).message;
+        if (message !== undefined && isUndoAnchor(message)) {
+          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds) });
+        }
+        continue;
+      }
       if (record.type !== 'turn.prompt') continue;
       sawTurnPrompt = true;
       const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
+      if (origin === undefined) continue;
       if (
-        (origin?.kind === 'task' || origin?.kind === 'background_task') &&
+        (origin.kind === 'task' || origin.kind === 'background_task') &&
         typeof origin.taskId === 'string'
       ) {
         taskOriginTurnTaskIds.add(origin.taskId);

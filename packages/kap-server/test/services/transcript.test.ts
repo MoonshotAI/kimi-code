@@ -1998,6 +1998,49 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot drops undone task-turn boundaries so a redelivered notification folds', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-undoboundary-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const notification =
+        '<notification id="task:task_9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_9">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n</notification>';
+      const taskOrigin = { kind: 'task', taskId: 'task_9', status: 'completed', notificationId: 'n1' };
+      const opening = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] }, time: 2000 },
+      ];
+      const boundary = { type: 'turn.prompt', input: [{ type: 'text', text: notification }], origin: taskOrigin, time: 3000 };
+      const delivered = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: notification }], toolCalls: [], origin: taskOrigin }, time: 4000 };
+      const reply = { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'reporting back' }], toolCalls: [] }, time: 5000 };
+      const again = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'again' }], toolCalls: [], origin: { kind: 'user' } }, time: 7000 };
+      const answer2 = { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'answer2' }], toolCalls: [] }, time: 8000 };
+      const redelivered = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: notification }], toolCalls: [], origin: taskOrigin }, time: 9000 };
+      const write = async (records: unknown[]): Promise<void> =>
+        writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      await write([...opening, boundary, delivered, reply, again, answer2, redelivered]);
+      const withBoundary = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const originKinds = withBoundary!.items
+        .filter((item) => item.kind === 'turn')
+        .map((item) => (item.kind === 'turn' ? item.origin.kind : ''));
+      expect(originKinds).toEqual(['user', 'task', 'user', 'task']);
+
+      await write([...opening, boundary, delivered, reply, { type: 'context.undo', count: 1, time: 6000 }, again, answer2, redelivered]);
+      const withUndo = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const undoTurns = withUndo!.items.filter((item) => item.kind === 'turn');
+      expect(undoTurns).toHaveLength(1);
+      const undoTurn = undoTurns[0];
+      if (undoTurn?.kind !== 'turn') throw new Error('expected turn');
+      expect(undoTurn.origin.kind).toBe('user');
+      expect(
+        undoTurn.steps.flatMap((step) => step.frames).some((f) => f.kind === 'text' && f.role === 'user'),
+      ).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('folds blocked turn endings into failed (engine wire contract)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
