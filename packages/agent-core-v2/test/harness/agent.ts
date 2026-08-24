@@ -2110,7 +2110,7 @@ export class AgentTestContext {
       get agentsMdPaths() {
         return current.paths;
       },
-      onDidChange: Event.None as Event<void>,
+      onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
     };
   }
 

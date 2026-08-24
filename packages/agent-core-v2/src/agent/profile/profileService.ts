@@ -34,7 +34,6 @@ import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { BUILTIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -178,22 +177,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.states.contributeState(profileEmittedPluginBudgetWarningsKey);
     this.configure({});
     this._register(
-      this.sessionToolPolicy.onDidChange((event) => {
-        event.waitUntil(this.refreshSystemPrompt());
-      }),
-    );
-    this._register(
       this.config.onDidSectionChange(({ domain }) => {
         if (domain === TOOLS_SECTION) {
           this.publishToolPatternWarnings();
-          void this.refreshSystemPrompt();
-        }
-      }),
-    );
-    this._register(
-      this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === BUILTIN_SKILL_SOURCE_ID) {
-          void this.refreshSystemPrompt();
         }
       }),
     );
@@ -419,36 +405,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
-  }
-
-  async refreshSystemPrompt(): Promise<void> {
-    const profile = this.resolveActiveProfile();
-    if (profile === undefined) return;
-
-    let context: SystemPromptContext;
-    try {
-      context = await this.buildSystemPromptContext(profile);
-    } catch (error) {
-      void this.dispatcher.dispatch(
-        new WarningIssued({
-          agentId: this.scopeContext.agentId,
-          message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
-          code: 'system-prompt-refresh-failed',
-        }),
-      );
-      return;
-    }
-    this.activeProfile = profile;
-    const rendered = profile.renderSystemPrompt(context);
-    this.update({
-      profileName: profile.name,
-      systemPrompt: rendered.text,
-      environmentDisclosure: rendered.environment,
-      agentsMdPaths: context.agentsMdPaths ?? [],
-    });
-    this.seedAgentsMdReminder(context);
-    this.cacheAgentsMdWarning(context);
-    this.publishAgentsMdWarning();
   }
 
   private seedAgentsMdReminder(context: SystemPromptContext): void {
@@ -763,13 +719,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         { current, requested },
       );
     }
-  }
-
-  private resolveActiveProfile(): ResolvedAgentProfile | undefined {
-    if (this.activeProfile !== undefined) return this.activeProfile;
-    const profileName = this.profileName;
-    if (profileName === undefined) return undefined;
-    return this.catalog.get(profileName);
   }
 
   private cacheAgentsMdWarning(context: Pick<SystemPromptContext, 'agentsMdWarning'>): void {

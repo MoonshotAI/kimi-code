@@ -433,7 +433,7 @@ describe('AgentLifecycleService', () => {
       agentsMd: undefined,
       agentsMdWarning: undefined,
       agentsMdPaths: undefined,
-      onDidChange: Event.None as Event<void>,
+      onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
     } satisfies ISessionInstructionsProvider);
     ix.stub(IAgentAgentsMdReminderService, {
       _serviceBrand: undefined,

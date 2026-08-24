@@ -9,8 +9,10 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
 import {
   AGENTS_MD_PLAIN_NAMES,
@@ -65,11 +67,17 @@ export class AgentAgentsMdReminderService
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
       @IAgentStateService private readonly agentState: IAgentStateService,
+    @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
     this.states.contributeState(agentsMdReminderKnownKey);
     this.states.contributeState(agentsMdReminderCwdKey);
     this.states.contributeState(agentsMdReminderSeededKey);
+    this._register(
+      this.instructions.onDidChange((changes) => {
+        this.announceChanged(changes);
+      }),
+    );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
         const profile = this.agentState.get(profileKey);
@@ -92,6 +100,24 @@ export class AgentAgentsMdReminderService
     this.states.set(agentsMdReminderKnownKey, new Set(known));
     this.states.set(agentsMdReminderCwdKey, cwd);
     this.states.set(agentsMdReminderSeededKey, true);
+  }
+
+  private announceChanged(changes: readonly HostFsChange[]): void {
+    if (!this.states.get(agentsMdReminderSeededKey)) return;
+    const entries = new Map<string, HostFsChange>();
+    for (const change of changes) {
+      const path = normalize(change.path);
+      entries.set(path, { ...change, path });
+    }
+    if (entries.size === 0) return;
+    const list = [...entries.values()];
+    this.reminders.appendSystemReminder(changeReminderText(list), {
+      kind: 'injection',
+      variant: 'agents_md_change',
+    });
+    this.publishKnown(
+      list.filter((change) => change.action !== 'deleted').map((change) => change.path),
+    );
   }
 
   private readonly claimed = new Set<string>();
@@ -284,6 +310,16 @@ function reminderText(paths: readonly string[]): string {
     'The path(s) touched by a recent tool call are covered by AGENTS.md instruction file(s) that were not part of the injected instructions:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
     '\nRead them before making changes in those directories. Each file is suggested at most once per agent.'
+  );
+}
+
+function changeReminderText(changes: readonly HostFsChange[]): string {
+  return (
+    'The AGENTS.md instruction file(s) below changed on disk after they were injected into the system prompt:\n' +
+    changes
+      .map((change) => `- ${change.path}${change.action === 'deleted' ? ' (deleted)' : ''}`)
+      .join('\n') +
+    '\nRead the current file(s) and follow the latest contents; the copies injected in the system prompt are stale.'
   );
 }
 
