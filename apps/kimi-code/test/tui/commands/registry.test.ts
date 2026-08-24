@@ -223,7 +223,7 @@ describe('built-in slash command registry', () => {
     expect((command as KimiSlashCommand).requiresEngineV2).toBe(true);
   });
 
-  it('keeps tower reads and toggles always available but defers objectives to idle', () => {
+  it('keeps every tower subcommand always available, including objectives', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
@@ -231,6 +231,6 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, 'off')).toBe('always');
     expect(resolveSlashCommandAvailability(command!, 'status')).toBe('always');
     expect(resolveSlashCommandAvailability(command!, 'teardown')).toBe('always');
-    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('idle-only');
+    expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
 });

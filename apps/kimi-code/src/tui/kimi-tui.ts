@@ -1921,6 +1921,34 @@ export class KimiTUI {
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+    const phase = this.state.appState.streamingPhase;
+    // Tower mode keeps the main agent as a long-lived coordinator: while its
+    // turn is live, new input steers into that turn instead of queueing
+    // behind it, so consecutive /tower objectives are accepted immediately
+    // rather than serialized one turn at a time. A foreground shell command
+    // ('shell') has no turn to steer into and keeps queue semantics, as do
+    // input deferral and compaction.
+    const steerIntoCoordinator =
+      this.state.appState.towerMode &&
+      phase !== 'idle' &&
+      phase !== 'shell' &&
+      !this.deferUserMessages &&
+      !this.state.appState.isCompacting;
+    if (steerIntoCoordinator) {
+      // Same lease hand-off as the queue path below: the pre-dispatch lease
+      // defers to the raw ids on the steer item, which re-leases inside
+      // steerMessage and binds to the running turn.
+      this.staging.defer(options?.lease);
+      this.steerMessage(session, [
+        {
+          text: input,
+          parts: options?.parts,
+          imageAttachmentIds: options?.imageAttachmentIds,
+          videoAttachmentIds: options?.videoAttachmentIds,
+        },
+      ]);
+      return;
+    }
     if (
       this.deferUserMessages ||
       this.state.appState.streamingPhase !== 'idle' ||
