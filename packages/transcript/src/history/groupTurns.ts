@@ -278,6 +278,25 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
+  if (pendingNotificationFrames.length > 0 && turn !== undefined) {
+    const current = turn;
+    const stepOrdinal = current.steps.length + 1;
+    const step: StepDraft = {
+      stepId: `${current.turnId}.${stepOrdinal}`,
+      ordinal: stepOrdinal,
+      frames: pendingNotificationFrames.map((pending, index): TranscriptFrame => ({
+        kind: 'text',
+        frameId: `${current.turnId}.${stepOrdinal}.f${index + 1}`,
+        role: 'user',
+        text: pending.text,
+        taskId: pending.taskId,
+      })),
+    };
+    current.steps.push(step);
+    syncTurnItem(items, current);
+    pendingNotificationFrames = [];
+  }
+
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
