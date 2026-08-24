@@ -23,6 +23,7 @@ import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
+import { declaredDefaultEffortForModel } from '#/kosong/model/thinking';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   type ExecutableToolContext,
@@ -279,12 +280,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
 
     let createdContext: AgentContext;
     try {
-      if (binding !== undefined) this.modelCatalog.get(binding.model);
+      const model = binding === undefined ? undefined : this.modelCatalog.get(binding.model);
       createdContext = await this.agentLifecycle.create({
         binding: {
           profile: TOWER_WORKER_PROFILE,
           model: binding?.model,
-          thinking: binding?.thinking,
+          thinking: binding?.thinking ?? declaredDefaultEffortForModel(model),
         },
         labels: subagentLabels(this.callerAgentId),
       });
