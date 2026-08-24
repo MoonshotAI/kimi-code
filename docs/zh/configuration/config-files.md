@@ -210,12 +210,14 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 | `default_model` | `string` | — | subagent 的默认模型 |
 | `models` | `table<string, string>` | — | subagent 模型池。key 是 [`[models]`](#models) 条目的别名，value 是给 main agent 的挑选提示 |
 | `force` | `boolean` | `false` | 把所有 subagent 固定到 `default_model`，收回 main agent 的选择权 |
+| `default_effort` | `string` | — | 每次派生的 subagent 绑定的 Thinking 档位，优先于所绑定模型条目自己的 `default_effort` |
 
 字段之间的约束：
 
 - `default_model`：配置 `models` 表时必填，且必须是其中的 key。
 - `models`：value 中英文均可；空字符串表示只列出别名、不给提示。
 - `force`：必须搭配 `default_model`，且不能与 `models` 表同用——表的意义在于提供选择，而 force 取消了选择。
+- `default_effort` 是节级设置：无论派生绑定到池中哪个条目（或 force 固定的模型）都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
 - `primary` 是保留字（含义见下文），不能作为池中 key。
 
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
@@ -240,7 +242,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 
 - 接受池中任意别名，或 `"primary"`——调用方自己正在运行的模型，始终合法，即使不在池中。
 - `default_model` 与 `models` 都未配置时该参数不存在，subagent 继承调用方模型。
-- 绑定池中别名时不携带显式 Thinking 档位：subagent 按 "全局 `[thinking]` 配置 → 所绑定模型的默认 effort" 解析，不继承调用方的档位。
+- 绑定池中别名时不继承调用方的 Thinking 档位，subagent 的档位按以下顺序解析：本节的 `default_effort`、所绑定模型条目的 `default_effort`、全局 `[thinking]` 配置、所绑定模型 `support_efforts` 的中间项。
 - `"primary"` 则连模型带档位一起继承调用方。
 - 传入的值既不是池中别名也不是 `"primary"` 时，本次派生报错并列出可选值。
 
@@ -285,7 +287,7 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 - 底层模型必须声明了 `support_efforts`（`managed:kimi-code` 下目前只有 k3 系列声明了档位）。
 - 变体是独立条目，不会继承被指向条目的字段——`capabilities`、`support_efforts` 等元数据要完整照抄，否则 `default_effort` 不生效（它必须是 `support_efforts` 列表中的值）。
 
-另外注意，`default_effort` 只是模型级默认值：全局 `[thinking].effort` 一旦设置，对 main agent 和 subagent 都优先生效，变体的默认档位只在全局未设置时起作用。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
+另外注意 main agent 与 subagent 的不对称：对 main agent，全局 `[thinking].effort` 一旦设置就压过变体的 `default_effort`；对绑定池内别名的 subagent，变体的 `default_effort` 优先于全局值，只有 `[secondary_model].default_effort` 的优先级更高。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
 
 ::: warning 注意
 配置错误一律直接报错，不做静默回退。出现以下情况时，会话的创建、恢复（resume）与 fork 都会在启动时失败：

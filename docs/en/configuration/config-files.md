@@ -210,12 +210,14 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 | `default_model` | `string` | — | The default model for subagents |
 | `models` | `table<string, string>` | — | Subagent model pool. Each key is the alias of a configured [`[models]`](#models) entry; each value is the selection hint shown to the main agent |
 | `force` | `boolean` | `false` | Pin every subagent to `default_model`, taking the choice away from the main agent |
+| `default_effort` | `string` | — | The thinking effort every spawned subagent binds with; outranks the bound model entry's own `default_effort` |
 
 Constraints between the fields:
 
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `force`: requires `default_model` and cannot be combined with a `models` table — the table exists to offer a choice, and force removes it.
+- `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
 - `primary` is a reserved alias (see below) and cannot be a pool key.
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
@@ -240,7 +242,7 @@ Rules for the `model` parameter:
 
 - It accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when not in the pool.
 - When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model.
-- Binding a pool alias carries no explicit thinking effort: the subagent resolves it as "global `[thinking]` config → the bound model's default effort" instead of inheriting the caller's level.
+- Binding a pool alias does not inherit the caller's thinking effort. The subagent's effort resolves in this order: the section's `default_effort`, the bound model entry's `default_effort`, the global `[thinking]` config, then the middle of the bound model's `support_efforts`.
 - `"primary"` inherits both the model and the effort level from the caller.
 - A value that is neither a pool alias nor `"primary"` fails the spawn with an error listing the available choices.
 
@@ -286,7 +288,7 @@ Two prerequisites:
 - The underlying model must declare `support_efforts` (under `managed:kimi-code` only the k3 family currently declares effort levels).
 - The variant is a standalone entry and does not inherit fields from the entry it points at — copy `capabilities`, `support_efforts`, and the other metadata over in full, otherwise `default_effort` has no effect (it must be a member of `support_efforts`).
 
-Also note that `default_effort` stays a model-level default: once a global `[thinking].effort` is set, it wins for the main agent and subagents alike, and the variant's default only applies when no global effort is set. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
+Note the asymmetry between the main agent and pool-bound subagents: for the main agent, a configured global `[thinking].effort` overrides the variant's `default_effort`; for subagents the variant's `default_effort` wins over the global value, and only `[secondary_model].default_effort` outranks it. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
 
 ::: warning Note
 Configuration errors fail loudly instead of falling back silently. Session creation, resume, and fork all fail at startup when:
