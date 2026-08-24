@@ -237,6 +237,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             }],
           ],
           configureContainer: (container) => {
+            container.anchorKernelEntry(() => {
+              eventBus?.deactivateAgent(agent);
+            }, 'agent-event-bus-deactivate');
             this.adopt({
               id: agentId,
               kind: LifecycleScope.Agent,
@@ -447,9 +450,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     await managed.runtimeSet.close();
     managed.killSpace();
     handle.dispose();
-    this.instantiation.invokeFunction((accessor) =>
-      (accessor.get(ISessionEventBus) as ISessionEventBus | undefined)?.deactivateAgent(agent),
-    );
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);
   }

@@ -228,6 +228,21 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const enableTerminals = exposureClass === 'loopback' || opts.allowRemoteTerminals === true;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
+  const onUnhandledRejection = (reason: unknown): void => {
+    logger.error(
+      { err: reason instanceof Error ? reason : new Error(String(reason)) },
+      'unhandledRejection',
+    );
+  };
+  const onUncaughtException = (err: unknown): void => {
+    logger.fatal(
+      { err: err instanceof Error ? err : new Error(String(err)) },
+      'uncaughtException',
+    );
+    process.exit(1);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+  process.on('uncaughtException', onUncaughtException);
   const authFailureLimiter =
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
@@ -343,6 +358,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
+    process.off('unhandledRejection', onUnhandledRejection);
+    process.off('uncaughtException', onUncaughtException);
     await app.close();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();

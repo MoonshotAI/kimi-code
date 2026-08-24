@@ -70,6 +70,7 @@ import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import '#/app/event/eventBusService';
+import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
@@ -501,6 +502,48 @@ describe('AgentLifecycleService', () => {
     await svc.remove(main);
     expect(svc.get('main')).toBeUndefined();
     expect(svc.handleOf('main')).toBeUndefined();
+  });
+
+  it('remove keeps the lifecycle context active through async scope teardown', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const bus = ix.get(ISessionEventBus);
+    const main = await svc.create({ agentId: 'main' });
+    const seen: string[] = [];
+    disposables.add(bus.subscribe(AgentActivityUpdated, (event) => seen.push(event.lifecycle)));
+    const agentScope = ix.children.find((child) => child.debugLabel === 'main');
+    expect(agentScope).toBeDefined();
+    let releaseDrain!: () => void;
+    agentScope!.anchorKernelEntry(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDrain = resolve;
+        }),
+      'test-async-disposer',
+    );
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await svc.remove(main);
+      bus.publish(
+        new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
+        main,
+      );
+      expect(seen).toEqual(['disposed']);
+      releaseDrain();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(() =>
+        bus.publish(
+          new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
+          main,
+        ),
+      ).toThrow("Agent event 'agent.activity.updated' has no active lifecycle context");
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('remove stops the agent background tasks before disposal', async () => {

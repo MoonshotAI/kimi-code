@@ -232,6 +232,28 @@ describe('server-v2 boot', () => {
     expect(() => core.accessor.get(IBootstrapService)).toThrow();
     expect(await listLiveServerInstances(home)).toEqual([]);
   });
+
+  it('installs process-level rejection handlers while running and removes them on close', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore + 1);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore + 1);
+
+    await server.close();
+    server = undefined;
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+  });
 });
 
 function silentLogger() {
