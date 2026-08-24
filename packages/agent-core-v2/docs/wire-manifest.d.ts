@@ -512,6 +512,7 @@ interface PromptAcceptedPayload {
   _name: 'prompt.accepted';
   agentId: string;
   promptId: string;
+  content?: any;
 }
 
 /**

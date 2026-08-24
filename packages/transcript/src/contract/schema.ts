@@ -209,6 +209,8 @@ export const transcriptTaskSchema = z.object({
   error: z.string().optional(),
   stateReason: z.string().optional(),
   usage: stepUsageSchema.optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export const goalMetaSchema = z.object({

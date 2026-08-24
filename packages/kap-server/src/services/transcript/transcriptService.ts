@@ -30,6 +30,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import { readWireRecords } from './wireRecords';
+import { projectPromptContentParts } from '../messages/messageProjection';
 import {
   bindSessionTranscript,
   descriptorFromMeta,
@@ -417,7 +418,7 @@ export class TranscriptService {
           promptId: queue.active.id,
           status: 'running',
           userMessageId: queue.active.userMessageId,
-          content: queue.active.message.content,
+          content: projectPromptContentParts(queue.active.message.content),
           createdAt: queue.active.createdAt,
         },
       });
@@ -429,7 +430,7 @@ export class TranscriptService {
           promptId: pending.id,
           status: 'queued',
           userMessageId: pending.userMessageId,
-          content: pending.message.content,
+          content: projectPromptContentParts(pending.message.content),
           createdAt: pending.createdAt,
         },
       });

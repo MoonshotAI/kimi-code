@@ -200,7 +200,11 @@ export class AgentPromptService implements IAgentPromptService {
         submitted = true;
         this.reservedPromptIds.delete(id);
         await this.dispatcher.dispatch(
-          new PromptAccepted({ agentId: this.scopeContext.agentId, promptId: id }),
+          new PromptAccepted({
+            agentId: this.scopeContext.agentId,
+            promptId: id,
+            content: stripBundledSkillBlocks(message),
+          }),
         );
         return this.enqueue({ id, message });
       },

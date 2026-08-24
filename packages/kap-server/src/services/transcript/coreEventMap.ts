@@ -8,6 +8,7 @@ import type {
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -1335,6 +1336,11 @@ export class AgentTranscriptProjector {
     const prompt = this.upsertPrompt(event.promptId, () => ({
       promptId: event.promptId,
       status: 'running',
+      userMessageId: event.promptId,
+      content:
+        event.content === undefined
+          ? undefined
+          : projectPromptContentParts(event.content as readonly ContentPart[]),
       createdAt: nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
@@ -1344,7 +1350,7 @@ export class AgentTranscriptProjector {
     const prompt = this.upsertPrompt(event.promptId, () => ({
       promptId: event.promptId,
       status: 'queued',
-      content: event.content,
+      content: projectPromptContentParts(event.content),
       createdAt: nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
