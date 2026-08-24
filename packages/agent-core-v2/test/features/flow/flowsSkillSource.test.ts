@@ -6,6 +6,8 @@ import type { IConfigService } from '#/app/config/config';
 import type { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID } from '#/features/flow/flow';
 import { FlowsSkillSource, isProjectedFlowSkill } from '#/features/flow/flowsSkillSource';
+import { FLOW_DRAFT_SKILL } from '#/features/flow/skill/skill';
+import { visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
 import type { HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -68,24 +70,32 @@ describe('FlowsSkillSource', () => {
     source = new FlowsSkillSource(fs, fsWatch, workspace, bootstrap, flags, config);
   });
 
-  it('contributes the built-in /flow drafting skill first', async () => {
+  it('registers the /flow drafting skill through the builtin channel, gated on the flow flag', () => {
+    expect(FLOW_DRAFT_SKILL.name).toBe('flow');
+    expect(FLOW_DRAFT_SKILL.source).toBe('builtin');
+    expect(FLOW_DRAFT_SKILL.experimentalFlag).toBe(FLOW_FLAG_ID);
+    expect(FLOW_DRAFT_SKILL.metadata.type).toBe('inline');
+    expect(FLOW_DRAFT_SKILL.content).toContain('$ARGUMENTS');
+    expect(FLOW_DRAFT_SKILL.content).toContain('.kimi-code/flows/<id>.md');
+    expect(FLOW_DRAFT_SKILL.content).toContain('FlowStart');
+    expect(FLOW_DRAFT_SKILL.content).toContain('## Contract');
+    expect(FLOW_DRAFT_SKILL.content).not.toContain('$CONTRACT');
+    const flagOn = stubFlag((id) => id === FLOW_FLAG_ID);
+    const flagOff = stubFlag(() => false);
+    expect(visibleBuiltinSkills(true, flagOn).some((skill) => skill.name === 'flow')).toBe(true);
+    expect(visibleBuiltinSkills(true, flagOff).some((skill) => skill.name === 'flow')).toBe(false);
+  });
+
+  it('does not contribute the drafting skill itself — the builtin channel owns it', async () => {
     const contribution = await source.load();
-    expect(contribution.skills).toHaveLength(1);
-    const draft = contribution.skills[0]!;
-    expect(draft.name).toBe('flow');
-    expect(draft.source).toBe('builtin');
-    expect(draft.metadata.type).toBe('inline');
-    expect(draft.content).toContain('$ARGUMENTS');
-    expect(draft.content).toContain('.kimi-code/flows/<id>.md');
-    expect(draft.content).toContain('FlowStart');
-    expect(draft.content).toContain('## Contract');
+    expect(contribution.skills).toHaveLength(0);
   });
 
   it('projects a flow definition into a user-activatable flow skill', async () => {
     files.set('issue-fix.md', VALID);
     const contribution = await source.load();
-    expect(contribution.skills).toHaveLength(2);
-    const skill = contribution.skills[1]!;
+    expect(contribution.skills).toHaveLength(1);
+    const skill = contribution.skills[0]!;
     expect(skill.name).toBe('flow:issue-fix');
     expect(skill.source).toBe('project');
     expect(skill.metadata.type).toBe('flow');
@@ -104,16 +114,16 @@ describe('FlowsSkillSource', () => {
     expect((await source.load()).skills).toHaveLength(0);
   });
 
-  it('contributes only the drafting skill when the flows directory does not exist', async () => {
+  it('contributes nothing when the flows directory does not exist', async () => {
     const contribution = await source.load();
-    expect(contribution.skills.map((skill) => skill.name)).toEqual(['flow']);
+    expect(contribution.skills).toHaveLength(0);
   });
 
   it('skips a definition whose id does not match its file name, and unparseable files', async () => {
     files.set('renamed.md', VALID);
     files.set('broken.md', 'not a flow definition');
     const contribution = await source.load();
-    expect(contribution.skills.map((skill) => skill.name)).toEqual(['flow']);
+    expect(contribution.skills).toHaveLength(0);
     expect(contribution.skipped?.map((entry) => entry.path).toSorted()).toEqual([
       '/ws/.kimi-code/flows/broken.md',
       '/ws/.kimi-code/flows/renamed.md',
@@ -123,8 +133,8 @@ describe('FlowsSkillSource', () => {
   it('projects a user-level flow definition with the user source', async () => {
     userFiles.set('issue-fix.md', VALID);
     const contribution = await source.load();
-    expect(contribution.skills).toHaveLength(2);
-    const skill = contribution.skills[1]!;
+    expect(contribution.skills).toHaveLength(1);
+    const skill = contribution.skills[0]!;
     expect(skill.name).toBe('flow:issue-fix');
     expect(skill.source).toBe('user');
     expect(skill.path).toBe('/home/.kimi-code/flows/issue-fix.md');
@@ -149,8 +159,8 @@ describe('FlowsSkillSource', () => {
     files.set('issue-fix.md', VALID);
     userFiles.set('issue-fix.md', VALID);
     const contribution = await source.load();
-    expect(contribution.skills).toHaveLength(2);
-    expect(contribution.skills[1]!.source).toBe('project');
+    expect(contribution.skills).toHaveLength(1);
+    expect(contribution.skills[0]!.source).toBe('project');
     expect(contribution.skipped).toEqual([
       {
         path: '/home/.kimi-code/flows/issue-fix.md',

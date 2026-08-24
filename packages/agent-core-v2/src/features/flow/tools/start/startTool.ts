@@ -41,11 +41,12 @@ export class FlowStartTool implements IFlowStartTool {
       ],
       description: `Starting flow ${args.flow}`,
       approvalRule: this.name,
-      execute: () => this.execution(args, path, inspected.identity.generation),
+      execute: (ctx) => this.execution(ctx.toolCallId, args, path, inspected.identity.generation),
     };
   }
 
   private async execution(
+    toolCallId: string,
     rawArgs: FlowStartInput,
     path: string,
     generation: string,
@@ -64,6 +65,11 @@ export class FlowStartTool implements IFlowStartTool {
         output:
           'A flow run is already active in this session. Finish it or call FlowAbort before starting another.',
       };
+    }
+
+    const approved = this.flow.consumeStartApproval(toolCallId);
+    if (approved !== undefined) {
+      return this.startRun(approved, args);
     }
 
     let projectText: string | undefined;

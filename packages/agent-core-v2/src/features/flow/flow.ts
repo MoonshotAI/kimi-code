@@ -190,6 +190,12 @@ export interface IAgentFlowService {
    *  FlowAdvance's execution so the verdict provenance cannot be inferred
    *  from prepare-time mode/display state). */
   consumeGateApproval(toolCallId: string): boolean;
+  /** One-shot snapshot of the definition the user approved in this call's
+   *  start review (set by the start hook when the approval resolves
+   *  approved). FlowStart's execution starts the run from this snapshot
+   *  instead of re-reading the definition file, so the blueprint the user
+   *  approved is exactly the one that runs. */
+  consumeStartApproval(toolCallId: string): FlowDefinition | undefined;
 }
 
 export const IAgentFlowService: ServiceIdentifier<IAgentFlowService> =

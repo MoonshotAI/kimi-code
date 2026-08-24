@@ -27,6 +27,7 @@ export class FlowGateReview {
     private readonly loadStartDefinition: (
       flowId: string,
     ) => Promise<ResolvedStartDefinition | undefined>,
+    private readonly onStartApproved: (toolCallId: string, definition: FlowDefinition) => void,
   ) {}
 
   async requestStartApproval(
@@ -50,18 +51,38 @@ export class FlowGateReview {
       })),
     };
     const reviewContext = { ...context, execution: { ...context.execution, display } };
+    const epochAtRequest = this.runEpoch();
     return this.toolApproval.requestToolApproval(
       reviewContext,
       {
         kind: 'ask',
-        resolveApproval: (result) => this.startApprovalResult(result),
+        resolveApproval: (result) =>
+          this.startApprovalResult(result, context, resolved.definition, epochAtRequest),
       },
       'flow-start-review-ask',
     );
   }
 
-  private startApprovalResult(result: ApprovalResponse): PermissionPolicyResolution | undefined {
-    if (result.decision === 'approved') return undefined;
+  private startApprovalResult(
+    result: ApprovalResponse,
+    context: ResolvedToolExecutionHookContext,
+    definition: FlowDefinition,
+    epochAtRequest: number,
+  ): PermissionPolicyResolution | undefined {
+    if (this.runEpoch() !== epochAtRequest) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          output:
+            'The session state changed while this start review was open (undo, or another run started); this stale review is void. Submit FlowStart again.',
+        },
+      };
+    }
+    if (result.decision === 'approved') {
+      this.onStartApproved(context.toolCall.id, definition);
+      return undefined;
+    }
     if (result.decision === 'cancelled') {
       return {
         kind: 'result',

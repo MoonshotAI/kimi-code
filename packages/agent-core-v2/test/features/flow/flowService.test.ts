@@ -89,6 +89,8 @@ describe('AgentFlowService', () => {
   let contextMessages: ContextMessage[];
   let configHandlers: ((e: ConfigChangedEvent) => void)[];
   let flowToolSource: 'builtin' | 'user';
+  let runtimeText: string | undefined;
+  let hostFsText: string | undefined;
   let todoToolSource: 'builtin' | 'user';
   let scopeFor: (id: string) => ReturnType<typeof makeAgentScopeContext>;
 
@@ -112,13 +114,15 @@ describe('AgentFlowService', () => {
     ix.stub(IBootstrapService, {
       homeDir: '/home/.kimi-code',
     } as unknown as IBootstrapService);
+    runtimeText = DEFINITION_TEXT;
+    hostFsText = undefined;
     ix.stub(IAgentRuntimeService, {
       acquire: () => ({
         runtime: {
           identity: { generation: 'g1' },
           fs: {
             readText: async (path: string) => {
-              if (path.endsWith('/issue-fix.md')) return DEFINITION_TEXT;
+              if (runtimeText !== undefined && path.endsWith('/issue-fix.md')) return runtimeText;
               throw new Error('not found');
             },
           },
@@ -127,7 +131,8 @@ describe('AgentFlowService', () => {
       }),
     } as unknown as IAgentRuntimeService);
     ix.stub(IHostFileSystem, {
-      readText: async () => {
+      readText: async (path: string) => {
+        if (hostFsText !== undefined && path.endsWith('/issue-fix.md')) return hostFsText;
         throw new Error('not found');
       },
     } as unknown as IHostFileSystem);
@@ -948,6 +953,58 @@ describe('AgentFlowService', () => {
         startContext({ flow: 'issue-fix', task: 'task' }),
       );
       expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a valid user-level definition when the project file is invalid, and still reviews', async () => {
+      hostFsText = DEFINITION_TEXT;
+      runtimeText = 'not a valid flow definition';
+      await executorEvents.fireBeforeExecute(
+        startContext({ flow: 'issue-fix', task: 'task' }),
+      );
+      expect(requestToolApproval).toHaveBeenCalledTimes(1);
+      const reviewContext = requestToolApproval.mock.calls[0]![0] as ResolvedToolExecutionHookContext;
+      const display = reviewContext.execution.display;
+      expect(display?.kind).toBe('flow_start_review');
+      if (display?.kind === 'flow_start_review') {
+        expect(display.source_path).toBe('/home/.kimi-code/flows/issue-fix.md');
+      }
+    });
+
+    it('vetoes a FlowStart batched with any sibling call', async () => {
+      const context = startContext({ flow: 'issue-fix', task: 'task' });
+      const sibling: ToolCall = {
+        type: 'function',
+        id: 'call_write',
+        name: 'Write',
+        arguments: '{}',
+      };
+      const batched = {
+        ...context,
+        toolCalls: [context.toolCall, sibling],
+      } as ResolvedToolExecutionHookContext;
+      const decision = await executorEvents.fireBeforeExecute(batched);
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('Submit FlowStart alone');
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
+    it('snapshots the approved definition for one-shot consumption by the tool', async () => {
+      requestToolApproval.mockImplementationOnce(
+        async (
+          _context: unknown,
+          ask: { resolveApproval: (result: { decision: string }) => unknown },
+        ) => {
+          ask.resolveApproval({ decision: 'approved' });
+          return undefined;
+        },
+      );
+      await executorEvents.fireBeforeExecute(
+        startContext({ flow: 'issue-fix', task: 'task' }),
+      );
+      const snapshot = service.consumeStartApproval('call_start');
+      expect(snapshot?.id).toBe('issue-fix');
+      expect(snapshot?.stages.map((stage) => stage.id)).toEqual(['triage', 'implement']);
+      expect(service.consumeStartApproval('call_start')).toBeUndefined();
     });
 
     it('skips the start review when the definition does not declare the requested id', async () => {

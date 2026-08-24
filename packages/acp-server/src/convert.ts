@@ -291,6 +291,18 @@ export function displayBlockToAcpContent(block: ToolInputDisplay): ToolCallConte
     if (text === null) return null;
     return { type: 'content', content: { type: 'text', text } };
   }
+  if (block.kind === 'flow_start_review') {
+    const lines = [
+      `Start flow \`${block.flow_id}\` (${block.stages.length} stages)`,
+      `Task: ${block.task}`,
+      `Definition: ${block.source_path}`,
+      ...block.stages.map(
+        (stage, index) =>
+          `${index + 1}. \`${stage.id}\` (gate: ${stage.gate})\n   Objective: ${stage.objective}\n   Done when: ${stage.completion}`,
+      ),
+    ];
+    return { type: 'content', content: { type: 'text', text: lines.join('\n') } };
+  }
   if (block.kind === 'flow_gate_review') {
     return { type: 'content', content: { type: 'text', text: composeFlowGateContent(block) } };
   }

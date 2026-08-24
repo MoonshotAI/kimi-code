@@ -60,6 +60,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
 
   private readonly review: FlowGateReview;
   private readonly approvedGateCalls = new Map<string, number>();
+  private readonly approvedStartCalls = new Map<string, { definition: FlowDefinition; epoch: number }>();
   private readonly preparedEpochs = new WeakMap<object, number>();
   private readonly pendingActivations = new Map<
     string,
@@ -96,6 +97,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
       },
       () => this.epoch,
       (flowId) => this.loadStartDefinition(flowId),
+      (toolCallId, definition) => {
+        this.approvedStartCalls.set(toolCallId, { definition, epoch: this.epoch });
+      },
     );
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
@@ -126,6 +130,14 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
           return;
         }
         if (event.toolCall.name === FLOW_START_TOOL_NAME) {
+          if (event.toolCalls.length > 1) {
+            event.veto(
+              denyToolExecution(
+                'A flow start must be the only call in its response: the reviewed blueprint must be exactly the one that runs, and a sibling call could rewrite the definition mid-review. Submit FlowStart alone.',
+              ),
+            );
+            return;
+          }
           if (this.modeService.mode === 'auto') return;
           event.waitUntil(() => this.review.requestStartApproval(event));
           return;
@@ -212,9 +224,9 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     }
     if (projectText !== undefined) {
       const validated = validateFlowDefinitionText(projectText, projectPath, flowId);
-      return validated.definition !== undefined
-        ? { definition: validated.definition, sourcePath: projectPath }
-        : undefined;
+      if (validated.definition !== undefined) {
+        return { definition: validated.definition, sourcePath: projectPath };
+      }
     }
     const userPath = userFlowDefinitionPath(this.bootstrap.homeDir, flowId);
     let userText: string | undefined;
@@ -417,6 +429,12 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     const approvedAt = this.approvedGateCalls.get(toolCallId);
     this.approvedGateCalls.delete(toolCallId);
     return approvedAt === this.epoch;
+  }
+
+  consumeStartApproval(toolCallId: string): FlowDefinition | undefined {
+    const approved = this.approvedStartCalls.get(toolCallId);
+    this.approvedStartCalls.delete(toolCallId);
+    return approved !== undefined && approved.epoch === this.epoch ? approved.definition : undefined;
   }
 
   abort(note?: string): void {

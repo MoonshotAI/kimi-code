@@ -29,6 +29,7 @@ export class ReverseRpcController {
       this.approvals.set(id, {
         resolve,
         flowGate:
+          request.display?.kind === "flow_start_review" ||
           request.display?.kind === "flow_gate_review" ||
           request.display?.kind === "flow_jump_review",
       });

@@ -39,6 +39,7 @@ describe('FlowStartTool', () => {
   let active: boolean;
   let startResult: boolean;
   let start: ReturnType<typeof vi.fn>;
+  let approvedSnapshot: unknown;
 
   beforeEach(() => {
     ix = new TestInstantiationService();
@@ -46,6 +47,7 @@ describe('FlowStartTool', () => {
     userFileText = undefined;
     active = false;
     startResult = true;
+    approvedSnapshot = undefined;
     start = vi.fn(() => startResult);
     const runtime = {
       identity: { workspaceId: 'w', runtimeId: 'r', generation: 'g1' },
@@ -70,6 +72,8 @@ describe('FlowStartTool', () => {
       run: () => ({ active }),
       start,
       hasPendingActivation: () => false,
+      consumeStartApproval: (toolCallId: string) =>
+        toolCallId === CTX.toolCallId ? approvedSnapshot : undefined,
     } as unknown as IAgentFlowService);
     ix.stub(IHostFileSystem, {
       readText: async (target: string) => {
@@ -88,6 +92,21 @@ describe('FlowStartTool', () => {
   function execute(flow: string) {
     return runnable(tool.resolveExecution({ flow, task: 'fix #1' })).execute(CTX);
   }
+
+  it('starts from the approved review snapshot without re-reading the definition', async () => {
+    approvedSnapshot = {
+      id: 'issue-fix',
+      stages: [
+        { id: 'approved-stage', objective: 'run the approved plan', completion: 'done', gate: 'human' },
+      ],
+    };
+    fileText = 'not a valid definition anymore';
+    const result = await execute('issue-fix');
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('Flow run started: `issue-fix`');
+    expect(result.output).toContain('approved-stage');
+    expect(start).toHaveBeenCalledWith(approvedSnapshot, 'fix #1');
+  });
 
   it('starts a run whose definition id matches the requested flow', async () => {
     const result = await execute('issue-fix');

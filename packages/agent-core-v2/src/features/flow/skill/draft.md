@@ -55,4 +55,6 @@ Read-only stage: no code changes while mapping.
 2. Fold in their feedback and rewrite the file until they are satisfied.
 3. When the user approves the draft, call `FlowStart` with the flow id and the task. The engine then raises a final start-review approval showing the parsed blueprint — that approval, not your conversation, is what actually starts the run. If the user rejects it with feedback, revise the definition and submit `FlowStart` again.
 
+Note on the contract below: its Start clause describes `/flow:<id>` activations, where the engine starts the run for you. This drafting path has no automatic start — calling `FlowStart` yourself after the user approves the draft is exactly right here.
+
 $CONTRACT
