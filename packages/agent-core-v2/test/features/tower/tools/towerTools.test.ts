@@ -7,11 +7,13 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
-import { IAgentTowerService, TOWER_TOOL_NAMES } from '#/features/tower/tower';
+import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -39,6 +41,8 @@ import { ITowerStatusTool } from '#/features/tower/tools/status/status';
 import { TowerStatusTool } from '#/features/tower/tools/status/statusTool';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { stubAgentContext } from '../../../agent/agentContext/stubs';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -67,7 +71,8 @@ let ix: TestInstantiationService;
 let towerActive: boolean;
 let currentAgentId: string;
 let currentSessionId: string;
-let addedTools: string[];
+let liveSessionIds: string[];
+const agentContexts = new Map<string, AgentContext>();
 
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), 'tower-tools-test-'));
@@ -78,8 +83,9 @@ beforeEach(async () => {
 
   towerActive = false;
   currentAgentId = 'main';
+  liveSessionIds = [];
   currentSessionId = 'session-test';
-  addedTools = [];
+  agentContexts.clear();
 
   disposables = new DisposableStore();
   ix = createServices(disposables, {
@@ -101,6 +107,14 @@ beforeEach(async () => {
         get agentId() {
           return currentAgentId;
         },
+        get agentContext() {
+          let context = agentContexts.get(currentAgentId);
+          if (context === undefined) {
+            context = stubAgentContext(currentAgentId, 0);
+            agentContexts.set(currentAgentId, context);
+          }
+          return context;
+        },
         scope: (subKey?: string) => subKey ?? '',
       });
       reg.defineInstance(IAgentTowerService, {
@@ -115,11 +129,9 @@ beforeEach(async () => {
           towerActive = false;
         },
       });
-      reg.definePartialInstance(IAgentProfileService, {
-        addActiveTool: (name: string) => {
-          addedTools.push(name);
-        },
-      });
+      reg.defineInstance(ISessionManager, {
+        get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
+      } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
       });
@@ -153,7 +165,7 @@ async function initViaTool() {
 }
 
 describe('TowerInitTool', () => {
-  it('creates .tower, enters tower mode, and activates the tower tool set', async () => {
+  it('creates .tower and enters tower mode', async () => {
     const result = await run(ix.get(ITowerInitTool), {});
 
     expect(result.isError).toBeFalsy();
@@ -161,7 +173,6 @@ describe('TowerInitTool', () => {
     expect(result.output).toContain('base branch: main');
     expect((await stat(join(repo, '.tower/comms'))).isDirectory()).toBe(true);
     expect(towerActive).toBe(true);
-    expect(addedTools).toEqual([...TOWER_TOOL_NAMES]);
   });
 
   it('is idempotent — a second run reports already-initialized and keeps state', async () => {
@@ -175,7 +186,6 @@ describe('TowerInitTool', () => {
     expect(second.output).toContain('tower workspace already initialized');
     const state = await new TowerStore(repo).load();
     expect(state.missions).toHaveLength(1);
-    expect(addedTools).toHaveLength(2 * TOWER_TOOL_NAMES.length);
   });
 
   it('adopting from a previous session retires its roster and says so', async () => {
@@ -197,6 +207,19 @@ describe('TowerInitTool', () => {
     const state = await store.load();
     expect(state.sessionId).toBe('session-next');
     expect(state.roster.agents).toEqual([]);
+  });
+
+  it('refuses to adopt while the owning session is live in this process', async () => {
+    await initViaTool();
+    liveSessionIds = ['session-test'];
+    currentSessionId = 'session-next';
+
+    const result = await run(ix.get(ITowerInitTool), {});
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('owned by a live session (session-test)');
+    const state = await new TowerStore(repo).load();
+    expect(state.sessionId).toBe('session-test');
   });
 });
 
@@ -237,6 +260,18 @@ describe('TowerTeardownTool', () => {
     expect(result.output).toContain('tower teardown:');
     expect(result.output).toContain('Tower mode exited.');
     expect(towerActive).toBe(false);
+  });
+
+  it('refuses to tear down while the owning session is live in this process', async () => {
+    await initViaTool();
+    liveSessionIds = ['session-test'];
+    currentSessionId = 'session-next';
+
+    const result = await run(ix.get(ITowerTeardownTool), {});
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('dismantle that session');
+    expect((await new TowerStore(repo).load()).sessionId).toBe('session-test');
   });
 });
 
@@ -309,24 +344,26 @@ describe('TowerStatusTool', () => {
 });
 
 describe('tool registration', () => {
-  const MAIN_ONLY = ['TowerInit', 'TowerPlan', 'TowerSpawn', 'TowerMerge', 'TowerTeardown'];
-  const SHARED = ['TowerSend', 'TowerInbox', 'TowerFinding', 'TowerReview', 'TowerMission', 'TowerStatus'];
+  it('declares no when gate on any tower tool contribution', () => {
+    for (const contribution of TOWER_TOOL_CONTRIBUTIONS) {
+      expect('when' in contribution, contribution.name).toBe(false);
+    }
+  });
 
-  it('gates init/plan/spawn/merge/teardown to the main agent and shares the rest', () => {
-    for (const name of MAIN_ONLY) {
-      const contribution = TOWER_TOOL_CONTRIBUTIONS.find((c) => c.name === name);
-      expect(contribution, name).toBeDefined();
-      expect(contribution?.when, name).toBeDefined();
-      currentAgentId = 'main';
-      expect(contribution?.when?.(ix), name).toBe(true);
-      currentAgentId = 'agent-w1';
-      expect(contribution?.when?.(ix), name).toBe(false);
+  it('rejects orchestration tools at execution time for non-main agents', async () => {
+    currentAgentId = 'agent-w1';
+    const cases: readonly (readonly [ServiceIdentifier<AnyAgentTool>, unknown])[] = [
+      [ITowerInitTool, {}],
+      [ITowerPlanTool, { missions: [] }],
+      [ITowerMergeTool, { branch: 'tower/x' }],
+      [ITowerTeardownTool, {}],
+    ];
+    for (const [id, args] of cases) {
+      const result = await run(ix.get(id), args as never);
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe('Tower orchestration tools are only supported by the main agent.');
     }
-    currentAgentId = 'main';
-    for (const name of SHARED) {
-      const contribution = TOWER_TOOL_CONTRIBUTIONS.find((c) => c.name === name);
-      expect(contribution, name).toBeDefined();
-      expect(contribution?.when, name).toBeUndefined();
-    }
+    expect(towerActive).toBe(false);
+    expect((await stat(join(repo, '.tower')).catch(() => undefined))).toBeUndefined();
   });
 });

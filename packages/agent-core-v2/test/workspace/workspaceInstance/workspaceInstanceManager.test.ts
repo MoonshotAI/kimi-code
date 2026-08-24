@@ -139,10 +139,10 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 21 }, () => undefined),
+    ...Array.from({ length: 22 }, () => undefined),
     new TestRuntimeUnitHostFactory(),
   ];
-  args[19] = { entries: () => [] };
+  args[20] = { entries: () => [] };
   const value = Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
   const providers = (value as unknown as { providers: Map<string, RuntimeProviderFactory> }).providers;
   providers.clear();
@@ -229,5 +229,52 @@ describe('WorkspaceInstanceManager', () => {
     expect(instance.program.status).toBe('preparing');
     expect(instance.snapshot().lifecycle).toBe('active');
     await value.dispose();
+  });
+
+  describe('findContaining', () => {
+    function rootedWorkspace(id: string, root: string): Workspace {
+      return { id, root, name: id, createdAt: 0, lastOpenedAt: 0 };
+    }
+
+    it('matches exact and nested cwds, preferring the longest containing root', async () => {
+      const value = manager([
+        rootedWorkspace('repo', '/repo'),
+        rootedWorkspace('sub', '/repo/sub'),
+      ]);
+      await value.getOrCreate({ workspaceId: 'repo' });
+      await value.getOrCreate({ workspaceId: 'sub' });
+
+      expect(value.findContaining('/repo')?.id).toBe('repo');
+      expect(value.findContaining('/repo/sub')?.id).toBe('sub');
+      expect(value.findContaining('/repo/sub/deep/pkg')?.id).toBe('sub');
+      expect(value.findContaining('/repo/other')?.id).toBe('repo');
+      expect(value.findContaining('/repo-other')).toBeUndefined();
+      expect(value.findContaining('/outside')).toBeUndefined();
+      await value.dispose();
+    });
+
+    it('matches across Windows spelling variants', async () => {
+      const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
+      await value.getOrCreate({ workspaceId: 'win' });
+
+      expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
+      expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
+      expect(value.findContaining('D:/elsewhere')).toBeUndefined();
+      await value.dispose();
+    });
+
+    it('matches any absolute cwd against a workspace rooted at /', async () => {
+      const value = manager([
+        rootedWorkspace('root', '/'),
+        rootedWorkspace('repo', '/repo'),
+      ]);
+      await value.getOrCreate({ workspaceId: 'root' });
+      await value.getOrCreate({ workspaceId: 'repo' });
+
+      expect(value.findContaining('/')?.id).toBe('root');
+      expect(value.findContaining('/elsewhere')?.id).toBe('root');
+      expect(value.findContaining('/repo/sub')?.id).toBe('repo');
+      await value.dispose();
+    });
   });
 });

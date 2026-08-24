@@ -12,11 +12,13 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
-import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
+import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { ReloadSummary } from '#/app/plugin/types';
+import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
@@ -73,9 +75,15 @@ describe('Workspace MCP initialization', () => {
         reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
-          onDidReload: Event.None as Event<ReloadSummary>,
+          onDidReload: Event.None as Event<PluginReloadEvent>,
         });
-        reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
+        reg.definePartialInstance(
+          IMcpOAuthService,
+          new McpOAuthService({ store: createMemoryMcpOAuthStore() }),
+        );
+        reg.definePartialInstance(IMcpConfigStore, {
+          onDidWrite: Event.None as Event<McpConfigWriteEvent>,
+        });
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         const runtime = Object.assign(

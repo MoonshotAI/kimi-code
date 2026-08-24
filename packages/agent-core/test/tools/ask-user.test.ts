@@ -35,6 +35,7 @@ function input(
 
 function makeTool(
   options: {
+    readonly allowBackground?: boolean;
     readonly mode?: PermissionMode;
     readonly requestQuestion?: (
       request: QuestionRequest,
@@ -58,7 +59,11 @@ function makeTool(
     rpc: { requestQuestion },
     telemetry: { track: telemetryTrack },
   } as unknown as Agent;
-  return { tool: new AskUserQuestionTool(agent), requestQuestion, telemetryTrack };
+  return {
+    tool: new AskUserQuestionTool(agent, { allowBackground: options.allowBackground }),
+    requestQuestion,
+    telemetryTrack,
+  };
 }
 
 describe('AskUserQuestionTool', () => {
@@ -185,16 +190,111 @@ describe('AskUserQuestionTool', () => {
     expect(requestQuestion).not.toHaveBeenCalled();
   });
 
-  it('always builds the background-question schema', () => {
+  it('keeps the background schema and description when background questions are allowed', () => {
     const agent = {
       rpc: { requestQuestion: vi.fn() },
       telemetry: { track: vi.fn() },
       background: createBackgroundManager().manager,
     } as unknown as Agent;
 
-    const tool = new AskUserQuestionTool(agent);
+    const tool = new AskUserQuestionTool(agent, { allowBackground: true });
 
     expect(JSON.stringify(tool.parameters)).toContain('background');
+    expect(tool.description).toContain('background=true');
+    expect(tool.description).toContain('task_id');
+  });
+
+  it('hides and rejects background questions when background is not allowed', async () => {
+    const { manager } = createBackgroundManager();
+    const registerTask = vi.spyOn(manager, 'registerTask');
+    const requestQuestion = vi.fn();
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: vi.fn() },
+      background: manager,
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent, { allowBackground: false });
+
+    expect(JSON.stringify(tool.parameters)).not.toContain('background');
+    expect(tool.description.toLowerCase()).not.toContain('background');
+    expect(tool.description).not.toContain('task_id');
+    expect(tool.description).not.toContain('TaskOutput');
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_bg_disabled',
+      args: { ...input(), background: true },
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+    });
+    expect(registerTask).not.toHaveBeenCalled();
+    expect(requestQuestion).not.toHaveBeenCalled();
+  });
+
+  it('preserves foreground answers when background questions are disabled', async () => {
+    const { tool, requestQuestion } = makeTool({ allowBackground: false });
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_fg_disabled',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: false,
+      output: JSON.stringify({ answers: { Postgres: true } }),
+    });
+    expect(requestQuestion).toHaveBeenCalledOnce();
+  });
+
+  it('preserves foreground dismissal semantics when background questions are disabled', async () => {
+    const { tool } = makeTool({
+      allowBackground: false,
+      requestQuestion: async () => null,
+    });
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_fg_dismissed',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: false,
+      output: JSON.stringify({
+        answers: {},
+        note: 'User dismissed the question without answering.',
+      }),
+    });
+  });
+
+  it('preserves foreground error semantics when background questions are disabled', async () => {
+    const { tool } = makeTool({
+      allowBackground: false,
+      requestQuestion: async () => {
+        throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Client does not support questions');
+      },
+    });
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_fg_unsupported',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.',
+    });
   });
 
   it.each(['manual', 'yolo'] as const)(

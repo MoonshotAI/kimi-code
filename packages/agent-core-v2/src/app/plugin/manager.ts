@@ -2,20 +2,20 @@ import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import type { HookDef } from '#/features/externalHooks/internal/types';
-import type { McpServerConfig } from '#/mcpCore/config-schema';
-import type { PluginAgentRoot } from './types';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
 import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
+import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 import { downloadZip, extractZip } from './archive';
 import { loadPluginCommand } from './commands';
 import { resolveGithubCommitSha, resolveGithubSource } from './github-resolver';
-import { resolveInstallSource } from './source';
 import { parseManifest, type ParsedManifestResult } from './manifest';
+import { resolveInstallSource } from './source';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
+import type { PluginAgentRoot } from './types';
 import {
   normalizePluginId,
   type EnabledPluginSessionStart,
@@ -24,6 +24,7 @@ import {
   type PluginCommandDef,
   type PluginGithubMetadata,
   type PluginInfo,
+  type PluginMcpServerEntry,
   type PluginMcpServerInfo,
   type PluginRecord,
   type PluginSource,
@@ -44,9 +45,7 @@ interface ManagedPluginCopy {
 
 export class PluginManager {
   private readonly kimiHomeDir: string;
-  private readonly discoverSkills: (
-    roots: readonly SkillRoot[],
-  ) => Promise<SkillDiscoveryResult>;
+  private readonly discoverSkills: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
   private records = new Map<string, PluginRecord>();
 
   constructor(options: PluginManagerOptions) {
@@ -117,7 +116,8 @@ export class PluginManager {
 
       const parsed = await parseManifest(sourceRoot);
       if (parsed.manifest === undefined) {
-        const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
+        const msg =
+          parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
         throw new Error2(
           ErrorCodes.PLUGIN_LOAD_FAILED,
           sourceType === 'local-path'
@@ -369,6 +369,28 @@ export class PluginManager {
     return out;
   }
 
+  mcpServerEntries(): readonly PluginMcpServerEntry[] {
+    const out: PluginMcpServerEntry[] = [];
+    for (const record of this.records.values()) {
+      if (record.state !== 'ok' || record.manifest === undefined) continue;
+      for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
+        const enabled = record.enabled && isMcpServerEnabled(record, name, config);
+        const effective = withPluginMcpRuntime(
+          withMcpServerEnabled(config, enabled),
+          record.root,
+          this.kimiHomeDir,
+        );
+        out.push({
+          name: pluginMcpRuntimeName(record.id, name),
+          config: effective,
+          pluginId: record.id,
+          serverName: name,
+        });
+      }
+    }
+    return out;
+  }
+
   summaries(): readonly PluginSummary[] {
     return this.list().map((record) => recordToSummary(record));
   }
@@ -583,11 +605,7 @@ async function recordFrom(input: {
     originalSource: input.originalSource,
     capabilities: input.capabilities,
     github: input.github,
-    skillCount: await countDiscoveredPluginSkills(
-      input.id,
-      parsed.manifest,
-      input.discoverSkills,
-    ),
+    skillCount: await countDiscoveredPluginSkills(input.id, parsed.manifest, input.discoverSkills),
     manifest: parsed.manifest,
     manifestKind: parsed.manifestKind,
     manifestPath: parsed.manifestPath,

@@ -65,10 +65,14 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
+  options?: {
+    readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
+  },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
   let turn: TurnDraft | undefined;
+  let pendingNotificationFrames: { text: string; taskId: string | undefined }[] = [];
   let nextOrdinal = 0;
   let markerCount = 0;
 
@@ -140,6 +144,7 @@ export function groupMessagesIntoSnapshot(
   const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
+    pendingNotificationFrames = [];
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
@@ -151,9 +156,14 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
+  let prevNonTaskRole: string | undefined;
   for (const message of messages) {
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
+    const isTaskOrigin =
+      originKind === 'task' || originKind === 'background_task' || originKind === 'task_notification';
+    const prevRoleAtEntry = prevNonTaskRole;
+    if (!isTaskOrigin) prevNonTaskRole = message.role;
 
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
@@ -169,6 +179,22 @@ export function groupMessagesIntoSnapshot(
         if (opening !== undefined) {
           startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
         }
+        continue;
+      }
+      if (isTaskOrigin) {
+        const origin = message.origin as { taskId?: unknown } | undefined;
+        const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
+        const opensOwn = options?.taskOriginTurnTaskIds === undefined
+          ? prevRoleAtEntry !== 'assistant' && prevRoleAtEntry !== 'tool'
+          : taskId === undefined ||
+            options.taskOriginTurnTaskIds.has(taskId) ||
+            originKind === 'background_task';
+        if (opensOwn) {
+          const opening = foldTurnOpeningInput(message);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          continue;
+        }
+        pendingNotificationFrames.push({ text: notificationFrameText(textOf(message)), taskId });
         continue;
       }
       const bundled = bundledSkillActivations(message);
@@ -205,6 +231,16 @@ export function groupMessagesIntoSnapshot(
         frameCount += 1;
         return `${step.stepId}.f${frameCount}`;
       };
+      for (const pending of pendingNotificationFrames) {
+        step.frames.push({
+          kind: 'text',
+          frameId: nextFrameId(),
+          role: 'user',
+          text: pending.text,
+          taskId: pending.taskId,
+        });
+      }
+      pendingNotificationFrames = [];
       for (const part of message.content ?? []) {
         if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
           step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
@@ -243,6 +279,36 @@ export function groupMessagesIntoSnapshot(
   }
 
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
+}
+
+function notificationFrameText(text: string): string {
+  if (!text.startsWith('<notification')) return text;
+  const openingEnd = text.indexOf('>');
+  const closingStart = text.lastIndexOf('</notification>');
+  if (openingEnd === -1 || closingStart <= openingEnd) return text;
+  const inner = text.slice(openingEnd + 1, closingStart);
+  const lines = inner.split('\n');
+  let headerEnd = 0;
+  while (headerEnd < lines.length && lines[headerEnd]!.trim() === '') headerEnd += 1;
+  let title = '';
+  let bodyStart = headerEnd;
+  const titleLine = lines[bodyStart];
+  if (titleLine !== undefined && titleLine.startsWith('Title: ')) {
+    title = titleLine.slice('Title: '.length);
+    bodyStart += 1;
+  }
+  const severityLine = lines[bodyStart];
+  if (severityLine !== undefined && severityLine.startsWith('Severity: ')) {
+    bodyStart += 1;
+  }
+  const bodyLines = lines.slice(bodyStart);
+  const childStart = bodyLines.findIndex((line) => {
+    const trimmed = line.trimStart();
+    return trimmed.startsWith('<output-file') || trimmed.startsWith('<output-preview');
+  });
+  const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
+  if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
+  return title.length > 0 ? title : body.length > 0 ? body : text;
 }
 
 function opensOwnTurn(message: HistoryMessage): boolean {

@@ -86,17 +86,17 @@ describe('plan ops (wire-backed)', () => {
   it('enter/cancel/exit drive active state and persist flat records', async () => {
     expect(agentState.get(planKey).active).toBe(false);
 
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     expect(agentState.get(planKey)).toEqual({
       active: true,
       id: 'p1',
     });
 
-    await dispatcher.dispatch(new PlanModeCancel({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeCancel({ agentId: 'test-agent', id: 'p1' }));
     expect(agentState.get(planKey)).toEqual({ active: false });
 
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p2' }));
-    await dispatcher.dispatch(new PlanModeExit({}));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p2' }));
+    await dispatcher.dispatch(new PlanModeExit({ agentId: 'test-agent' }));
     expect(agentState.get(planKey).active).toBe(false);
 
     const records = await readRecords();
@@ -116,12 +116,12 @@ describe('plan ops (wire-backed)', () => {
   });
 
   it('cancel and exit both deactivate plan mode but emit distinct record types', async () => {
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
-    await dispatcher.dispatch(new PlanModeCancel({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeCancel({ agentId: 'test-agent', id: 'p1' }));
     expect(agentState.get(planKey)).toEqual({ active: false });
 
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p2' }));
-    await dispatcher.dispatch(new PlanModeExit({ id: 'p2' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p2' }));
+    await dispatcher.dispatch(new PlanModeExit({ agentId: 'test-agent', id: 'p2' }));
     expect(agentState.get(planKey)).toEqual({ active: false });
 
     const records = await readRecords();
@@ -137,18 +137,19 @@ describe('plan ops (wire-backed)', () => {
 
   it('apply returns the same reference on a no-op (gate stays quiet)', async () => {
     const initial = agentState.get(planKey);
-    await dispatcher.dispatch(new PlanModeCancel({}));
+    await dispatcher.dispatch(new PlanModeCancel({ agentId: 'test-agent' }));
     expect(agentState.get(planKey)).toBe(initial);
 
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     const active = agentState.get(planKey);
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     expect(agentState.get(planKey)).toBe(active);
   });
 
   it('ignores an invalid undo count without corrupting checkpoint state', async () => {
     await dispatcher.dispatch(
       new ContextAppendMessage({
+        agentId: 'test-agent',
         message: {
           role: 'user',
           content: [{ type: 'text', text: 'keep me' }],
@@ -159,14 +160,14 @@ describe('plan ops (wire-backed)', () => {
     );
     const checkpointed = agentState.get(planKey);
 
-    await dispatcher.dispatch(new ContextUndo({ count: 0.5 }));
+    await dispatcher.dispatch(new ContextUndo({ agentId: 'test-agent', count: 0.5 }));
 
     expect(agentState.get(planKey)).toBe(checkpointed);
     expect(agentState.get(planKey)).toEqual({ active: false });
   });
 
   it('replay rebuilds active state silently', async () => {
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     const records = await readRecords();
 
     const host = buildHost('plan-replay');
@@ -200,9 +201,10 @@ describe('plan ops (wire-backed)', () => {
   });
 
   it('plan.revision persists a flat reference record and advances the per-id counter', async () => {
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     await dispatcher.dispatch(
       new PlanRevision({
+        agentId: 'test-agent',
         id: 'p1',
         version: 1,
         path: 'sessions/w/s/agents/main/plan/p1/v1.md',
@@ -218,6 +220,7 @@ describe('plan ops (wire-backed)', () => {
 
     await dispatcher.dispatch(
       new PlanRevision({
+        agentId: 'test-agent',
         id: 'p1',
         version: 2,
         path: 'sessions/w/s/agents/main/plan/p1/v2.md',
@@ -254,9 +257,10 @@ describe('plan ops (wire-backed)', () => {
       emissions.push(e);
     });
 
-    await host.dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await host.dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     await host.dispatcher.dispatch(
       new PlanRevision({
+        agentId: 'test-agent',
         id: 'p1',
         version: 1,
         path: 'sessions/w/s/agents/main/plan/p1/v1.md',
@@ -264,13 +268,13 @@ describe('plan ops (wire-backed)', () => {
         bytes: 12,
       }),
     );
-    await host.dispatcher.dispatch(new PlanModeExit({}));
+    await host.dispatcher.dispatch(new PlanModeExit({ agentId: 'test-agent' }));
     expect(host.agentState.get(planKey)).toEqual({
       active: false,
       revisionCount: { p1: 1 },
     });
 
-    await host.dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await host.dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     expect(host.agentState.get(planKey).revisionCount).toEqual({ p1: 1 });
 
     expect(
@@ -288,9 +292,10 @@ describe('plan ops (wire-backed)', () => {
   });
 
   it('replay restores the revision counter silently', async () => {
-    await dispatcher.dispatch(new PlanModeEnter({ id: 'p1' }));
+    await dispatcher.dispatch(new PlanModeEnter({ agentId: 'test-agent', id: 'p1' }));
     await dispatcher.dispatch(
       new PlanRevision({
+        agentId: 'test-agent',
         id: 'p1',
         version: 1,
         path: 'sessions/w/s/agents/main/plan/p1/v1.md',
@@ -300,6 +305,7 @@ describe('plan ops (wire-backed)', () => {
     );
     await dispatcher.dispatch(
       new PlanRevision({
+        agentId: 'test-agent',
         id: 'p1',
         version: 2,
         path: 'sessions/w/s/agents/main/plan/p1/v2.md',

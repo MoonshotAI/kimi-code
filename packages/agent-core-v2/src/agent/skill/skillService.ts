@@ -228,7 +228,9 @@ export class AgentSkillService extends Service implements IAgentSkillService {
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
   ): Promise<Turn | undefined> {
-    await this.dispatcher.dispatch(new SkillActivate({ origin }));
+    await this.dispatcher.dispatch(
+      new SkillActivate({ agentId: this.scopeContext.agentId, origin }),
+    );
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;

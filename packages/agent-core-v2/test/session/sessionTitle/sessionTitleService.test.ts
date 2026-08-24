@@ -198,7 +198,7 @@ describe('SessionTitleService', () => {
           dispose: () => undefined,
         };
         reg.definePartialInstance(IAgentLifecycleService, {
-          get: () => mainAgent,
+          handleOf: () => mainAgent,
         });
         reg.defineInstance(IEventService, events);
         reg.defineInstance(IProviderService, stubProviderService(providers));

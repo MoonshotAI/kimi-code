@@ -2,7 +2,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2, type AgentDomainTrait } from '#/app/event/event2';
 
 export type TurnPhase = 'running' | 'streaming' | 'tool_call' | 'retrying';
 
@@ -72,8 +72,10 @@ export interface IAgentActivityView {
 export const IAgentActivityView: ServiceIdentifier<IAgentActivityView> =
   createDecorator<IAgentActivityView>('agentActivityView');
 
-export class AgentActivityUpdated extends Event2<AgentActivityState> {
+export class AgentActivityUpdated extends AgentEvent2<AgentActivityState & AgentDomainTrait> {
   static override readonly type = 'agent.activity.updated';
   static override readonly observable = true;
 }
-export interface AgentActivityUpdated extends AgentActivityState {}
+export interface AgentActivityUpdated extends AgentActivityState {
+  readonly agentId: string;
+}

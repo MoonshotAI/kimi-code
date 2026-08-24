@@ -15,7 +15,7 @@ import type {
 import type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,

@@ -33,6 +33,7 @@ function fakeInitialAppState(): AppState {
     planMode: false,
     inputMode: 'prompt',
     swarmMode: false,
+    towerMode: false,
     thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,

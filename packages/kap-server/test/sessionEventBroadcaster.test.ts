@@ -4,35 +4,43 @@ import { join } from 'node:path';
 
 import type {
   AgentActivityState,
+  AgentContext,
+  AgentRuntimeDefinition,
+  RuntimeOf,
+  Interaction,
+  InteractionKind,
+  InteractionPendingChangedEvent,
+  InteractionRequest,
+  InteractionResolution,
   IScopeHandle,
-  ISessionStateService,
   Scope,
   SessionActivityCause,
   SessionActivityChangedEvent,
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  AgentInteraction,
   IAgentActivityView,
   LifecycleScope,
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
   IEventService,
   IModelCatalog,
   IModelService,
   ISessionActivityView,
-  ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
   ISessionManager,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
-  SessionInteractionService,
-  StateRegistry,
+  makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
+import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -44,10 +52,6 @@ import {
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
-
-class TestSessionStateService extends StateRegistry implements ISessionStateService {
-  declare readonly _serviceBrand: undefined;
-}
 
 type FakeBusEvent = { type: string };
 
@@ -102,8 +106,16 @@ class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  readonly context: AgentContext;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    const scope = makeAgentScopeContext({
+      agentId: id,
+      agentScope: `agents/${id}`,
+      generation: 1,
+    });
+    this.context = scope.agentContext;
+    this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -115,26 +127,157 @@ class FakeAgentHandle {
   dispose(): void {}
 }
 
+class FakeInteractionKernel {
+  private readonly pending = new Map<string, Interaction>();
+  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+  private readonly resolveEmitter = new Emitter<InteractionResolution>();
+  readonly onDidChangePending = this.changeEmitter.event;
+  readonly onDidResolve = this.resolveEmitter.event;
+
+  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+    return new Promise<TResponse>((resolve) => {
+      this.park(req, (response) => resolve(response as TResponse));
+    });
+  }
+
+  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+    return this.park(req, () => {});
+  }
+
+  respond(id: string, response: unknown): boolean {
+    if (!this.pending.delete(id)) return false;
+    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    this.resolveEmitter.fire({ id, response });
+    return true;
+  }
+
+  listPending(kind?: InteractionKind): readonly Interaction[] {
+    const all = [...this.pending.values()];
+    return kind === undefined ? all : all.filter((i) => i.kind === kind);
+  }
+
+  isRecentlyResolved(): boolean {
+    return false;
+  }
+
+  cancelPendingForTurn(_turnId: number): void {}
+
+  private park<TPayload>(
+    req: InteractionRequest<TPayload>,
+    resolve: (response: unknown) => void,
+  ): Interaction {
+    void resolve;
+    const interaction: Interaction = {
+      id: req.id ?? `interaction-${this.pending.size}`,
+      kind: req.kind,
+      payload: req.payload,
+      origin: req.origin ?? {},
+      createdAt: Date.now(),
+    };
+    this.pending.set(interaction.id, interaction);
+    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    return interaction;
+  }
+}
+
+class FakeInteractionHub {
+  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+  private readonly resolveEmitter = new Emitter<InteractionResolution>();
+  readonly onDidChangePending = this.changeEmitter.event;
+  readonly onDidResolve = this.resolveEmitter.event;
+  private readonly watched = new Set<FakeInteractionKernel>();
+
+  constructor(
+    private readonly kernelFor: (agentId: string) => FakeInteractionKernel,
+    private readonly allKernels: () => Iterable<FakeInteractionKernel>,
+  ) {}
+
+  watch(kernel: FakeInteractionKernel): void {
+    if (this.watched.has(kernel)) return;
+    this.watched.add(kernel);
+    kernel.onDidChangePending((e: InteractionPendingChangedEvent) => this.changeEmitter.fire(e));
+    kernel.onDidResolve((e: InteractionResolution) => this.resolveEmitter.fire(e));
+  }
+
+  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+    return this.kernelFor(req.origin?.agentId ?? 'main').request(req);
+  }
+
+  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+    return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
+  }
+
+  respond(id: string, response: unknown): boolean {
+    for (const kernel of this.allKernels()) {
+      if (kernel.respond(id, response)) return true;
+    }
+    return false;
+  }
+
+  listPending(kind?: InteractionKind): readonly Interaction[] {
+    return [...this.allKernels()].flatMap((kernel) => kernel.listPending(kind));
+  }
+
+  isRecentlyResolved(): boolean {
+    return false;
+  }
+
+  cancelPendingForTurn(turnId: number): void {
+    for (const kernel of this.allKernels()) kernel.cancelPendingForTurn(turnId);
+  }
+}
+
 class FakeLifecycle {
   readonly handles: FakeAgentHandle[] = [];
-  readonly interactions = new SessionInteractionService(new TestSessionStateService());
-  private readonly turnCounters = new Map<string, { dispose(): void }>();
-  private createHandlers: Array<(h: IScopeHandle) => void> = [];
-  private disposeHandlers: Array<(id: string) => void> = [];
-  list(): readonly FakeAgentHandle[] {
-    return this.handles;
+  private readonly kernels = new Map<string, FakeInteractionKernel>();
+  readonly interactions: FakeInteractionHub;
+  readonly workView: FakeSessionActivityView;
+
+  constructor() {
+    this.interactions = new FakeInteractionHub(
+      (agentId) => this.kernelFor(agentId),
+      () => this.kernels.values(),
+    );
+    this.workView = new FakeSessionActivityView(this);
   }
-  get(id: string): FakeAgentHandle | undefined {
-    return this.getHandle(id);
+
+  kernelFor(agentId: string): FakeInteractionKernel {
+    let kernel = this.kernels.get(agentId);
+    if (kernel === undefined) {
+      kernel = new FakeInteractionKernel();
+      this.kernels.set(agentId, kernel);
+      this.interactions.watch(kernel);
+    }
+    return kernel;
+  }
+
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    context: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    if (definition !== AgentInteraction) throw new Error('unsupported runtime');
+    return this.kernelFor(context.agentId) as RuntimeOf<Definition>;
+  }
+  private readonly turnCounters = new Map<string, { dispose(): void }>();
+  private createHandlers: Array<(context: AgentContext) => void> = [];
+  private disposeHandlers: Array<(context: AgentContext) => void> = [];
+  list(): readonly AgentContext[] {
+    return this.handles.map((handle) => handle.context);
+  }
+  get(context: AgentContext): FakeAgentHandle | undefined {
+    return this.handles.find((h) => h.id === context.agentId);
   }
   getHandle(id: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === id);
   }
-  onDidCreate(h: (h: IScopeHandle) => void) {
+  handleOf(agentId: string): FakeAgentHandle | undefined {
+    return this.handles.find((h) => h.id === agentId);
+  }
+  onDidCreate(h: (context: AgentContext) => void) {
     this.createHandlers.push(h);
     return { dispose: () => {} };
   }
-  onDidDispose(h: (id: string) => void) {
+  onDidClose(h: (context: AgentContext) => void) {
     this.disposeHandlers.push(h);
     return { dispose: () => {} };
   }
@@ -177,17 +320,18 @@ class FakeLifecycle {
       },
     });
     this.handles.push(handle);
-    for (const cb of this.createHandlers) cb(handle as unknown as IScopeHandle);
+    for (const cb of this.createHandlers) cb(handle.context);
     return handle;
   }
   removeAgent(id: string): void {
     const idx = this.handles.findIndex((h) => h.id === id);
-    if (idx >= 0) this.handles.splice(idx, 1);
+    const [removed] = idx >= 0 ? this.handles.splice(idx, 1) : [];
     this.turnCounters.get(id)?.dispose();
     this.turnCounters.delete(id);
-    for (const cb of this.disposeHandlers) cb(id);
+    if (removed !== undefined) {
+      for (const cb of this.disposeHandlers) cb(removed.context);
+    }
   }
-  readonly workView = new FakeSessionActivityView(this);
 }
 
 class FakeSessionActivityView {
@@ -197,17 +341,19 @@ class FakeSessionActivityView {
     { turnActive: boolean; background: number; lastTurnReason?: 'completed' | 'cancelled' | 'failed' }
   >();
   private readonly busSubscriptions = new Map<string, { dispose(): void }>();
-  private readonly interactions: SessionInteractionService;
+  private readonly interactions: FakeInteractionHub;
   private current: SessionActivityState;
 
   constructor(lifecycle: FakeLifecycle) {
     this.interactions = lifecycle.interactions;
     for (const handle of lifecycle.list()) this.attach(handle as unknown as FakeAgentHandle);
-    lifecycle.onDidCreate((handle) => {
-      this.attach(handle as unknown as FakeAgentHandle);
+    lifecycle.onDidCreate((context) => {
+      const handle = lifecycle.get(context);
+      if (handle !== undefined) this.attach(handle as unknown as FakeAgentHandle);
       this.recompute('agent_lifecycle');
     });
-    lifecycle.onDidDispose((agentId) => {
+    lifecycle.onDidClose((context) => {
+      const agentId = context.agentId;
       this.busSubscriptions.get(agentId)?.dispose();
       this.busSubscriptions.delete(agentId);
       if (this.folds.delete(agentId)) this.recompute('agent_lifecycle');
@@ -326,7 +472,6 @@ function makeCore(
     const sessionAccessor = {
       get: (t: unknown) => {
         if (t === IAgentLifecycleService) return lifecycle;
-        if (t === ISessionInteractionService) return lifecycle.interactions;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
         return undefined;
@@ -422,7 +567,10 @@ describe('SessionEventBroadcaster', () => {
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
-    const event = new TurnStarted({ turnId: 1, origin: { kind: 'user' } }, 1_700_000_000_123);
+    const event = new TurnStarted(
+      { agentId: 'main', turnId: 1, origin: { kind: 'user' } },
+      1_700_000_000_123,
+    );
 
     main.bus.emit(event);
     await bc.getCursor('s1');
@@ -502,14 +650,14 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentTokenCountingService, {
+    main.set(ISessionTokenCountingService, {
       statusSize: () => contextSize,
     });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
-    main.set(IAgentUsageService, { status: () => usage });
+    main.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -547,12 +695,12 @@ describe('SessionEventBroadcaster', () => {
     const usage = {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    sub.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    sub.set(ISessionTokenCountingService, { statusSize: () => 10 });
     sub.set(IAgentProfileService, {
       getModel: () => 'sub-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
-    sub.set(IAgentUsageService, { status: () => usage });
+    sub.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -581,12 +729,12 @@ describe('SessionEventBroadcaster', () => {
       },
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => 'example-model',
       getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
     });
-    main.set(IAgentUsageService, { status: () => usage });
+    main.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -603,12 +751,12 @@ describe('SessionEventBroadcaster', () => {
   it('omits maxContextTokens instead of pushing 0 when the context limit is unknown', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => 'ghost-model',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
     });
-    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(ISessionUsageService, { status: () => ({}) });
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
@@ -626,12 +774,12 @@ describe('SessionEventBroadcaster', () => {
   it('falls back to the default model limit when no model is bound', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => '',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
     });
-    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(ISessionUsageService, { status: () => ({}) });
     main.set(IModelService, { getDefaultModel: () => 'default-model' });
     main.set(IModelCatalog, {
       get: (id: string) => {
@@ -654,12 +802,12 @@ describe('SessionEventBroadcaster', () => {
   it('omits maxContextTokens when no model is bound and no default model resolves', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
-    main.set(IAgentTokenCountingService, { statusSize: () => 10 });
+    main.set(ISessionTokenCountingService, { statusSize: () => 10 });
     main.set(IAgentProfileService, {
       getModel: () => '',
       getModelCapabilities: () => ({ max_context_tokens: 0 }),
     });
-    main.set(IAgentUsageService, { status: () => ({}) });
+    main.set(ISessionUsageService, { status: () => ({}) });
     main.set(IModelService, { getDefaultModel: () => 'removed-model' });
     main.set(IModelCatalog, {
       get: () => {
@@ -2075,7 +2223,7 @@ describe('SessionEventBroadcaster', () => {
           expect(ops.volatile).toBe(true);
         }
         expect(batches.map((ops) => (ops.payload as OpsPayload).ops.map((o) => o.op))).toEqual([
-          ['turn.upsert'],
+          ['turn.upsert', 'meta.merge'],
           ['meta.merge'],
         ]);
       }

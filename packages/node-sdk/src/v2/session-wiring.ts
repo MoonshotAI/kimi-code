@@ -33,15 +33,19 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/agent-core';
 import {
+  agentContextOf,
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
   IEventBus,
   ISessionApprovalService,
-  ISessionInteractionService,
   ISessionQuestionService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   MAIN_AGENT_ID,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
+  respondSessionInteraction,
   type Event2,
   type IAgentScopeHandle,
   type IDisposable,
@@ -110,23 +114,27 @@ export class SessionEventWiring {
     private readonly session: ISessionScopeHandle,
     private readonly sink: SessionEventSink,
   ) {
-    const interactions = session.accessor.get(ISessionInteractionService);
+    const manager = session.accessor.get(IAgentLifecycleService);
     this.disposables.push(
-      interactions.onDidChangePending(() => {
+      onSessionInteractionDidChangePending(manager, () => {
         this.bridgeNewPendingInteractions();
       }),
+      onSessionInteractionDidResolve(manager, ({ id }) => {
+        this.bridgedInteractionIds.delete(id);
+      }),
     );
-    const lifecycle = session.accessor.get(IAgentLifecycleService);
     this.disposables.push(
-      lifecycle.onDidCreate((agent) => {
-        this.attachAgent(agent);
+      manager.onDidCreate((context) => {
+        const handle = manager.handleOf(context.agentId);
+        if (handle !== undefined) this.attachAgent(handle);
       }),
-      lifecycle.onDidDispose((agentId) => {
-        this.detachAgent(agentId);
+      manager.onDidClose((context) => {
+        this.detachAgent(context.agentId);
       }),
     );
-    for (const agent of lifecycle.list()) {
-      this.attachAgent(agent);
+    for (const agent of manager.list()) {
+      const handle = manager.handleOf(agent.agentId);
+      if (handle !== undefined) this.attachAgent(handle);
     }
   }
 
@@ -166,7 +174,7 @@ export class SessionEventWiring {
 
   private bridgeNewPendingInteractions(): void {
     if (this.disposed) return;
-    const pending = this.session.accessor.get(ISessionInteractionService).listPending();
+    const pending = listSessionPendingInteractions(this.session.accessor.get(IAgentLifecycleService));
     for (const interaction of pending) {
       if (this.bridgedInteractionIds.has(interaction.id)) continue;
       this.bridgedInteractionIds.add(interaction.id);
@@ -250,7 +258,11 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         args: payload.args,
       });
-      this.session.accessor.get(ISessionInteractionService).respond(interaction.id, result);
+      respondSessionInteraction(
+        this.session.accessor.get(IAgentLifecycleService),
+        interaction.id,
+        result,
+      );
     } catch {
       // See bridgeApproval.
     }
@@ -270,20 +282,21 @@ export class SessionEventWiring {
  */
 function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
   const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as IAgentUsageService | undefined;
-  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
-    | IAgentTokenCountingService
+  const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
   // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`IAgentTokenCountingService.statusSize`).
-  const contextTokens = tokenCounting.statusSize();
+  // strategy inside the service (`ISessionTokenCountingService.statusSize`).
+  const context = agentContextOf(agent);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   return Object.assign({}, event, {
-    usage: usageService.status(),
+    usage: usageService.status(context),
     contextTokens,
     maxContextTokens,
     model: profile.getModel(),
