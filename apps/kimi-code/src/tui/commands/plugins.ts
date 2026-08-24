@@ -35,9 +35,14 @@ import {
   isOfficialPluginInstall,
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV, QUOTA_CONSUMING_PLUGIN_IDS } from '#/constant/app';
+import {
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  kimiCodePluginMarketplaceUrl,
+  QUOTA_CONSUMING_PLUGIN_IDS,
+} from '#/constant/app';
 import {
   loadPluginMarketplace,
+  withBuiltInEntries,
   withMarketplaceLatestVersions,
   type PluginMarketplace,
   type PluginMarketplaceEntry,
@@ -355,27 +360,47 @@ async function loadMarketplaceCatalog(
       ? capabilities.map(capabilityMarketplaceEntry)
       : undefined;
   let marketplace: PluginMarketplace;
+  let catalog: PluginMarketplace;
   try {
     // Phase 1: render the catalog as soon as it arrives. Version lookups
     // (GitHub releases/latest round trips) must not gate the first paint.
-    marketplace = await loadPluginMarketplace({
+    // Keep the raw parsed catalog for phase 2: injecting built-ins first
+    // would mask the matching catalog entries' GitHub sources behind
+    // `capability:<id>` rows, making their versions unresolvable.
+    catalog = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
       skipLatestVersions: true,
-      builtInEntries,
     });
+    marketplace =
+      builtInEntries !== undefined ? withBuiltInEntries(catalog, builtInEntries) : catalog;
     panel.setMarketplace(marketplace.plugins, marketplace.source);
     host.state.ui.requestRender();
   } catch (error) {
-    panel.setMarketplaceError(formatErrorMessage(error));
+    if (builtInEntries !== undefined) {
+      // Catalog unreachable: the built-in rows do not come from the catalog,
+      // so keep them visible and installable (mirrors the builtInEntries
+      // fallback inside loadPluginMarketplace) and skip version enrichment.
+      const fallbackSource =
+        source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] ?? kimiCodePluginMarketplaceUrl();
+      const fallback = withBuiltInEntries({ source: fallbackSource, plugins: [] }, builtInEntries);
+      panel.setMarketplace(fallback.plugins, fallback.source);
+    } else {
+      panel.setMarketplaceError(formatErrorMessage(error));
+    }
     host.state.ui.requestRender();
     return;
   }
   try {
-    // Phase 2: resolve latest versions in the background, then refresh so
-    // update badges appear. Failures degrade to badge-less rows and never
-    // clobber the already-rendered list.
-    const enriched = await withMarketplaceLatestVersions(marketplace);
+    // Phase 2: resolve latest versions in the background (against the raw
+    // catalog), re-apply the built-in injection so resolved versions flow
+    // onto capability rows, then refresh so update badges appear. Failures
+    // degrade to badge-less rows and never clobber the rendered list.
+    const enrichedCatalog = await withMarketplaceLatestVersions(catalog);
+    const enriched =
+      builtInEntries !== undefined
+        ? withBuiltInEntries(enrichedCatalog, builtInEntries)
+        : enrichedCatalog;
     panel.setMarketplace(enriched.plugins, enriched.source);
   } catch (error) {
     log.warn('marketplace version lookup failed', { error });

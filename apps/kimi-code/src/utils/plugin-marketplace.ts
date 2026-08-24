@@ -30,6 +30,7 @@ import {
 export {
   computeUpdateStatus,
   PLUGIN_MARKETPLACE_TIERS,
+  withBuiltInEntries,
   type PluginMarketplace,
   type PluginMarketplaceEntry,
   type PluginMarketplaceTier,

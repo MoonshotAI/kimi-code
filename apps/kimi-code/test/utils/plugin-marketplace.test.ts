@@ -12,7 +12,9 @@ import {
 import {
   computeUpdateStatus,
   loadPluginMarketplace,
+  withBuiltInEntries,
   withMarketplaceLatestVersions,
+  type PluginMarketplaceEntry,
 } from '#/utils/plugin-marketplace';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -671,6 +673,47 @@ describe('loadPluginMarketplace', () => {
 
       expect(enriched.plugins[0]?.version).toBeUndefined();
       expect(enriched.plugins[0]?.id).toBe('demo');
+    });
+
+    it('carries a resolved catalog version onto a built-in row injected after enrichment', async () => {
+      // Regression for the resolve-before-inject ordering: enriching the
+      // built-in-masked marketplace cannot see the catalog entry's GitHub
+      // source, so built-in rows would never get update badges.
+      const fetchImpl = vi.fn(async () => ({
+        ok: false,
+        status: 302,
+        headers: new Headers({
+          location: 'https://github.com/owner/repo/releases/tag/v2.0.0',
+        }),
+        text: async () => '',
+      })) as unknown as typeof fetch;
+      const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+      const file = join(dir, 'marketplace.json');
+      await writeFile(
+        file,
+        JSON.stringify({
+          plugins: [{ id: 'demo', displayName: 'Demo', source: 'https://github.com/owner/repo' }],
+        }),
+        'utf8',
+      );
+      const catalog = await loadPluginMarketplace({
+        workDir: dir,
+        source: file,
+        skipLatestVersions: true,
+      });
+      const builtIns: readonly PluginMarketplaceEntry[] = [
+        { id: 'demo', displayName: 'Demo Capability', source: 'capability:demo', builtIn: true },
+      ];
+
+      const enriched = withBuiltInEntries(
+        await withMarketplaceLatestVersions(catalog, fetchImpl),
+        builtIns,
+      );
+
+      expect(enriched.plugins).toHaveLength(1);
+      expect(enriched.plugins[0]).toEqual(
+        expect.objectContaining({ id: 'demo', builtIn: true, version: '2.0.0' }),
+      );
     });
   });
 
