@@ -37,7 +37,6 @@ import {
 } from '../utils/plugin-source-label';
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
-  kimiCodePluginMarketplaceUrl,
   QUOTA_CONSUMING_PLUGIN_IDS,
 } from '#/constant/app';
 import {
@@ -377,17 +376,11 @@ async function loadMarketplaceCatalog(
     panel.setMarketplace(marketplace.plugins, marketplace.source);
     host.state.ui.requestRender();
   } catch (error) {
-    if (builtInEntries !== undefined) {
-      // Catalog unreachable: the built-in rows do not come from the catalog,
-      // so keep them visible and installable (mirrors the builtInEntries
-      // fallback inside loadPluginMarketplace) and skip version enrichment.
-      const fallbackSource =
-        source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] ?? kimiCodePluginMarketplaceUrl();
-      const fallback = withBuiltInEntries({ source: fallbackSource, plugins: [] }, builtInEntries);
-      panel.setMarketplace(fallback.plugins, fallback.source);
-    } else {
-      panel.setMarketplaceError(formatErrorMessage(error));
-    }
+    // Any phase-1 failure (unreachable OR malformed catalog) surfaces as an
+    // error: the panel keeps built-in capability rows installable in the
+    // Official tab while the error is shown, and a broken catalog must not
+    // be masked as a successfully loaded, built-ins-only marketplace.
+    panel.setMarketplaceError(formatErrorMessage(error));
     host.state.ui.requestRender();
     return;
   }
