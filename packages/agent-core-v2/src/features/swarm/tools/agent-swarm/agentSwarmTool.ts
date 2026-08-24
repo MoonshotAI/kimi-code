@@ -12,6 +12,7 @@ import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/se
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
@@ -23,7 +24,6 @@ import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
-  resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
 } from '#/session/subagent/configSection';
@@ -172,7 +172,7 @@ export class AgentSwarmTool implements IAgentSwarmTool {
       });
     }
     const profileName = plan?.profileName ?? DEFAULT_SUBAGENT_TYPE;
-    const timeoutMs = resolveSubagentTimeoutMs(this.config);
+    const timeoutMs = resolveSwarmTimeoutMs(this.config);
     const specs = await createAgentSwarmSpecs(args, (agentId) =>
       this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),
     );

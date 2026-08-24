@@ -19,7 +19,7 @@ import { AgentContextInjectorService } from '#/agent/contextInjector/contextInje
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
+import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -730,7 +730,7 @@ describe('AgentSwarmTool', () => {
         swarmItem: 'src/a.ts',
         runInBackground: false,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
         plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
       },
       {
@@ -749,7 +749,7 @@ describe('AgentSwarmTool', () => {
         swarmItem: 'src/b.ts',
         runInBackground: false,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
         plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
       },
     ] }));
@@ -952,7 +952,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         resumeAgentId: 'agent-old-1',
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
       {
         kind: 'resume',
@@ -972,7 +972,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         resumeAgentId: 'agent-old-2',
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
       {
         kind: 'spawn',
@@ -990,7 +990,7 @@ describe('AgentSwarmTool', () => {
         swarmItem: 'src/new.ts',
         runInBackground: false,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
         plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
       },
     ] }));
@@ -1057,7 +1057,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         resumeAgentId: 'agent-old-1',
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
     ] }));
     expect(result.output).toBe(
@@ -1111,9 +1111,37 @@ describe('AgentSwarmTool', () => {
     expect(result.isError).toBeUndefined();
   });
 
-  it('passes the configured subagent timeout to swarm tasks', async () => {
+  it('passes the configured swarm timeout to swarm tasks', async () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ timeoutMs: 5_000 }), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig({ timeoutMs: 5_000 }), stubFlag(true), stubCallerProfile()), stubCallerProfile());
+
+    await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      }),
+    );
+
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: [
+          expect.objectContaining({ timeout: 5_000 }),
+          expect.objectContaining({ timeout: 5_000 }),
+        ],
+      }),
+    );
+  });
+
+  it('ignores [subagent] timeout_ms and reads only the [swarm] section', async () => {
+    const host = mockSwarmHost();
+    const sectionAwareConfig = {
+      _serviceBrand: undefined,
+      get: (section: string) =>
+        section === SWARM_SECTION ? { timeoutMs: 5_000 } : { timeoutMs: 1_000 },
+    } as unknown as IConfigService;
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), sectionAwareConfig, stubFlag(true), realSubagents(stubSwarmCatalog(), sectionAwareConfig, stubFlag(true), stubCallerProfile()), stubCallerProfile());
 
     await executeTool(
       tool,

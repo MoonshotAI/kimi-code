@@ -91,6 +91,13 @@ import {
 } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
+  DEFAULT_SWARM_TIMEOUT_MS,
+  resolveSwarmTimeoutMs,
+  SWARM_SECTION,
+  SWARM_TIMEOUT_ENV,
+  type SwarmConfig,
+} from '#/features/swarm/configSection';
+import {
   SERVICES_SECTION,
   WEB_FETCH_API_KEY_ENV,
   WEB_FETCH_BASE_URL_ENV,
@@ -1562,11 +1569,13 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(0);
     expect(resolveSubagentTimeoutMs(config)).toBe(0);
+    expect(resolveSwarmTimeoutMs(config)).toBe(0);
     expect(config.inspect('task').memoryValue).toMatchObject({ bashTaskTimeoutS: 0 });
     expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toMatchObject({
       maxStepsPerTurn: 0,
     });
     expect(config.inspect('subagent').memoryValue).toMatchObject({ timeoutMs: 0 });
+    expect(config.inspect('swarm').memoryValue).toMatchObject({ timeoutMs: 0 });
 
     disposables.dispose();
   });
@@ -1576,7 +1585,8 @@ describe('applyPrintModeConfigDefaults', () => {
       {},
       '[task]\nbash_task_timeout_s = 30\n\n' +
         '[loop_control]\nmax_steps_per_turn = 7\n\n' +
-        '[subagent]\ntimeout_ms = 5000\n',
+        '[subagent]\ntimeout_ms = 5000\n\n' +
+        '[swarm]\ntimeout_ms = 6000\n',
     );
 
     await applyPrintModeConfigDefaults(config);
@@ -1584,9 +1594,11 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(30);
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(7);
     expect(resolveSubagentTimeoutMs(config)).toBe(5000);
+    expect(resolveSwarmTimeoutMs(config)).toBe(6000);
     expect(config.inspect('task').memoryValue).toBeUndefined();
     expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toBeUndefined();
     expect(config.inspect('subagent').memoryValue).toBeUndefined();
+    expect(config.inspect('swarm').memoryValue).toBeUndefined();
 
     disposables.dispose();
   });
@@ -1629,6 +1641,102 @@ describe('applyPrintModeConfigDefaults', () => {
     await applyPrintModeConfigDefaults(config);
 
     expect(resolveSubagentTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('does not override the swarm timeout env override', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '3000' };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+});
+
+describe('swarm config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('defaults to two hours and honours the env override', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env);
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+
+    env[SWARM_TIMEOUT_ENV] = 'abc';
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+
+    env[SWARM_TIMEOUT_ENV] = '3000';
+    expect(resolveSwarmTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('reads timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[swarm]\ntimeout_ms = 5000\n');
+    expect(resolveSwarmTimeoutMs(config)).toBe(5000);
+
+    env[SWARM_TIMEOUT_ENV] = '7000';
+    expect(resolveSwarmTimeoutMs(config)).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('does not fall back to [subagent] timeout_ms', async () => {
+    const { config, disposables } = await createConfig({}, '[subagent]\ntimeout_ms = 5000\n');
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env, '[swarm]\ntimeout_ms = 5000\n');
+
+    await config.set(SWARM_SECTION, { timeoutMs: 7000 });
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(7000);
+    expect(config.inspect<SwarmConfig>(SWARM_SECTION).userValue).toEqual({
+      timeoutMs: 5000,
+    });
+
+    disposables.dispose();
+  });
+
+  it('clears the raw section when stripping removes the last persisted field', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env);
+
+    await config.set(SWARM_SECTION, { timeoutMs: 7000 });
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(7000);
+    expect(config.inspect<SwarmConfig>(SWARM_SECTION).userValue).toBeUndefined();
+
+    delete env[SWARM_TIMEOUT_ENV];
+    expect(config.get<SwarmConfig>(SWARM_SECTION)).toEqual({
+      timeoutMs: DEFAULT_SWARM_TIMEOUT_MS,
+    });
 
     disposables.dispose();
   });
