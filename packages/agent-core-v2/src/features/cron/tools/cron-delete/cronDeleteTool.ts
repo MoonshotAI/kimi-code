@@ -1,0 +1,64 @@
+import { type ToolExecution } from '#/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
+
+import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
+import { ICronDeleteTool, CronDeleteInputSchema, type CronDeleteInput } from './cron-delete';
+import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
+
+const ID_PATTERN = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
+
+export class CronDeleteTool implements ICronDeleteTool {
+  declare readonly _serviceBrand: undefined;
+
+  readonly name = 'CronDelete' as const;
+  readonly description = CRON_DELETE_DESCRIPTION;
+  readonly parameters: Record<string, unknown> = toInputJsonSchema(
+    CronDeleteInputSchema,
+  );
+
+  constructor(
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
+
+  private get cron(): CronRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentCron);
+  }
+
+  resolveExecution(args: CronDeleteInput): ToolExecution {
+    const denied = mainAgentOnlyExecution(this.scopeContext, CRON_MAIN_AGENT_ONLY);
+    if (denied !== undefined) return denied;
+    if (!ID_PATTERN.test(args.id)) {
+      return {
+        isError: true,
+        output: `Invalid cron job id ${JSON.stringify(
+          args.id,
+        )} — must be a ULID.`,
+      };
+    }
+
+    return {
+      description: `Deleting cron ${args.id}`,
+      approvalRule: this.name,
+      execute: async () => {
+        const removed = this.cron.removeTasks([args.id]);
+        if (removed.length === 0) {
+          return {
+            isError: true,
+            output: `No cron job with id ${args.id}.`,
+          };
+        }
+
+        this.cron.emitDeleted(args.id, this.scopeContext.agentId);
+
+        return {
+          output: `Deleted cron job ${args.id}.`,
+          isError: false,
+        };
+      },
+    };
+  }
+}

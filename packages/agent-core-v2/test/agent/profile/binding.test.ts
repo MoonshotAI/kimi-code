@@ -4,7 +4,7 @@ import { join, normalize } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
@@ -25,6 +25,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -263,6 +264,45 @@ describe('AgentProfileService.bind', () => {
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
+  });
+
+  it('freezes the system prompt when the session instructions change', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const emitter = new Emitter<void>();
+    let agentsMd = 'v1 instructions';
+    ctx = createTestAgent(
+      { persistence },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionInstructionsProvider, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        get agentsMd() {
+          return agentsMd;
+        },
+        agentsMdWarning: undefined,
+        agentsMdPaths: [],
+        onDidChange: emitter.event,
+      } satisfies ISessionInstructionsProvider),
+    );
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    const before = svc.getSystemPrompt();
+    expect(before).toContain('v1 instructions');
+    await ctx.get(IWireService).flush();
+    const configUpdates = () =>
+      persistence.records.filter(
+        (record) => record.type === 'config.update' && 'systemPrompt' in record,
+      );
+    const configUpdateCount = configUpdates().length;
+
+    const refreshSpy = vi.spyOn(svc, 'refreshSystemPrompt');
+    agentsMd = 'v2 instructions';
+    emitter.fire();
+    await ctx.get(IWireService).flush();
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(svc.getSystemPrompt()).toBe(before);
+    expect(configUpdates()).toHaveLength(configUpdateCount);
   });
 
   it('setModel applies the default profile when none is bound yet', async () => {

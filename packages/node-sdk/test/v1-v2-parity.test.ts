@@ -19,6 +19,7 @@ import {
   IAgentLifecycleService,
   ISessionApprovalService,
   ISessionQuestionService,
+  ensureMainAgent,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -30,6 +31,7 @@ import {
   createKimiHarness,
   createKimiHarnessV2,
   ErrorCodes,
+  isKimiError,
   SDKRpcClient,
   SDKRpcClientV2,
   type ApprovalRequest,
@@ -53,6 +55,7 @@ import {
   type ResumedAgentState,
   type ResumedSessionSummary,
   type SessionPlan,
+  type SessionStatus,
   type SessionSummary,
   type SkillSummary,
   type SDKRpcClientBase,
@@ -282,6 +285,14 @@ const KNOWN_DIFFS = {
     };
     return { ...projected, path: projected.path.replaceAll(plan.id, '<PLAN_ID>') };
   },
+  // `towerMode` is v2-only (the tower feature exists only in the v2 engine;
+  // the v1 base client throws `not_implemented` for setTowerMode) — deleted;
+  // every other status field compares in full.
+  getStatus: (status: SessionStatus): unknown => {
+    const projected: Record<string, unknown> = { ...status };
+    delete projected['towerMode'];
+    return projected;
+  },
   // Goal snapshots: `goalId` is a per-engine random uuid and `wallClockMs`
   // is per-run wall clock (it keeps accruing while the goal is active, so
   // even a same-moment read differs by execution time) — both deleted;
@@ -340,14 +351,9 @@ const KNOWN_DIFFS = {
   },
   // Session skills: `path`s point into each engine's own home (user skills)
   // or the shared packages (builtins) — after the home-prefix scrub the
-  // summaries compare in full. The builtin `tower` skill is v2-only (the v1
-  // tower implementation was removed ahead of v1's deprecation), so it is
-  // projected out — an engine gap, not catalog data.
+  // summaries compare in full.
   listSkills: (skills: readonly SkillSummary[], home: HomePair): unknown =>
-    scrubHomePrefixes(
-      skills.filter((skill) => skill.name !== 'tower'),
-      home,
-    ),
+    scrubHomePrefixes(skills, home),
 } satisfies Record<string, (value: never, other: never) => unknown>;
 
 /** See the KNOWN_DIFFS goal note above for what this projects and why. */
@@ -449,9 +455,10 @@ function projectResumedAgents(
  *   the engines (the subagent/cron docs embed engine-specific facts), and
  *   v1 additionally registers the `select_tools` meta tool v2 has no
  *   counterpart for — both are engine design, not resume data. v2's default
- *   profile also carries `TowerInit` (the tower-mode entry point) and
- *   `WaitFor` (the background-task wait primitive); both are v2-only, so the
- *   tools are projected out of both rosters. A model-less
+ *   profile also carries `TowerInit`/`TowerStatus`/`TowerTeardown` (the
+ *   tower-mode control tools) and `WaitFor` (the background-task wait
+ *   primitive); all are v2-only, so the tools are projected out of both
+ *   rosters. A model-less
  *   agent's roster is not compared at all (v1 initializes builtin tools
  *   only on a profiled agent; v2 exposes them unbound).
  */
@@ -470,6 +477,8 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
     projected['tools'] = tools
       .filter((tool) => tool['name'] !== 'select_tools')
       .filter((tool) => tool['name'] !== 'TowerInit')
+      .filter((tool) => tool['name'] !== 'TowerStatus')
+      .filter((tool) => tool['name'] !== 'TowerTeardown')
       .filter((tool) => tool['name'] !== 'WaitFor')
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -688,13 +697,7 @@ describe('v1↔v2 return-value parity', () => {
         v1.listWorkspaceSkills(workDir),
         v2.listWorkspaceSkills(workDir),
       ]);
-      // The builtin `tower` skill is v2-only (the v1 tower implementation
-      // was removed ahead of v1's deprecation) — project it out.
-      const withoutTower = (skills: readonly SkillSummary[]): readonly SkillSummary[] =>
-        skills.filter((skill) => skill.name !== 'tower');
-      expect(normalize(withoutTower(v2Skills), 'name')).toEqual(
-        normalize(withoutTower(v1Skills), 'name'),
-      );
+      expect(normalize(v2Skills, 'name')).toEqual(normalize(v1Skills, 'name'));
     } finally {
       await closeAll(v1, v2);
     }
@@ -1993,7 +1996,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Status, '')).toEqual(normalize(v1Status, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Status), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Status), ''),
+      );
       // The eager-default state both engines arrive at from the fixture:
       // default model + its default effort + the configured permission mode.
       expect(v1Status).toEqual({
@@ -2044,7 +2049,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Status, '')).toEqual(normalize(v1Status, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Status), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Status), ''),
+      );
       expect(v1Status).toEqual({
         model: undefined,
         thinkingEffort: 'off',
@@ -2078,7 +2085,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Status, '')).toEqual(normalize(v1Status, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Status), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Status), ''),
+      );
       expect(v1Status.model).toBe('second-model');
       expect(v1Status.maxContextTokens).toBe(128000);
     } finally {
@@ -2124,7 +2133,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Low, '')).toEqual(normalize(v1Low, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Low), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Low), ''),
+      );
       expect(v1Low.thinkingEffort).toBe('low');
       // An unlisted effort on a strict-thinking (kimi-typed) model rejects
       // with the same code AND the same message on both engines.
@@ -2151,7 +2162,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Off, '')).toEqual(normalize(v1Off, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Off), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Off), ''),
+      );
       expect(v1Off.thinkingEffort).toBe('off');
     } finally {
       await closeSessionPair(pair);
@@ -2173,7 +2186,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Yolo, '')).toEqual(normalize(v1Yolo, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Yolo), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Yolo), ''),
+      );
       expect(v1Yolo.permission).toBe('yolo');
       await Promise.all([
         pair.v1.setPermission({ ...input, mode: 'manual' }),
@@ -2183,7 +2198,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(input),
         pair.v2.getStatus(input),
       ]);
-      expect(normalize(v2Manual, '')).toEqual(normalize(v1Manual, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Manual), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Manual), ''),
+      );
       expect(v1Manual.permission).toBe('manual');
     } finally {
       await closeSessionPair(pair);
@@ -2593,7 +2610,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus(statusInput),
         pair.v2.getStatus(statusInput),
       ]);
-      expect(normalize(v2Status, '')).toEqual(normalize(v1Status, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Status), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Status), ''),
+      );
       expect(v1Status).toMatchObject({
         model: 'fixture-model',
         thinkingEffort: 'low',
@@ -2612,7 +2631,9 @@ describe('v1↔v2 agent interaction parity', () => {
         pair.v1.getStatus({ sessionId: drifted.id }),
         pair.v2.getStatus({ sessionId: drifted.id }),
       ]);
-      expect(normalize(v2Drift, '')).toEqual(normalize(v1Drift, ''));
+      expect(normalize(KNOWN_DIFFS.getStatus(v2Drift), '')).toEqual(
+        normalize(KNOWN_DIFFS.getStatus(v1Drift), ''),
+      );
       expect(v1Drift.thinkingEffort).toBe('high');
     } finally {
       await closeSessionPair(pair);
@@ -3713,8 +3734,9 @@ async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 /**
- * Both engines must reject with the same code and the same message (home
- * prefixes scrubbed — the file-store errors embed the mcp.json path).
+ * Both engines must reject with the same class, code, and message (home
+ * prefixes scrubbed — the file-store errors embed the mcp.json path). The
+ * class is pinned because SDK consumers branch on `isKimiError`.
  */
 async function expectSameMcpRejection(
   pair: GlobalMcpParityPair,
@@ -3726,8 +3748,12 @@ async function expectSameMcpRejection(
     captureRejection(v2Call(pair.v2)),
   ]);
   const payload = (error: unknown): unknown => {
-    const err = error as { code?: unknown; message?: unknown };
-    return { code: err.code ?? null, message: String(err.message ?? error) };
+    const err = error as { name?: unknown; code?: unknown; message?: unknown };
+    return {
+      name: err.name ?? null,
+      code: err.code ?? null,
+      message: String(err.message ?? error),
+    };
   };
   expect(scrubHomePrefixes(payload(v2Error), pair.v2Home)).toEqual(
     scrubHomePrefixes(payload(v1Error), pair.v1Home),
@@ -3750,7 +3776,7 @@ function expectSameManagedServers(
 }
 
 describe('v1↔v2 global MCP parity', () => {
-  it('classifies global MCP authorization identically from persisted credentials', async () => {
+  it('detects implicit OAuth requirements identically by default', async () => {
     const statusServer = await startMcpAuthStatusServer();
     const authorizedUrl = 'https://authorized.example.test/mcp';
     const pair = await makeGlobalMcpParityPair({
@@ -3798,7 +3824,6 @@ describe('v1↔v2 global MCP parity', () => {
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
       ]);
-      expect(v2Statuses).toEqual(v1Statuses);
       expect(v1Statuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
@@ -3810,6 +3835,7 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
         { name: 'disabled-oauth', authStatus: 'not-applicable' },
       ]);
+      expect(v2Statuses).toEqual(v1Statuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
@@ -3900,14 +3926,12 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'oauth-required', authStatus: 'oauth-required' },
       ]);
 
-      // The legacy name-based list stays offline (verify is opt-in): a
-      // stored grant is `oauth-authorized` even when the server would reject
-      // it — the deliberate offline false positive.
+      // The name-based list preserves implicit no-grant detection when verify
+      // is omitted, while stored grants are classified from disk.
       const [v1LegacyStatuses, v2LegacyStatuses] = await Promise.all([
         pair.v1.listGlobalMcpServerAuthStatuses(),
         pair.v2.listGlobalMcpServerAuthStatuses(),
       ]);
-      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
       expect(v1LegacyStatuses).toEqual([
         { name: 'stdio', authStatus: 'not-applicable' },
         { name: 'plain', authStatus: 'not-applicable' },
@@ -3919,6 +3943,27 @@ describe('v1↔v2 global MCP parity', () => {
         { name: 'unavailable-explicit', authStatus: 'oauth-required' },
         { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
       ]);
+      expect(v2LegacyStatuses).toEqual(v1LegacyStatuses);
+
+      // verify: false stays fully offline — the challenging `detected` server
+      // is no longer probed (it flips to `not-applicable`), while pinned and
+      // stored-grant entries keep their offline classification.
+      const [v1OfflineStatuses, v2OfflineStatuses] = await Promise.all([
+        pair.v1.listGlobalMcpServerAuthStatuses({ verify: false }),
+        pair.v2.listGlobalMcpServerAuthStatuses({ verify: false }),
+      ]);
+      expect(v1OfflineStatuses).toEqual([
+        { name: 'stdio', authStatus: 'not-applicable' },
+        { name: 'plain', authStatus: 'not-applicable' },
+        { name: 'detected', authStatus: 'not-applicable' },
+        { name: 'bearer', authStatus: 'bearer-token' },
+        { name: 'oauth-required', authStatus: 'oauth-required' },
+        { name: 'oauth-authorized', authStatus: 'oauth-authorized' },
+        { name: 'oauth-stale', authStatus: 'oauth-authorized' },
+        { name: 'unavailable-explicit', authStatus: 'oauth-required' },
+        { name: 'unavailable-dynamic', authStatus: 'not-applicable' },
+      ]);
+      expect(v2OfflineStatuses).toEqual(v1OfflineStatuses);
     } finally {
       await closeGlobalMcpPair(pair);
       await statusServer.close();
@@ -4151,6 +4196,100 @@ describe('v1↔v2 global MCP parity', () => {
         (client) => client.getGlobalMcpServer('missing'),
         (client) => client.getGlobalMcpServer('missing'),
       );
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
+  it.each([
+    [
+      'add',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.addGlobalMcpServer(
+          { name: 'project', transport: 'stdio', command: 'replacement' },
+          { cwd },
+        ),
+    ],
+    [
+      'update',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.updateGlobalMcpServer(
+          { name: 'project', transport: 'stdio', command: 'replacement' },
+          { cwd },
+        ),
+    ],
+    [
+      'remove',
+      (client: SDKRpcClient | SDKRpcClientV2, cwd: string) =>
+        client.removeGlobalMcpServer('project', { cwd }),
+    ],
+  ])('%s rejects a trusted project-layer entry as read-only on both engines', async (_operation, mutate) => {
+    const pair = await makeGlobalMcpParityPair();
+    const project = await makeTempDir('kimi-sdk-parity-mcp-project-');
+    await mkdir(join(project, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(project, '.kimi-code', 'mcp.json'),
+      JSON.stringify({ mcpServers: { project: { command: 'project-command' } } }),
+      'utf-8',
+    );
+    try {
+      await pair.v2.trustWorkspace(project);
+
+      await expectSameMcpRejection(
+        pair,
+        (client) => mutate(client, project),
+        (client) => mutate(client, project),
+      );
+    } finally {
+      await closeGlobalMcpPair(pair);
+    }
+  });
+
+  it('threads cwd through project-layer inspection and authorization on both engines', async () => {
+    const pair = await makeGlobalMcpParityPair();
+    const project = await makeTempDir('kimi-sdk-parity-mcp-auth-project-');
+    await mkdir(join(project, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(project, '.kimi-code', 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'project-stdio': { command: 'project-command' },
+          'project-oauth': {
+            transport: 'http',
+            url: 'https://project.example.test/mcp',
+            auth: 'oauth',
+          },
+        },
+      }),
+      'utf-8',
+    );
+    try {
+      await pair.v2.trustWorkspace(project);
+
+      const [v1Inspections, v2Inspections] = await Promise.all([
+        pair.v1.inspectAppMcpServers([{ source: 'global', name: 'project-stdio' }], {
+          cwd: project,
+        }),
+        pair.v2.inspectAppMcpServers([{ source: 'global', name: 'project-stdio' }], {
+          cwd: project,
+        }),
+      ]);
+      const summarize = (inspections: typeof v1Inspections) =>
+        inspections.map(({ runtimeName, authStatus }) => ({ runtimeName, authStatus }));
+      expect(summarize(v2Inspections)).toEqual(summarize(v1Inspections));
+      expect(summarize(v1Inspections)).toEqual([
+        { runtimeName: 'project-stdio', authStatus: 'not-applicable' },
+      ]);
+
+      await expectSameMcpRejection(
+        pair,
+        (client) => client.beginGlobalMcpServerAuth('project-stdio', { cwd: project }),
+        (client) => client.beginGlobalMcpServerAuth('project-stdio', { cwd: project }),
+      );
+      await Promise.all([
+        pair.v1.resetGlobalMcpServerAuth('project-oauth', { cwd: project }),
+        pair.v2.resetGlobalMcpServerAuth('project-oauth', { cwd: project }),
+      ]);
     } finally {
       await closeGlobalMcpPair(pair);
     }
@@ -4647,6 +4786,50 @@ describe('v1↔v2 session MCP parity', () => {
       restoreEnv();
     }
   }, 20_000);
+
+  it('a persisted session add over an enabled plugin entry follows each engine\'s precedence', async () => {
+    const restoreEnv = scrubConfigEnv();
+    const pair = await makeSessionMcpPair();
+    const pluginSource = await makeTempDir('kimi-sdk-parity-mcp-plugin-src-');
+    await writeFixturePlugin(pluginSource);
+    try {
+      await Promise.all([
+        pair.v1.installPlugin(pluginSource),
+        pair.v2.installPlugin(pluginSource),
+      ]);
+      await createOnBoth(pair, { id: 'session_parity_mcp_plugin_shadow' });
+      const input = { sessionId: 'session_parity_mcp_plugin_shadow' } as const;
+      const server: McpServerConfig = {
+        name: 'plugin-parity-plugin:parity-stdio',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [MCP_STDIO_FIXTURE],
+      };
+
+      // Deliberate divergence: v1 ranks an enabled plugin above the file
+      // layers, so a persisted add could never take effect and rejects
+      // (`isKimiError` is the SDK's public error class on both engines). v2
+      // keeps the file layers above plugins, so the same add is a real
+      // override: the user-level write lands and shadows the plugin.
+      const [v1Error, v2Info] = await Promise.all([
+        captureRejection(pair.v1.addSessionMcpServer({ ...input, server, persist: true })),
+        pair.v2.addSessionMcpServer({ ...input, server, persist: true }),
+      ]);
+      expect(isKimiError(v1Error)).toBe(true);
+      expect(v1Error).toMatchObject({ code: 'request.invalid' });
+      expect(v2Info.name).toBe('plugin-parity-plugin:parity-stdio');
+
+      const [v1File, v2File] = await Promise.all([
+        readFile(join(pair.v1Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+        readFile(join(pair.v2Home.raw, 'mcp.json'), 'utf-8').catch(() => ''),
+      ]);
+      expect(v1File).not.toContain('plugin-parity-plugin:parity-stdio');
+      expect(v2File).toContain('plugin-parity-plugin:parity-stdio');
+    } finally {
+      await closeSessionPair(pair);
+      restoreEnv();
+    }
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -4846,6 +5029,7 @@ describe('v1↔v2 event & interaction parity', () => {
       const sessionId = 'session_parity_events_approval';
       const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
+      await ensureMainAgent(v2Session!);
       const v2Approvals = v2Session!.accessor.get(ISessionApprovalService);
       const requestInput = {
         turnId: 1,
@@ -4925,6 +5109,7 @@ describe('v1↔v2 event & interaction parity', () => {
       const sessionId = 'session_parity_events_question';
       const v2Session = getLiveSessionById(pair.v2.engineAccessor, sessionId);
       expect(v2Session).toBeDefined();
+      await ensureMainAgent(v2Session!);
       const v2Questions = v2Session!.accessor.get(ISessionQuestionService);
       const requestInput = {
         turnId: 1,

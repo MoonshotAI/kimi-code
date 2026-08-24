@@ -787,10 +787,11 @@ export class ToolManager {
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
-    const allowBackground =
+    const canRunInBackground = () =>
       this.isExactToolEnabled('TaskList') &&
       this.isExactToolEnabled('TaskOutput') &&
       this.isExactToolEnabled('TaskStop');
+    const allowBackground = canRunInBackground();
     const goalToolsEnabled = this.agent.type === 'main';
     this.builtinTools = new Map(
       [
@@ -828,7 +829,8 @@ export class ToolManager {
         goalToolsEnabled && new b.GetGoalTool(this.agent),
         goalToolsEnabled && new b.SetGoalBudgetTool(this.agent),
         goalToolsEnabled && new b.UpdateGoalTool(this.agent),
-        this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
+        this.agent.rpc?.requestQuestion &&
+          new b.AskUserQuestionTool(this.agent, { allowBackground: canRunInBackground }),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),

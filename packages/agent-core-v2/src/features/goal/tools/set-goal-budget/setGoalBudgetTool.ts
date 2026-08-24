@@ -3,7 +3,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/features/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { GoalBudgetLimits, GoalSnapshot } from '#/features/goal/types';
 
 import DESCRIPTION from './set-goal-budget.md?raw';
@@ -22,10 +23,14 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SetGoalBudgetToolInputSchema);
 
+  private readonly goal: GoalRuntime;
+
   constructor(
-    @IAgentGoalService private readonly goal: IAgentGoalService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-  ) {}
+  ) {
+    this.goal = manager.resolve(scopeContext.agentContext, AgentGoal);
+  }
 
   resolveExecution(args: SetGoalBudgetToolInput): ToolExecution {
     const denied = mainAgentOnlyExecution(this.scopeContext, GOAL_MAIN_AGENT_ONLY);
@@ -90,6 +95,7 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
     );
   }
 }
+
 
 function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolInput {
   switch (input.unit) {

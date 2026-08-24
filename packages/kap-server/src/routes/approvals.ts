@@ -1,6 +1,8 @@
 import {
+  IAgentLifecycleService,
   ISessionApprovalService,
-  ISessionInteractionService,
+  isSessionInteractionRecentlyResolved,
+  listSessionPendingInteractions,
   resumeSessionById,
   type ApprovalRequest,
   type ApprovalResponse,
@@ -77,7 +79,7 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = handle.accessor.get(ISessionInteractionService).listPending('approval');
+      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'approval');
       const items = pending.map((i) => toWireApproval(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -111,13 +113,12 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         );
         return;
       }
-      const interaction = handle.accessor.get(ISessionInteractionService);
-      const isPending = interaction
-        .listPending('approval')
+      const agents = handle.accessor.get(IAgentLifecycleService);
+      const isPending = listSessionPendingInteractions(agents, 'approval')
         .some((i) => i.id === approval_id);
 
       if (!isPending) {
-        if (interaction.isRecentlyResolved(approval_id)) {
+        if (isSessionInteractionRecentlyResolved(agents, approval_id)) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `approval ${approval_id} already resolved`,

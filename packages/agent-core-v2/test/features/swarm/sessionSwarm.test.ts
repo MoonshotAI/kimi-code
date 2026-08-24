@@ -1246,11 +1246,12 @@ function lifecycleStub(
     _serviceBrand: undefined,
     onDidCreate: Event.None,
     onDidCreateScope: Event.None,
-    onDidDispose: Event.None,
+    onWillClose: Event.None,
+    onDidClose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
       if (opts.agentId !== undefined) {
         const existing = handles.get(opts.agentId);
-        if (existing !== undefined) return existing;
+        if (existing !== undefined) return stubAgentContext(opts.agentId, 1);
       }
       const id = opts.agentId ?? 'agent-new';
       const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
@@ -1259,16 +1260,24 @@ function lifecycleStub(
         thinkingLevel: opts.binding?.thinking ?? 'medium',
       });
       handles.set(id, handle);
-      return handle;
+      return stubAgentContext(id, 1);
     }),
     fork: vi.fn(),
-    get: (context: AgentContext) => handles.get(context.agentId),
-    findAgentHandle: (agentId: string) => handles.get(agentId),
-    list: () => [...handles.values()],
+    get: (agentId: string) => (handles.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
+    handleOf: (agentId: string) => handles.get(agentId),
+    list: () => [...handles.keys()].map((agentId) => stubAgentContext(agentId, 1)),
+    resolve: () => {
+      throw new Error('unexpected resolve');
+    },
+    inspect: () => {
+      throw new Error('unexpected inspect');
+    },
     remove: async (context: AgentContext) => {
       handles.delete(context.agentId);
     },
     broadcastPermissionMode: () => {},
+    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
+    attachRuntimes: () => {},
   };
   return lifecycle as IAgentLifecycleService;
 }

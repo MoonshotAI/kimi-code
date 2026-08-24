@@ -3,7 +3,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/features/goal/goal';
+import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { goalResultForModel } from '#/features/goal/tools/serialize';
 
 import DESCRIPTION from './get-goal.md?raw';
@@ -15,10 +16,14 @@ export class GetGoalTool implements IGetGoalTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GetGoalToolInputSchema);
 
+  private readonly goal: GoalRuntime;
+
   constructor(
-    @IAgentGoalService private readonly goal: IAgentGoalService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-  ) {}
+  ) {
+    this.goal = manager.resolve(scopeContext.agentContext, AgentGoal);
+  }
 
   resolveExecution(_args: GetGoalToolInput): ToolExecution {
     const denied = mainAgentOnlyExecution(this.scopeContext, GOAL_MAIN_AGENT_ONLY);
@@ -33,3 +38,4 @@ export class GetGoalTool implements IGetGoalTool {
     };
   }
 }
+

@@ -7,8 +7,7 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { GoalUpdated } from '@moonshot-ai/agent-core-v2';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2';
+import type { ContentPart, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -49,7 +48,6 @@ import type {
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
-import type { CronFired } from '@moonshot-ai/agent-core-v2/session/cron/cronOps';
 import type {
   SubagentCompleted,
   SubagentFailed,
@@ -1218,6 +1216,7 @@ export class AgentTranscriptProjector {
   private onAgentStatusUpdated(event: {
     planMode?: boolean;
     swarmMode?: boolean;
+    towerMode?: boolean;
     model?: string;
     thinkingEffort?: string;
     usage?: AgentUsageMeta;
@@ -1227,7 +1226,11 @@ export class AgentTranscriptProjector {
     permission?: 'manual' | 'yolo' | 'auto';
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const modes: { plan?: Record<string, never> | null; swarm?: Record<string, never> | null } = {};
+    const modes: {
+      plan?: Record<string, never> | null;
+      swarm?: Record<string, never> | null;
+      tower?: Record<string, never> | null;
+    } = {};
     if (event.planMode === true) {
       modes.plan = {};
       this.planModeActive = true;
@@ -1237,7 +1240,9 @@ export class AgentTranscriptProjector {
     }
     if (event.swarmMode === true) modes.swarm = {};
     else if (event.swarmMode === false) modes.swarm = null;
-    if (modes.plan !== undefined || modes.swarm !== undefined) {
+    if (event.towerMode === true) modes.tower = {};
+    else if (event.towerMode === false) modes.tower = null;
+    if (modes.plan !== undefined || modes.swarm !== undefined || modes.tower !== undefined) {
       ops.push({ op: 'meta.merge', meta: { modes } });
     }
     const agent: {

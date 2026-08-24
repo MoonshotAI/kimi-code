@@ -29,7 +29,6 @@ import {
 } from '#/_base/di/test';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -55,6 +54,7 @@ import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/se
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const fsOpenHook = vi.hoisted(() => ({
   afterOpen: undefined as ((path: string, handle: FileHandle) => Promise<void>) | undefined,
@@ -993,14 +993,24 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     _serviceBrand: undefined,
     onDidCreate: noopEvent,
     onDidCreateScope: noopEvent,
-    onDidDispose: noopEvent,
-    create: async () => agents[0]!,
-    fork: async () => agents[0]!,
-    get: (context: AgentContext) => agents.find((agent) => agent.id === context.agentId),
-    findAgentHandle: (agentId: string) => agents.find((agent) => agent.id === agentId),
-    list: () => agents,
+    onWillClose: noopEvent,
+    onDidClose: noopEvent,
+    create: async () => stubAgentContext(agents[0]!.id, 1),
+    fork: async () => stubAgentContext(agents[0]!.id, 1),
+    get: (agentId: string) =>
+      agents.some((agent) => agent.id === agentId) ? stubAgentContext(agentId, 1) : undefined,
+    list: () => agents.map((agent) => stubAgentContext(agent.id, 1)),
+    resolve: () => {
+      throw new Error('unexpected resolve');
+    },
+    inspect: () => {
+      throw new Error('unexpected inspect');
+    },
     remove: async () => {},
     broadcastPermissionMode: () => {},
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
+    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
+    attachRuntimes: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

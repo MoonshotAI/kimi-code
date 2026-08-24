@@ -11,7 +11,7 @@
 # Index (25 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/app/skillCatalog/configSection.ts
-#   cron                     src/app/cron/configSection.ts
+#   cron                     src/features/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
@@ -70,7 +70,7 @@ builtin_product_skills = true
 
 # ##########################################################################
 # cron
-#   owner: src/app/cron/configSection.ts
+#   owner: src/features/cron/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:

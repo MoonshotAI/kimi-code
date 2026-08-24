@@ -4,11 +4,15 @@ import { readFile } from 'node:fs/promises';
 import {
   IAgentLifecycleService,
   IAgentPromptService,
+  IFlagService,
   ISessionIndex,
+  ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
+  TOWER_FLAG_ID,
   followSessionLifecycles,
   getLiveSessionById,
+  isTowerFeatureAssembled,
   isUndoAnchor,
   reduceContextTranscript,
   type ContextMessage,
@@ -17,11 +21,16 @@ import {
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  TowerStore,
+  resolveTowerRepoRoot,
+} from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
+import {
   TranscriptStore,
   foldWireRecordFacts,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
   type AgentDescriptor,
+  type ActivityMeta,
   type AgentTranscript,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
@@ -381,7 +390,7 @@ export class TranscriptService {
     const agent =
       session === undefined
         ? undefined
-        : session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
+        : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
     const status = agent?.accessor.get(IAgentLoopService).status();
     if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
     const ordinal = status.activeTurnId;
@@ -408,7 +417,7 @@ export class TranscriptService {
   private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
     const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
-      .findAgentHandle(agentId);
+      .handleOf(agentId);
     const promptService = agent === undefined ? undefined : agent.accessor.get(IAgentPromptService);
     const queue = promptService?.list();
     if (queue === undefined) return [];
@@ -590,11 +599,33 @@ export class TranscriptService {
     const folded = foldWireRecordFacts(records, base);
     const status = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
-      .findAgentHandle(agentId)
+      .handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
       .status();
-    const activity = status?.state === 'running' ? 'turn' : 'idle';
-    return { ...folded, meta: { ...folded.meta, activity } };
+    const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
+    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
+    if (snapshot.meta.modes?.tower === undefined) return snapshot;
+    const flags = this.deps.core.accessor.get(IFlagService);
+    if (
+      agentId === MAIN_AGENT_ID &&
+      flags.enabled(TOWER_FLAG_ID) &&
+      isTowerFeatureAssembled(flags) &&
+      (await this.coldTowerOwnedHere(sessionId, summary.cwd))
+    ) {
+      return snapshot;
+    }
+    const modes = { ...snapshot.meta.modes, tower: undefined };
+    const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
+    return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
+  }
+
+  private async coldTowerOwnedHere(sessionId: string, cwd: string | undefined): Promise<boolean> {
+    if (cwd === undefined) return true;
+    const owner = await new TowerStore(resolveTowerRepoRoot(cwd))
+      .load()
+      .then((state) => state.sessionId, () => undefined);
+    if (owner === undefined || owner === sessionId) return true;
+    return this.deps.core.accessor.get(ISessionManager).get(owner) === undefined;
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

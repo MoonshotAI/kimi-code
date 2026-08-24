@@ -1,7 +1,9 @@
 import {
   type Interaction,
-  ISessionInteractionService,
+  IAgentLifecycleService,
   ISessionQuestionService,
+  isSessionInteractionRecentlyResolved,
+  listSessionPendingInteractions,
   resumeSessionById,
   type QuestionAnswers,
   type QuestionItem,
@@ -87,7 +89,7 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = handle.accessor.get(ISessionInteractionService).listPending('question');
+      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'question');
       const items = pending.map((i) => toWireQuestion(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -131,14 +133,14 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const interaction = handle.accessor.get(ISessionInteractionService);
+      const agents = handle.accessor.get(IAgentLifecycleService);
 
       let questionId: string;
       let action: 'resolve' | 'dismiss';
       if (parsed.kind === 'invalid') {
         if (
-          interaction.listPending('question').some((i) => i.id === tail) ||
-          interaction.isRecentlyResolved(tail)
+          listSessionPendingInteractions(agents, 'question').some((i) => i.id === tail) ||
+          isSessionInteractionRecentlyResolved(agents, tail)
         ) {
           questionId = tail;
           action = 'resolve';
@@ -151,12 +153,11 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         action = parsed.kind === 'bare' ? 'resolve' : parsed.action;
       }
 
-      const pendingInteraction = interaction
-        .listPending('question')
+      const pendingInteraction = listSessionPendingInteractions(agents, 'question')
         .find((i) => i.id === questionId);
 
       if (pendingInteraction === undefined) {
-        if (interaction.isRecentlyResolved(questionId)) {
+        if (isSessionInteractionRecentlyResolved(agents, questionId)) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `question ${questionId} already resolved`,

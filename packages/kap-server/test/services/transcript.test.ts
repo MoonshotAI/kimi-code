@@ -1,29 +1,40 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import {
+  AgentInteraction,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
+  IFlagService,
   ISessionIndex,
-  ISessionInteractionService,
   ISessionMetadata,
   ISessionLifecycleService,
   ISessionManager,
   IWorkspaceInstanceManager,
   LifecycleScope,
   makeAgentScopeContext,
-  SessionInteractionService,
-  StateRegistry,
   type AgentContext,
+  type AgentRuntimeDefinition,
   type Event2,
+  type RuntimeOf,
+  type Interaction,
+  type InteractionKind,
+  type InteractionPendingChangedEvent,
+  type InteractionRequest,
+  type InteractionResolution,
+  TOWER_FLAG_ID,
+  _setTowerFeatureAssembledForTests,
   type ISessionScopeHandle,
-  type ISessionStateService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { Emitter, Event } from '@moonshot-ai/agent-core-v2/_base/event';
+import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
   TranscriptStore,
@@ -50,12 +61,12 @@ import {
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 
+_setTowerFeatureAssembledForTests(true);
+
+const execFileAsync = promisify(execFile);
+
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
-}
-
-class TestSessionStateService extends StateRegistry implements ISessionStateService {
-  declare readonly _serviceBrand: undefined;
 }
 
 function turnOps(turnId: string, items: ReturnType<AgentTranscript['getItems']>): TranscriptTurn {
@@ -1160,6 +1171,17 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getMeta().modes).toBeUndefined();
   });
 
+  it('mirrors the tower mode slice into meta.modes', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: true })));
+    expect(tx.getMeta().modes).toEqual({ tower: {} });
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: false })));
+    expect(tx.getMeta().modes).toBeUndefined();
+  });
+
   it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
@@ -2041,6 +2063,105 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('gates the cold tower mode badge behind the tower experiment flag', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-tower-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        { type: 'tower_mode.enter', time: 2000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const serviceWith = (
+        flagOn: boolean,
+        opts: { cwd?: string; liveSessionIds?: string[] } = {},
+      ) =>
+        new TranscriptService({
+          homeDir: home,
+          core: {
+            accessor: {
+              get: (token: unknown) => {
+                if (token === ISessionManager) {
+                  return {
+                    get: (id: string) => (opts.liveSessionIds?.includes(id) ? {} : undefined),
+                    list: () => [],
+                  };
+                }
+                if (token === IWorkspaceInstanceManager) {
+                  return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
+                }
+                if (token === ISessionIndex) {
+                  return { get: async () => ({ workspaceId: 'ws', cwd: opts.cwd }) };
+                }
+                if (token === IFlagService) {
+                  return { enabled: (id: string) => flagOn && id === TOWER_FLAG_ID };
+                }
+                return undefined;
+              },
+            },
+          } as unknown as Scope,
+        });
+
+      const withFlag = await serviceWith(true).readColdSnapshot('s1', 'main');
+      expect(withFlag!.meta.modes).toEqual({ tower: {} });
+
+      const withoutFlag = await serviceWith(false).readColdSnapshot('s1', 'main');
+      expect(withoutFlag!.meta.modes).toBeUndefined();
+
+      _setTowerFeatureAssembledForTests(false);
+      try {
+        const notAssembled = await serviceWith(true).readColdSnapshot('s1', 'main');
+        expect(notAssembled!.meta.modes).toBeUndefined();
+      } finally {
+        _setTowerFeatureAssembledForTests(true);
+      }
+
+      const repo = await mkdtemp(join(tmpdir(), 'tower-cold-owner-'));
+      try {
+        await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
+        await execFileAsync('git', ['config', 'user.email', 'tower-test@example.com'], { cwd: repo });
+        await execFileAsync('git', ['config', 'user.name', 'Tower Test'], { cwd: repo });
+        await writeFile(join(repo, 'README.md'), '# fixture\n');
+        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
+        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
+        await new TowerStore(repo).init('session-b');
+
+        const adoptedByLive = await serviceWith(true, {
+          cwd: repo,
+          liveSessionIds: ['session-b'],
+        }).readColdSnapshot('s1', 'main');
+        expect(adoptedByLive!.meta.modes).toBeUndefined();
+
+        const adoptedByDead = await serviceWith(true, { cwd: repo }).readColdSnapshot('s1', 'main');
+        expect(adoptedByDead!.meta.modes).toEqual({ tower: {} });
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+
+      const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'worker-1');
+      await mkdir(childDir, { recursive: true });
+      await writeFile(
+        join(childDir, 'wire.jsonl'),
+        `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
+      );
+      const child = await serviceWith(true).readColdSnapshot('s1', 'worker-1');
+      expect(child!.meta.modes).toBeUndefined();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('folds blocked turn endings into failed (engine wire contract)', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
@@ -2164,36 +2285,186 @@ describe('bindSessionTranscript', () => {
     }
   }
 
+
+  class FakeInteractionKernel {
+    private readonly pending = new Map<string, Interaction>();
+    private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+    private readonly resolveEmitter = new Emitter<InteractionResolution>();
+    readonly onDidChangePending = this.changeEmitter.event;
+    readonly onDidResolve = this.resolveEmitter.event;
+
+    request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+      return new Promise<TResponse>((resolve) => {
+        this.park(req, (response) => resolve(response as TResponse));
+      });
+    }
+
+    enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+      return this.park(req, () => {});
+    }
+
+    respond(id: string, response: unknown): boolean {
+      if (!this.pending.delete(id)) return false;
+      this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+      this.resolveEmitter.fire({ id, response });
+      return true;
+    }
+
+    listPending(kind?: InteractionKind): readonly Interaction[] {
+      const all = [...this.pending.values()];
+      return kind === undefined ? all : all.filter((i) => i.kind === kind);
+    }
+
+    isRecentlyResolved(): boolean {
+      return false;
+    }
+
+    cancelPendingForTurn(_turnId: number): void {}
+
+    private park<TPayload>(
+      req: InteractionRequest<TPayload>,
+      resolve: (response: unknown) => void,
+    ): Interaction {
+      void resolve;
+      const interaction: Interaction = {
+        id: req.id ?? `interaction-${this.pending.size}`,
+        kind: req.kind,
+        payload: req.payload,
+        origin: req.origin ?? {},
+        createdAt: Date.now(),
+      };
+      this.pending.set(interaction.id, interaction);
+      this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+      return interaction;
+    }
+  }
+
+  class FakeInteractionHub {
+    private readonly entries = new Map<
+      string,
+      { context: AgentContext; kernel: FakeInteractionKernel }
+    >();
+    private readonly createEmitter = new Emitter<AgentContext>();
+    readonly onDidCreate = this.createEmitter.event;
+    readonly onDidClose = Event.None as Event<AgentContext>;
+
+    kernelFor(agentId: string): FakeInteractionKernel {
+      let entry = this.entries.get(agentId);
+      if (entry === undefined) {
+        const context = makeAgentScopeContext({
+          agentId,
+          agentScope: `agents/${agentId}`,
+          generation: 1,
+        }).agentContext;
+        entry = { context, kernel: new FakeInteractionKernel() };
+        this.entries.set(agentId, entry);
+      }
+      return entry.kernel;
+    }
+
+    enqueue(req: InteractionRequest<unknown>): Interaction {
+      return this.kernelFor(req.origin?.agentId ?? 'main').enqueue(req);
+    }
+
+    respond(id: string, response: unknown): void {
+      for (const entry of this.entries.values()) {
+        if (entry.kernel.respond(id, response)) return;
+      }
+    }
+
+    list(): AgentContext[] {
+      return [...this.entries.values()].map((entry) => entry.context);
+    }
+
+    get(agentId: string): AgentContext | undefined {
+      return this.entries.get(agentId)?.context;
+    }
+
+    resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+      context: AgentContext,
+      definition: Definition,
+    ): RuntimeOf<Definition> {
+      if (definition !== AgentInteraction) throw new Error('unsupported runtime');
+      for (const entry of this.entries.values()) {
+        if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
+      }
+      throw new Error(`unknown agent ${context.agentId}`);
+    }
+
+    handleOf(): undefined {
+      return undefined;
+    }
+  }
+
   interface FakeAgentHandle {
     readonly id: string;
     readonly context: AgentContext;
     readonly bus: FakeBus;
+    readonly kernel: FakeInteractionKernel;
     readonly accessor: { get: (token: unknown) => unknown };
   }
 
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
+    private readonly kernels = new Map<
+      string,
+      { context: AgentContext; kernel: FakeInteractionKernel }
+    >();
     private readonly createHandlers = new Set<(context: AgentContext) => void>();
-    private readonly disposeHandlers = new Set<(context: AgentContext) => void>();
-    list(): FakeAgentHandle[] {
-      return [...this.handles.values()];
+    private readonly closeHandlers = new Set<(context: AgentContext) => void>();
+    list(): AgentContext[] {
+      const handleIds = new Set(this.handles.keys());
+      return [
+        ...[...this.handles.values()].map((handle) => handle.context),
+        ...[...this.kernels.entries()]
+          .filter(([id]) => !handleIds.has(id))
+          .map(([, entry]) => entry.context),
+      ];
     }
-    get(context: AgentContext): FakeAgentHandle | undefined {
-      return this.handles.get(context.agentId);
+    get(agentId: string): AgentContext | undefined {
+      return this.handles.get(agentId)?.context ?? this.kernels.get(agentId)?.context;
     }
-    findAgentHandle(agentId: string): FakeAgentHandle | undefined {
+    handleOf(agentId: string): FakeAgentHandle | undefined {
       return this.handles.get(agentId);
     }
     byId(id: string): FakeAgentHandle | undefined {
       return this.handles.get(id);
     }
+    kernelFor(id: string): FakeInteractionKernel {
+      const handle = this.handles.get(id);
+      if (handle !== undefined) return handle.kernel;
+      let entry = this.kernels.get(id);
+      if (entry === undefined) {
+        const context = makeAgentScopeContext({
+          agentId: id,
+          agentScope: `agents/${id}`,
+          generation: 1,
+        }).agentContext;
+        entry = { context, kernel: new FakeInteractionKernel() };
+        this.kernels.set(id, entry);
+      }
+      return entry.kernel;
+    }
+    resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+      context: AgentContext,
+      definition: Definition,
+    ): RuntimeOf<Definition> {
+      if (definition !== AgentInteraction) throw new Error('unsupported runtime');
+      for (const handle of this.handles.values()) {
+        if (handle.context === context) return handle.kernel as RuntimeOf<Definition>;
+      }
+      for (const entry of this.kernels.values()) {
+        if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
+      }
+      throw new Error(`unknown agent ${context.agentId}`);
+    }
     onDidCreate(cb: (context: AgentContext) => void): { dispose: () => void } {
       this.createHandlers.add(cb);
       return { dispose: () => this.createHandlers.delete(cb) };
     }
-    onDidDispose(cb: (context: AgentContext) => void): { dispose: () => void } {
-      this.disposeHandlers.add(cb);
-      return { dispose: () => this.disposeHandlers.delete(cb) };
+    onDidClose(cb: (context: AgentContext) => void): { dispose: () => void } {
+      this.closeHandlers.add(cb);
+      return { dispose: () => this.closeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
       const bus = new FakeBus();
@@ -2202,10 +2473,12 @@ describe('bindSessionTranscript', () => {
         agentScope: `agents/${id}`,
         generation: 1,
       });
+      const kernel = this.kernels.get(id)?.kernel ?? new FakeInteractionKernel();
       const handle: FakeAgentHandle = {
         id,
         context: scope.agentContext,
         bus,
+        kernel,
         accessor: {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
@@ -2228,29 +2501,16 @@ describe('bindSessionTranscript', () => {
       const removed = this.handles.get(id);
       this.handles.delete(id);
       if (removed !== undefined) {
-        for (const cb of this.disposeHandlers) cb(removed.context);
+        for (const cb of this.closeHandlers) cb(removed.context);
       }
     }
   }
 
-  function fakeSession(
-    interactions: SessionInteractionService,
-    agents?: FakeAgents,
-  ): ISessionScopeHandle {
+  function fakeSession(manager: FakeAgents | FakeInteractionHub): ISessionScopeHandle {
     return {
       accessor: {
         get: (token: unknown) => {
-          if (token === IAgentLifecycleService) {
-            return (
-              agents ?? {
-                list: () => [],
-                findAgentHandle: () => undefined,
-                onDidCreate: () => ({ dispose: () => undefined }),
-                onDidDispose: () => ({ dispose: () => undefined }),
-              }
-            );
-          }
-          if (token === ISessionInteractionService) return interactions;
+          if (token === IAgentLifecycleService) return manager;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },
@@ -2259,7 +2519,7 @@ describe('bindSessionTranscript', () => {
   }
 
   it('registers pre-bind pendings without frames and replays an early resolve at seed time', () => {
-    const interactions = new SessionInteractionService(new TestSessionStateService());
+    const interactions = new FakeInteractionHub();
     interactions.enqueue({
       id: 'apr-1',
       kind: 'approval',
@@ -2291,7 +2551,7 @@ describe('bindSessionTranscript', () => {
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(
       store,
-      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+      fakeSession(agents),
     );
 
     const sub = agents.add('sub-1');
@@ -2327,7 +2587,7 @@ describe('bindSessionTranscript', () => {
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(
       store,
-      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+      fakeSession(agents),
     );
 
     expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
@@ -2390,11 +2650,11 @@ describe('bindSessionTranscript', () => {
     return home;
   }
 
-  function fakeCoreWithAgents(interactions: SessionInteractionService, agents: FakeAgents): Scope {
+  function fakeCoreWithAgents(agents: FakeAgents): Scope {
     const sessionLifecycle = {
       onDidCloseSession: () => ({ dispose: () => undefined }),
       onDidArchiveSession: () => ({ dispose: () => undefined }),
-      get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
+      get: (sid: string) => (sid === 's1' ? fakeSession(agents) : undefined),
     };
     const handler = {
       id: 'ws',
@@ -2428,7 +2688,7 @@ describe('bindSessionTranscript', () => {
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(
       store,
-      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+      fakeSession(agents),
     );
 
     const sub = agents.add('sub-1');
@@ -2549,7 +2809,7 @@ describe('bindSessionTranscript', () => {
     const ops: TranscriptOperation[] = [];
     const binding = bindSessionTranscript(
       store,
-      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+      fakeSession(agents),
       undefined,
       (event) => ops.push(...event.ops),
     );
@@ -2603,7 +2863,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
-    const interactions = new SessionInteractionService(new TestSessionStateService());
+    const interactions = new FakeInteractionHub();
     interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
     interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
 
@@ -2622,7 +2882,7 @@ describe('bindSessionTranscript', () => {
   });
 
   it('defers pendings created before their owning agent is seeded', () => {
-    const interactions = new SessionInteractionService(new TestSessionStateService());
+    const interactions = new FakeInteractionHub();
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
     const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) => {
@@ -2642,15 +2902,14 @@ describe('bindSessionTranscript', () => {
 
   it('announces pendings from live-created agents immediately (their projector is complete)', () => {
     const agents = new FakeAgents();
-    const interactions = new SessionInteractionService(new TestSessionStateService());
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
-    const binding = bindSessionTranscript(store, fakeSession(interactions, agents), undefined, (event) => {
+    const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
     agents.add('sub-1');
-    interactions.enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    agents.kernelFor('sub-1').enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, origin: { agentId: 'sub-1', turnId: 0 } });
     expect([...byAgent.keys()]).toEqual(['sub-1']);
     binding.dispose();
   });
@@ -2704,11 +2963,10 @@ describe('bindSessionTranscript', () => {
 
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
     const agents = new FakeAgents();
-    const interactions = new SessionInteractionService(new TestSessionStateService());
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
+    agents.kernelFor('sub-1').enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
-    const binding = bindSessionTranscript(store, fakeSession(interactions, agents), undefined, (event) => {
+    const binding = bindSessionTranscript(store, fakeSession(agents), undefined, (event) => {
       byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
     });
 
@@ -2728,7 +2986,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       const store = service.forSessionLive('s1');
       await service.whenReady('s1');
@@ -2749,7 +3007,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       const store = service.forSessionLive('s1');
       const bus = agents.byId('main')!.bus;
@@ -2791,7 +3049,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       const store = service.forSessionLive('s1');
       agents
@@ -2815,7 +3073,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       const store = service.forSessionLive('s1');
       agents.byId('main')!.bus.emit(
@@ -2850,7 +3108,7 @@ describe('bindSessionTranscript', () => {
       agents.add('main', { loopStatus: { state: 'idle' } });
       const service = new TranscriptService({
         homeDir: home,
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       const store = service.forSessionLive('s1');
       const batches: TranscriptOperation[][] = [];
@@ -2905,7 +3163,7 @@ describe('bindSessionTranscript', () => {
       const main = agents.add('main');
       const service = new TranscriptService({
         homeDir: '/nonexistent-home',
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       service.forSessionLive('s1');
       await service.whenReady('s1');
@@ -2946,7 +3204,7 @@ describe('bindSessionTranscript', () => {
       const main = agents.add('main');
       const service = new TranscriptService({
         homeDir: '/nonexistent-home',
-        core: fakeCoreWithAgents(new SessionInteractionService(new TestSessionStateService()), agents),
+        core: fakeCoreWithAgents(agents),
       });
       service.forSessionLive('s1');
       await service.whenReady('s1');

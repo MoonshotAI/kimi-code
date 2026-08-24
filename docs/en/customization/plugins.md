@@ -79,7 +79,7 @@ Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, o
 
 Official plugins are plugins and built-in product capabilities maintained by Kimi. There are currently three:
 
-- **[Kimi Datasource](#kimi-datasource)**: Query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language
+- **[Kimi Datasource](#kimi-datasource)**: Query financial market data, financial news, macroeconomic indicators, corporate registration records, academic literature, Chinese laws and regulations, and official data from intergovernmental organizations in natural language
 - **[Kimi WebBridge](#kimi-webbridge)**: Let AI drive your own browser to get web tasks done
 - **[Kimi Computer Use](#kimi-computer-use)**: Let AI operate your desktop apps (macOS and Windows)
 
@@ -99,7 +99,9 @@ Official plugins do not update automatically — when an update is available, yo
 
 ### Kimi Datasource <Badge type="tip" text="v3.4.0" />
 
-Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data accounts required.
+Kimi Datasource is the official Kimi Code data plugin, letting you query financial market data, financial news, macroeconomic indicators, corporate registration records, academic literature, Chinese laws and regulations, and official data from intergovernmental organizations in natural language — no manual API calls or data accounts required.
+
+Sources include authoritative institutions and leading databases such as the World Bank, IMF, OECD, FRED, WHO, FAO, the National Bureau of Statistics of China, Wind, S&P Capital IQ, SEC EDGAR, Caixin, Xinhua Finance, and Hundsun Juyuan — all traceable to their original publishers.
 
 You must first complete OAuth login with a Kimi Code account via `/login`; data queries consume your Kimi Code plan quota.
 
@@ -110,31 +112,49 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 
 #### What you can do
 
-**Live market research**: Want to run a quantitative analysis on a stock? Pull three years of daily closing prices, MACD, and KDJ signals in a single query — no third-party data platforms needed.
+::: details **Live market research** — Want to run a quantitative analysis on a stock?
+Pull three years of daily closing prices, MACD, and KDJ signals in a single query, no third-party data platforms needed.
+:::
 
-**Cross-country macro comparison**: Studying supply-chain shifts across China, India, and Vietnam? Get complete GDP growth, trade volume, and demographic time-series from World Bank data spanning 50+ years, all in one go.
+::: details **Cross-country macro comparison** — Studying supply-chain shifts across China, India, and Vietnam?
+Get complete GDP growth, trade volume, and demographic time-series for multiple countries from World Bank data spanning 50+ years, all in one go.
+:::
 
-**Pre-contract risk check**: Need to vet a counterparty fast? Type the company name and instantly get business registration, equity structure, litigation disputes, and credit blacklist status — right when you need it.
+::: details **Pre-contract risk check** — Need to vet a counterparty minutes before signing?
+Type the company name and instantly get business registration, equity structure, litigation disputes, and credit blacklist status, right when you need it.
+:::
 
-**Literature review acceleration**: Tracing the research arc of RLHF? Get the most-cited papers, key authors, and core findings in seconds, so your literature review outline takes shape in half the time.
+::: details **Literature review acceleration** — Tracing the research arc of RLHF for a paper?
+Get the most-cited papers, key authors, and core findings in seconds, so your literature review outline takes shape in half the time.
+:::
 
-**On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
+::: details **On-the-spot legal lookup** — Need to confirm the statute behind a residence-right contract dispute?
+Pinpoint the relevant Civil Code articles (full text, authority level, and validity) in one query, then pull a few comparable precedents to back them up, without digging through statute databases.
+:::
 
-**Institutional-grade US equity research**: Writing a deep dive on a US stock? Pull the annual report, standardized financial metrics, top-50 holders, and consensus estimates in one go — no more juggling multiple data terminals.
+::: details **Institutional-grade US equity research** — Writing a deep dive on a US stock?
+Pull the annual report, standardized financial metrics, top-50 holders, and consensus estimates in one go, no more juggling multiple data terminals.
+:::
+
+::: details **Financial news and industry data** — Tracking market hotspots or policy moves?
+Query Caixin's market news, bond/fund/futures data, and listed-company supply-chain relationships, plus news, policies, announcements, and market flashes from the Xinhua Finance national financial information platform — authoritative and traceable sources.
+:::
+
+::: details **Standards lookup** — Need to check compliance against Chinese standards?
+Look up national (GB), industry, local, and association standards by number or topic, with status and full-text entry points.
+:::
 
 #### Coverage
 
 | Category | Scope |
 |---|---|
 | Stocks & financial markets | Well-known databases such as Wind, S&P Capital IQ, and SEC EDGAR, covering prices, technical indicators, financials and valuation, and consensus estimates across A-shares, HK, US, and other major markets, plus official filings for 8,000+ US-listed companies |
-| Macroeconomics | Well-known databases such as the World Bank and IMF, covering 50+ years of time series for 189 countries: GDP, trade, population, exchange rates, CPI, balance of payments, GDP forecasts, and more |
+| Financial news & industry data | Well-known data platforms such as Caixin and Xinhua Finance, covering market news and flashes, listed-company announcements, regulatory policies, bond/fund/futures data, corporate credit violation records, and listed-company supply-chain relationships |
+| Macroeconomics | Well-known databases such as the World Bank, IMF, OECD, FRED, and China's National Bureau of Statistics, plus official statistics from IGOs such as WHO and FAO, covering 50+ years of time series for 189 countries and China indicators at national/provincial/municipal levels: GDP, trade, population, exchange rates, CPI, balance of payments, GDP forecasts, and more |
+| China standards | National (GB), industry, local, and association standards — numbers, titles, status, and details, with official full-text entry points for some national and public association standards |
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
-| Legal | Chinese laws, regulations, and judicial cases — statute search and detail lookup across all authority levels, plus ordinary and authoritative case search |
-| Chinese government statistics | Open data catalogs from the National Data Administration, plus NBS macro indicators (national, provincial, and major-city time series) |
-| Chinese standards | National (GB), industry (HB), local (DB), and association (TT) standards lookup |
-| International organizations | Official open datasets from WHO, FAO, UNSD, ECB, Eurostat, UNICEF, OECD, and FRED — global health, food and agriculture, finance, and macro time series |
-| Financial news and data | Xinhua Finance announcements, news flashes, and policy updates; Caixin database with 600+ data APIs |
+| Legal | Yuandian Legal and other leading legal databases, covering Chinese laws, regulations, and judicial cases — statute search and detail lookup across all authority levels, plus ordinary and authoritative case search |
 | Smart screening | Well-known databases such as Gildata, covering natural-language screening for stocks, funds, and fund managers, plus macro-industry data, research reports, announcements, and news |
 
 #### Billing and limitations

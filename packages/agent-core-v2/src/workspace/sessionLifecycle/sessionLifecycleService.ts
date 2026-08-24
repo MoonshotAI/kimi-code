@@ -29,7 +29,6 @@ import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -188,16 +187,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       .catch(() => undefined);
     const handle = await this.materializeSession({ ...opts, sessionId });
     try {
+      const agents = handle.accessor.get(IAgentLifecycleService);
       const main =
         opts.mainAgentBinding === undefined
           ? undefined
-          : await handle.accessor.get(IAgentLifecycleService).create({
+          : await agents.create({
               agentId: MAIN_AGENT_ID,
               binding: opts.mainAgentBinding,
             });
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));
-        await planAgent.accessor.get(IAgentPlanService).enter();
+        const planHandle = agents.handleOf(planAgent.agentId);
+        if (planHandle === undefined) {
+          throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+        }
+        await planHandle.accessor.get(IAgentPlanService).enter();
       }
       await this.appendSessionIndexEntry(sessionId, opts.workDir);
     } catch (error) {
@@ -354,7 +358,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     });
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
-      if (agents.findAgentHandle(MAIN_AGENT_ID) === undefined) {
+      if (agents.get(MAIN_AGENT_ID) === undefined) {
         await agents.create({ agentId: MAIN_AGENT_ID });
       }
       await this.announceCreated({ sessionId, handle, source: 'resume' });
@@ -446,7 +450,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
     const agentLifecycle = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
-      await agentLifecycle.remove(agentContextOf(agent));
+      await agentLifecycle.remove(agent);
     }
   }
 
@@ -462,8 +466,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
     }
     if (sourceHandle !== undefined) {
-      for (const agent of sourceHandle.accessor.get(IAgentLifecycleService).list()) {
-        if (agent.accessor.get(IAgentActivityView).state().turn !== undefined) {
+      const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+      for (const agent of sourceAgents.list()) {
+        const agentHandle = sourceAgents.handleOf(agent.agentId);
+        if (agentHandle === undefined) continue;
+        if (agentHandle.accessor.get(IAgentActivityView).state().turn !== undefined) {
           throw new Error2(
             ErrorCodes.SESSION_FORK_ACTIVE_TURN,
             `Session "${sourceId}" cannot be forked while a turn is running`,
@@ -651,7 +658,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (sourceHandle !== undefined) {
       const agentHandle = sourceHandle.accessor
         .get(IAgentLifecycleService)
-        .findAgentHandle(agentId);
+        .handleOf(agentId);
       if (agentHandle !== undefined) {
         await agentHandle.accessor.get(IEventDispatcher).flush();
       }

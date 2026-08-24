@@ -62,6 +62,10 @@ export class TowerFeature extends Feature {
   constructor(@IFlagService flags: IFlagService) {
     super();
     if (!flags.enabled(TOWER_FLAG_ID)) return;
+    assembledFlagServices.add(flags);
+    this.onDispose(() => {
+      assembledFlagServices.delete(flags);
+    });
     this.contributeService(LifecycleScope.App, ITowerRateLimitService, TowerRateLimitService, {
       activation: ScopeActivation.OnDemand,
     });
@@ -73,6 +77,24 @@ export class TowerFeature extends Feature {
     }
     this.contributeProfiles([TOWER_WORKER_PROFILE_DEF]);
   }
+}
+
+const assembledFlagServices = new WeakSet<IFlagService>();
+let assembledOverrideForTests: boolean | undefined;
+
+/**
+ * Whether the App scope owning `flags` ran its tower feature assembly with
+ * the flag on. A live `/experiments` flip does not re-assemble features, so
+ * until a restart the tower tools/profile do not exist and the mode
+ * machinery must stay inert. Keyed per App scope (via its flag service) so
+ * coexisting Apps in one process do not leak assembly state into each other.
+ */
+export function isTowerFeatureAssembled(flags: IFlagService): boolean {
+  return assembledOverrideForTests ?? assembledFlagServices.has(flags);
+}
+
+export function _setTowerFeatureAssembledForTests(value: boolean | undefined): void {
+  assembledOverrideForTests = value;
 }
 
 registerFeature(TowerFeature);

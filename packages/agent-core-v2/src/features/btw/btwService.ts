@@ -12,15 +12,16 @@ export class SessionBtwService implements ISessionBtwService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {}
 
   async start(): Promise<string> {
-    const main = this.lifecycle.findAgentHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
-    const child = await this.lifecycle.fork(main.accessor.get(IAgentScopeContext).agentContext);
+    const childContext = await this.agentLifecycle.fork(main.accessor.get(IAgentScopeContext).agentContext);
+    const child = this.agentLifecycle.handleOf(childContext.agentId)!;
     child.accessor
       .get(IAgentSystemReminderService)
       ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {
@@ -36,6 +37,6 @@ export class SessionBtwService implements ISessionBtwService {
       ?.onBeforeExecuteTool((event) => {
         event.veto(denyToolExecution(reason));
       });
-    return child.id;
+    return childContext.agentId;
   }
 }

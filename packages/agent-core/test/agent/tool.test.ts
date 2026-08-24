@@ -326,6 +326,56 @@ describe('Agent tools', () => {
     expect(subagentHost.spawn).not.toHaveBeenCalled();
   });
 
+  it('rechecks AskUserQuestion background mode after the task policy changes', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.tools.setActiveTools([
+      'AskUserQuestion',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+    ]);
+
+    const retainedTool = ctx.agent.tools.loopTools.find(
+      (tool) => tool.name === 'AskUserQuestion',
+    );
+    expect(retainedTool).toBeDefined();
+    expect(retainedTool!.parameters).toHaveProperty('properties.background');
+    expect(retainedTool!.description).toContain('background=true');
+
+    const registerTask = vi.spyOn(ctx.agent.background, 'registerTask');
+    ctx.agent.tools.setActiveTools(['AskUserQuestion', 'TaskList', 'TaskOutput']);
+
+    expect(retainedTool!.parameters).not.toHaveProperty('properties.background');
+    expect(retainedTool!.description.toLowerCase()).not.toContain('background');
+    await expect(
+      executeTool(retainedTool!, {
+        turnId: '0',
+        toolCallId: 'call_question',
+        args: {
+          background: true,
+          questions: [
+            {
+              question: 'Which database?',
+              header: 'Storage',
+              options: [
+                { label: 'Postgres', description: 'Relational storage' },
+                { label: 'SQLite', description: 'Embedded storage' },
+              ],
+              multi_select: false,
+            },
+          ],
+        },
+        signal,
+      }),
+    ).resolves.toEqual({
+      isError: true,
+      output:
+        'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+    });
+    expect(registerTask).not.toHaveBeenCalled();
+  });
+
   it('removes denied exact tool names from the active set', () => {
     const ctx = testAgent();
     ctx.configure();

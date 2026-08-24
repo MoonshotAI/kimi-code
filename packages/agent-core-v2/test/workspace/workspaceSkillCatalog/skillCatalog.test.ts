@@ -11,11 +11,11 @@ import {
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
-import { Emitter, Event } from '#/_base/event';
+import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
-import type { ReloadSummary } from '#/app/plugin/types';
+import type { PluginReloadEvent } from '#/app/plugin/types';
 import { IProviderService } from '#/kosong/provider/provider';
 import {
   IHostFsWatchService,
@@ -109,7 +109,7 @@ function configStub(): IConfigService & {
 
 function pluginStub(
   skillRoots: readonly SkillRoot[] = [],
-  reloadEmitter?: Emitter<ReloadSummary>,
+  reloadEmitter?: Emitter<PluginReloadEvent>,
 ): IPluginService {
   return {
     _serviceBrand: undefined,
@@ -131,6 +131,7 @@ function pluginStub(
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
+    mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
   };
@@ -168,7 +169,7 @@ function makeHost(
   ws: IWorkspaceContext,
   pluginRoots: readonly SkillRoot[] = [],
   explicitDirs?: readonly string[],
-  pluginReloadEmitter?: Emitter<ReloadSummary>,
+  pluginReloadEmitter?: Emitter<PluginReloadEvent>,
 ) {
   const config = configStub();
   const host = createScopedTestHost([
@@ -585,7 +586,7 @@ describe('WorkspaceSkillCatalogService', () => {
     store.setPluginSkills([
       stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
     ]);
-    const reloadEmitter = new Emitter<ReloadSummary>();
+    const reloadEmitter = new AsyncEmitter<PluginReloadEvent>();
     const pluginRoot: SkillRoot = {
       path: '/plugins/demo/skills',
       source: 'extra',
@@ -605,7 +606,10 @@ describe('WorkspaceSkillCatalogService', () => {
           resolve(sourceId);
         });
       });
-      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+      await reloadEmitter.fireAsyncConcurrent(
+        { added: [], removed: [], errors: [] },
+        new AbortController().signal,
+      );
 
       await expect(refreshed).resolves.toBe('plugin');
     } finally {
@@ -695,7 +699,7 @@ describe('WorkspaceSkillCatalogService', () => {
   });
 
   it('binds thisArg when forwarding plugin reloads through the plugin skill source', async () => {
-    const reloadEmitter = new Emitter<ReloadSummary>();
+    const reloadEmitter = new AsyncEmitter<PluginReloadEvent>();
     const pluginService = pluginStub([], reloadEmitter);
     const ws = workspaceContextStub('/work');
     const host = createScopedTestHost([
@@ -722,7 +726,10 @@ describe('WorkspaceSkillCatalogService', () => {
         receiver,
       );
 
-      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+      await reloadEmitter.fireAsyncConcurrent(
+        { added: [], removed: [], errors: [] },
+        new AbortController().signal,
+      );
 
       expect(seen).toEqual([receiver]);
       subscription?.dispose();
