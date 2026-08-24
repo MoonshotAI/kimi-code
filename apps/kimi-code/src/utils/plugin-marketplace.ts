@@ -45,6 +45,38 @@ export interface LoadPluginMarketplaceOptions {
    * Undefined means no injection.
    */
   readonly builtInEntries?: readonly PluginMarketplaceEntry[];
+  /**
+   * Skip the per-entry "latest GitHub release" lookups so the catalog can be
+   * rendered as soon as it is parsed; the caller resolves versions in the
+   * background via {@link withMarketplaceLatestVersions} and re-renders.
+   */
+  readonly skipLatestVersions?: boolean;
+}
+
+/**
+ * Bound on each background "latest release" lookup. Without it a stalled
+ * connection to github.com hangs the version phase for undici's default
+ * header timeout (300s) — and before the two-phase load, hung the whole
+ * marketplace render with it.
+ */
+export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
+
+/**
+ * Second phase of the marketplace load: fill in `version` for entries that
+ * need a GitHub `releases/latest` lookup. Every lookup gets a hard timeout
+ * and per-entry failures degrade to a missing version (badge-less row), so
+ * this never throws for network reasons and never blocks the first paint.
+ */
+export async function withMarketplaceLatestVersions(
+  marketplace: PluginMarketplace,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PluginMarketplace> {
+  const timedFetch: typeof fetch = (input, init) =>
+    fetchImpl(input, {
+      ...init,
+      signal: AbortSignal.timeout(MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS),
+    });
+  return withLatestVersions(marketplace, timedFetch);
 }
 
 export async function loadPluginMarketplace(
@@ -70,10 +102,9 @@ export async function loadPluginMarketplace(
     }
     throw error;
   }
-  const marketplace = await withLatestVersions(
-    parsePluginMarketplace(read.raw, read.location),
-    fetchImpl,
-  );
+  const marketplace = options.skipLatestVersions === true
+    ? parsePluginMarketplace(read.raw, read.location)
+    : await withLatestVersions(parsePluginMarketplace(read.raw, read.location), fetchImpl);
   return options.builtInEntries !== undefined
     ? withBuiltInEntries(marketplace, options.builtInEntries)
     : marketplace;
