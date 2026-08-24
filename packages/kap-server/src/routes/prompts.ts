@@ -7,7 +7,8 @@ import {
   IAgentProfileService,
   IAgentToolPolicyService,
   IAgentPromptService,
-  IAgentSkillService,
+  agentContextOf,
+  AgentSkill,
   IAuthSummaryService,
   IEventBus,
   IEventService,
@@ -103,13 +104,13 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
-      : session.accessor.get(IAgentLifecycleService).findAgentHandle(agentId);
+      : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
   if (agent === undefined) {
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
     prompt: agent.accessor.get(IAgentPromptService),
-    skill: agent.accessor.get(IAgentSkillService),
+    skill: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentSkill),
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),

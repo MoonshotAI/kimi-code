@@ -116,6 +116,25 @@ describe('server-v2 OpenAPI', () => {
     const schema = asRecord(json['schema']);
     expect(Array.isArray(schema['oneOf'])).toBe(true);
   });
+
+  it('documents MCP OAuth failures for auth completion', async () => {
+    const doc = await fetchOpenApi();
+    const authCompleteOp = operation(doc, '/api/v2/mcp/auth:complete', 'post');
+    const responses = asRecord(authCompleteOp['responses']);
+    const response = asRecord(responses['200']);
+    const content = asRecord(response['content']);
+    const schema = asRecord(asRecord(content['application/json'])['schema']);
+    const variants = schema['oneOf'];
+
+    expect(Array.isArray(variants)).toBe(true);
+    expect(
+      (variants as unknown[]).some((variant) => {
+        const properties = asRecord(asRecord(variant)['properties']);
+        const values = asRecord(properties['code'])['enum'];
+        return Array.isArray(values) && values.includes(40929);
+      }),
+    ).toBe(true);
+  });
 });
 
 function asRecord(value: unknown): Record<string, unknown> {

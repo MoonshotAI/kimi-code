@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  ensureMainAgent,
   getLiveSessionById,
   IAgentFlowService,
   type FlowDefinition,
@@ -13,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type RunningServer, startServer } from '../src/start';
 import type { FlowStateResponse } from '../src/protocol/rest-flow';
 import { readLegacyStatus } from '../src/services/legacyStatus/legacyStatus';
+import { ensureMainAgent } from '../src/transport/mainAgent';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 

@@ -61,11 +61,15 @@ describe('SessionBtwService', () => {
         },
       },
     };
-    fork = vi.fn(async () => child);
+    fork = vi.fn(async () => stubAgentContext('agent-btw-1', 2));
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
-      findAgentHandle: (id: string) => (id === 'main' ? main : undefined),
+      handleOf: (id: string) => {
+        if (id === 'main') return main;
+        if (id === 'agent-btw-1') return child;
+        return undefined;
+      },
     } as unknown as IAgentLifecycleService);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });

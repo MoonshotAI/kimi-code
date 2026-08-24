@@ -1,5 +1,6 @@
 export {
   ErrorCodes,
+  isKimiErrorCode,
   KIMI_ERROR_INFO,
   type KimiErrorCode,
   type KimiErrorInfo,

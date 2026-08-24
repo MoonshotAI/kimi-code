@@ -16,10 +16,12 @@ import {
   IEventBus,
   IEventService,
   ISessionActivityView,
-  ISessionInteractionService,
   ISessionIndex,
   MAIN_AGENT_ID,
   getLiveSessionById,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
@@ -272,10 +274,7 @@ export class SessionEventBroadcaster {
         if (sub === undefined) return;
         const session = getLiveSessionById(this.opts.core.accessor, state.sessionId);
         if (session === undefined) return;
-        const main = session.accessor
-          .get(IAgentLifecycleService)
-          .list()
-          .find((handle) => handle.id === MAIN_AGENT_ID);
+        const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
         if (main === undefined) return;
         const snapshot = readLegacyStatus(main);
         if (snapshot === undefined) return;
@@ -989,10 +988,13 @@ export class SessionEventBroadcaster {
       if (state.agentDisposables.has(handle.id)) return;
       state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
-    for (const handle of agents.list()) subscribeAgent(handle);
+    for (const agent of agents.list()) {
+      const handle = agents.handleOf(agent.agentId);
+      if (handle !== undefined) subscribeAgent(handle);
+    }
     state.lifecycleDisposables.push(
       agents.onDidCreate((context) => {
-        const handle = agents.get(context);
+        const handle = agents.handleOf(context.agentId);
         if (handle !== undefined) subscribeAgent(handle);
         this.enqueueDurable(state, {
           type: 'agent.created',
@@ -1000,7 +1002,7 @@ export class SessionEventBroadcaster {
           sessionId,
         });
       }),
-      agents.onDidDispose((context) => {
+      agents.onDidClose((context) => {
         const agentId = context.agentId;
         const d = state.agentDisposables.get(agentId);
         if (d !== undefined) {
@@ -1053,6 +1055,8 @@ export class SessionEventBroadcaster {
   private onAgentEvent(sessionId: string, agentId: string, event: Event2<any>): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
+
+    if (event.type === 'prompt.accepted') return;
 
     if (event.type === 'agent.activity.updated') {
       const snapshot = event as unknown as AgentActivityState;
@@ -1116,13 +1120,13 @@ export class SessionEventBroadcaster {
     session: ISessionScopeHandle,
     state: SessionState,
   ): void {
-    const interactions = session.accessor.get(ISessionInteractionService);
-    for (const i of interactions.listPending()) {
+    const agents = session.accessor.get(IAgentLifecycleService);
+    for (const i of listSessionPendingInteractions(agents)) {
       state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
     }
     state.lifecycleDisposables.push(
-      interactions.onDidChangePending(() => {
-        for (const i of interactions.listPending()) {
+      onSessionInteractionDidChangePending(agents, () => {
+        for (const i of listSessionPendingInteractions(agents)) {
           if (state.knownInteractions.has(i.id)) continue;
           state.knownInteractions.set(i.id, {
             kind: i.kind,
@@ -1134,7 +1138,7 @@ export class SessionEventBroadcaster {
           }
         }
       }),
-      interactions.onDidResolve(({ id, response }) => {
+      onSessionInteractionDidResolve(agents, ({ id, response }) => {
         const known = state.knownInteractions.get(id);
         if (known === undefined) return;
         state.knownInteractions.delete(id);

@@ -15,10 +15,10 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { SkillActivate, skillKey } from '#/agent/skill/skillOps';
+import { SkillActivated } from '#/features/skill/skillOps';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
+import { ISkillActivationDataService } from '#/features/skill/skillActivationData';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -504,20 +504,11 @@ describe('AgentFlowService', () => {
       reconcile?: boolean;
     }
 
-    let skillKeyContributed = false;
-    beforeEach(() => {
-      skillKeyContributed = false;
-    });
-
     async function activateFlowSkill(options: ActivateOptions = {}): Promise<void> {
       const activationId = options.activationId ?? 'act-1';
       const skillName = options.skillName ?? 'issue-fix';
       const task = options.task ?? 'fix the paste bug';
       const skillPath = options.skillPath ?? `/ws/.kimi-code/flows/${skillName}.md`;
-      if (!skillKeyContributed) {
-        agentState.contributeState(skillKey);
-        skillKeyContributed = true;
-      }
       if (!('data' in options)) {
         activationDataStore.set(activationId, { ...DEFINITION, id: skillName });
       } else if (options.data !== undefined) {
@@ -532,7 +523,17 @@ describe('AgentFlowService', () => {
         skillPath,
         skillArgs: task,
       } as const;
-      await dispatcher.dispatch(new SkillActivate({ agentId, origin }));
+      await dispatcher.dispatch(
+        new SkillActivated({
+          agentId,
+          activationId,
+          skillName: `flow:${skillName}`,
+          trigger: 'user-slash',
+          skillType: 'flow',
+          skillPath,
+          skillArgs: task,
+        }),
+      );
       if (options.appendPrompt !== false) {
         contextMessages.push({
           role: 'user',

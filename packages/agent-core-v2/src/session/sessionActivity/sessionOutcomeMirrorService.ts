@@ -37,7 +37,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     this._register(this.agents.onDidCreate((agent) => {
       if (agent.agentId === MAIN_AGENT_ID) this.attachMain();
     }));
-    this._register(this.agents.onDidDispose((agent) => {
+    this._register(this.agents.onDidClose((agent) => {
       if (agent.agentId !== MAIN_AGENT_ID) return;
       this.mainSubscription?.dispose();
       this.mainSubscription = undefined;
@@ -52,7 +52,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private attachMain(): void {
     if (this.mainSubscription !== undefined) return;
-    const bus = this.agents.findAgentHandle(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
+    const bus = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
       | IEventBus
       | undefined;
     if (bus === undefined) return;

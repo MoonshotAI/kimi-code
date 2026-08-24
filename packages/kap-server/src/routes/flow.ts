@@ -1,5 +1,4 @@
 import {
-  ensureMainAgent,
   FLOW_FLAG_ID,
   IAgentFlowService,
   IFlagService,
@@ -12,6 +11,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { flowStateResponseSchema, type FlowStateResponse } from '../protocol/rest-flow';
+import { ensureMainAgent } from '../transport/mainAgent';
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),

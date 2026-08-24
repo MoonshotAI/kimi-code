@@ -14,6 +14,7 @@ import {
   isInsideRepo,
   isWorktreeDirty,
   mergeNoFf,
+  tryGit,
   worktreeAdd,
   worktreeRemove,
 } from './git';
@@ -64,6 +65,22 @@ export interface TowerInitResult {
    * different session. Empty on creation and on same-session re-init.
    */
   readonly retiredAgents: readonly string[];
+  /**
+   * The branch checked out in the main worktree at init time ('HEAD' when
+   * detached). Merges stay blocked while this differs from `base`.
+   */
+  readonly checkout: string;
+  /**
+   * The base argument dropped because the existing workspace already records
+   * a different base — re-init never resets recorded state.
+   */
+  readonly ignoredBase?: string;
+  /**
+   * Ids of missions still holding their scope (not merged, not abandoned) —
+   * on re-init these are the carried-over missions a new plan must either
+   * continue or abandon. Empty on creation.
+   */
+  readonly openMissions: readonly string[];
 }
 
 export interface TowerPlanInput {
@@ -123,7 +140,12 @@ const STATUS_EMOJI: Record<TowerMissionStatus, string> = {
   blocked: '🔴',
   paused: '⏸️',
   merged: '✅',
+  abandoned: '🚫',
 };
+
+function isOpenMission(mission: Pick<TowerMission, 'status'>): boolean {
+  return mission.status !== 'merged' && mission.status !== 'abandoned';
+}
 
 export class TowerStore {
   /** Absolute path of the main checkout (the session working directory). */
@@ -147,7 +169,7 @@ export class TowerStore {
    * session's freshly issued `agent-N` ids), missions/worktrees survive, and
    * an `adopt` line marks the session boundary in the activity log.
    */
-  async init(sessionId?: string): Promise<TowerInitResult> {
+  async init(sessionId?: string, base?: string): Promise<TowerInitResult> {
     if (!(await isInsideRepo(this.repoRoot))) {
       throw new TowerProtocolError(
         'tower needs a git repository (the session working directory is not inside one)',
@@ -161,7 +183,32 @@ export class TowerStore {
     if (await this.isInitialized()) {
       const state = await this.load();
       const retiredAgents = await this.adoptForeignRoster(state, sessionId);
-      return { base: state.base, created: false, retiredAgents };
+      return {
+        base: state.base,
+        created: false,
+        retiredAgents,
+        checkout: await this.checkedOutBranch(),
+        ignoredBase: base !== undefined && base !== state.base ? base : undefined,
+        openMissions: state.missions.filter(isOpenMission).map((m) => m.id),
+      };
+    }
+
+    const checkout = await this.checkedOutBranch();
+    let resolvedBase: string;
+    if (base !== undefined) {
+      if (!(await branchExists(this.repoRoot, base))) {
+        throw new TowerProtocolError(
+          `base branch "${base}" does not exist as a local branch — merges land on a local branch, so remote-tracking refs and tags are not accepted; create a local branch first`,
+        );
+      }
+      resolvedBase = base;
+    } else {
+      if (checkout === 'HEAD') {
+        throw new TowerProtocolError(
+          'cannot determine the base branch from a detached HEAD — pass the base branch explicitly',
+        );
+      }
+      resolvedBase = checkout;
     }
 
     for (const dir of [INBOX_DIR, FINDINGS_DIR, REVIEWS_DIR, MISSIONS_DIR, LOG_DIR, WORKTREES_DIR]) {
@@ -169,10 +216,9 @@ export class TowerStore {
     }
     await this.ensureGitExclude();
 
-    const base = await currentBranch(this.repoRoot);
     const state: TowerState = {
       version: 1,
-      base,
+      base: resolvedBase,
       mode: 'branch',
       createdAt: new Date().toISOString(),
       sessionId,
@@ -182,8 +228,13 @@ export class TowerStore {
     await this.save(state);
     await writeFile(this.abs(ACTIVITY_LOG), '', 'utf8');
     await this.renderMissionsIndex(state);
-    await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base }, MISSIONS_INDEX);
-    return { base, created: true, retiredAgents: [] };
+    await this.appendLog(TOWER_NAME, 'init', { mode: state.mode, base: resolvedBase }, MISSIONS_INDEX);
+    return { base: resolvedBase, created: true, retiredAgents: [], checkout, openMissions: [] };
+  }
+
+  /** Branch checked out in the main worktree, or 'HEAD' when detached. */
+  private async checkedOutBranch(): Promise<string> {
+    return (await tryGit(this.repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])) ?? 'HEAD';
   }
 
   /**
@@ -345,7 +396,7 @@ export class TowerStore {
       }
     }
     this.assertScopesDisjoint([
-      ...state.missions.filter((m) => m.status !== 'merged'),
+      ...state.missions.filter(isOpenMission),
       ...missions,
     ]);
 
@@ -391,7 +442,7 @@ export class TowerStore {
         if (a.id === b.id) continue;
         if (a.stem === b.stem || a.stem.startsWith(`${b.stem}/`) || b.stem.startsWith(`${a.stem}/`)) {
           throw new TowerProtocolError(
-            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") — split the shared files into exactly one mission`,
+            `mission scopes overlap: ${a.id} ("${a.raw}") vs ${b.id} ("${b.raw}") — split the shared files into exactly one mission; if one of them is stale finished work, abandon it first (TowerMission status=abandoned)`,
           );
         }
       }
@@ -443,12 +494,19 @@ export class TowerStore {
         );
       }
       this.assertScopesDisjoint([
-        ...state.missions.filter((m) => m.id !== id && m.status !== 'merged'),
+        ...state.missions.filter((m) => m.id !== id && isOpenMission(m)),
         { ...mission, scope: [...patch.scope] },
       ]);
       mission.scope = [...patch.scope];
     }
-    if (patch.status !== undefined) mission.status = patch.status;
+    if (patch.status !== undefined) {
+      if (patch.status === 'abandoned' && callerName !== TOWER_NAME) {
+        throw new TowerProtocolError(
+          `agent "${callerName}" cannot abandon mission ${id} — abandoning releases the mission scope, so only the tower does it`,
+        );
+      }
+      mission.status = patch.status;
+    }
     if (patch.note !== undefined) mission.notes.push(patch.note);
     if (patch.blocker !== undefined) {
       mission.blockers.push(patch.blocker);
@@ -738,7 +796,7 @@ export class TowerStore {
 
     const unmergedDeps = mission.deps.filter((dep) => {
       const depMission = state.missions.find((m) => m.id === dep);
-      return depMission !== undefined && depMission.status !== 'merged';
+      return depMission !== undefined && isOpenMission(depMission);
     });
     if (unmergedDeps.length > 0) {
       throw await block(
@@ -818,7 +876,7 @@ export class TowerStore {
     const changedSet = new Set(changed);
     const conflictsWith: Array<{ readonly branch: string; readonly files: readonly string[] }> = [];
     for (const other of state.missions) {
-      if (other.branch === branch || other.status === 'merged') continue;
+      if (other.branch === branch || !isOpenMission(other)) continue;
       if (!(await branchExists(this.repoRoot, other.branch))) continue;
       const otherChanged = await diffNameOnly(this.repoRoot, state.base, other.branch);
       const overlap = otherChanged.filter((file) => changedSet.has(file));
@@ -894,7 +952,7 @@ export class TowerStore {
       '| -- | ------- | ------ | -------- | ------ | ----- |',
       ...rows,
       '',
-      'Status: 🟡 planned · 🔵 active · 🟢 completed · 🔴 blocked · ⏸️ paused · ✅ merged',
+      'Status: 🟡 planned · 🔵 active · 🟢 completed · 🔴 blocked · ⏸️ paused · ✅ merged · 🚫 abandoned',
       `Mode: ${state.mode} — Base: ${state.base}`,
       '',
       '## Dependency Flow',

@@ -38,6 +38,8 @@ const AGENT_TOOLS = [
   'SetGoalBudget',
   'UpdateGoal',
   'TowerInit',
+  'TowerStatus',
+  'TowerTeardown',
   'FlowStart',
   'FlowAdvance',
   'FlowAbort',

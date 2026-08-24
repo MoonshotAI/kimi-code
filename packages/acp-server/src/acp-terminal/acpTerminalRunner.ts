@@ -47,6 +47,7 @@ class AcpProcessService implements IHostProcessService {
     private readonly sessionId: string,
     private readonly cwd: string,
     private readonly connection: IAcpConnection,
+    private readonly local: IHostProcessService,
   ) {}
 
   async spawn(
@@ -54,11 +55,8 @@ class AcpProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options?: HostProcessOptions,
   ): Promise<IHostProcess> {
-    if (!this.connection.terminalEnabled) {
-      throw new Error('ACP terminal capability is unavailable');
-    }
-    if (!isBashToolInvocation(args, options)) {
-      throw new Error('ACP runtime only supports interactive Bash tool processes');
+    if (!this.connection.terminalEnabled || !isBashToolInvocation(args, options)) {
+      return this.local.spawn(command, args, { ...options, cwd: options?.cwd ?? this.cwd });
     }
 
     const handle = await this.connection.get().createTerminal({
@@ -178,6 +176,7 @@ class AcpSessionRuntime implements Runtime {
     cwd: string,
     connection: IAcpConnection,
     environment: IHostEnvironment,
+    local: IHostProcessService,
   ) {
     this.identity = {
       workspaceId,
@@ -205,7 +204,7 @@ class AcpSessionRuntime implements Runtime {
       dirname: (p: string) => path.dirname(p),
     };
     this.fs = new AcpHostFileSystem({ sessionId } as unknown as ISessionContext, connection);
-    this.process = new AcpProcessService(sessionId, cwd, connection);
+    this.process = new AcpProcessService(sessionId, cwd, connection, local);
   }
 
   dispose(): void {}
@@ -219,13 +218,14 @@ class AcpWorkspaceRuntimeAttachment implements RuntimeProviderAttachment {
     private readonly host: RuntimeProviderHost,
     private readonly connection: IAcpConnection,
     private readonly environment: IHostEnvironment,
+    private readonly local: IHostProcessService,
   ) {}
 
   bindSession(sessionId: string, cwd: string): string {
     const runtimeId = AcpRuntimeProviderFactory.runtimeId(sessionId);
     if (this.sessions.has(sessionId)) return runtimeId;
     const registration = this.host.registerRuntime(
-      new AcpSessionRuntime(this.workspace.id, sessionId, cwd, this.connection, this.environment),
+      new AcpSessionRuntime(this.workspace.id, sessionId, cwd, this.connection, this.environment, this.local),
     );
     this.sessions.set(sessionId, registration);
     return runtimeId;
@@ -253,6 +253,7 @@ export class AcpRuntimeProviderFactory implements RuntimeProviderFactory {
   constructor(
     private readonly connection: IAcpConnection,
     private readonly environment: IHostEnvironment,
+    private readonly local: IHostProcessService,
   ) {}
 
   static runtimeId(sessionId: string): string {
@@ -260,7 +261,7 @@ export class AcpRuntimeProviderFactory implements RuntimeProviderFactory {
   }
 
   async attach(workspace: RuntimeProviderContext, host: RuntimeProviderHost): Promise<RuntimeProviderAttachment> {
-    const attachment = new AcpWorkspaceRuntimeAttachment(workspace, host, this.connection, this.environment);
+    const attachment = new AcpWorkspaceRuntimeAttachment(workspace, host, this.connection, this.environment, this.local);
     this.attachments.set(workspace.id, attachment);
     return {
       dispose: async () => {

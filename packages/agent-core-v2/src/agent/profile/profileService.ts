@@ -33,8 +33,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { BUILTIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { BUILTIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -180,11 +180,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
         event.waitUntil(this.refreshSystemPrompt());
-      }),
-    );
-    this._register(
-      this.instructions.onDidChange(() => {
-        void this.refreshSystemPrompt();
       }),
     );
     this._register(

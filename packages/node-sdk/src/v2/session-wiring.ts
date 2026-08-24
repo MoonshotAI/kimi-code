@@ -38,11 +38,14 @@ import {
   IAgentProfileService,
   IEventBus,
   ISessionApprovalService,
-  ISessionInteractionService,
   ISessionQuestionService,
   ISessionTokenCountingService,
   ISessionUsageService,
   MAIN_AGENT_ID,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
+  respondSessionInteraction,
   type Event2,
   type IAgentScopeHandle,
   type IDisposable,
@@ -111,24 +114,27 @@ export class SessionEventWiring {
     private readonly session: ISessionScopeHandle,
     private readonly sink: SessionEventSink,
   ) {
-    const interactions = session.accessor.get(ISessionInteractionService);
+    const manager = session.accessor.get(IAgentLifecycleService);
     this.disposables.push(
-      interactions.onDidChangePending(() => {
+      onSessionInteractionDidChangePending(manager, () => {
         this.bridgeNewPendingInteractions();
       }),
+      onSessionInteractionDidResolve(manager, ({ id }) => {
+        this.bridgedInteractionIds.delete(id);
+      }),
     );
-    const lifecycle = session.accessor.get(IAgentLifecycleService);
     this.disposables.push(
-      lifecycle.onDidCreate((context) => {
-        const handle = lifecycle.get(context);
+      manager.onDidCreate((context) => {
+        const handle = manager.handleOf(context.agentId);
         if (handle !== undefined) this.attachAgent(handle);
       }),
-      lifecycle.onDidDispose((context) => {
+      manager.onDidClose((context) => {
         this.detachAgent(context.agentId);
       }),
     );
-    for (const agent of lifecycle.list()) {
-      this.attachAgent(agent);
+    for (const agent of manager.list()) {
+      const handle = manager.handleOf(agent.agentId);
+      if (handle !== undefined) this.attachAgent(handle);
     }
   }
 
@@ -168,7 +174,7 @@ export class SessionEventWiring {
 
   private bridgeNewPendingInteractions(): void {
     if (this.disposed) return;
-    const pending = this.session.accessor.get(ISessionInteractionService).listPending();
+    const pending = listSessionPendingInteractions(this.session.accessor.get(IAgentLifecycleService));
     for (const interaction of pending) {
       if (this.bridgedInteractionIds.has(interaction.id)) continue;
       this.bridgedInteractionIds.add(interaction.id);
@@ -252,7 +258,11 @@ export class SessionEventWiring {
         toolCallId: payload.toolCallId,
         args: payload.args,
       });
-      this.session.accessor.get(ISessionInteractionService).respond(interaction.id, result);
+      respondSessionInteraction(
+        this.session.accessor.get(IAgentLifecycleService),
+        interaction.id,
+        result,
+      );
     } catch {
       // See bridgeApproval.
     }

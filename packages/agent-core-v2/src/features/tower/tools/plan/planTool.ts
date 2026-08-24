@@ -1,9 +1,11 @@
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool } from '../support';
+import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
 import DESCRIPTION from './plan.md?raw';
 import { ITowerPlanTool, TowerPlanToolInputSchema, type TowerPlanToolInput } from './plan';
 
@@ -16,9 +18,16 @@ export class TowerPlanTool implements ITowerPlanTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentTowerService private readonly tower: IAgentTowerService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerPlanToolInput): ToolExecution {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      return {
+        isError: true,
+        output: TOWER_MAIN_AGENT_ONLY,
+      };
+    }
     return {
       description: `Planning ${String(args.missions.length)} tower mission(s)`,
       approvalRule: this.name,

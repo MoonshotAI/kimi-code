@@ -77,6 +77,7 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly fork?: boolean;
   readonly model?: string;
   readonly taskId?: string;
 }
@@ -97,7 +98,7 @@ export function emitAgentRunSpawned(
 ): void {
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
-    .findAgentHandle(targetAgentId)
+    .handleOf(targetAgentId)
     ?.accessor.get(IAgentProfileService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
@@ -119,6 +120,7 @@ export function emitAgentRunSpawned(
   const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
+    fork: meta.fork ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
@@ -200,7 +202,7 @@ function childContextTokens(
   agentLifecycle: IAgentLifecycleService,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.findAgentHandle(agentId);
+  const child = agentLifecycle.handleOf(agentId);
   if (child === undefined) return undefined;
   const context = tryAgentContextOf(child);
   if (context === undefined) return undefined;

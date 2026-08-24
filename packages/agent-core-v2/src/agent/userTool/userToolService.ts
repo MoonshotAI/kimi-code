@@ -12,8 +12,12 @@ import type {
   ExecutableToolResult,
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  AgentInteraction,
+  type InteractionRuntime,
+} from '#/features/interaction/interactionAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -35,16 +39,18 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<string, IDisposable>();
+  private readonly interaction: InteractionRuntime;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    this.interaction = manager.resolve(scopeContext.agentContext, AgentInteraction);
     this.agentState.contributeState(userToolKey);
     this._register(
       this.dispatcher.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
@@ -58,9 +64,17 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     return [...this.agentState.get(userToolKey).values()];
   }
 
-  inheritUserTools(parent: IAgentUserToolService): void {
+  inheritUserTools(
+    parent: IAgentUserToolService,
+    activeToolNames?: readonly string[],
+  ): void {
     for (const registration of parent.list()) {
-      this.register(registration);
+      void this.dispatcher.dispatch(
+        new ToolsRegisterUserTool({ ...registration, agentId: this.scopeContext.agentId }),
+      );
+      const activate =
+        activeToolNames === undefined || activeToolNames.includes(registration.name);
+      this.applyRegister(registration, { activate });
     }
   }
 

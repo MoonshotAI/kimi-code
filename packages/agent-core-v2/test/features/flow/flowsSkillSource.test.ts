@@ -7,7 +7,7 @@ import type { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID } from '#/features/flow/flow';
 import { FlowsSkillSource, isProjectedFlowSkill } from '#/features/flow/flowsSkillSource';
 import { FLOW_DRAFT_SKILL } from '#/features/flow/skill/skill';
-import { visibleBuiltinSkills } from '#/app/skillCatalog/builtin/builtin';
+import { visibleBuiltinSkills } from '#/features/skill/catalog/builtin/builtin';
 import type { HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';

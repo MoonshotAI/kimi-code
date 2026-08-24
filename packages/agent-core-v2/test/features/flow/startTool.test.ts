@@ -53,6 +53,7 @@ describe('FlowStartTool', () => {
       identity: { workspaceId: 'w', runtimeId: 'r', generation: 'g1' },
       workspace: { mapRoots: (roots: unknown) => roots },
       path,
+      environment: { pathClass: 'posix' },
       fs: {
         readText: async () => {
           if (fileText === undefined) throw new Error('not found');

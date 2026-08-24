@@ -27,6 +27,7 @@ export interface AgentStatusUpdatedEvent {
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
   readonly flowRun?: AgentFlowRunStatus | null;
+  readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;

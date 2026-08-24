@@ -2,12 +2,13 @@ import {
   builtinProductSkillsEnabled,
   discoverFlowSkills,
   visibleBuiltinSkills,
+  AgentSkill,
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
   FLOW_FLAG_ID,
-  IAgentSkillService,
   IHostFileSystem,
+  IAgentLifecycleService,
   IBootstrapService,
   IConfigService,
   IFileService,
@@ -27,6 +28,7 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
+  ensureMainAgent,
   projectRoots,
   sessionMediaOriginalsDir,
   userFlowsDir,
@@ -51,7 +53,6 @@ import {
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   activateSkillRequestSchema,
@@ -257,9 +258,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           );
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
-        const agent = await ensureMainAgent(resolved.handle);
-        await agent.accessor
-          .get(IAgentSkillService)
+        const context = await ensureMainAgent(resolved.handle);
+        await resolved.handle.accessor
+          .get(IAgentLifecycleService)
+          .resolve(context, AgentSkill)
           .activate({ name: parsed.id, args: req.body.args, content: attachmentParts });
         await preparedMedia?.discard();
         preparedMedia = undefined;

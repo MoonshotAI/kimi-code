@@ -192,6 +192,41 @@ describe('AppendLogStore', () => {
     replacementOwner.dispose();
   });
 
+  it('final release retirement is awaited by drainRetirements', async () => {
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      markAppendStarted();
+      await appendGate;
+      return originalAppend(...args);
+    };
+
+    const owner = record.acquire(SCOPE, KEY);
+    record.append(SCOPE, KEY, { n: 1 });
+    await appendStarted;
+    owner.dispose();
+
+    let drained = false;
+    const draining = record.drainRetirements().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    releaseAppend();
+    await draining;
+    expect(drained).toBe(true);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
+  });
+
   it('keeps a sticky failure until every acquired owner releases it', async () => {
     const failure = new Error('shared append failed');
     let reportFailure!: (error: unknown) => void;

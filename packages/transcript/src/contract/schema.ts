@@ -209,6 +209,8 @@ export const transcriptTaskSchema = z.object({
   error: z.string().optional(),
   stateReason: z.string().optional(),
   usage: stepUsageSchema.optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export const goalMetaSchema = z.object({
@@ -222,6 +224,7 @@ export const goalMetaSchema = z.object({
 export const modesMetaSchema = z.object({
   plan: z.object({ reviewPath: z.string().optional(), version: z.number().optional() }).optional(),
   swarm: z.object({ trigger: z.string().optional() }).optional(),
+  tower: z.object({}).optional(),
 });
 
 /** `meta.merge` contract shape: a mode key set to `null` clears that badge. */
@@ -231,6 +234,7 @@ export const modesMetaMergeSchema = z.object({
     .nullable()
     .optional(),
   swarm: z.object({ trigger: z.string().optional() }).nullable().optional(),
+  tower: z.object({}).nullable().optional(),
 });
 
 /** Same shape as the wire `agentPhaseSchema`, re-declared (this package must not import the server). */

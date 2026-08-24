@@ -13,6 +13,9 @@ export function newTowerStore(sessionContext: ISessionContext): TowerStore {
   return new TowerStore(resolveTowerRepoRoot(sessionContext.cwd));
 }
 
+export const TOWER_MAIN_AGENT_ONLY =
+  'Tower orchestration tools are only supported by the main agent.';
+
 /**
  * Resolve the caller's tower identity. The main agent is the control tower;
  * a spawned worker/reviewer is looked up in the roster by its agent id.

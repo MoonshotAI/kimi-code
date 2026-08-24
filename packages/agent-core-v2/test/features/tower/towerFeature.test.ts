@@ -30,9 +30,13 @@ import {
   _clearFeatureRecipesForTests,
   registerFeature,
 } from '#/features/featureRegistry';
+import { TOWER_FLAG_ENV } from '#/features/tower/flag';
 import { TOWER_FLAG_ID } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
-import { TowerFeature } from '#/features/tower/towerFeature';
+import {
+  TowerFeature,
+  isTowerFeatureAssembled,
+} from '#/features/tower/towerFeature';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -114,9 +118,21 @@ describe('TowerFeature — experimental flag gating', () => {
     );
     host.dispose();
   });
+
+  it('clears the assembly marker when the feature unit unloads', async () => {
+    const flags = stubFlag((id) => id === TOWER_FLAG_ID);
+    const host = createScopedTestHost([[IFlagService, flags]]);
+    const manager = host.app.accessor.get(IFeatureManager);
+    expect(isTowerFeatureAssembled(flags)).toBe(true);
+
+    await manager.unprovideUnit('tower');
+
+    expect(isTowerFeatureAssembled(flags)).toBe(false);
+    host.dispose();
+  });
 });
 
-describe('tower flag — hard-disabled (no declaration registered)', () => {
+describe('tower flag — resolution', () => {
   let disposables: DisposableStore;
   let homeDir: string;
 
@@ -139,19 +155,53 @@ describe('tower flag — hard-disabled (no declaration registered)', () => {
     return { config: ix.get(IConfigService), flags: ix.get(IFlagService) };
   }
 
-  it('cannot be enabled by the dedicated or master env while no tower flag is registered', () => {
-    const { flags } = makeFlags({
-      KIMI_CODE_EXPERIMENTAL_TOWER: 'true',
-      [MASTER_ENV]: 'true',
+  it('is registered and disabled by default', () => {
+    const { flags } = makeFlags();
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      id: TOWER_FLAG_ID,
+      env: TOWER_FLAG_ENV,
+      defaultEnabled: false,
+      enabled: false,
+      source: 'default',
     });
-    expect(flags.explain(TOWER_FLAG_ID)).toBeUndefined();
-    expect(flags.enabled(TOWER_FLAG_ID)).toBe(false);
   });
 
-  it('cannot be enabled through the [experimental] config section', async () => {
-    const { config, flags } = makeFlags();
-    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
-    expect(flags.explain(TOWER_FLAG_ID)).toBeUndefined();
-    expect(flags.enabled(TOWER_FLAG_ID)).toBe(false);
+  it('is enabled by the dedicated env', () => {
+    const { flags } = makeFlags({ [TOWER_FLAG_ENV]: '1' });
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'env',
+    });
+  });
+
+  it('uses config unless the dedicated env overrides it', async () => {
+    const configured = makeFlags();
+    await configured.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    expect(configured.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'config',
+      configValue: true,
+    });
+
+    const overridden = makeFlags({ [TOWER_FLAG_ENV]: 'false' });
+    await overridden.config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: true });
+    expect(overridden.flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: false,
+      source: 'env',
+      configValue: true,
+    });
+  });
+
+  it('lets the master env override the dedicated env and config', async () => {
+    const { config, flags } = makeFlags({
+      [TOWER_FLAG_ENV]: 'false',
+      [MASTER_ENV]: 'true',
+    });
+    await config.set(EXPERIMENTAL_SECTION, { [TOWER_FLAG_ID]: false });
+    expect(flags.explain(TOWER_FLAG_ID)).toMatchObject({
+      enabled: true,
+      source: 'master-env',
+      configValue: false,
+    });
   });
 });

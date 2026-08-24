@@ -22,7 +22,26 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
+import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
+import type {
+  InteractionKind,
+  InteractionRequest,
+} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import type {
+  PromptWithSkillsInput,
+  SkillActivationInput,
+} from '@moonshot-ai/agent-core-v2/features/skill/skill';
+import { AgentSkill } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
+import {
+  enqueueSessionInteraction,
+  isSessionInteractionRecentlyResolved,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
+  requestSessionInteraction,
+  respondSessionInteraction,
+} from '@moonshot-ai/agent-core-v2/features/interaction/sessionInteractions';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import type {
   FileMeta,
@@ -51,6 +70,50 @@ export function wireClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/**
+ * `sessionInteractionService` stays on the wire after the engine moved the
+ * interaction kernel into per-agent runtimes: the view aggregates the live
+ * agents' `AgentInteraction` facades through the session's agent lifecycle.
+ */
+function interactionServiceView(session: ScopeLike): Record<string, unknown> {
+  const manager = session.accessor.get(IAgentLifecycleService);
+  return {
+    request: (req: InteractionRequest<unknown>) => requestSessionInteraction(manager, req),
+    enqueue: (req: InteractionRequest<unknown>) => enqueueSessionInteraction(manager, req),
+    respond: (id: string, response: unknown) => {
+      respondSessionInteraction(manager, id, response);
+    },
+    listPending: (kind?: InteractionKind) => listSessionPendingInteractions(manager, kind),
+    isRecentlyResolved: (id: string) => isSessionInteractionRecentlyResolved(manager, id),
+    cancelPendingForTurn: (turnId: number) => {
+      for (const context of manager.list()) {
+        manager.resolve(context, AgentInteraction).cancelPendingForTurn(turnId);
+      }
+    },
+    onDidChangePending: (listener: (event: unknown) => void) =>
+      onSessionInteractionDidChangePending(manager, listener),
+    onDidResolve: (listener: (event: unknown) => void) =>
+      onSessionInteractionDidResolve(manager, listener),
+  };
+}
+
+/**
+ * `agentSkillService` stays on the wire after the engine moved the skill
+ * kernel into a per-agent runtime: the view forwards to the agent's resolved
+ * `AgentSkill` facade through the session's agent lifecycle.
+ */
+function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const manager = agent.accessor.get(IAgentLifecycleService);
+  const skill = () => manager.resolve(agentContextOf(agent), AgentSkill);
+  return {
+    activate: (input: SkillActivationInput) => skill().activate(input),
+    promptWithSkills: (input: PromptWithSkillsInput) => skill().promptWithSkills(input),
+    recordModelToolActivation: (origin: SkillActivationOrigin) => {
+      skill().recordModelToolActivation(origin);
+    },
+  };
+}
+
 export interface MemoryDispatcher {
   call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown>;
   stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown>;
@@ -64,7 +127,13 @@ export interface MemoryDispatcher {
 
 const REQUEST_INVALID = 40001;
 const NOT_FOUND = 40404;
+/** kap-server wire codes mirrored so memory/ipc surface the same numeric codes as `/api/v2/mcp`. */
+const MCP_SERVER_NOT_FOUND = 40408;
+const MCP_OAUTH_FAILED = 40929;
 const PROMPT_ID_CONFLICT = 40927;
+
+/** Wire name of the engine's `IMcpManagementService` decorator id. */
+const MCP_MANAGEMENT_SERVICE = 'mcpManagementService';
 
 /**
  * Session-scope domain services whose methods take the lifecycle-issued
@@ -87,6 +156,28 @@ const AGENT_CONTEXT_SERVICES: ReadonlySet<string> = new Set([
 function rethrowFileErrorAsRpc(error: unknown): never {
   if (error instanceof Error2 && error.code === FileErrors.codes.FILE_NOT_FOUND) {
     throw new RPCError(NOT_FOUND, error.message, error.details);
+  }
+  throw error;
+}
+
+/**
+ * Same treatment for the MCP management plane: its coded rejections cross as
+ * `RPCError`s carrying the kap-server wire codes, so memory and ipc behave
+ * identically (a raw `Error2` would cross ipc as a generic 50001) and both
+ * match `/api/v2/mcp` — `mcp.server_not_found` → 40408, `request.invalid` /
+ * `config.invalid` → 40001, `mcp.oauth_failed` → 40929.
+ */
+function rethrowMcpManagementErrorAsRpc(error: unknown): never {
+  if (error instanceof Error2) {
+    switch (error.code) {
+      case ErrorCodes.MCP_SERVER_NOT_FOUND:
+        throw new RPCError(MCP_SERVER_NOT_FOUND, error.message, error.details);
+      case ErrorCodes.REQUEST_INVALID:
+      case ErrorCodes.CONFIG_INVALID:
+        throw new RPCError(REQUEST_INVALID, error.message, error.details);
+      case ErrorCodes.MCP_OAUTH_FAILED:
+        throw new RPCError(MCP_OAUTH_FAILED, error.message, error.details);
+    }
   }
   throw error;
 }
@@ -121,9 +212,14 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     }
     if (scope.agentId === undefined) return { kind: 'session', like: session };
     if (scope.agentId === 'main') {
-      return { kind: 'agent', like: await ensureMainAgent(session) };
+      const context = await ensureMainAgent(session);
+      const handle = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
+      if (handle === undefined) {
+        throw new RPCError(NOT_FOUND, 'main agent was not found');
+      }
+      return { kind: 'agent', like: handle };
     }
-    const agent = session.accessor.get(IAgentLifecycleService).findAgentHandle(scope.agentId);
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(scope.agentId);
     if (agent === undefined) {
       throw new RPCError(NOT_FOUND, `agent not found: ${scope.agentId}`);
     }
@@ -131,6 +227,18 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   }
 
   function resolveService(resolved: ResolvedScope, service: string): Record<string, unknown> {
+    if (service === 'sessionInteractionService') {
+      if (resolved.kind !== 'session') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return interactionServiceView(resolved.like);
+    }
+    if (service === 'agentSkillService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentSkillServiceView(resolved.like as IAgentScopeHandle);
+    }
     const token = serviceTokens[service];
     if (token === undefined) {
       throw new RPCError(REQUEST_INVALID, `unknown service: ${service}`);
@@ -151,14 +259,13 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       });
     }
     if (resolved.kind === 'session' && name === 'interactions') {
-      const interaction = resolved.like.accessor.get(ISessionInteractionService);
-      return interaction.onDidChangePending(() => {
-        handler(wireClone(interaction.listPending()));
+      const manager = resolved.like.accessor.get(IAgentLifecycleService);
+      return onSessionInteractionDidChangePending(manager, () => {
+        handler(wireClone(listSessionPendingInteractions(manager)));
       });
     }
     if (resolved.kind === 'session' && name === 'interactions:resolved') {
-      const interaction = resolved.like.accessor.get(ISessionInteractionService);
-      return interaction.onDidResolve((resolution) => {
+      return onSessionInteractionDidResolve(resolved.like.accessor.get(IAgentLifecycleService), (resolution) => {
         handler(wireClone(resolution));
       });
     }
@@ -246,6 +353,9 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         const result = await (member as (...a: unknown[]) => unknown).apply(instance, callArgs);
         return wireClone(result);
       } catch (error) {
+        if (service === MCP_MANAGEMENT_SERVICE) {
+          rethrowMcpManagementErrorAsRpc(error);
+        }
         if (error instanceof Error2 && error.code === ErrorCodes.PROMPT_ID_CONFLICT) {
           throw new RPCError(PROMPT_ID_CONFLICT, error.message, error.details);
         }

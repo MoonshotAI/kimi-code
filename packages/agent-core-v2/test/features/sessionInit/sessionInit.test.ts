@@ -60,10 +60,8 @@ describe('SessionInitService', () => {
         onWillStartAgentTask: { run: vi.fn(async () => {}) },
       },
       notifyAgentTaskStopped: vi.fn(),
-      get: vi.fn((context: AgentContext) => handles[context.agentId]),
-      findAgentHandle: vi.fn((agentId: string) => handles[agentId]),
-      list: vi.fn(() => Object.values(handles)),
-      create: vi.fn(async () => handles['agent-0']),
+      handleOf: vi.fn((agentId: string) => handles[agentId]),
+      create: vi.fn(async () => stubAgentContext('agent-0', 1)),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
         turn: {},
@@ -219,9 +217,9 @@ describe('SessionInitService', () => {
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
     const lifecycle = ix.get(IAgentLifecycleService) as unknown as {
-      list: ReturnType<typeof vi.fn>;
+      handleOf: ReturnType<typeof vi.fn>;
     };
-    lifecycle.list.mockReturnValue([]);
+    lifecycle.handleOf.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);

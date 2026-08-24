@@ -39,21 +39,17 @@ import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
 import '#/agent/tools/fetch-url/fetchUrlTool';
-import '#/agent/tools/goal/create-goal/createGoalTool';
-import '#/agent/tools/goal/get-goal/getGoalTool';
-import '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
-import '#/agent/tools/goal/update-goal/updateGoalTool';
 import '#/agent/tools/os/bash/bashTool';
 import '#/agent/tools/os/glob/globTool';
 import '#/agent/tools/os/grep/grepTool';
 import '#/agent/tools/os/read/readTool';
 import '#/agent/tools/os/write/writeTool';
 import '#/agent/tools/select-tools/selectToolsTool';
-import '#/agent/tools/skill/skillTool';
+import '#/features/skill/tools/skillTool';
 import '#/agent/tools/task/task-list/taskListTool';
 import '#/agent/tools/task/task-output/taskOutputTool';
 import '#/agent/tools/task/task-stop/taskStopTool';
-import '#/agent/tools/todo-list/todoListTool';
+import '#/features/todo/tools/todo-list/todoListTool';
 import '#/agent/tools/web-search/webSearchTool';
 
 class StubTool implements AgentTool {
@@ -538,7 +534,7 @@ describe('AgentToolActivationService', () => {
     });
 
     it('feeds every built-in contribution through the App-scope assembly unchanged', async () => {
-      expect(savedContributions).toHaveLength(19);
+      expect(savedContributions).toHaveLength(14);
       for (const contribution of savedContributions) {
         registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }

@@ -29,4 +29,5 @@ export interface UsageRecordedContext {
   readonly model: string;
   readonly usage: Readonly<TokenUsage>;
   readonly source?: AgentLLMRequestSource;
+  readonly firstRecord: boolean;
 }

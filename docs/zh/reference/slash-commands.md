@@ -152,7 +152,7 @@ Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在�
 Kimi Code CLI 随包内置的 Skill 会直接以 `/<name>` 形式出现在斜杠命令面板中。例如，`/mcp-config` 用于配置 MCP server 和处理 MCP OAuth 登录，`/custom-theme [附加文本]` 用于进入自定义主题流程，创建或编辑 TUI 主题。
 
 ::: info 说明
-所有 Skill 命令仅在空闲状态下可用。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。
+Agent 忙碌时输入的外部 Skill 命令不会被拒绝，而是排队等待当前轮次结束——按 `Ctrl-S` 可让排队的命令立即插入正在运行的轮次。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。
 :::
 
 Skill 的安装与编写详见 [Agent Skills](../customization/skills.md)。

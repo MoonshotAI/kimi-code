@@ -1,6 +1,6 @@
-import type { SkillDefinition } from '#/app/skillCatalog/types';
-import { parseSkillText } from '#/app/skillCatalog/parser';
-import { registerBuiltinSkill } from '#/app/skillCatalog/builtin/registry';
+import type { SkillDefinition } from '#/features/skill/catalog/types';
+import { parseSkillText } from '#/features/skill/catalog/parser';
+import { registerBuiltinSkill } from '#/features/skill/catalog/builtin/registry';
 
 import { FLOW_FLAG_ID } from '../flow';
 

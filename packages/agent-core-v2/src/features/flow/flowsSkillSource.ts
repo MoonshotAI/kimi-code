@@ -10,8 +10,8 @@ import {
   SKILL_SOURCE_PRIORITY,
   type ISkillSource,
   type SkillContribution,
-} from '#/app/skillCatalog/skillSource';
-import type { SkillDefinition, SkippedSkill } from '#/app/skillCatalog/types';
+} from '#/features/skill/catalog/skillSource';
+import type { SkillDefinition, SkippedSkill } from '#/features/skill/catalog/types';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
