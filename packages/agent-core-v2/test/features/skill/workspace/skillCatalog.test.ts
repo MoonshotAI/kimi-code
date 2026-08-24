@@ -185,7 +185,7 @@ function makeHost(
   });
   const disposeHost = host.dispose.bind(host);
   host.dispose = () => {
-    workspaceHandle.dispose();
+    void workspaceHandle.dispose();
     disposeHost();
   };
   return { host, workspace: workspaceHandle, config };

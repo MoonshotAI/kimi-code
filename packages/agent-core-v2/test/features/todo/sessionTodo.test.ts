@@ -166,7 +166,7 @@ function makeRuntimeAgent(
       registry.untrack(managed);
       await managed.runtimeSet.close();
       managed.killSpace();
-      handle.dispose();
+      await handle.dispose();
     },
   };
 }
@@ -248,7 +248,7 @@ describe('TodoAgentRuntime', () => {
     expect(managed.runtimeSet.resolve(AgentTodo)).toBe(todo);
     expect(reminders).toBe(1);
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 
   it('rejects resolve and lease tracking once the runtime set is closed', async () => {
@@ -417,7 +417,7 @@ describe('TodoAgentRuntime', () => {
     expect(creates).toBe(1);
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized' });
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 
   it('reports registered, materialized, retired, and definition generations', async () => {
@@ -467,7 +467,7 @@ describe('TodoAgentRuntime', () => {
     managed.attachDurableRuntimes();
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized', state: [] });
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 
   it('retains actor failure status and inspection diagnostics', async () => {
@@ -518,7 +518,7 @@ describe('TodoAgentRuntime', () => {
       error: 'actor failed',
     });
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 });
 
