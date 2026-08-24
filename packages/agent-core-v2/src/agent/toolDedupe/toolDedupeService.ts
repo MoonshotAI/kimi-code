@@ -15,6 +15,8 @@ import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventBus } from '#/app/event/eventBus';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -73,6 +75,10 @@ function makeKey(toolName: string, args: unknown): string {
 
 function argsHash(args: unknown): string {
   return createHash('sha256').update(canonicalTelemetryArgs(args)).digest('hex').slice(0, 8);
+}
+
+function callSignature(key: string): string {
+  return createHash('sha256').update(key).digest('hex');
 }
 
 interface CheckedToolCall {
@@ -155,6 +161,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     @IAgentLoopService loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IEventBus eventBus: IEventBus,
   ) {
     super();
     this.states.contributeState(toolDedupeStepCallsKey);
@@ -167,6 +174,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.contributeState(toolDedupeActiveStepKey);
     this.states.contributeState(toolDedupeTurnCallRecordsKey);
     this.states.contributeState(toolDedupeTurnRepeatCountKey);
+    this._register(eventBus.subscribe(TurnEnded, () => this.clearTurnRecords()));
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();
@@ -272,13 +280,17 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     this.states.set(toolDedupeTurnRepeatCountKey, value);
   }
 
+  private clearTurnRecords(): void {
+    this.turnCallRecords.clear();
+    this.turnRepeatCount = 0;
+  }
+
   private beginStep(turnId?: number, step?: number): void {
     if (turnId !== undefined && turnId !== this.activeTurnId) {
       this.activeTurnId = turnId;
       this.consecutiveKey = null;
       this.consecutiveCount = 0;
-      this.turnCallRecords.clear();
-      this.turnRepeatCount = 0;
+      this.clearTurnRecords();
     }
     if (step !== undefined) {
       this.activeStep = step;
@@ -315,9 +327,10 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
     key: string,
     trace: LLMRequestTrace | undefined,
   ): void {
-    const record = this.turnCallRecords.get(key);
+    const signature = callSignature(key);
+    const record = this.turnCallRecords.get(signature);
     if (record === undefined) {
-      this.turnCallRecords.set(key, { count: 0, lastStep: this.activeStep });
+      this.turnCallRecords.set(signature, { count: 0, lastStep: this.activeStep });
       return;
     }
     if (record.lastStep === this.activeStep) return;
