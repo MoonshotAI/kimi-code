@@ -1009,6 +1009,8 @@ export class SessionEventBroadcaster {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
 
+    if (event.type === 'prompt.accepted') return;
+
     if (event.type === 'agent.activity.updated') {
       const snapshot = event as unknown as AgentActivityState;
       const phase = toLegacyPhase(snapshot);
