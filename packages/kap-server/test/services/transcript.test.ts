@@ -2056,8 +2056,10 @@ describe('AgentTranscriptProjector', () => {
       if (undoTurn?.kind !== 'turn') throw new Error('expected turn');
       expect(undoTurn.origin.kind).toBe('user');
       expect(
-        undoTurn.steps.flatMap((step) => step.frames).some((f) => f.kind === 'text' && f.role === 'user'),
-      ).toBe(true);
+        undoTurn.steps
+          .flatMap((step) => step.frames)
+          .some((f) => f.kind === 'text' && f.text.includes('inspect done')),
+      ).toBe(false);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
