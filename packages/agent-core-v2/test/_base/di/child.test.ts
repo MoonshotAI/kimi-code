@@ -214,6 +214,34 @@ describe('InstantiationService.createChild', () => {
     expect(events).toEqual(['disposed']);
   });
 
+  it('repeated disposeAsync returns the in-flight teardown promise', async () => {
+    const events: string[] = [];
+    let releaseGate!: () => void;
+    const ix = new InstantiationService(new ServiceCollection());
+    ix.anchorKernelEntry(() => {
+      events.push('finalizer');
+    }, 'finalizer');
+    ix.anchorKernelEntry(() => {
+      events.push('gate-entered');
+      return new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+    }, 'gate');
+
+    const first = ix.disposeAsync();
+    const second = ix.disposeAsync();
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['gate-entered']);
+    expect(secondSettled).toBe(false);
+    releaseGate();
+    await Promise.all([first, second]);
+    expect(events).toEqual(['gate-entered', 'finalizer']);
+  });
+
   it('parent dispose propagates to children', () => {
     const events: string[] = [];
     interface IParentSvc {

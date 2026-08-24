@@ -652,11 +652,18 @@ export class InstantiationService implements IInstantiationService {
     return new InstantiationService(services, this._strict, this, this._enableTracing);
   }
 
+  private _disposePromise: Promise<void> | undefined;
+
   dispose(): void {
     void this.disposeAsync();
   }
 
   disposeAsync(): Promise<void> {
+    this._disposePromise ??= this.disposeCore();
+    return this._disposePromise;
+  }
+
+  private disposeCore(): Promise<void> {
     if (this._disposed) {
       return Promise.resolve();
     }
