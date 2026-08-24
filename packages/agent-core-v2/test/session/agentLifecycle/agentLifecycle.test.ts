@@ -516,27 +516,31 @@ describe('AgentLifecycleService', () => {
     const agentScope = ix.children.find((child) => child.debugLabel === 'main');
     expect(agentScope).toBeDefined();
     let releaseDrain!: () => void;
-    agentScope!.anchorKernelEntry(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseDrain = resolve;
-        }),
-      'test-async-disposer',
-    );
+    let gateEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      gateEntered = resolve;
+    });
+    agentScope!.anchorKernelEntry(() => {
+      gateEntered();
+      return new Promise<void>((resolve) => {
+        releaseDrain = resolve;
+      });
+    }, 'test-async-disposer');
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason);
     };
     process.on('unhandledRejection', onUnhandled);
     try {
-      await svc.remove(main);
+      const removal = svc.remove(main);
+      await entered;
       bus.publish(
         new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
         main,
       );
       expect(seen).toEqual(['disposed']);
       releaseDrain();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await removal;
       expect(() =>
         bus.publish(
           new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
@@ -643,7 +647,6 @@ describe('AgentLifecycleService', () => {
     process.on('unhandledRejection', onUnhandled);
     try {
       await expect(svc.create({ agentId: 'main' })).rejects.toThrow('boom');
-      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(seen).toEqual(['disposed']);
       expect(unhandled).toEqual([]);
     } finally {
@@ -670,7 +673,6 @@ describe('AgentLifecycleService', () => {
     try {
       const main = await svc.create({ agentId: 'main' });
       await svc.remove(main);
-      await new Promise((resolve) => setTimeout(resolve, 10));
       expect(seen).toEqual(['disposed']);
       expect(unhandled).toEqual([]);
     } finally {
@@ -1354,7 +1356,7 @@ describe('AgentLifecycleService', () => {
     const originalDispose = handle.dispose.bind(handle);
     handle.dispose = () => {
       order.push('scope-disposed');
-      originalDispose();
+      return originalDispose();
     };
     svc.resolve(main, AgentTodo).get();
     expect(reminders).toBe(1);

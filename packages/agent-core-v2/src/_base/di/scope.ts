@@ -112,7 +112,7 @@ export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
   readonly id: string;
   readonly kind: K;
   readonly accessor: ServicesAccessor;
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
 export type IAppScopeHandle = IScopeHandle<'app'>;
@@ -171,7 +171,7 @@ export function createScopedChildHandle(
     get: <T>(serviceId: ServiceIdentifier<T>): T =>
       child.invokeFunction((a) => a.get(serviceId)),
   };
-  return { id, kind, accessor, dispose: () => child.dispose() };
+  return { id, kind, accessor, dispose: () => child.disposeAsync() };
 }
 
 export class Scope implements IDisposable {
