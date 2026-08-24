@@ -101,7 +101,7 @@ import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
-import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 
@@ -461,6 +461,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         },
         {
           definition: AgentInteraction,
+          provider: interactionAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

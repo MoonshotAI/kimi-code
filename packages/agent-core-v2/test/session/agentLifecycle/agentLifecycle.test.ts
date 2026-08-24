@@ -58,7 +58,7 @@ import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
 import { ICronDeleteTool } from '#/features/cron/tools/cron-delete/cron-delete';
 import { ICronListTool } from '#/features/cron/tools/cron-list/cron-list';
 import { CRON_SECTION } from '#/features/cron/configSection';
-import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
@@ -487,7 +487,7 @@ describe('AgentLifecycleService', () => {
       AgentRuntimeContributionPoint,
       'test',
       new Ledger('test'),
-      AgentInteraction,
+      interactionAgentRuntimeProvider,
     );
   }
 

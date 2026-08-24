@@ -5,7 +5,8 @@ import type { ServicesAccessor } from '#/_base/di/instantiation';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import {
-  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
   type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
   type AgentRuntimeDescriptor,
@@ -25,8 +26,11 @@ function record<Runtime>(
   logic: AgentRuntimeDescriptor<any, any>['logic'] = fromCallback(() => {}),
   durable?: AgentRuntimeDescriptor<any, any>['durable'],
 ): AgentRuntimeDefinitionRecord & { definition: AgentRuntimeDefinition<any, Runtime> } {
+  const definition = defineAgentRuntimeContract<Runtime>(id) as AgentRuntimeDefinition<any, Runtime>;
+  const provider = defineAgentRuntimeProvider(definition, { id, logic, durable, createApi });
   return {
-    definition: defineAgentRuntime({ id, logic, durable, createApi }),
+    definition,
+    provider,
     generation,
     active: true,
   };
@@ -241,70 +245,10 @@ describe('AgentRuntimeSet', () => {
     await set.close();
   });
 
-  it('drains a tracked lease before disposing the actor', async () => {
-    let stopped = 0;
-    let release!: () => void;
-    const runtime = record(
-      'leased',
-      (context) => ({
-        run: () => context.track(new Promise<void>((resolve) => { release = resolve; })),
-      }),
-      1,
-      fromCallback(() => () => { stopped += 1; }),
-    );
-    const set = new AgentRuntimeSet(agent, accessor);
-    set.apply(runtime);
-    const runtimeInstance = set.resolve(runtime.definition);
-    void runtimeInstance.run();
-
-    const closing = set.close();
-    await Promise.resolve();
-    expect(stopped).toBe(0);
-    release();
-    await closing;
-    expect(stopped).toBe(1);
-  });
-
-  it('disposes registered resources before stopping its actor', async () => {
-    const order: string[] = [];
-    let releaseCleanup!: () => void;
-    const runtime = record(
-      'scope',
-      (context) => {
-        context.own({ dispose: () => { order.push('subscription'); } });
-        context.own({ dispose: () => { order.push('tool'); } });
-        context.own(async () => {
-          order.push('cleanup:start');
-          await new Promise<void>((resolve) => { releaseCleanup = resolve; });
-          order.push('cleanup:end');
-        });
-        return {};
-      },
-      1,
-      fromCallback(() => () => { order.push('actor:stop'); }),
-    );
-    const set = new AgentRuntimeSet(agent, accessor);
-    set.apply(runtime);
-    set.resolve(runtime.definition);
-
-    const closing = set.close();
-    await Promise.resolve();
-    expect(order).toEqual(['cleanup:start']);
-
-    releaseCleanup();
-    await closing;
-
-    expect(order).toEqual(['cleanup:start', 'cleanup:end', 'tool', 'subscription', 'actor:stop']);
-  });
-
   it('resolves only the current definition object for a runtime id', async () => {
     const old = record('identity', () => ({ generation: 1 }), 1);
     const current = record('identity', () => ({ generation: 2 }), 2);
-    const forged = defineAgentRuntime({
-      id: 'identity',
-      logic: fromCallback(() => {}),
-      createApi: () => ({ generation: 999 }),
-    });
+    const forged = defineAgentRuntimeContract<{ generation: number }>('identity');
     const set = new AgentRuntimeSet(agent, accessor);
     set.apply(old);
 

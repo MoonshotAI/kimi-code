@@ -51,7 +51,6 @@ import {
   type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
   type AgentRuntimeSnapshot,
-  getAgentRuntimeContract,
   getAgentRuntimeDefinitionId,
   type RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
@@ -131,7 +130,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private registerContribution(contribution: AgentRuntimeContribution, override: boolean): void {
     if (this.contributions.has(contribution)) return;
-    const definition = getAgentRuntimeContract(contribution);
+    const definition = contribution.contract;
     const id = getAgentRuntimeDefinitionId(definition);
     const generation = (this.recordGenerations.get(id) ?? 0) + 1;
     this.recordGenerations.set(id, generation);

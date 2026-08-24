@@ -6,7 +6,6 @@ import { Event } from '#/_base/event';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
-  AgentRuntimeLifecycle,
   type AgentRuntimeDefinition,
   type RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
@@ -21,6 +20,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   AgentInteraction,
+  interactionAgentRuntimeProvider,
   type InteractionRuntime,
 } from '#/features/interaction/interactionAgentRuntime';
 import {
@@ -78,6 +78,7 @@ function makeRuntimeAgent(agentId: string): RuntimeAgent {
   const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
   runtimes.apply({
     definition: AgentInteraction,
+    provider: interactionAgentRuntimeProvider,
     generation: 1,
     active: true,
   });
@@ -192,7 +193,7 @@ describe('interaction runtime', () => {
     agent.disposables.add(agent.runtime.onDidChangePending(() => changes++));
     const pending = agent.runtime.request({ kind: 'question', payload: {} });
 
-    await agent.runtime[AgentRuntimeLifecycle].dispose?.();
+    await agent.runtimes.close();
 
     await expect(pending).resolves.toEqual({ cancelled: true, reason: 'agent_closed' });
     expect(seen).toEqual([]);

@@ -1,13 +1,11 @@
-import { assign, setup, type Snapshot } from 'xstate';
+import { assign, fromCallback, setup, type Snapshot } from 'xstate';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
-  AgentRuntimeLifecycle,
-  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
   type AgentRuntimeContext,
-  type AgentRuntimeLifecycle as AgentRuntimeLifecycleProtocol,
 } from '#/agent/runtime/agentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -32,8 +30,18 @@ interface PendingEntry {
   readonly resolve: (response: unknown) => void;
 }
 
+interface InteractionEffectState {
+  readonly pending: Map<string, PendingEntry>;
+  readonly recentlyResolved: Map<string, number>;
+  nextId: number;
+  readonly changeEmitter: Emitter<InteractionPendingChangedEvent>;
+  readonly resolveEmitter: Emitter<InteractionResolution>;
+}
+
 interface InteractionActorContext {
   readonly records: InteractionModelState;
+  readonly effects: InteractionEffectState;
+  readonly runtime: AgentRuntimeContext<InteractionModelState>;
 }
 
 interface InteractionCommitEvent {
@@ -43,39 +51,58 @@ interface InteractionCommitEvent {
 
 type InteractionActorSnapshot = Snapshot<unknown> & { readonly context: InteractionActorContext };
 
+function rememberResolved(effects: InteractionEffectState, id: string): void {
+  const now = Date.now();
+  for (const [key, resolvedAt] of effects.recentlyResolved) {
+    if (now - resolvedAt > RECENTLY_RESOLVED_TTL_MS) effects.recentlyResolved.delete(key);
+  }
+  while (effects.recentlyResolved.size >= RECENTLY_RESOLVED_MAX) {
+    const oldest = effects.recentlyResolved.keys().next().value;
+    if (oldest === undefined) break;
+    effects.recentlyResolved.delete(oldest);
+  }
+  effects.recentlyResolved.set(id, now);
+}
+
+function recordResolved(runtime: AgentRuntimeContext<InteractionModelState>, id: string, response: unknown): void {
+  void runtime.dispatch(
+    new InteractionResolvedEvent({
+      agentId: runtime.agent.agentId,
+      id,
+      response,
+    }),
+  );
+}
+
+function cancelTurnPending(
+  runtime: AgentRuntimeContext<InteractionModelState>,
+  effects: InteractionEffectState,
+  turnId: number,
+): void {
+  let changed = false;
+  for (const [id, entry] of effects.pending) {
+    if (entry.interaction.origin?.turnId !== turnId) continue;
+    effects.pending.delete(id);
+    rememberResolved(effects, id);
+    const response = { cancelled: true, reason: 'turn_ended' };
+    entry.resolve(response);
+    recordResolved(runtime, id, response);
+    effects.resolveEmitter.fire({ id, response });
+    changed = true;
+  }
+  if (changed) effects.changeEmitter.fire({ pending: [...effects.pending.keys()] });
+}
+
 export class InteractionRuntime {
-  private readonly pending = new Map<string, PendingEntry>();
-  private lifecycleDisposer: (() => void) | undefined;
-  private readonly recentlyResolved = new Map<string, number>();
-  private nextId = 0;
-  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
-  private readonly resolveEmitter = new Emitter<InteractionResolution>();
+  private readonly effects: InteractionEffectState;
 
-  readonly onDidChangePending: Event<InteractionPendingChangedEvent> = this.changeEmitter.event;
-  readonly onDidResolve: Event<InteractionResolution> = this.resolveEmitter.event;
+  readonly onDidChangePending: Event<InteractionPendingChangedEvent>;
+  readonly onDidResolve: Event<InteractionResolution>;
 
-  readonly [AgentRuntimeLifecycle]: AgentRuntimeLifecycleProtocol = {
-    start: () => { this.lifecycleDisposer = this.attach(); },
-    dispose: () => {
-      for (const entry of this.pending.values()) {
-        entry.resolve({ cancelled: true, reason: 'agent_closed' });
-      }
-      this.pending.clear();
-      this.lifecycleDisposer?.();
-      this.lifecycleDisposer = undefined;
-    },
-  };
-
-  constructor(private readonly runtime: AgentRuntimeContext<InteractionModelState>) {}
-
-  private attach(): () => void {
-    const store = new DisposableStore();
-    store.add(this.changeEmitter);
-    store.add(this.resolveEmitter);
-    store.add(
-      this.runtime.get(IEventBus).subscribe(TurnEnded, (e) => this.cancelPendingForTurn(e.turnId)),
-    );
-    return () => store.dispose();
+  constructor(private readonly runtime: AgentRuntimeContext<InteractionModelState>) {
+    this.effects = runtime.getLogicState<InteractionActorContext>().effects;
+    this.onDidChangePending = this.effects.changeEmitter.event;
+    this.onDidResolve = this.effects.resolveEmitter.event;
   }
 
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
@@ -89,53 +116,42 @@ export class InteractionRuntime {
   }
 
   respond(id: string, response: unknown): boolean {
-    const entry = this.pending.get(id);
+    const entry = this.effects.pending.get(id);
     if (entry === undefined) return false;
-    this.pending.delete(id);
-    this.rememberResolved(id);
+    this.effects.pending.delete(id);
+    rememberResolved(this.effects, id);
     entry.resolve(response);
-    this.recordResolved(id, response);
-    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
-    this.resolveEmitter.fire({ id, response });
+    recordResolved(this.runtime, id, response);
+    this.effects.changeEmitter.fire({ pending: [...this.effects.pending.keys()] });
+    this.effects.resolveEmitter.fire({ id, response });
     return true;
   }
 
   listPending(kind?: InteractionKind): readonly Interaction[] {
-    const all = [...this.pending.values()].map((p) => p.interaction);
+    const all = [...this.effects.pending.values()].map((p) => p.interaction);
     return kind === undefined ? all : all.filter((i) => i.kind === kind);
   }
 
   isRecentlyResolved(id: string): boolean {
-    const resolvedAt = this.recentlyResolved.get(id);
+    const resolvedAt = this.effects.recentlyResolved.get(id);
     if (resolvedAt === undefined) return false;
     if (Date.now() - resolvedAt > RECENTLY_RESOLVED_TTL_MS) {
-      this.recentlyResolved.delete(id);
+      this.effects.recentlyResolved.delete(id);
       return false;
     }
     return true;
   }
 
   cancelPendingForTurn(turnId: number): void {
-    let changed = false;
-    for (const [id, entry] of this.pending) {
-      if (entry.interaction.origin?.turnId !== turnId) continue;
-      this.pending.delete(id);
-      this.rememberResolved(id);
-      const response = { cancelled: true, reason: 'turn_ended' };
-      entry.resolve(response);
-      this.recordResolved(id, response);
-      this.resolveEmitter.fire({ id, response });
-      changed = true;
-    }
-    if (changed) this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    cancelTurnPending(this.runtime, this.effects, turnId);
   }
 
   private park<TPayload>(
     req: InteractionRequest<TPayload>,
     resolve: (response: unknown) => void,
   ): Interaction {
-    const id = req.id ?? `${this.runtime.agent.agentId}:interaction-${this.nextId++}`;
-    if (this.pending.has(id)) throw new Error(`Interaction "${id}" is already pending`);
+    const id = req.id ?? `${this.runtime.agent.agentId}:interaction-${this.effects.nextId++}`;
+    if (this.effects.pending.has(id)) throw new Error(`Interaction "${id}" is already pending`);
     const interaction: Interaction<TPayload> = {
       id,
       kind: req.kind,
@@ -143,7 +159,7 @@ export class InteractionRuntime {
       origin: req.origin ?? {},
       createdAt: Date.now(),
     };
-    this.pending.set(id, { interaction, resolve });
+    this.effects.pending.set(id, { interaction, resolve });
     void this.runtime.dispatch(
       new InteractionRequestEvent({
         agentId: this.runtime.agent.agentId,
@@ -153,31 +169,8 @@ export class InteractionRuntime {
         request: interaction.payload,
       }),
     );
-    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    this.effects.changeEmitter.fire({ pending: [...this.effects.pending.keys()] });
     return interaction;
-  }
-
-  private recordResolved(id: string, response: unknown): void {
-    void this.runtime.dispatch(
-      new InteractionResolvedEvent({
-        agentId: this.runtime.agent.agentId,
-        id,
-        response,
-      }),
-    );
-  }
-
-  private rememberResolved(id: string): void {
-    const now = Date.now();
-    for (const [key, resolvedAt] of this.recentlyResolved) {
-      if (now - resolvedAt > RECENTLY_RESOLVED_TTL_MS) this.recentlyResolved.delete(key);
-    }
-    while (this.recentlyResolved.size >= RECENTLY_RESOLVED_MAX) {
-      const oldest = this.recentlyResolved.keys().next().value;
-      if (oldest === undefined) break;
-      this.recentlyResolved.delete(oldest);
-    }
-    this.recentlyResolved.set(id, now);
   }
 }
 
@@ -187,13 +180,51 @@ function readPayloadToolCallId(payload: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+const interactionEffects = fromCallback(({
+  input,
+}: {
+  input: {
+    readonly runtime: AgentRuntimeContext<InteractionModelState>;
+    readonly effects: InteractionEffectState;
+  };
+}) => {
+  const subscription = input.runtime.get(IEventBus).subscribe(TurnEnded, (e) => {
+    cancelTurnPending(input.runtime, input.effects, e.turnId);
+  });
+  return () => {
+    subscription.dispose();
+    for (const entry of input.effects.pending.values()) {
+      entry.resolve({ cancelled: true, reason: 'agent_closed' });
+    }
+    input.effects.pending.clear();
+    input.effects.changeEmitter.dispose();
+    input.effects.resolveEmitter.dispose();
+  };
+});
+
 const interactionActorLogic = setup({
   types: {} as {
     context: InteractionActorContext;
+    input: AgentRuntimeContext<InteractionModelState>;
     events: InteractionCommitEvent;
   },
+  actors: { interactionEffects },
 }).createMachine({
-  context: { records: new Map() },
+  context: ({ input }) => ({
+    records: new Map(),
+    effects: {
+      pending: new Map(),
+      recentlyResolved: new Map(),
+      nextId: 0,
+      changeEmitter: new Emitter(),
+      resolveEmitter: new Emitter(),
+    },
+    runtime: input,
+  }),
+  invoke: {
+    src: 'interactionEffects',
+    input: ({ context }) => ({ runtime: context.runtime, effects: context.effects }),
+  },
   on: {
     'interaction.commit': {
       actions: assign({ records: ({ event }) => event.records }),
@@ -201,7 +232,9 @@ const interactionActorLogic = setup({
   },
 });
 
-export const AgentInteraction = defineAgentRuntime<InteractionModelState, InteractionRuntime>({
+export const AgentInteraction = defineAgentRuntimeContract<InteractionRuntime>('interaction');
+
+export const interactionAgentRuntimeProvider = defineAgentRuntimeProvider<InteractionModelState, InteractionRuntime>(AgentInteraction, {
   id: 'interaction',
   logic: interactionActorLogic,
   durable: {
@@ -238,4 +271,3 @@ export const AgentInteraction = defineAgentRuntime<InteractionModelState, Intera
     }));
   },
 });
-

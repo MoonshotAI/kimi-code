@@ -112,7 +112,6 @@ export * from '#/state/agentModel';
 export {
   AgentRuntimeContributionPoint,
   AgentRuntimeOverrideContributionPoint,
-  defineAgentRuntime,
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
 } from '#/agent/runtime/agentRuntime';

@@ -13,6 +13,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   AgentInteraction,
+  interactionAgentRuntimeProvider,
   type InteractionRuntime,
 } from '#/features/interaction/interactionAgentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -49,6 +50,7 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
     const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
     runtimes.apply({
       definition: AgentInteraction,
+      provider: interactionAgentRuntimeProvider,
       generation: 1,
       active: true,
     });
