@@ -622,6 +622,32 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     });
   });
 
+  it('keeps a body whose first line starts with Severity:', () => {
+    const xml = [
+      '<notification id="task:task-9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task-9">',
+      'Title: Background agent completed',
+      'Severity: info',
+      'Severity: this line is the task description, not a header',
+      'last line.',
+      '</notification>',
+    ].join('\n');
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'go' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: xml }], toolCalls: [], origin: { kind: 'task', taskId: 'task-9' } as { kind: string } },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+      ],
+      { taskOriginTurnTaskIds: new Set() },
+    );
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const frame = turn.steps.flatMap((step) => step.frames).find((f) => f.kind === 'text' && f.role === 'user');
+    expect(frame).toMatchObject({
+      text: 'Background agent completed\nSeverity: this line is the task description, not a header\nlast line.',
+    });
+  });
+
   it('expands a bundled prompt into per-skill markers and a caller-text turn', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

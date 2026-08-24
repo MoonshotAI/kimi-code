@@ -292,18 +292,14 @@ function notificationFrameText(text: string): string {
   while (headerEnd < lines.length && lines[headerEnd]!.trim() === '') headerEnd += 1;
   let title = '';
   let bodyStart = headerEnd;
-  for (let i = headerEnd; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (line.startsWith('Title: ')) {
-      title = line.slice('Title: '.length);
-      bodyStart = i + 1;
-      continue;
-    }
-    if (line.startsWith('Severity: ')) {
-      bodyStart = i + 1;
-      continue;
-    }
-    break;
+  const titleLine = lines[bodyStart];
+  if (titleLine !== undefined && titleLine.startsWith('Title: ')) {
+    title = titleLine.slice('Title: '.length);
+    bodyStart += 1;
+  }
+  const severityLine = lines[bodyStart];
+  if (severityLine !== undefined && severityLine.startsWith('Severity: ')) {
+    bodyStart += 1;
   }
   const bodyLines = lines.slice(bodyStart);
   const childStart = bodyLines.findIndex((line) => {
