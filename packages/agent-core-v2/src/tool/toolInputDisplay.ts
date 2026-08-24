@@ -77,6 +77,18 @@ export type ToolInputDisplay =
       mode: 'manual' | 'yolo';
     }
   | {
+      kind: 'flow_start_review';
+      flow_id: string;
+      task: string;
+      source_path: string;
+      stages: readonly {
+        id: string;
+        gate: 'ai' | 'human' | 'ai-then-human';
+        objective: string;
+        completion: string;
+      }[];
+    }
+  | {
       kind: 'flow_gate_review';
       flow_id: string;
       task?: string;

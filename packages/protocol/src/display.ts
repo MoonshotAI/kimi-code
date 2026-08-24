@@ -113,6 +113,25 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
       .readonly(),
     note: z.string().optional(),
   }),
+  // A flow run about to start, awaiting the user's approval: the parsed
+  // blueprint (every stage with its gate, objective, and completion) so the
+  // user confirms the plan of record before any stage work begins.
+  z.object({
+    kind: z.literal('flow_start_review'),
+    flow_id: z.string(),
+    task: z.string(),
+    source_path: z.string(),
+    stages: z
+      .array(
+        z.object({
+          id: z.string(),
+          gate: z.enum(['ai', 'human', 'ai-then-human']),
+          objective: z.string(),
+          completion: z.string(),
+        }),
+      )
+      .readonly(),
+  }),
   // A pending stage jump awaiting the user's approval: where the run is,
   // where the supervisor wants to move it, and why.
   z.object({

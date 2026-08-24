@@ -346,6 +346,43 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('adapts a flow start review into a flow_start block with start choices', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-flow-start',
+      toolName: 'FlowStart',
+      action: 'Starting flow harden-payments',
+      display: {
+        kind: 'flow_start_review',
+        flow_id: 'harden-payments',
+        task: 'harden the payments module',
+        source_path: '/ws/.kimi-code/flows/harden-payments.md',
+        stages: [
+          { id: 'audit', gate: 'human', objective: 'map the surface', completion: 'risks ranked' },
+          { id: 'fix', gate: 'ai-then-human', objective: 'close the risks', completion: 'suite green' },
+        ],
+      },
+    });
+
+    expect(adapted.description).toBe('');
+    expect(adapted.display).toEqual([
+      {
+        type: 'flow_start',
+        flow_id: 'harden-payments',
+        task: 'harden the payments module',
+        source_path: '/ws/.kimi-code/flows/harden-payments.md',
+        stages: [
+          { id: 'audit', gate: 'human', objective: 'map the surface', completion: 'risks ranked' },
+          { id: 'fix', gate: 'ai-then-human', objective: 'close the risks', completion: 'suite green' },
+        ],
+      },
+    ]);
+    expect(adapted.choices).toEqual([
+      { label: 'Start the run', response: 'approved' },
+      { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+      { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
+    ]);
+  });
+
   it('maps approved-for-session responses into core approval payloads', () => {
     expect(
       adaptPanelResponse({

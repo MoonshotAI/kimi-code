@@ -6,7 +6,7 @@ export const flowFlag: FlagDefinitionInput = {
   description:
     'Multi-stage flow runs: the main agent supervises user-defined stages from .kimi-code/flows definitions, dispatching workers and passing gated stage transitions.',
   env: 'KIMI_CODE_EXPERIMENTAL_FLOW',
-  default: false,
+  default: true,
   surface: 'both',
 };
 

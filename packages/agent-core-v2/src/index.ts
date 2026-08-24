@@ -384,6 +384,7 @@ export * from '#/features/flow/tools/abort/abort';
 export * from '#/features/flow/tools/jump/jump';
 export * from '#/features/flow/skill/skill';
 export * from '#/features/flow/flowsSkillSource';
+export * from '#/features/flow/skill/skill';
 import '#/features/flow/flowFeature';
 export * from '#/agent/usage/usage';
 export * from '#/session/usage/sessionUsage';

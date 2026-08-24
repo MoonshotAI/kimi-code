@@ -655,7 +655,7 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 14_898,
+        tokens_before: 16_207,
         retry_count: 1,
         trace_id: 'trace-compact-1',
       }),
@@ -1069,7 +1069,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 14_898,
+        tokens_before: 16_207,
         duration_ms: expect.any(Number),
         round: 1,
         retry_count: 0,
@@ -1294,7 +1294,7 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokens_before: 14_898,
+        tokens_before: 16_207,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',

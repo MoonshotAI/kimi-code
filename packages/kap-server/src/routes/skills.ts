@@ -1,6 +1,7 @@
 import {
   builtinProductSkillsEnabled,
   discoverFlowSkills,
+  FLOW_DRAFT_SKILL,
   visibleBuiltinSkills,
   Error2,
   ErrorCodes,
@@ -315,7 +316,10 @@ async function listWorkspaceSkillsForRoot(
           core.accessor.get(IHostFileSystem),
           workDir,
           userFlowsDir(bootstrap.homeDir),
-        )
+        ).then((contribution) => ({
+          ...contribution,
+          skills: [FLOW_DRAFT_SKILL, ...contribution.skills],
+        }))
       : Promise.resolve({ skills: [] as readonly SkillDefinition[] }),
   ]);
 

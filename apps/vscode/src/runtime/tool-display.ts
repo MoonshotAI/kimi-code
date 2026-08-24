@@ -26,6 +26,8 @@ export function describeToolDisplay(display: ToolInputDisplay): string {
       return display.task_description;
     case "plan_review":
       return display.plan;
+    case "flow_start_review":
+      return `Start flow ${display.flow_id} (${display.stages.length} stages)`;
     case "flow_gate_review":
       return `Stage ${display.stage_id} gate review (${display.stage_index + 1}/${display.stage_total})`;
     case "flow_jump_review":
@@ -65,6 +67,18 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
           status: item.status === "done" || item.status === "in_progress" ? item.status : "pending",
         })),
       }];
+    case "flow_start_review": {
+      const lines = [
+        describeToolDisplay(display),
+        `task: ${display.task}`,
+        `definition: ${display.source_path}`,
+        ...display.stages.map(
+          (stage, index) =>
+            `${index + 1}. ${stage.id} (gate: ${stage.gate}) — ${stage.objective}`,
+        ),
+      ];
+      return [{ type: "brief", text: lines.join("\n") }];
+    }
     case "flow_gate_review": {
       const lines = [
         describeToolDisplay(display),

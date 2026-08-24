@@ -16,6 +16,15 @@ const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Revise', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
 ];
 
+// Flow start review: approving begins the run; a rejection with feedback
+// sends the supervisor back to revise the drafted definition, and a plain
+// rejection stops the turn awaiting the user's direction.
+const FLOW_START_CHOICES: ApprovalPanelChoice[] = [
+  { label: 'Start the run', response: 'approved' },
+  { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+  { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
+];
+
 // Flow gate review: a plain rejection stops the turn and waits for the user;
 // a rejection with feedback sends the supervisor back to rework the stage.
 const FLOW_GATE_CHOICES: ApprovalPanelChoice[] = [
@@ -194,6 +203,7 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
     case 'plan_review':
     case 'flow_gate_review':
       return '';
+    case 'flow_start_review':
     case 'flow_jump_review':
       return '';
     case 'goal_start':
@@ -358,6 +368,16 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
           note: display.note,
         },
       ];
+    case 'flow_start_review':
+      return [
+        {
+          type: 'flow_start',
+          flow_id: display.flow_id,
+          task: display.task,
+          source_path: display.source_path,
+          stages: display.stages.map((stage) => ({ ...stage })),
+        },
+      ];
     case 'flow_jump_review': {
       const direction = display.to_index < display.from_index ? 'back' : 'forward';
       return [
@@ -390,6 +410,9 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
 }
 
 function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPanelChoice[] {
+  if (display.kind === 'flow_start_review') {
+    return FLOW_START_CHOICES.map((choice) => cloneChoice(choice));
+  }
   if (display.kind === 'flow_gate_review') {
     return FLOW_GATE_CHOICES.map((choice) => cloneChoice(choice));
   }

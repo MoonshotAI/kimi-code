@@ -142,3 +142,30 @@ function extractStageNotes(body: string): Map<string, string> {
   flush();
   return notes;
 }
+
+/**
+ * Parse a definition text and verify it declares the requested flow id —
+ * the shared validation between FlowStart's execution and the start-review
+ * approval hook. Returns exactly one of `definition` or `error`.
+ */
+export function validateFlowDefinitionText(
+  text: string,
+  sourcePath: string,
+  flowId: string,
+): { definition?: FlowDefinition; error?: string } {
+  let definition: FlowDefinition;
+  try {
+    definition = parseFlowDefinition(text);
+  } catch (error) {
+    if (error instanceof FlowDefinitionParseError) {
+      return { error: `${error.message} (${sourcePath})` };
+    }
+    throw error;
+  }
+  if (definition.id !== flowId) {
+    return {
+      error: `The definition at ${sourcePath} declares id \`${definition.id}\`, which does not match the requested flow \`${flowId}\`. Fix the file's id or request the flow by its declared id.`,
+    };
+  }
+  return { definition };
+}

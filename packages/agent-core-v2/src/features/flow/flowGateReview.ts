@@ -7,9 +7,16 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import type { IAgentFlowService } from './flow';
+import type { FlowDefinition, IAgentFlowService } from './flow';
 import { FlowAdvanceInputSchema } from './tools/advance/advance';
+import { FlowStartInputSchema } from './tools/start/start';
+
+export interface ResolvedStartDefinition {
+  readonly definition: FlowDefinition;
+  readonly sourcePath: string;
+}
 
 export class FlowGateReview {
   constructor(
@@ -17,7 +24,83 @@ export class FlowGateReview {
     private readonly toolApproval: IAgentToolApprovalService,
     private readonly onApproved: (toolCallId: string) => void,
     private readonly runEpoch: () => number,
+    private readonly loadStartDefinition: (
+      flowId: string,
+    ) => Promise<ResolvedStartDefinition | undefined>,
   ) {}
+
+  async requestStartApproval(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<BeforeExecuteDecision | undefined> {
+    const parsed = FlowStartInputSchema.safeParse(context.args);
+    if (!parsed.success) return undefined;
+    if (this.flow.run().active || this.flow.hasPendingActivation()) return undefined;
+    const resolved = await this.loadStartDefinition(parsed.data.flow);
+    if (resolved === undefined) return undefined;
+    const display: ToolInputDisplay = {
+      kind: 'flow_start_review',
+      flow_id: resolved.definition.id,
+      task: parsed.data.task,
+      source_path: resolved.sourcePath,
+      stages: resolved.definition.stages.map((stage) => ({
+        id: stage.id,
+        gate: stage.gate,
+        objective: stage.objective,
+        completion: stage.completion,
+      })),
+    };
+    const reviewContext = { ...context, execution: { ...context.execution, display } };
+    return this.toolApproval.requestToolApproval(
+      reviewContext,
+      {
+        kind: 'ask',
+        resolveApproval: (result) => this.startApprovalResult(result),
+      },
+      'flow-start-review-ask',
+    );
+  }
+
+  private startApprovalResult(result: ApprovalResponse): PermissionPolicyResolution | undefined {
+    if (result.decision === 'approved') return undefined;
+    if (result.decision === 'cancelled') {
+      return {
+        kind: 'result',
+        result: {
+          isError: false,
+          output: 'Start approval dismissed. The flow run was not started.',
+        },
+      };
+    }
+    const feedback = result.feedback ?? '';
+    if (feedback.length === 0 && (result.selectedLabel === undefined || result.selectedLabel.length === 0)) {
+      return {
+        kind: 'result',
+        result: {
+          isError: true,
+          stopTurn: true,
+          output:
+            'The start review ended without an observed user decision (transport failure or dismissal). The flow run was not started — wait for the user.',
+        },
+      };
+    }
+    if (feedback.length > 0) {
+      return {
+        kind: 'result',
+        result: {
+          isError: false,
+          output: `The user declined to start the flow run. Feedback:\n\n${feedback}\n\nRevise the flow definition (or the task) accordingly, then submit FlowStart again.`,
+        },
+      };
+    }
+    return {
+      kind: 'result',
+      result: {
+        isError: true,
+        stopTurn: true,
+        output: "The user declined to start the flow run. Wait for the user's direction.",
+      },
+    };
+  }
 
   async requestApproval(
     context: ResolvedToolExecutionHookContext,

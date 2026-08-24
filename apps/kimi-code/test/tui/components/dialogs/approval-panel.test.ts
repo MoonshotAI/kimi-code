@@ -88,6 +88,43 @@ describe('ApprovalPanelComponent', () => {
     expect(out).toContain('2. Do not start');
   });
 
+  it('renders a flow start review with the blueprint and start choices', () => {
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_flow_start',
+        tool_call_id: 'tool_flow_start',
+        tool_name: 'FlowStart',
+        action: 'Starting flow harden-payments',
+        description: '',
+        display: [
+          {
+            type: 'flow_start',
+            flow_id: 'harden-payments',
+            task: 'harden the payments module',
+            source_path: '/ws/.kimi-code/flows/harden-payments.md',
+            stages: [
+              { id: 'audit', gate: 'human', objective: 'map the surface', completion: 'risks ranked' },
+              { id: 'fix', gate: 'ai-then-human', objective: 'close the risks', completion: 'suite green' },
+            ],
+          },
+        ],
+        choices: [
+          { label: 'Start the run', response: 'approved' },
+          { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
+          { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
+        ],
+      },
+    };
+    const out = strip(new ApprovalPanelComponent(pending, () => {}).render(100).join('\n'));
+    expect(out).toContain('Start this flow run?');
+    expect(out).toContain('flow harden-payments · 2 stages · /ws/.kimi-code/flows/harden-payments.md');
+    expect(out).toContain('task: harden the payments module');
+    expect(out).toContain('1. audit (gate: human)');
+    expect(out).toContain('done when: risks ranked');
+    expect(out).toContain('2. fix (gate: ai-then-human)');
+    expect(out).toContain('1. Start the run');
+  });
+
   it('renders a flow gate review with its own header, criteria checklist, and note', () => {
     const pending: PendingApproval = {
       data: {

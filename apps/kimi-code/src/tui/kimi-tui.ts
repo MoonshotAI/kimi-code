@@ -2801,6 +2801,7 @@ export class KimiTUI {
     if (
       request.toolName === 'ExitPlanMode' ||
       request.display.kind === 'plan_review' ||
+      request.display.kind === 'flow_start_review' ||
       request.display.kind === 'flow_gate_review' ||
       request.display.kind === 'goal_start'
     )

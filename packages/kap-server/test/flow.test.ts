@@ -40,7 +40,7 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
   const inheritedFlowEnv = process.env[FLOW_ENV];
 
   beforeEach(async () => {
-    delete process.env[FLOW_ENV];
+    process.env[FLOW_ENV] = 'false';
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-flow-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -178,7 +178,7 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
     const sessionId = await createSession();
     await startRun(sessionId);
 
-    delete process.env[FLOW_ENV];
+    process.env[FLOW_ENV] = 'false';
     const { body } = await getFlow(sessionId);
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ run: { active: false }, gates: [] });
@@ -199,7 +199,7 @@ describe('server-v2 /api/v1/sessions/{sid}/flow', () => {
       gate: 'human',
     });
 
-    delete process.env[FLOW_ENV];
+    process.env[FLOW_ENV] = 'false';
     expect(readLegacyStatus(main)?.flowRun).toBeNull();
   });
 });

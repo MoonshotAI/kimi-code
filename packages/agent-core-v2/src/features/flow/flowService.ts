@@ -5,6 +5,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { SkillActivated } from '#/agent/skill/skillOps';
 import { ISkillActivationDataService } from '#/agent/skill/skillActivationData';
@@ -17,6 +18,7 @@ import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
@@ -42,7 +44,7 @@ import {
   type FlowRunState,
   type FlowStageDefinition,
 } from './flow';
-import { FlowGateReview } from './flowGateReview';
+import { FlowGateReview, type ResolvedStartDefinition } from './flowGateReview';
 import {
   FLOW_SKILL_NAME_PREFIX,
   flowDefinitionPath,
@@ -50,6 +52,7 @@ import {
 } from './flowsSkillSource';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
+import { validateFlowDefinitionText } from './definition';
 import { FlowJumped, FlowRunEnded, FlowRunStarted, FlowVerdict, flowGatesKey, flowKey } from './flowOps';
 
 export class AgentFlowService extends Disposable implements IAgentFlowService {
@@ -75,6 +78,8 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
     @IEventBus eventBus: IEventBus,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISkillActivationDataService private readonly activationData: ISkillActivationDataService,
     @IAgentContextMemoryService private readonly contextMemory: IAgentContextMemoryService,
@@ -90,6 +95,7 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         this.approvedGateCalls.set(toolCallId, this.epoch);
       },
       () => this.epoch,
+      (flowId) => this.loadStartDefinition(flowId),
     );
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
@@ -117,6 +123,11 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
           if (this.jumpPolicy() !== 'approval') return;
           if (this.modeService.mode === 'auto') return;
           event.waitUntil(() => this.review.requestJumpApproval(event));
+          return;
+        }
+        if (event.toolCall.name === FLOW_START_TOOL_NAME) {
+          if (this.modeService.mode === 'auto') return;
+          event.waitUntil(() => this.review.requestStartApproval(event));
           return;
         }
         if (event.toolCall.name !== FLOW_ADVANCE_TOOL_NAME) return;
@@ -184,6 +195,38 @@ export class AgentFlowService extends Disposable implements IAgentFlowService {
         );
       }),
     );
+  }
+
+  private async loadStartDefinition(flowId: string): Promise<ResolvedStartDefinition | undefined> {
+    const projectPath = flowDefinitionPath(this.workspaceCtx.workDir, flowId);
+    let projectText: string | undefined;
+    try {
+      const lease = this.runtime.acquire(['fs']);
+      try {
+        projectText = await lease.runtime.fs?.readText(projectPath);
+      } finally {
+        lease.dispose();
+      }
+    } catch {
+      projectText = undefined;
+    }
+    if (projectText !== undefined) {
+      const validated = validateFlowDefinitionText(projectText, projectPath, flowId);
+      return validated.definition !== undefined
+        ? { definition: validated.definition, sourcePath: projectPath }
+        : undefined;
+    }
+    const userPath = userFlowDefinitionPath(this.bootstrap.homeDir, flowId);
+    let userText: string | undefined;
+    try {
+      userText = await this.hostFs.readText(userPath);
+    } catch {
+      return undefined;
+    }
+    const validated = validateFlowDefinitionText(userText, userPath, flowId);
+    return validated.definition !== undefined
+      ? { definition: validated.definition, sourcePath: userPath }
+      : undefined;
   }
 
   private isBuiltinFlowTool(name: string): boolean {

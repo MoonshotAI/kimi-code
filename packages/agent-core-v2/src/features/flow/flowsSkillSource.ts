@@ -18,7 +18,7 @@ import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext
 
 import { FlowDefinitionParseError, parseFlowDefinition } from './definition';
 import { FLOW_FLAG_ID, FLOWS_PROJECT_DIR, type FlowDefinition } from './flow';
-import { FLOW_SUPERVISOR_CONTRACT } from './skill/skill';
+import { FLOW_DRAFT_SKILL, FLOW_SUPERVISOR_CONTRACT } from './skill/skill';
 
 export const FLOWS_SKILL_SOURCE_ID = 'flows';
 
@@ -156,7 +156,12 @@ export class FlowsSkillSource extends Disposable implements IFlowsSkillSource {
   async load(): Promise<SkillContribution> {
     if (!this.flags.enabled(FLOW_FLAG_ID)) return { skills: [] };
     await this.watchReady;
-    return discoverFlowSkills(this.fs, this.workspace.cwd, userFlowsDir(this.bootstrap.homeDir));
+    const discovered = await discoverFlowSkills(
+      this.fs,
+      this.workspace.cwd,
+      userFlowsDir(this.bootstrap.homeDir),
+    );
+    return { ...discovered, skills: [FLOW_DRAFT_SKILL, ...discovered.skills] };
   }
 }
 

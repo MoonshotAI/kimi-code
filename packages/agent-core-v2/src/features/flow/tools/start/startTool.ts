@@ -7,7 +7,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { ToolAccesses, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 
 import { FLOWS_PROJECT_DIR, IAgentFlowService, type FlowDefinition } from '../../flow';
-import { FlowDefinitionParseError, parseFlowDefinition } from '../../definition';
+import { validateFlowDefinitionText } from '../../definition';
 import { userFlowDefinitionPath, userFlowsDir } from '../../flowsSkillSource';
 
 import DESCRIPTION from './start.md?raw';
@@ -82,7 +82,9 @@ export class FlowStartTool implements IFlowStartTool {
     }
 
     const project =
-      projectText === undefined ? undefined : this.validateDefinition(projectText, path, args.flow);
+      projectText === undefined
+        ? undefined
+        : validateFlowDefinitionText(projectText, path, args.flow);
     if (project?.definition !== undefined) {
       return this.startRun(project.definition, args);
     }
@@ -95,7 +97,9 @@ export class FlowStartTool implements IFlowStartTool {
       userText = undefined;
     }
     const user =
-      userText === undefined ? undefined : this.validateDefinition(userText, userPath, args.flow);
+      userText === undefined
+        ? undefined
+        : validateFlowDefinitionText(userText, userPath, args.flow);
     if (user?.definition !== undefined) {
       return this.startRun(user.definition, args);
     }
@@ -106,28 +110,6 @@ export class FlowStartTool implements IFlowStartTool {
       isError: true,
       output: `Could not read the flow definition at ${path} or ${userPath}. Check that the file exists under ${FLOWS_PROJECT_DIR}/ or ${userFlowsDir(this.bootstrap.homeDir)}/.`,
     };
-  }
-
-  private validateDefinition(
-    text: string,
-    sourcePath: string,
-    flowId: string,
-  ): { definition?: FlowDefinition; error?: string } {
-    let definition: FlowDefinition;
-    try {
-      definition = parseFlowDefinition(text);
-    } catch (error) {
-      if (error instanceof FlowDefinitionParseError) {
-        return { error: `${error.message} (${sourcePath})` };
-      }
-      throw error;
-    }
-    if (definition.id !== flowId) {
-      return {
-        error: `The definition at ${sourcePath} declares id \`${definition.id}\`, which does not match the requested flow \`${flowId}\`. Fix the file's id or request the flow by its declared id.`,
-      };
-    }
-    return { definition };
   }
 
   private startRun(definition: FlowDefinition, args: FlowStartInput): ExecutableToolResult {

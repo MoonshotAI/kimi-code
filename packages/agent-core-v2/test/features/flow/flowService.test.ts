@@ -9,6 +9,7 @@ import {
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -25,6 +26,7 @@ import { IConfigService, type ConfigChangedEvent } from '#/app/config/config';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
 import { FLOW_FLAG_ID, IAgentFlowService, type FlowDefinition } from '#/features/flow/flow';
@@ -57,6 +59,19 @@ const DEFINITION: FlowDefinition = {
 };
 
 const CRITERIA = [{ criterion: 'cause located', met: true, evidence: 'src/x.ts:12' }];
+
+const DEFINITION_TEXT = `---
+id: issue-fix
+stages:
+  - id: triage
+    objective: find root cause
+    completion: cause located
+    gate: human
+  - id: implement
+    objective: fix it
+    completion: tests pass
+---
+`;
 
 
 describe('AgentFlowService', () => {
@@ -97,6 +112,25 @@ describe('AgentFlowService', () => {
     ix.stub(IBootstrapService, {
       homeDir: '/home/.kimi-code',
     } as unknown as IBootstrapService);
+    ix.stub(IAgentRuntimeService, {
+      acquire: () => ({
+        runtime: {
+          identity: { generation: 'g1' },
+          fs: {
+            readText: async (path: string) => {
+              if (path.endsWith('/issue-fix.md')) return DEFINITION_TEXT;
+              throw new Error('not found');
+            },
+          },
+        },
+        dispose: () => {},
+      }),
+    } as unknown as IAgentRuntimeService);
+    ix.stub(IHostFileSystem, {
+      readText: async () => {
+        throw new Error('not found');
+      },
+    } as unknown as IHostFileSystem);
     ix.stub(IAgentToolRegistryService, {
       listReferences: () => [
         ...['FlowStart', 'FlowAdvance', 'FlowAbort', 'FlowJump'].map((name) => ({
@@ -861,6 +895,66 @@ describe('AgentFlowService', () => {
         execution: { approvalRule: 'TodoList', execute: async () => ({ output: '' }) },
       };
       expect(await executorEvents.fireBeforeExecute(context)).toBeUndefined();
+    });
+  });
+
+  describe('FlowStart start review', () => {
+    function startContext(args: unknown): ResolvedToolExecutionHookContext {
+      const call: ToolCall = {
+        type: 'function',
+        id: 'call_start',
+        name: 'FlowStart',
+        arguments: '{}',
+      };
+      return {
+        turnId: 0,
+        signal,
+        toolCall: call,
+        toolCalls: [call],
+        args,
+        execution: {
+          approvalRule: 'FlowStart',
+          execute: async () => ({ output: '' }),
+        },
+      } as ResolvedToolExecutionHookContext;
+    }
+
+    it('raises a flow_start_review approval with the parsed blueprint', async () => {
+      await executorEvents.fireBeforeExecute(
+        startContext({ flow: 'issue-fix', task: 'fix the paste bug' }),
+      );
+      expect(requestToolApproval).toHaveBeenCalledTimes(1);
+      const reviewContext = requestToolApproval.mock.calls[0]![0] as ResolvedToolExecutionHookContext;
+      const display = reviewContext.execution.display;
+      expect(display?.kind).toBe('flow_start_review');
+      if (display?.kind === 'flow_start_review') {
+        expect(display.flow_id).toBe('issue-fix');
+        expect(display.task).toBe('fix the paste bug');
+        expect(display.stages.map((stage) => stage.id)).toEqual(['triage', 'implement']);
+        expect(display.source_path).toContain('.kimi-code/flows/issue-fix.md');
+      }
+    });
+
+    it('skips the start review in auto mode, with an active run, and for an unknown flow', async () => {
+      permissionMode = 'auto';
+      await executorEvents.fireBeforeExecute(
+        startContext({ flow: 'issue-fix', task: 'task' }),
+      );
+      expect(requestToolApproval).not.toHaveBeenCalled();
+
+      permissionMode = 'default';
+      service.start(DEFINITION, 'task');
+      await executorEvents.fireBeforeExecute(
+        startContext({ flow: 'issue-fix', task: 'task' }),
+      );
+      expect(requestToolApproval).not.toHaveBeenCalled();
+    });
+
+    it('skips the start review when the definition does not declare the requested id', async () => {
+      await executorEvents.fireBeforeExecute(
+        startContext({ flow: 'other-flow', task: 'task' }),
+      );
+      expect(requestToolApproval).not.toHaveBeenCalled();
     });
   });
 
