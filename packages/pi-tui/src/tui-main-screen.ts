@@ -121,6 +121,7 @@ export interface TuiMainScreenRenderState {
 	hardwareCursorRow: number;
 	maxLinesRendered: number;
 	previousViewportTop: number;
+	aboveViewportStaleTop: number | null;
 }
 
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
@@ -156,6 +157,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			hardwareCursorRow: this.hardwareCursorRow,
 			maxLinesRendered: this.maxLinesRendered,
 			previousViewportTop: this.previousViewportTop,
+			aboveViewportStaleTop: this.aboveViewportStaleTop,
 		};
 	}
 
@@ -170,7 +172,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.hardwareCursorRow = state.hardwareCursorRow;
 		this.maxLinesRendered = state.maxLinesRendered;
 		this.previousViewportTop = state.previousViewportTop;
-		this.aboveViewportStaleTop = null;
+		this.aboveViewportStaleTop = state.aboveViewportStaleTop;
 	}
 
 	protected override resetRenderState(): void {
