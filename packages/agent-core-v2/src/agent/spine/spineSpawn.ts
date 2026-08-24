@@ -1,5 +1,5 @@
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import {
@@ -14,7 +14,10 @@ import {
   ChatProviderError,
 } from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
-import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  MAIN_AGENT_ID,
+  type IAgentLifecycleService,
+} from '#/session/agentLifecycle/agentLifecycle';
 import type {
   AgentRunHandle,
   ISessionSubagentService,
@@ -117,7 +120,7 @@ export async function executeSpawnBranches(
     const settles = await Promise.all(
       starts.map((start) =>
         start.ok
-          ? settleBranch(start.branch, signal, batchAborted)
+          ? settleBranch(deps, start.branch, signal, batchAborted)
           : Promise.resolve(startFailedSettle(start.error)),
       ),
     );
@@ -127,7 +130,7 @@ export async function executeSpawnBranches(
         tasks[index]!,
         settle,
         batchAborted,
-        start.ok ? start.branch.handle.id : undefined,
+        start.ok ? start.branch.context.agentId : undefined,
       );
     });
   } finally {
@@ -141,7 +144,7 @@ type BranchStart =
 
 interface SpawnBranch {
   readonly task: SpineSpawnTaskInput;
-  readonly handle: IAgentScopeHandle;
+  readonly context: AgentContext;
   readonly run: AgentRunHandle;
 }
 
@@ -151,16 +154,20 @@ async function startBranch(
   tasks: readonly SpineSpawnTaskInput[],
   signal: AbortSignal,
 ): Promise<SpawnBranch> {
-  const handle = await deps.lifecycle.fork('main', {
+  const source = deps.lifecycle.get(MAIN_AGENT_ID);
+  if (source === undefined) {
+    throw new Error('Main agent was not found');
+  }
+  const context = await deps.lifecycle.fork(source, {
     trimTrailingToolCallBatch: true,
     labels: { [SPINE_BRANCH_LABEL]: 'true' },
   });
   const run = await deps.subagentService.run(
-    handle.id,
+    context,
     { kind: 'prompt', prompt: taskEnvelope(task, tasks) },
     { signal } satisfies RunAgentOptions,
   );
-  return { task, handle, run };
+  return { task, context, run };
 }
 
 async function awaitBranch(
@@ -232,7 +239,7 @@ async function releaseBranch(
   branch: SpawnBranch,
 ): Promise<void> {
   try {
-    await deps.lifecycle.remove(branch.handle.id);
+    await deps.lifecycle.remove(branch.context);
   } catch (error) {
     onUnexpectedError(error);
   }
@@ -286,6 +293,7 @@ function startFailedSettle(error: unknown): BranchSettle {
 }
 
 async function settleBranch(
+  deps: SpawnExecutorDependencies,
   branch: SpawnBranch,
   signal: AbortSignal,
   batchAborted: boolean,
@@ -300,7 +308,7 @@ async function settleBranch(
     }
     const salvagedMemory =
       !batchAborted && isSalvageableError(reason)
-        ? await salvageBranchMemory(branch, extracted.message, signal)
+        ? await salvageBranchMemory(deps, branch, extracted.message, signal)
         : undefined;
     return { type: 'failed', reason: extracted, salvagedMemory };
   }
@@ -334,14 +342,17 @@ function isSalvageableError(reason: unknown): boolean {
 }
 
 async function salvageBranchMemory(
+  deps: SpawnExecutorDependencies,
   branch: SpawnBranch,
   diagnostic: string,
   signal: AbortSignal,
 ): Promise<string | undefined> {
   if (signal.aborted) return undefined;
   try {
-    const context = branch.handle.accessor.get(IAgentContextMemoryService);
-    const requester = branch.handle.accessor.get(IAgentLLMRequesterService);
+    const handle = deps.lifecycle.handleOf(branch.context.agentId);
+    if (handle === undefined) return undefined;
+    const context = handle.accessor.get(IAgentContextMemoryService);
+    const requester = handle.accessor.get(IAgentLLMRequesterService);
     const salvageMessage: Message = {
       role: 'user',
       content: [

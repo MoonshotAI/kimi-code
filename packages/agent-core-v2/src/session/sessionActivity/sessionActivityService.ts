@@ -15,7 +15,11 @@ import {
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionInteractionService, type Interaction } from '#/session/interaction/interaction';
+import type { Interaction } from '#/features/interaction/interaction';
+import {
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+} from '#/features/interaction/sessionInteractions';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import {
@@ -55,27 +59,31 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
-    @ISessionInteractionService private readonly interactions: ISessionInteractionService,
   ) {
     super();
     this.states.contributeState(sessionActivityFoldsKey);
     this.states.contributeState(sessionActivityCurrentKey);
-    for (const handle of this.agents.list()) this.attachAgent(handle);
+    for (const agent of this.agents.list()) {
+      const handle = this.agents.handleOf(agent.agentId);
+      if (handle !== undefined) this.attachAgent(handle);
+    }
     this.current = this.aggregate();
     this._register(
-      this.agents.onDidCreate((handle) => {
+      this.agents.onDidCreateScope(({ handle }) => {
         this.attachAgent(handle);
         this.recompute('agent_lifecycle');
       }),
     );
     this._register(
-      this.agents.onDidDispose((agentId) => {
-        this.agentSubscriptions.get(agentId)?.dispose();
-        this.agentSubscriptions.delete(agentId);
-        if (this.folds.delete(agentId)) this.recompute('agent_lifecycle');
+      this.agents.onDidClose((agent) => {
+        this.agentSubscriptions.get(agent.agentId)?.dispose();
+        this.agentSubscriptions.delete(agent.agentId);
+        if (this.folds.delete(agent.agentId)) this.recompute('agent_lifecycle');
       }),
     );
-    this._register(this.interactions.onDidChangePending(() => this.recompute('interaction')));
+    this._register(
+      onSessionInteractionDidChangePending(this.agents, () => this.recompute('interaction')),
+    );
     this._register(
       toDisposable(() => {
         for (const subscription of this.agentSubscriptions.values()) subscription.dispose();
@@ -148,7 +156,7 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
-      pendingInteraction: resolvePendingInteraction(this.interactions.listPending()),
+      pendingInteraction: resolvePendingInteraction(listSessionPendingInteractions(this.agents)),
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
     };
   }

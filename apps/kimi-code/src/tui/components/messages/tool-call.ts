@@ -36,6 +36,7 @@ import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { buildWaitForHeader } from './tool-renderers/wait-for';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
@@ -620,6 +621,7 @@ export class ToolCallComponent extends Container {
   // spinner). Cleared when the result lands — the result is the
   // authoritative final state.
   private progressLines: string[] = [];
+  private progressStatusRows = 0;
   private static readonly MAX_PROGRESS_LINES = 24;
   private liveOutput = '';
 
@@ -731,6 +733,7 @@ export class ToolCallComponent extends Container {
     // authoritative final state. Without this clear, a finished tool would
     // show both the streamed status lines and the final output stacked.
     this.progressLines = [];
+    this.progressStatusRows = 0;
     this.liveOutput = '';
     this.detachHintVisible = false;
     this.stopDetachHintTimer();
@@ -759,15 +762,26 @@ export class ToolCallComponent extends Container {
   /**
    * Append a live progress line emitted by the tool via
    * `onUpdate({kind:'status', text})`. Splits on newlines so multi-line
-   * status payloads render row-by-row. Old lines are dropped once the
+   * status payloads render row-by-row. With `options.replace`, the previous
+   * replaceable status block is swapped out first — periodic "still
+   * waiting" updates would otherwise pile up to the cap with stale rows.
+   * Old lines are dropped once the
    * buffer fills past {@link ToolCallComponent.MAX_PROGRESS_LINES} so a
    * misbehaving tool can't grow the box unboundedly.
    */
-  appendProgress(text: string): void {
+  appendProgress(text: string, options?: { readonly replace?: boolean }): void {
     if (this.result !== undefined) return;
-    for (const line of text.split('\n')) {
+    if (options?.replace === true && this.progressStatusRows > 0) {
+      this.progressLines.splice(
+        Math.max(0, this.progressLines.length - this.progressStatusRows),
+        this.progressStatusRows,
+      );
+    }
+    const lines = text.split('\n');
+    for (const line of lines) {
       this.progressLines.push(line);
     }
+    this.progressStatusRows = options?.replace === true ? lines.length : 0;
     while (this.progressLines.length > ToolCallComponent.MAX_PROGRESS_LINES) {
       this.progressLines.shift();
     }
@@ -1379,14 +1393,14 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  appendSubToolLiveOutput(id: string, text: string): void {
+  appendSubToolLiveOutput(id: string, text: string, options?: { readonly replace?: boolean }): void {
     if (text.length === 0) return;
     const activity = this.subToolActivities.get(id);
     const ongoing = this.ongoingSubCalls.get(id);
     if (activity === undefined && ongoing === undefined) return;
     const name = activity?.name ?? ongoing?.name ?? 'Tool';
     const args = activity?.args ?? ongoing?.args ?? {};
-    const existingOutput = activity?.output ?? '';
+    const existingOutput = options?.replace === true ? '' : (activity?.output ?? '');
     let output = existingOutput + text;
     if (output.length > MAX_LIVE_OUTPUT_CHARS) {
       output = `[...truncated]\n${output.slice(output.length - MAX_LIVE_OUTPUT_CHARS)}`;
@@ -1502,6 +1516,14 @@ export class ToolCallComponent extends Container {
       chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
     });
     if (goalHeader !== undefined) return goalHeader;
+
+    const waitForHeader = buildWaitForHeader({
+      toolCall,
+      result,
+      bullet,
+      chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
+    });
+    if (waitForHeader !== undefined) return waitForHeader;
 
     if (this.isSingleSubagentView()) {
       return this.buildSingleSubagentHeader();
@@ -1880,7 +1902,7 @@ export class ToolCallComponent extends Container {
       current?.phase === 'ongoing' &&
       current.output !== undefined &&
       current.output.trim().length > 0 &&
-      (current.name === 'Bash' || isGenericToolResult(current.name))
+      (current.name === 'Bash' || current.name === 'WaitFor' || isGenericToolResult(current.name))
     ) {
       return { text: current.output, tone: 'text' };
     }

@@ -127,7 +127,7 @@ async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<R
       try {
         await closeProvider();
       } finally {
-        await rm(rootDir, { recursive: true, force: true });
+        await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     }
   });
@@ -155,7 +155,7 @@ async function createPlainHarness(homeDir: string): Promise<KimiHarness> {
 
 async function createMcpHandlerRig(): Promise<McpHandlerRig> {
   const homeDir = await mkdtemp(join(tmpdir(), "kimi-vscode-mcp-handler-"));
-  cleanups.push(() => rm(homeDir, { recursive: true, force: true }));
+  cleanups.push(() => rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const harness = await createPlainHarness(homeDir);
   const broadcasts: BroadcastRecord[] = [];
   const logs: LogRecord[] = [];
@@ -506,7 +506,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
   it("keeps project-layer servers in the list refreshed after every mutation", async () => {
     const rig = await createMcpHandlerRig();
     const project = await mkdtemp(join(tmpdir(), "kimi-vscode-mcp-project-"));
-    cleanups.push(() => rm(project, { recursive: true, force: true }));
+    cleanups.push(() => rm(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     await mkdir(join(project, ".git"), { recursive: true });
     await writeFile(
       join(project, ".mcp.json"),

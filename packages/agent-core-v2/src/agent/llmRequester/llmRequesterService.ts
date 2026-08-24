@@ -9,13 +9,13 @@ import {
   type MediaStripSnapshot,
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import { IAgentUsageService } from '#/agent/usage/usage';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import {
   APIRequestTooLargeError,
@@ -47,6 +47,7 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
@@ -153,18 +154,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextProjectorService private readonly projector: IAgentContextProjectorService,
-    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentMediaResolverService private readonly mediaResolver: IAgentMediaResolverService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentUsageService private readonly usage: IAgentUsageService,
+    @ISessionUsageService private readonly usage: ISessionUsageService,
     @IConfigService private readonly config: IConfigService,
     @IModelService private readonly modelService: IModelService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     this.states.contributeState(llmRequestTraceKey);
@@ -350,7 +352,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
-    const currentTurn = this.usage.status().currentTurn;
+    const currentTurn = this.usage.status(this.scopeContext.agentContext).currentTurn;
     if (currentTurn !== undefined) properties['input_tokens'] = inputTotal(currentTurn);
     this.telemetry.track2('api_error', properties);
     return traceId;
@@ -481,9 +483,14 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         throw error;
       }
 
-      this.usage.record(request.modelAlias, usage ?? emptyUsage(), request.source);
+      void this.usage.record(
+        this.scopeContext.agentContext,
+        request.modelAlias,
+        usage ?? emptyUsage(),
+        request.source,
+      );
       if (usage !== undefined) {
-        this.tokenCounting.measured(request.messages, [message], usage);
+        this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 
@@ -607,7 +614,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     } catch {
     }
     try {
-      void this.dispatcher.dispatch(new WarningIssued({ code, message }));
+      void this.dispatcher.dispatch(
+        new WarningIssued({ agentId: this.scopeContext.agentId, code, message }),
+      );
     } catch {
     }
   }
@@ -660,7 +669,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       capability: resolved.modelCapabilities,
       usedContextTokens:
         overrides.messages === undefined
-          ? this.tokenCounting.get().size
+          ? this.tokenCounting.get(this.scopeContext.agentContext).size
           : undefined,
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);
@@ -755,7 +764,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const tools = toolSignature(wireTools);
     const toolsHash = fingerprint(JSON.stringify(tools));
     if (!this.states.get(llmRequestTraceKey).seenToolsHashes.includes(toolsHash)) {
-      void this.dispatcher.dispatch(new LlmToolsSnapshot({ hash: toolsHash, tools }));
+      void this.dispatcher.dispatch(
+        new LlmToolsSnapshot({ agentId: this.scopeContext.agentId, hash: toolsHash, tools }),
+      );
     }
 
     const systemPromptHash = fingerprint(input.systemPrompt);
@@ -764,6 +775,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const modelConfig =
       input.modelAlias === undefined ? undefined : this.modelService.get(input.modelAlias);
     const payload: LlmRequestPayload = {
+      agentId: this.scopeContext.agentId,
       kind: requestKindForRecord(fields),
       provider: input.protocol,
       model: input.modelName,

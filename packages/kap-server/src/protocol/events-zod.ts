@@ -19,7 +19,7 @@ import type {
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { messageContentSchema } from './message';
-import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
@@ -36,7 +36,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
-} from '@moonshot-ai/agent-core-v2/agent/goal/types';
+} from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDeltaPayload,
   ThinkingDeltaPayload,
@@ -469,6 +469,7 @@ export const toolUpdateSchema = z.object({
   percent: z.number().optional(),
   customKind: z.string().optional(),
   customData: z.unknown().optional(),
+  replace: z.boolean().optional(),
 }) satisfies z.ZodType<ToolUpdate>;
 
 export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
@@ -545,6 +546,7 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
 
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
+  agentId: z.string(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
   contextTokens: z.number().optional(),
@@ -552,6 +554,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   contextUsage: z.number().optional(),
   planMode: z.boolean().optional(),
   swarmMode: z.boolean().optional(),
+  towerMode: z.boolean().optional(),
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
   phase: agentPhaseSchema.optional(),
@@ -574,6 +577,11 @@ export const agentDisposedEventSchema = z.object({
 export const sessionCreatedEventSchema = z.object({
   type: z.literal('event.session.created'),
   session: sessionSchema,
+});
+
+export const sessionArchivedEventSchema = z.object({
+  type: z.literal('event.session.archived'),
+  workspace_id: z.string().min(1),
 });
 
 export const workspaceCreatedEventSchema = z.object({
@@ -657,12 +665,14 @@ export const diUnitChangedEventSchema = z.object({
 
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
+  agentId: z.string(),
   snapshot: goalSnapshotSchema.nullable(),
   change: goalChangeSchema.optional(),
 });
 
 export const skillActivatedEventSchema = z.object({
   type: z.literal('skill.activated'),
+  agentId: z.string(),
   activationId: z.string(),
   skillName: z.string(),
   skillArgs: z.string().optional(),
@@ -673,6 +683,7 @@ export const skillActivatedEventSchema = z.object({
 
 export const pluginCommandActivatedEventSchema = z.object({
   type: z.literal('plugin_command.activated'),
+  agentId: z.string(),
   activationId: z.string(),
   pluginId: z.string(),
   commandName: z.string(),
@@ -682,24 +693,31 @@ export const pluginCommandActivatedEventSchema = z.object({
 
 export const errorEventSchema = kimiErrorPayloadObjectSchema.extend({
   type: z.literal('error'),
+  agentId: z.string(),
 });
 
 export const warningEventSchema = z.object({
   type: z.literal('warning'),
+  agentId: z.string(),
   message: z.string(),
   code: z.string().optional(),
 }) satisfies z.ZodType<WarningEvent>;
 
 export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
+  agentId: z.string(),
   turnId: z.number(),
   origin: promptOriginSchema,
   prompt: z.string().optional(),
   promptId: z.string().optional(),
+  promptAttachments: z
+    .array(z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }))
+    .optional(),
 });
 
 export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
+  agentId: z.string(),
   time: z.number().optional(),
   turnId: z.number(),
   reason: turnEndReasonSchema,
@@ -712,6 +730,7 @@ export const turnEndedEventSchema = z.object({
 
 export const turnStepStartedEventSchema = z.object({
   type: z.literal('turn.step.started'),
+  agentId: z.string(),
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
@@ -719,6 +738,7 @@ export const turnStepStartedEventSchema = z.object({
 
 export const turnStepCompletedEventSchema = z.object({
   type: z.literal('turn.step.completed'),
+  agentId: z.string(),
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
@@ -736,6 +756,7 @@ export const turnStepCompletedEventSchema = z.object({
 
 export const turnStepRetryingEventSchema = z.object({
   type: z.literal('turn.step.retrying'),
+  agentId: z.string(),
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
@@ -750,6 +771,7 @@ export const turnStepRetryingEventSchema = z.object({
 
 export const turnStepInterruptedEventSchema = z.object({
   type: z.literal('turn.step.interrupted'),
+  agentId: z.string(),
   turnId: z.number(),
   step: z.number(),
   stepId: z.string().optional(),
@@ -759,12 +781,14 @@ export const turnStepInterruptedEventSchema = z.object({
 
 export const assistantDeltaEventSchema = z.object({
   type: z.literal('assistant.delta'),
+  agentId: z.string(),
   turnId: z.number(),
   delta: z.string(),
 }) satisfies z.ZodType<AssistantDeltaPayload>;
 
 export const hookResultEventSchema = z.object({
   type: z.literal('hook.result'),
+  agentId: z.string(),
   turnId: z.number().optional(),
   hookEvent: z.string(),
   content: z.string(),
@@ -773,12 +797,14 @@ export const hookResultEventSchema = z.object({
 
 export const thinkingDeltaEventSchema = z.object({
   type: z.literal('thinking.delta'),
+  agentId: z.string(),
   turnId: z.number(),
   delta: z.string(),
 }) satisfies z.ZodType<ThinkingDeltaPayload>;
 
 export const toolCallDeltaEventSchema = z.object({
   type: z.literal('tool.call.delta'),
+  agentId: z.string(),
   turnId: z.number(),
   toolCallId: z.string(),
   name: z.string().optional(),
@@ -787,6 +813,7 @@ export const toolCallDeltaEventSchema = z.object({
 
 export const toolCallStartedEventSchema = z.object({
   type: z.literal('tool.call.started'),
+  agentId: z.string(),
   turnId: z.number(),
   toolCallId: z.string(),
   name: z.string(),
@@ -797,6 +824,7 @@ export const toolCallStartedEventSchema = z.object({
 
 export const toolProgressEventSchema = z.object({
   type: z.literal('tool.progress'),
+  agentId: z.string(),
   turnId: z.number(),
   toolCallId: z.string(),
   update: toolUpdateSchema,
@@ -804,6 +832,7 @@ export const toolProgressEventSchema = z.object({
 
 export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
+  agentId: z.string(),
   commandId: z.string(),
   update: toolUpdateSchema,
   taskId: z.string().optional(),
@@ -811,12 +840,14 @@ export const shellOutputEventSchema = z.object({
 
 export const shellStartedEventSchema = z.object({
   type: z.literal('shell.started'),
+  agentId: z.string(),
   commandId: z.string(),
   taskId: z.string(),
 }) satisfies z.ZodType<ShellStartedPayload>;
 
 export const shellCompletedEventSchema = z.object({
   type: z.literal('shell.completed'),
+  agentId: z.string(),
   commandId: z.string(),
   isError: z.boolean(),
   taskId: z.string().optional(),
@@ -824,6 +855,7 @@ export const shellCompletedEventSchema = z.object({
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
+  agentId: z.string(),
   turnId: z.number(),
   toolCallId: z.string(),
   output: z.unknown(),
@@ -844,6 +876,7 @@ export const subagentSpawnedEventSchema = z.object({
   runInBackground: z.boolean(),
   model: z.string().optional(),
   thinkingEffort: z.string().optional(),
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedPayload>;
 
 export const subagentStartedEventSchema = z.object({
@@ -873,31 +906,37 @@ export const subagentFailedEventSchema = z.object({
 
 export const compactionStartedEventSchema = z.object({
   type: z.literal('compaction.started'),
+  agentId: z.string(),
   trigger: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),
 }) satisfies z.ZodType<CompactionStartedPayload>;
 
 export const compactionBlockedEventSchema = z.object({
   type: z.literal('compaction.blocked'),
+  agentId: z.string(),
   turnId: z.number().optional(),
 }) satisfies z.ZodType<CompactionBlockedPayload>;
 
 export const compactionCancelledEventSchema = z.object({
   type: z.literal('compaction.cancelled'),
+  agentId: z.string(),
 });
 
 export const compactionCompletedEventSchema = z.object({
   type: z.literal('compaction.completed'),
+  agentId: z.string(),
   result: compactionResultSchema,
 }) satisfies z.ZodType<CompactionCompletedPayload>;
 
 export const taskStartedEventSchema = z.object({
   type: z.literal('task.started'),
+  agentId: z.string(),
   info: taskInfoSchema,
 });
 
 export const taskTerminatedEventSchema = z.object({
   type: z.literal('task.terminated'),
+  agentId: z.string(),
   info: taskInfoSchema,
 });
 
@@ -928,6 +967,7 @@ export const promptSubmittedEventSchema = z.object({
 
 export const promptCompletedEventSchema = z.object({
   type: z.literal('prompt.completed'),
+  agentId: z.string(),
   promptId: z.string(),
   finishedAt: isoDateTimeSchema,
   reason: z.enum(['completed', 'failed', 'blocked']).optional(),
@@ -935,12 +975,14 @@ export const promptCompletedEventSchema = z.object({
 
 export const promptAbortedEventSchema = z.object({
   type: z.literal('prompt.aborted'),
+  agentId: z.string(),
   promptId: z.string(),
   abortedAt: isoDateTimeSchema,
 });
 
 export const promptSteeredEventSchema = z.object({
   type: z.literal('prompt.steered'),
+  agentId: z.string(),
   activePromptId: z.string(),
   promptIds: z.array(z.string()),
   content: z.array(messageContentSchema),
@@ -955,6 +997,7 @@ export const toolListUpdatedReasonSchema = z.enum([
 
 export const toolListUpdatedEventSchema = z.object({
   type: z.literal('tool.list.updated'),
+  agentId: z.string(),
   reason: toolListUpdatedReasonSchema,
   serverName: z.string(),
 }) satisfies z.ZodType<ToolListUpdatedPayload>;
@@ -969,6 +1012,7 @@ export const mcpServerStatusPayloadSchema = z.object({
 
 export const mcpServerStatusEventSchema = z.object({
   type: z.literal('mcp.server.status'),
+  agentId: z.string(),
   server: mcpServerStatusPayloadSchema,
 }) satisfies z.ZodType<McpServerStatusEventPayload>;
 
@@ -980,6 +1024,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   agentDisposedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
+  sessionArchivedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,

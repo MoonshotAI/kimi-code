@@ -97,7 +97,6 @@ function uploadedExtraction(fileId: string, byte: number): ExtractionResult {
     imageAttachmentIds: [1],
     videoAttachmentIds: [],
     imageSnapshots: [{ bytes: new Uint8Array([byte]), mime: 'image/png', width: 640, height: 480 }],
-    stagingPaths: [path],
   };
 }
 
@@ -269,11 +268,11 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     await flush();
 
     // Nothing was sent; the draft is back in the editor and the stash's
-    // retains/staged copies go through recall — without this the retain count
-    // never returns to zero and the upload can never be lease-deleted.
+    // retains go through recall — without this the retain count never
+    // returns to zero and the upload can never be lease-deleted.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]');
-    expect(host.recallStashedMedia).toHaveBeenCalledWith('describe [image #1 (1×1)]', extraction);
+    expect(host.recallStashedMedia).toHaveBeenCalledWith(extraction);
   });
 
   it('hands the stashed input back when the session switched during the fetch', async () => {

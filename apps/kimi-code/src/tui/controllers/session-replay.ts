@@ -10,6 +10,7 @@ import type {
 } from '#/core/index';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
+import { ShellRunComponent } from '../components/messages/shell-run';
 import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
 import { currentTheme } from '../theme';
 import type { TodoItem } from '../components/chrome/todo-panel';
@@ -377,8 +378,23 @@ export class SessionReplayRenderer {
       } else {
         const stdout = (extractBashTag(text, 'bash-stdout') ?? '').trim();
         const stderr = (extractBashTag(text, 'bash-stderr') ?? '').trim();
-        const out = formatBashOutputForDisplay(stdout, stderr, message.origin.isError);
-        this.host.appendTranscriptEntry(replayEntry(context, 'status', out, 'plain'));
+        // Replayed `!` output is a finished card: mount the same component the
+        // live view uses, already finished, so the ctrl+o toggle reaches it.
+        const output = new ShellRunComponent(() => this.host.state.ui.requestRender());
+        output.finish(stdout, stderr, message.origin.isError);
+        // Inherit the current ctrl+o state, same as the live card — the global
+        // toggle only reaches components that exist when it fires.
+        if (this.host.state.toolOutputExpanded) output.setExpanded(true);
+        markTranscriptComponent(
+          output,
+          replayEntry(
+            context,
+            'status',
+            formatBashOutputForDisplay(stdout, stderr, message.origin.isError),
+            'plain',
+          ),
+        );
+        this.host.state.transcriptContainer.addChild(output);
       }
       return;
     }

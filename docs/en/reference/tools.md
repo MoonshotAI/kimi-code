@@ -19,9 +19,9 @@ File tools handle reading, writing, and searching the local filesystem — the f
 
 **`Read`** accepts a file path (`path`) plus optional `line_offset` (starting line number; negative values count from the end) and `n_lines` (maximum number of lines to read). Returns at most 1000 lines or 100 KB per call; content beyond that limit is accompanied by a truncation notice. If the file is an image or video, the tool suggests using `ReadMediaFile` instead.
 
-**`Write`** accepts `path`, `content`, and an optional `mode` (`overwrite` or `append`; defaults to overwrite). Missing parent directories are created automatically; `append` mode appends content to the end of the file without automatically adding a newline.
+**`Write`** accepts `path`, `content`, and an optional `mode` (`overwrite` or `append`; defaults to overwrite). Missing parent directories are created automatically; `append` mode appends content to the end of the file without automatically adding a newline. Writing to an existing file — in either `overwrite` or `append` mode — requires a prior `Read` of that file in the session; the write is rejected if the file changed on disk since the last read, while creating a new file is exempt.
 
-**`Edit`** accepts `path`, `old_string` (the exact text to replace), and `new_string` (the replacement text). By default it replaces only one unique match; if the same content appears multiple times in the file, the tool returns an error and suggests using `replace_all: true`. `old_string` and `new_string` must not be identical.
+**`Edit`** accepts `path`, `old_string` (the exact text to replace), and `new_string` (the replacement text). By default it replaces only one unique match; if the same content appears multiple times in the file, the tool returns an error and suggests using `replace_all: true`. `old_string` and `new_string` must not be identical. The target file must have been read with `Read` earlier in the session, and the edit is rejected if the file changed on disk since that read.
 
 **`Grep`** invokes ripgrep to search file contents, supporting regular expressions (`pattern`), a search path (`path`), file type filtering (`type`, e.g., `ts`, `py`), glob filtering (`glob`), and output mode (`output_mode`: `files_with_matches` / `content` / `count_matches`; defaults to `files_with_matches`). `content` mode supports context lines (`-A`, `-B`, `-C`), case-insensitive matching (`-i`), line numbers (`-n`, default true), and multiline matching (`multiline`). All modes support `offset` + `head_limit` pagination; `head_limit` defaults to 250 and `0` means unlimited. Sensitive files such as `.env` files and private keys are automatically filtered out; set `include_ignored=true` to search files ignored by `.gitignore`, though sensitive files remain filtered.
 
@@ -99,19 +99,22 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 ## Background Tasks
 
-Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early.
+Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early, or `WaitFor` to wait for a result inside the current turn.
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
 | `TaskList` | Auto-allow | List background tasks |
 | `TaskOutput` | Auto-allow | View the output of a background task |
 | `TaskStop` | Requires approval | Stop a running background task |
+| `WaitFor` | Auto-allow | Wait for background tasks to finish |
 
 **`TaskList`** returns the list of background tasks. Optional parameters: `active_only` (defaults to true; lists only running tasks) and `limit` (defaults to 20; range 1–100).
 
 **`TaskOutput`** returns the status and output of a task given its `task_id`. The inline preview includes at most the most recent 32 KB of content; the full log is saved to disk, and the tool also returns an `output_path` with a suggestion to use `Read` for paginated access. The call is always non-blocking — it returns the current snapshot immediately, and task completion is delivered via automatic notification.
 
 **`TaskStop`** accepts a `task_id` and optional `reason` (defaults to `Stopped by TaskStop`). Safe to call on tasks that are already in a terminal state.
+
+**`WaitFor`** suspends the current turn until a background task finishes or the timeout elapses. Parameters: `timeout` (required, in seconds, max 600) and optional `task_id`. Without `task_id`, the wait ends as soon as any background task that was running at call time finishes; when no background tasks are running, it returns immediately. A timeout is not an error — the result lists the tasks still running, and the Agent can wait again or do other work meanwhile. A task whose result was reported by `WaitFor` does not also produce an automatic completion notification.
 
 ## Scheduled Tasks
 

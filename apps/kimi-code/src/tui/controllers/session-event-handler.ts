@@ -680,7 +680,7 @@ export class SessionEventHandler {
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
     if (event.update.kind === 'status') {
-      tc.appendProgress(text);
+      tc.appendProgress(text, { replace: event.update.replace === true });
       return;
     }
     if (event.update.kind === 'stdout' || event.update.kind === 'stderr') {
@@ -756,6 +756,7 @@ export class SessionEventHandler {
     }
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
+    if (event.towerMode !== undefined) patch.towerMode = event.towerMode;
     if (event.model !== undefined) patch.model = event.model;
     if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);

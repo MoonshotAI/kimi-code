@@ -12,6 +12,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TowerStore } from '#/features/tower/protocol/index';
@@ -24,7 +25,8 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
@@ -39,6 +41,7 @@ import {
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import { stubAgentContext } from '../../../agent/agentContext/stubs';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -73,7 +76,9 @@ describe('TowerSpawnTool', () => {
   let registerTask: Mock<IAgentTaskService['registerTask']>;
   let completion: Deferred<{ readonly summary: string }>;
   let secondaryFlagOn: boolean;
-  let secondaryModel: { readonly model: string } | undefined;
+  let secondaryModel: { readonly model: string; readonly defaultEffort?: string } | undefined;
+  let thinkingEnabled: boolean | undefined;
+  let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
 
   async function git(cwd: string, ...args: string[]): Promise<void> {
@@ -98,22 +103,17 @@ describe('TowerSpawnTool', () => {
     completion = deferred();
     secondaryFlagOn = false;
     secondaryModel = undefined;
+    thinkingEnabled = undefined;
+    modelMeta = {};
     createdSetMode = vi.fn();
-    createAgent = vi.fn(
-      async () =>
-        ({
-          id: 'agent-7',
-          accessor: {
-            get: (id: unknown) =>
-              id === (IAgentPermissionModeService as unknown)
-                ? { setMode: createdSetMode }
-                : undefined,
-          },
-        }) as never,
-    );
+    createAgent = vi.fn(async () => stubAgentContext('agent-7', 1));
     runAgent = vi.fn(
-      async (agentId: string) =>
-        ({ agentId, turn: undefined, completion: completion.promise }) as unknown as AgentRunHandle,
+      async (agent: AgentContext) =>
+        ({
+          agentId: agent.agentId,
+          turn: undefined,
+          completion: completion.promise,
+        }) as unknown as AgentRunHandle,
     );
     registerTask = vi.fn(() => 'task-1');
 
@@ -133,21 +133,40 @@ describe('TowerSpawnTool', () => {
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
     ix.stub(IAgentScopeContext, { agentId: 'main', scope: (subKey?: string) => subKey ?? '' });
+    const createdHandle = {
+      id: 'agent-7',
+      accessor: {
+        get: (id: unknown) => {
+          if (id === (IAgentPermissionModeService as unknown)) {
+            return { setMode: createdSetMode };
+          }
+          if (id === (IAgentScopeContext as unknown)) {
+            return {
+              agentId: 'agent-7',
+              agentContext: stubAgentContext('agent-7', 1),
+            };
+          }
+          return undefined;
+        },
+      },
+    } as never;
+    const mainHandle = {
+      id: 'main',
+      accessor: {
+        get: (id: unknown) =>
+          id === (IEventBus as unknown)
+            ? ix.get(IEventBus)
+            : id === (IAgentLifecycleService as unknown)
+              ? { list: () => [], handleOf: () => undefined }
+              : undefined,
+      },
+    } as never;
     ix.stub(IAgentLifecycleService, {
-      get: (agentId: string) =>
-        agentId === 'main'
-          ? ({
-              id: 'main',
-              accessor: {
-                get: (id: unknown) =>
-                  id === (IEventBus as unknown)
-                    ? ix.get(IEventBus)
-                    : id === (IAgentLifecycleService as unknown)
-                      ? { get: () => undefined }
-                      : undefined,
-              },
-            } as never)
-          : undefined,
+      handleOf: (agentId: string) => {
+        if (agentId === 'main') return mainHandle;
+        if (agentId === 'agent-7') return createdHandle;
+        return undefined;
+      },
       create: createAgent,
     } as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
@@ -157,12 +176,18 @@ describe('TowerSpawnTool', () => {
     } as unknown as IAgentProfileService);
     ix.stub(IConfigService, {
       get: ((domain: string) =>
-        domain === SECONDARY_MODEL_SECTION ? secondaryModel : undefined) as IConfigService['get'],
+        domain === SECONDARY_MODEL_SECTION
+          ? secondaryModel
+          : domain === 'thinking' && thinkingEnabled !== undefined
+            ? { enabled: thinkingEnabled }
+            : undefined) as IConfigService['get'],
     });
     ix.stub(IFlagService, {
       enabled: (id: string) => id === SECONDARY_MODEL_FLAG_ID && secondaryFlagOn,
     } as unknown as IFlagService);
-    ix.stub(IModelCatalog, { get: () => ({}) } as unknown as IModelCatalog);
+    ix.stub(IModelCatalog, {
+      get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
+    } as unknown as IModelCatalog);
     ix.set(ITowerSpawnTool, new SyncDescriptor(TowerSpawnTool));
   });
 
@@ -196,6 +221,19 @@ describe('TowerSpawnTool', () => {
       isError: true,
     });
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-main callers with the main-agent-only error before any work', async () => {
+    ix.stub(IAgentScopeContext, { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' });
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result).toEqual({
+      output: 'Tower orchestration tools are only supported by the main agent.',
+      isError: true,
+    });
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
   });
 
   it('surfaces the rate-limit reason as an error result', async () => {
@@ -240,7 +278,7 @@ describe('TowerSpawnTool', () => {
       labels: { parentAgentId: 'main' },
     });
     expect(runAgent).toHaveBeenCalledWith(
-      'agent-7',
+      expect.objectContaining({ agentId: 'agent-7' }),
       { kind: 'prompt', prompt: expect.stringContaining(worktreeAbs) },
       { signal: expect.any(AbortSignal) },
     );
@@ -292,6 +330,56 @@ describe('TowerSpawnTool', () => {
     });
     const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
     expect(activityLog).toMatch(/spawn .*model=cheap\/fast/);
+  });
+
+  it('passes [secondary_model].default_effort to the spawned worker', async () => {
+    secondaryFlagOn = true;
+    secondaryModel = { model: 'cheap/fast', defaultEffort: 'low' };
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: 'low' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('falls back to the bound model default_effort when the section declares none', async () => {
+    secondaryFlagOn = true;
+    secondaryModel = { model: 'cheap/fast' };
+    modelMeta['cheap/fast'] = {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    };
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: 'max' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('leaves thinking unset for global resolution when thinking is disabled', async () => {
+    secondaryFlagOn = true;
+    secondaryModel = { model: 'cheap/fast' };
+    thinkingEnabled = false;
+    modelMeta['cheap/fast'] = {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    };
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
+      labels: { parentAgentId: 'main' },
+    });
   });
 
   it('inherits the tower model when the secondary-model experiment is off', async () => {

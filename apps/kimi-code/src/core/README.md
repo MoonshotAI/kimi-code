@@ -32,7 +32,7 @@ run-shell.ts ── createCoreHarness(...) ──> CoreHarness ── createSess
 
 - `bootstrap()` 产生进程唯一的 App `Scope`，持有到退出。
 - 一切能力 = `handle.accessor.get(IXxxService)`，严格按 App / Session / Agent 三层从对应 handle 取。
-- main agent 通过 `ensureMainAgent(handle)` 惰性物化；其他 agent 经 `IAgentLifecycleService.get(id)` 解析。
+- main agent 通过 `ensureMainAgent(handle)` 惰性物化；其他 agent 经 `IAgentLifecycleService.handleOf(id)` 解析。
 
 ## 3. 文件职责
 
@@ -195,13 +195,13 @@ v2 事件 kind 自动经 `events.ts` 合流透传。若 TUI 需要处理新 kind
 
 ### 8.4 加一种新的交互 kind
 
-v2 的 `ISessionInteractionService` 当前有 `approval` / `question` / `user_tool` 三种 kind。门面只透传前两种。若需要支持 `user_tool` 或新增 kind，在 `session.ts` 的 `buildApprovals`/`buildQuestions` 旁加对应的子对象 + `src/tui/interactions/` 控制器。
+v2 的 interaction runtime（`AgentInteraction`，经 `listSessionPendingInteractions` 等会话级函数访问）当前有 `approval` / `question` / `user_tool` 三种 kind。门面只透传前两种。若需要支持 `user_tool` 或新增 kind，在 `session.ts` 的 `buildApprovals`/`buildQuestions` 旁加对应的子对象 + `src/tui/interactions/` 控制器。
 
 ### 8.5 排错路径
 
 TUI 行为异常时按数据流反查：
 
-- **交互问题**（审批/提问不弹、卡死）→ `interactions/` 控制器（in-flight 去重 / decide 写回 / 异常 settle）→ `session.ts` 的 `approvals`/`questions` 投影 → v2 `ISessionInteractionService`。
+- **交互问题**（审批/提问不弹、卡死）→ `interactions/` 控制器（in-flight 去重 / decide 写回 / 异常 settle）→ `session.ts` 的 `approvals`/`questions` 投影 → v2 `AgentInteraction` runtime。
 - **事件问题**（流式不更新、subagent 事件丢失）→ `session-event-handler.ts` case → `events.ts` 合流（订阅覆盖 / flush 队列 / App 级总线）→ v2 各服务的 `IEventBus.publish`。
 - **方法行为偏差** → `session.ts`/`harness.ts` 对应域方法 → v2 服务实现。
 - **resume 回放缺失** → `replay.ts` 的 `buildResumedAgents` → 各 v2 服务的数据形状。

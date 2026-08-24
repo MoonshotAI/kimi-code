@@ -67,13 +67,13 @@ import type {
 // not re-export most event modules; deep-import them the same way kap-server's
 // `services/transcript/coreEventMap.ts` does.
 import type { KimiErrorPayload } from '@moonshot-ai/agent-core-v2/_base/errors/serialize';
-import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
   CompactionStartedPayload,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { GoalUpdatedPayload } from '@moonshot-ai/agent-core-v2/agent/goal/goalOps';
+import type { GoalUpdatedPayload } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type {
   AssistantDeltaPayload,
   ThinkingDeltaPayload,
@@ -104,7 +104,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { AgentStatusUpdatedPayload } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { SubagentSuspendedPayload } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
-import type { CronFiredPayload } from '@moonshot-ai/agent-core-v2/session/cron/cronOps';
+import type { CronFiredPayload } from '@moonshot-ai/agent-core-v2/features/cron/cronOps';
 import type {
   SubagentCompletedPayload,
   SubagentFailedPayload,
@@ -243,11 +243,12 @@ export interface SessionStatus {
   readonly permission: PermissionMode;
   readonly planMode: boolean;
   readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly contextTokens: number;
   readonly rawContextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;
-  /** Merged from the main agent's `IAgentUsageService.status()` by `getStatus`. */
+  /** Merged from the main agent's `ISessionUsageService.status(...)` by `getStatus`. */
   readonly usage?: UsageStatus;
 }
 

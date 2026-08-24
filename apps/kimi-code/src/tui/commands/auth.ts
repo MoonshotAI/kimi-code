@@ -4,6 +4,7 @@ import {
   filterModelsByPrefix,
   getOpenPlatformById,
   OpenPlatformApiError,
+  type KimiRegion,
   type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
@@ -16,6 +17,10 @@ import {
   providersView,
 } from '../utils/core-config-view';
 import { formatErrorMessage } from '../utils/event-payload';
+import {
+  KIMI_CODE_GLOBAL_PLATFORM_VALUE,
+  refreshKimiRegion,
+} from '#/utils/region';
 import type { LoginProgressSpinnerHandle } from '../types';
 import {
   promptApiKey,
@@ -33,8 +38,9 @@ export async function handleLoginCommand(host: SlashCommandHost): Promise<void> 
   const platformId = await promptPlatformSelection(host);
   if (platformId === undefined) return;
 
-  if (platformId === 'kimi-code') {
-    await handleKimiCodeOAuthLogin(host);
+  if (platformId === 'kimi-code' || platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE) {
+    const region: KimiRegion = platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE ? 'global' : 'mainland-cn';
+    await handleKimiCodeOAuthLogin(host, region);
     return;
   }
 
@@ -43,7 +49,10 @@ export async function handleLoginCommand(host: SlashCommandHost): Promise<void> 
   await handleOpenPlatformLogin(host, platform);
 }
 
-async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
+async function handleKimiCodeOAuthLogin(
+  host: SlashCommandHost,
+  region: KimiRegion,
+): Promise<void> {
   const status = await host.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
   const alreadyLoggedIn = status.providers.some(
     (provider) => provider.providerName === DEFAULT_OAUTH_PROVIDER_NAME && provider.hasToken,
@@ -56,12 +65,17 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
   };
   host.cancelInFlight = cancelLogin;
   try {
+    // The facade maps region → profile hosts (env overrides keep priority);
+    // 'mainland-cn' is passed explicitly too so switching back overrides a
+    // persisted global login.
     await host.harness.auth.login(DEFAULT_OAUTH_PROVIDER_NAME, {
       signal: controller.signal,
+      region,
       onDeviceCode: (data) => {
         spinner = host.showLoginAuthorizationPrompt(data);
       },
     });
+    refreshKimiRegion();
     spinner?.stop({ ok: true, label: 'Logged in.' });
     spinner = undefined;
     try {
@@ -236,6 +250,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
       availableProviders: providersView(updated),
     });
   }
+  refreshKimiRegion();
 
   host.track('logout', { provider: target });
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;

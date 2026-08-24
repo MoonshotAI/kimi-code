@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
+import type { TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
@@ -10,6 +13,8 @@ import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
+import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -17,7 +22,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { todoKey, ToolsUpdateStore } from '#/session/todo/todoOps';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { type ReplayableStateKey } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 
@@ -194,7 +200,7 @@ describe('AgentConversationUndoService', () => {
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
     await ctx.dispatcher.dispatch(
-      new ContextApplyCompaction({ summary: 'legacy summary', compactedCount: 2 }),
+      new ContextApplyCompaction({ agentId: 'main', summary: 'legacy summary', compactedCount: 2 }),
     );
     expect(ctx.context.get().map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
 
@@ -235,18 +241,26 @@ describe('AgentConversationUndoService', () => {
   it('restores todos to their pre-turn value', async () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
+    const manager = ctx.get(IAgentLifecycleService);
+    const agent = ctx.get(IAgentScopeContext).agentContext;
+    expect(manager.inspect(agent).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
+      id: 'todo',
+      status: 'materialized',
+      state: [],
+      error: undefined,
+    });
     ctx.appendTurnExchange('u1', 'a1');
     await ctx.dispatcher.dispatch(
-      new ToolsUpdateStore({ key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
+      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'kept', status: 'pending' }] }),
     );
     ctx.appendTurnExchange('u2', 'a2');
     await ctx.dispatcher.dispatch(
-      new ToolsUpdateStore({ key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
+      new ToolsUpdateStore({ agentId: 'main', key: 'todo', value: [{ title: 'doomed', status: 'pending' }] }),
     );
 
     await undo.undo(1);
 
-    expect(ctx.agentState.get(todoKey)).toEqual([{ title: 'kept', status: 'pending' }]);
+    expect(ctx.resolve(AgentTodo).get()).toEqual([{ title: 'kept', status: 'pending' }]);
   });
 
   it('restores plan mode and its telemetry mirror to their pre-turn value', async () => {
@@ -500,5 +514,42 @@ describe('AgentConversationUndoService', () => {
       .map((event) => event.event);
     expect(wireEvents).toContain('context.undo');
     expect(wireEvents).not.toContain('log.cut');
+  });
+
+  it('re-delivers wait-reported task notifications after conversation undo', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    const tasks = ctx.get(IAgentTaskService);
+    ctx.appendTurnExchange('u1', 'a1');
+
+    const completingTask = (output: string): AgentTask => ({
+      idPrefix: 'test',
+      kind: 'process',
+      description: 'fake process task',
+      start: async (sink) => {
+        sink.appendOutput(output);
+        await sink.settle({ status: 'completed' });
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'echo', pid: 0, exitCode: null }),
+    });
+
+    const taskA = tasks.registerTask(completingTask('a\n'));
+    const taskB = tasks.registerTask(completingTask('b\n'));
+    tasks.markTasksDeliveredViaWait([
+      { taskId: taskA, status: 'completed' },
+      { taskId: taskB, status: 'completed' },
+    ]);
+    await tasks.wait(taskA, 1000);
+    await tasks.wait(taskB, 1000);
+
+    expect(ctx.context.get().some((message) => message.origin?.kind === 'task')).toBe(false);
+    expect(ctx.agentState.get(taskNotificationDeliveryKey)).toHaveLength(2);
+
+    await undo.undo(1);
+
+    const redelivered = ctx.context.get().filter((message) => message.origin?.kind === 'task');
+    expect(redelivered.map((message) => (message.origin as TaskOrigin).taskId).sort()).toEqual(
+      [taskA, taskB].sort(),
+    );
   });
 });

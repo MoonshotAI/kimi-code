@@ -19,6 +19,7 @@ const AGENT_TOOLS = [
   'TaskList',
   'TaskOutput',
   'TaskStop',
+  'WaitFor',
   'CronCreate',
   'CronList',
   'CronDelete',
@@ -37,6 +38,8 @@ const AGENT_TOOLS = [
   'SetGoalBudget',
   'UpdateGoal',
   'TowerInit',
+  'TowerStatus',
+  'TowerTeardown',
   'mcp__*',
   'spine_open',
   'spine_close',
@@ -63,6 +66,7 @@ const CODER_TOOLS = [
   'TaskOutput',
   'TaskStop',
   'TodoList',
+  'WaitFor',
   'WebSearch',
   'FetchURL',
   'Write',
@@ -97,6 +101,7 @@ registerAgentProfile({
   name: 'agent',
   description: 'Default agent',
   tools: AGENT_TOOLS,
+  subagents: ['coder', 'explore', 'plan'],
   renderSystemPrompt: (context) =>
     renderSystemPromptResult('', context, { skillActive: skillActiveFor(AGENT_TOOLS) }),
 });

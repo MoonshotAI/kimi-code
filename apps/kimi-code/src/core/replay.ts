@@ -13,8 +13,11 @@
  */
 
 import {
+  AgentTodo,
+  agentContextOf,
   IAgentBlobService,
   IAgentContextMemoryService,
+  IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPlanService,
@@ -23,14 +26,13 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
-  IAgentTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
-  IAgentUsageService,
   IAppendLogStore,
   ISessionContext,
   ISessionMetadata,
-  ISessionTodoService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWireService,
   MAIN_AGENT_ID,
   type AgentMeta,
@@ -69,6 +71,7 @@ export async function buildResumedAgents(
   replayTurnLimit?: number,
 ): Promise<Record<string, ResumedAgentState>> {
   const { accessor } = mainAgent;
+  const context = agentContextOf(mainAgent);
   const profile = accessor.get(IAgentProfileService);
   const data = profile.data();
   const history = accessor.get(IAgentContextMemoryService).get();
@@ -95,7 +98,7 @@ export async function buildResumedAgents(
       thinkingEffort: data.thinkingLevel,
       systemPrompt: data.systemPrompt,
     },
-    context: { history, tokenCount: accessor.get(IAgentTokenCountingService).get().size },
+    context: { history, tokenCount: accessor.get(ISessionTokenCountingService).get(context).size },
     replay,
     permission: {
       mode: accessor.get(IAgentPermissionModeService).mode,
@@ -103,10 +106,13 @@ export async function buildResumedAgents(
     },
     plan: await accessor.get(IAgentPlanService).status(),
     swarmMode: accessor.get(IAgentSwarmService).isActive,
-    usage: accessor.get(IAgentUsageService).status(),
+    usage: accessor.get(ISessionUsageService).status(context),
     tools,
-    // The todo list is session-shared state, not per-agent.
-    toolStore: { todo: session.accessor.get(ISessionTodoService).getTodos() },
+    // The todo list is session-shared state, not per-agent; it lives on the
+    // main agent's todo runtime.
+    toolStore: {
+      todo: session.accessor.get(IAgentLifecycleService).resolve(context, AgentTodo).get(),
+    },
     // Include finished tasks so the TUI can replay their terminal status.
     background: accessor.get(IAgentTaskService).list(false),
   };

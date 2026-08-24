@@ -18,7 +18,7 @@ import {
   IAgentLLMRequesterService,
   IAgentProfileService,
   IAgentSpineService,
-  IAgentTokenCountingService,
+  ISessionTokenCountingService,
   loadSpineViewOverride,
   spineTreeViewFromState,
   type SpineTreeNodeView,
@@ -27,10 +27,10 @@ import {
 } from '#/index';
 
 import {
-  agentService,
   execEnvServices,
   hostEnvironmentServices,
   InMemoryWireRecordPersistence,
+  sessionService,
   testAgent,
   wireRecordPersistenceServices,
   type TestAgentContext,
@@ -379,8 +379,8 @@ describe('Spine projection fold', () => {
       rawSize: () => sizeNow,
       measured: () => {},
       latestMeasurement: () => undefined,
-    } as unknown as IAgentTokenCountingService;
-    const ctx = testAgent(agentService(IAgentTokenCountingService, fakeSize));
+    } as unknown as ISessionTokenCountingService;
+    const ctx = testAgent(sessionService(ISessionTokenCountingService, fakeSize));
     await configureLoop(ctx);
     ctx.mockNextResponse(toolCallPart('c_open', 'spine_open', { summary: 'task A' }));
     ctx.mockNextResponse({ type: 'text', text: 'opened' });

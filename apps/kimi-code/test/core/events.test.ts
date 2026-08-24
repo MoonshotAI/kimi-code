@@ -12,16 +12,21 @@ function makeFakeBus() {
     publish: (e: unknown) => { for (const l of [...listeners]) l(e); },
   };
 }
-function makeFakeAgent(id: string) { const bus = makeFakeBus(); return { id, bus, accessor: { get: () => bus } }; }
+function makeFakeAgent(id: string) {
+  const bus = makeFakeBus();
+  const context = { agentId: id, generation: 0 };
+  return { id, bus, context, accessor: { get: () => bus } };
+}
 function makeFakeSession(agents: ReturnType<typeof makeFakeAgent>[]) {
   const created = new Set<(h: unknown) => void>();
-  const disposed = new Set<(id: string) => void>();
+  const closed = new Set<(h: unknown) => void>();
   const lifecycle = {
-    list: () => agents,
+    list: () => agents.map((a) => a.context),
+    handleOf: (id: string) => agents.find((a) => a.id === id),
     onDidCreate: (h: (a: unknown) => void) => { created.add(h); return { dispose: () => created.delete(h) }; },
-    onDidDispose: (h: (id: string) => void) => { disposed.add(h); return { dispose: () => disposed.delete(h) }; },
-    _create: (a: ReturnType<typeof makeFakeAgent>) => { agents.push(a); for (const h of [...created]) h(a); },
-    _dispose: (id: string) => { for (const h of [...disposed]) h(id); },
+    onDidClose: (h: (a: unknown) => void) => { closed.add(h); return { dispose: () => closed.delete(h) }; },
+    _create: (a: ReturnType<typeof makeFakeAgent>) => { agents.push(a); for (const h of [...created]) h(a.context); },
+    _close: (id: string) => { for (const h of [...closed]) h({ agentId: id }); },
   };
   return { accessor: { get: () => lifecycle }, lifecycle };
 }
@@ -53,7 +58,7 @@ describe('attachSessionEvents', () => {
     sub.bus.publish({ type: 'task.started', info: { taskId: 't2' } });
     expect(seen).toEqual([{ type: 'task.started', info: { taskId: 't2' }, agentId: 'sub', sessionId: 's1' }]);
 
-    session.lifecycle._dispose('sub');
+    session.lifecycle._close('sub');
     sub.bus.publish({ type: 'task.started', info: { taskId: 't3' } });
     expect(seen).toHaveLength(1);
   });

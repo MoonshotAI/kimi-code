@@ -4,8 +4,10 @@
 // tokens it documents.
 import { describe, expect, it } from 'vitest';
 import {
+  AgentTodo,
   IAgentBlobService,
   IAgentContextMemoryService,
+  IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPlanService,
@@ -13,14 +15,13 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
-  IAgentTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
-  IAgentUsageService,
   IAppendLogStore,
   ISessionContext,
   ISessionMetadata,
-  ISessionTodoService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWireService,
 } from '@moonshot-ai/agent-core-v2';
 import { buildResumedAgents, buildResumedSessionState } from '../../src/core/replay';
@@ -127,7 +128,7 @@ function makeFixture(metaOverrides?: Record<string, unknown>) {
     id: 'main',
     accessor: makeAccessor([
       [IAgentContextMemoryService, { get: () => history }],
-      [IAgentTokenCountingService, { get: () => ({ size: 1234, measured: 1000, estimated: 234 }) }],
+      [ISessionTokenCountingService, { get: () => ({ size: 1234, measured: 1000, estimated: 234 }) }],
       [IAgentProfileService, { data: () => profileData }],
       [
         IAgentToolPolicyService,
@@ -142,10 +143,10 @@ function makeFixture(metaOverrides?: Record<string, unknown>) {
       [IAgentPermissionRulesService, { rules }],
       [IAgentPlanService, { status: async () => plan }],
       [IAgentSwarmService, { isActive: true }],
-      [IAgentUsageService, { status: () => usage }],
+      [ISessionUsageService, { status: () => usage }],
       [IAgentToolRegistryService, { list: () => toolInfos }],
       [IWireService, { flush: () => Promise.resolve() }],
-      [IAgentScopeContext, { scope: () => 'agent-main' }],
+      [IAgentScopeContext, { scope: () => 'agent-main', agentContext: { agentId: 'main', generation: 0 } }],
       [
         IAppendLogStore,
         {
@@ -170,7 +171,15 @@ function makeFixture(metaOverrides?: Record<string, unknown>) {
     id: 'sess-1',
     accessor: makeAccessor([
       [ISessionContext, { cwd: '/work/dir' }],
-      [ISessionTodoService, { getTodos: () => todos }],
+      [
+        IAgentLifecycleService,
+        {
+          resolve: (_context: unknown, definition: unknown) => {
+            if (definition === AgentTodo) return { get: () => todos };
+            throw new Error('fake lifecycle: unexpected runtime definition');
+          },
+        },
+      ],
       [ISessionMetadata, { read: async () => meta }],
     ]),
   };
@@ -304,7 +313,7 @@ describe('buildResumedAgents', () => {
     ]);
   });
 
-  it('fills toolStore.todo from the session todo service', async () => {
+  it('fills toolStore.todo from the main agent todo runtime', async () => {
     const fx = makeFixture();
     const agents = await buildResumedAgents(fx.session as never, fx.mainAgent as never);
 

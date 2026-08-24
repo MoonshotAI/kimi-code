@@ -21,6 +21,7 @@ import {
   closeSessionById,
   ensureMainAgent,
   IAgentActivityView,
+  IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IBootstrapService,
@@ -67,7 +68,7 @@ import { ICapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/ca
 import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 import { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
-import { loadMcpServers } from '@moonshot-ai/agent-core-v2/workspace/workspaceMcpConfig/internal/config-loader';
+import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 
 import { KimiAuthFacade, type OAuthRefreshHandler } from './auth';
 import { CoreError, CoreErrorCodes } from './errors';
@@ -294,7 +295,8 @@ export class CoreHarness {
       additionalDirs: options.additionalDirs,
     });
     try {
-      const main = await ensureMainAgent(handle);
+      const mainContext = await ensureMainAgent(handle);
+      const main = handle.accessor.get(IAgentLifecycleService).handleOf(mainContext.agentId)!;
       if (options.model !== undefined) {
         await main.accessor.get(IAgentProfileService).setModel(options.model);
       }
@@ -354,7 +356,8 @@ export class CoreHarness {
     // `input.forcePluginSessionStartReminder` is accepted and ignored.
     const active = this.activeSessions.get(id);
     if (active !== undefined) {
-      const main = await ensureMainAgent(active.handle);
+      const mainContext = await ensureMainAgent(active.handle);
+      const main = active.handle.accessor.get(IAgentLifecycleService).handleOf(mainContext.agentId)!;
       const activity = main.accessor.get(IAgentActivityView).state();
       if (activity.turn !== undefined || activity.background.length > 0) {
         throw new CoreError(
@@ -628,11 +631,14 @@ export class CoreHarness {
 
   async uploadFile(
     data: Uint8Array,
-    options: { readonly name: string; readonly expiresInSec?: number },
+    options: { readonly name: string; readonly mimeType?: string; readonly expiresInSec?: number },
   ): Promise<FileMeta> {
     return this.deps.app.accessor
       .get(IFileService)
-      .save(Readable.from([data]), options.name, { expiresInSec: options.expiresInSec });
+      .save(Readable.from([data]), options.name, {
+        expiresInSec: options.expiresInSec,
+        mimeType: options.mimeType,
+      });
   }
 
   async deleteFile(fileId: string): Promise<void> {
@@ -751,7 +757,8 @@ export class CoreHarness {
     handle: ISessionScopeHandle,
     replayTurnLimit?: number,
   ): Promise<CoreSession> {
-    const main = await ensureMainAgent(handle);
+    const mainContext = await ensureMainAgent(handle);
+    const main = handle.accessor.get(IAgentLifecycleService).handleOf(mainContext.agentId)!;
     // TODO(v2-gap): G-30 — v2 resume has no warning channel;
     // `resumeState.warning` stays undefined.
     const resumeState = await buildResumedSessionState(handle, main, replayTurnLimit);

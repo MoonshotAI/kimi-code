@@ -227,10 +227,8 @@ describe('StagingLeaseTracker', () => {
       [
         'releaseMedia and releaseQueued',
         (tracker: StagingLeaseTracker) => {
-          tracker.releaseMedia([1], ['/cache/a']);
-          tracker.releaseQueued([
-            { text: 'q', agentId: 'main', imageAttachmentIds: [2], stagingPaths: ['/cache/b'] },
-          ]);
+          tracker.releaseMedia([1], ['/cache/a', '/cache/b']);
+          tracker.releaseQueued([{ text: 'q', agentId: 'main', videoAttachmentIds: [2] }]);
         },
       ],
       [
@@ -257,11 +255,8 @@ describe('StagingLeaseTracker', () => {
 
       // A recall restores the draft into the editor — not a discard: the
       // daemon upload stays staged (only the retain is consumed) and the
-      // cache copy retires to session lifetime.
-      tracker.releaseRecalled({
-        imageAttachmentIds: [2],
-        stagingPaths: ['/cache/b'],
-      });
+      // rewrite channel's cache copy retires to session lifetime.
+      tracker.releaseRecalled([2], ['/cache/b']);
 
       expect(releaseRetains).toHaveBeenCalledWith([2]);
       expect(deleted.fileIds).toEqual([]);

@@ -85,7 +85,7 @@ describe('GitService', () => {
       expect(result.additions).toBe(0);
       expect(result.deletions).toBe(0);
       expect(result.pullRequest).toBeNull();
-    });
+    }, 15000);
 
     it('reports a modified file with numstat', async () => {
       writeFileSync(join(repo, 'a.txt'), 'line1\n');

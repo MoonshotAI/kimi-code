@@ -19,11 +19,11 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
-import { todoKey } from '#/session/todo/todoOps';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  attachTodoRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -85,11 +85,12 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string) {
   const log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
   const dispatcher = registerTestEventDispatcher(ix);
+  const runtimes = attachTodoRuntime(ix, dispatcher);
+  store.add({ dispose: () => { void runtimes.close(); } });
   const agentState = ix.get(IAgentStateService);
   agentState.contributeState(compatCounterKey);
   agentState.contributeState(compatTagsKey);
-  agentState.contributeState(todoKey);
-  return { ix, dispatcher, agentState, log };
+  return { ix, dispatcher, agentState, runtimes, log };
 }
 
 function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
@@ -192,7 +193,7 @@ describe('wire.jsonl round-trip', () => {
     await legacy.dispatcher.restore();
 
     expect(legacy.agentState.get(compatCounterKey)).toEqual({ value: 7 });
-    expect(legacy.agentState.get(todoKey)).toEqual([
+    expect(legacy.runtimes.inspect()[0]?.state).toEqual([
       { title: 'legacy todo', status: 'pending' },
     ]);
 

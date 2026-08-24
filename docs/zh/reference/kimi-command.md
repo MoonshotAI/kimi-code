@@ -175,6 +175,7 @@ kimi web --port 58628    # 指定绑定端口
 | `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
+| `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
@@ -268,7 +269,7 @@ kimi migrate
 kimi upgrade
 ```
 
-对全局 npm、pnpm、yarn、bun 以及 macOS / Linux native 安装，`kimi upgrade` 会展示更新选项；选择 `Install update now` 后运行对应的前台安装命令。当前安装方式无法自动升级时（如 Windows native 安装），改为打印手动更新命令。
+对全局 npm、pnpm、yarn、bun 安装，`kimi upgrade` 会展示更新选项；选择 `Install update now` 后运行对应的前台安装命令。对 native 安装（含 Windows），会在前台下载并校验新二进制，并在下次启动时替换生效。当前安装方式无法自动升级时，改为打印手动更新命令。
 
 ### `kimi vis`
 

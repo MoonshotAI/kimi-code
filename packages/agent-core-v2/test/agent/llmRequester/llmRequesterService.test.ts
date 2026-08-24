@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
@@ -14,7 +15,7 @@ import {
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService, type AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ToolInfo } from '#/tool/toolContract';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -22,7 +23,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import { IAgentUsageService } from '#/agent/usage/usage';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
@@ -162,7 +163,7 @@ function createService(
     | (Pick<IAgentContextProjectorService, 'project'> &
         Partial<Pick<IAgentContextProjectorService, 'captureMediaStripSnapshot'>>)
     | undefined,
-  tokenCountingOverride?: Pick<IAgentTokenCountingService, 'get' | 'measured'>,
+  tokenCountingOverride?: Pick<ISessionTokenCountingService, 'get' | 'measured'>,
   toolEntries: readonly ToolInfo[] = [],
   options: {
     readonly thinkingLevel?: ThinkingEffort;
@@ -195,11 +196,16 @@ function createService(
   const measuredCalls: { readonly messages: number; readonly usage: TokenUsage }[] = [];
   const tokenCounting = tokenCountingOverride ?? {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
-    measured: (input: readonly Message[], _output: readonly Message[], usage: TokenUsage) => {
+    measured: (
+      _agent: AgentContext,
+      input: readonly Message[],
+      _output: readonly Message[],
+      usage: TokenUsage,
+    ) => {
       measuredCalls.push({ messages: input.length, usage });
     },
   };
-  const usage = { record: () => undefined, status: () => ({}) };
+  const usage = { record: () => Promise.resolve(), status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
   };
@@ -237,10 +243,10 @@ function createService(
       ...projector,
     });
   }
-  ix.stub(IAgentTokenCountingService, tokenCounting);
+  ix.stub(ISessionTokenCountingService, tokenCounting);
   ix.stub(IAgentToolRegistryService, tools);
   ix.stub(IAgentProfileService, profile);
-  ix.stub(IAgentUsageService, usage);
+  ix.stub(ISessionUsageService, usage);
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
@@ -359,7 +365,7 @@ describe('AgentLLMRequesterService strict resend', () => {
 });
 
 describe('AgentLLMRequesterService completion budget sizing', () => {
-  const contextSizeWithTail: Pick<IAgentTokenCountingService, 'get' | 'measured'> = {
+  const contextSizeWithTail: Pick<ISessionTokenCountingService, 'get' | 'measured'> = {
     get: () => ({ size: 600, measured: 100, estimated: 500 }),
     measured: () => undefined,
   };

@@ -16,11 +16,13 @@ import { SpineOpenTool } from '#/agent/spine/tools/spine-open';
 import { SpineSpawnTool } from '#/agent/spine/tools/spine-spawn';
 import { SpineTreeTool } from '#/agent/spine/tools/spine-tree';
 import { SpineTrimTool } from '#/agent/spine/tools/spine-trim';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { agentContextOf, IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
+import type { IAgentScopeHandle } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
@@ -29,6 +31,8 @@ import {
   PlanModeExit,
 } from '#/index';
 import type { Message } from '#/kosong/contract/message';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionSubagentService, type AgentRunHandle } from '#/session/subagent/subagent';
 
 import {
   createCommandRunner,
@@ -680,12 +684,11 @@ describe('spine control tool host gating', () => {
     maxThreads?: number,
     labels: Record<string, string> = {},
   ): ServicesAccessor {
-    const scopeContext: IAgentScopeContext = {
-      _serviceBrand: undefined,
+    const scopeContext: IAgentScopeContext = makeAgentScopeContext({
       agentId,
+      agentScope: '',
       labels,
-      scope: () => '',
-    };
+    });
     const flagService = {
       enabled: (id: string) => {
         if (id === SPINE_FLAG_ID) return flags.spine;
@@ -812,7 +815,7 @@ describe('Spine plan-mode gating', () => {
   it('rejects open / close / next in plan mode', async () => {
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ agentId: 'main', id: 'plan-1' }));
     for (const result of [
       spine.acceptOpen('task A'),
       spine.acceptClose('memory'),
@@ -829,7 +832,7 @@ describe('Spine plan-mode gating', () => {
     vi.stubEnv('KIMI_CODE_SPINE_SPAWN', '1');
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ agentId: 'main', id: 'plan-1' }));
     const result = await spine.executeSpawn(
       [
         { summary: 'branch A', prompt: 'do A' },
@@ -847,7 +850,7 @@ describe('Spine plan-mode gating', () => {
     vi.stubEnv('KIMI_CODE_SPINE_TRIM', '1');
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ agentId: 'main', id: 'plan-1' }));
     const result = spine.acceptTrim('trim_1', { kind: 'snip' });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -858,8 +861,8 @@ describe('Spine plan-mode gating', () => {
   it('accepts transitions again after plan mode exits', async () => {
     const ctx = testAgent();
     const spine = ctx.get(IAgentSpineService);
-    await ctx.dispatcher.dispatch(new PlanModeEnter({ id: 'plan-1' }));
-    await ctx.dispatcher.dispatch(new PlanModeExit({ id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeEnter({ agentId: 'main', id: 'plan-1' }));
+    await ctx.dispatcher.dispatch(new PlanModeExit({ agentId: 'main', id: 'plan-1' }));
     expect(spine.acceptOpen('task A').accepted).toBe(true);
   });
 });
@@ -1050,34 +1053,48 @@ function spineReceipt(toolCallId: string): ContextMessage {
     toolCallId,
   };
 }
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { ISessionSubagentService } from '#/session/subagent/subagent';
-import type { AgentRunHandle } from '#/session/subagent/subagent';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 
 function mockLifecycleService(): IAgentLifecycleService {
   let minted = 0;
-  const handles = new Map<string, IAgentScopeHandle>();
+  const contexts = new Map<string, AgentContext>([
+    ['main', { agentId: 'main' } as unknown as AgentContext],
+  ]);
   return {
     _serviceBrand: undefined,
     onDidCreate: () => ({ dispose: () => undefined }),
     onDidDispose: () => ({ dispose: () => undefined }),
     create: () => Promise.reject(new Error('create is not used in spawn tests')),
-    fork: (sourceAgentId: string, _opts?: unknown) => {
-      if (sourceAgentId !== 'main') return Promise.reject(new Error(`unknown source ${sourceAgentId}`));
+    fork: (source: AgentContext, _opts?: unknown) => {
+      if (source.agentId !== 'main') {
+        return Promise.reject(new Error(`unknown source ${source.agentId}`));
+      }
       const id = `agent-${String(minted++)}`;
-      const handle = { id } as unknown as IAgentScopeHandle;
-      handles.set(id, handle);
-      return Promise.resolve(handle);
+      const context = { agentId: id } as unknown as AgentContext;
+      contexts.set(id, context);
+      return Promise.resolve(context);
     },
-    get: (agentId: string) => handles.get(agentId),
-    list: () => [...handles.values()],
+    get: (agentId: string) => contexts.get(agentId),
+    list: () => [...contexts.values()],
+    resolve: () =>
+      new Proxy({} as Record<string | symbol, unknown>, {
+        get: (target, prop) => target[prop] ?? (() => undefined),
+        set: (target, prop, value) => {
+          target[prop] = value;
+          return true;
+        },
+      }),
     broadcastPermissionMode: () => undefined,
-    remove: (agentId: string) => {
-      handles.delete(agentId);
+    remove: (agent: AgentContext) => {
+      contexts.delete(agent.agentId);
       return Promise.resolve();
     },
+    handleOf: () => undefined,
+    adopt: (handle: IAgentScopeHandle) => {
+      const context = agentContextOf(handle);
+      contexts.set(context.agentId, context);
+      return context;
+    },
+    attachRuntimes: () => undefined,
   } as unknown as IAgentLifecycleService;
 }
 
@@ -1088,11 +1105,11 @@ function mockSubagentService(
     _serviceBrand: undefined,
     hooks: { onWillStartAgentTask: { register: () => ({ dispose: () => undefined }) } },
     onDidStopAgentTask: () => ({ dispose: () => undefined }),
-    run: async (agentId: string) => {
-      const summary = summaries[agentId] ?? '';
+    run: async (agent: AgentContext) => {
+      const summary = summaries[agent.agentId] ?? '';
       const controller = new AbortController();
       const handle: AgentRunHandle = {
-        agentId,
+        agentId: agent.agentId,
         turn: {
           id: 1,
           signal: controller.signal,
@@ -1194,12 +1211,12 @@ describe('spine_spawn service', () => {
       _serviceBrand: undefined,
       hooks: { onWillStartAgentTask: { register: () => ({ dispose: () => undefined }) } },
       onDidStopAgentTask: () => ({ dispose: () => undefined }),
-      run: async (agentId: string) => {
+      run: async (agent: AgentContext) => {
         const controller = new AbortController();
         const completion = buildCompletionController();
         completions.push(completion);
         return {
-          agentId,
+          agentId: agent.agentId,
           turn: {
             id: 1,
             signal: controller.signal,

@@ -2,7 +2,9 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ErrorCodes, Error2 } from '#/errors';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
 import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER, TOOL_CALL_DISABLED_MESSAGE } from './btw';
 
@@ -10,11 +12,16 @@ export class SessionBtwService implements ISessionBtwService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {}
 
   async start(): Promise<string> {
-    const child = await this.lifecycle.fork('main');
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    if (main === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+    }
+    const childContext = await this.agentLifecycle.fork(main.accessor.get(IAgentScopeContext).agentContext);
+    const child = this.agentLifecycle.handleOf(childContext.agentId)!;
     child.accessor
       .get(IAgentSystemReminderService)
       ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {
@@ -30,6 +37,6 @@ export class SessionBtwService implements ISessionBtwService {
       ?.onBeforeExecuteTool((event) => {
         event.veto(denyToolExecution(reason));
       });
-    return child.id;
+    return childContext.agentId;
   }
 }

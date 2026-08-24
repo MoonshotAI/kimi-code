@@ -41,6 +41,7 @@ import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolic
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 
@@ -165,6 +166,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IBuiltinAgentProfileLoader private readonly builtinProfiles: IBuiltinAgentProfileLoader,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
@@ -182,11 +184,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this._register(
       this.sessionToolPolicy.onDidChange((event) => {
         event.waitUntil(this.refreshSystemPrompt());
-      }),
-    );
-    this._register(
-      this.instructions.onDidChange(() => {
-        void this.refreshSystemPrompt();
       }),
     );
     this._register(
@@ -264,6 +261,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       snapshot.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(snapshot.systemPrompt);
     void this.dispatcher.dispatch(
       new ProfileBind({
+        agentId: this.scopeContext.agentId,
         modelAlias: snapshot.modelAlias,
         profileName: snapshot.profileName,
         thinkingEffort: snapshot.thinkingLevel,
@@ -332,6 +330,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
     this.activeToolNamesOverlay = undefined;
     await this.dispatcher.dispatch(new ProfileBind({
+      agentId: this.scopeContext.agentId,
       modelAlias: alias,
       profileName: profile.name,
       thinkingEffort: thinkingLevel,
@@ -441,6 +440,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     } catch (error) {
       void this.dispatcher.dispatch(
         new WarningIssued({
+          agentId: this.scopeContext.agentId,
           message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
           code: 'system-prompt-refresh-failed',
         }),
@@ -592,7 +592,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
   ): ConfigUpdatePayload {
-    const payload: ConfigUpdatePayload = {};
+    const payload: ConfigUpdatePayload = { agentId: this.scopeContext.agentId };
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
     if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
@@ -651,7 +651,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
       this.emittedThinkingEffortWarnings.add(key);
-      void this.dispatcher.dispatch(new WarningIssued({ code, message }));
+      void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
     } catch {
     }
   }
@@ -659,10 +659,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private setActiveTools(names: readonly string[] | undefined): void {
     this.activeToolNamesOverlay = undefined;
     if (names === undefined) {
-      void this.dispatcher.dispatch(new ToolsResetActiveTools({}));
+      void this.dispatcher.dispatch(new ToolsResetActiveTools({ agentId: this.scopeContext.agentId }));
       return;
     }
-    void this.dispatcher.dispatch(new ToolsSetActiveTools({ names: [...names] }));
+    void this.dispatcher.dispatch(
+      new ToolsSetActiveTools({ agentId: this.scopeContext.agentId, names: [...names] }),
+    );
   }
 
   private emitStatusUpdated(includeThinkingEffort = false): void {
@@ -677,6 +679,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const maxContextTokens = capabilities?.max_input_tokens ?? capabilities?.max_context_tokens;
     void this.dispatcher.dispatch(
       new AgentStatusUpdated({
+        agentId: this.scopeContext.agentId,
         model: modelAlias,
         thinkingEffort: includeThinkingEffort
           ? this.getEffectiveThinkingLevel()
@@ -806,6 +809,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (warning === undefined) return;
     void this.dispatcher.dispatch(
       new WarningIssued({
+        agentId: this.scopeContext.agentId,
         message: warning,
         code: 'agents-md-oversized',
       }),
@@ -852,6 +856,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         this.emittedToolPatternWarnings.add(key);
         void this.dispatcher.dispatch(
           new WarningIssued({
+            agentId: this.scopeContext.agentId,
             code: 'tool-pattern-no-match',
             message: describeInactiveToolPattern(context, field, issue),
           }),
@@ -968,6 +973,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         for (const id of newlySkipped) this.emittedPluginBudgetWarnings.add(id);
         void this.dispatcher.dispatch(
           new WarningIssued({
+            agentId: this.scopeContext.agentId,
             message:
               `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
               `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,

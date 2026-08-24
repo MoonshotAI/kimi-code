@@ -22,8 +22,8 @@ import {
 } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 
 import {
-  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  kimiCodePluginMarketplaceUrl,
 } from '#/constant/app';
 
 export {
@@ -51,7 +51,7 @@ export async function loadPluginMarketplace(
   options: LoadPluginMarketplaceOptions,
 ): Promise<PluginMarketplace> {
   const configuredSource = options.source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
-  const source = configuredSource ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL;
+  const source = configuredSource ?? kimiCodePluginMarketplaceUrl();
   const fetchImpl = options.fetchImpl ?? fetch;
   let read: { raw: string; location: MarketplaceLocation };
   try {

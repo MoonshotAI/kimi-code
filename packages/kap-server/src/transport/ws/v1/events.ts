@@ -18,6 +18,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -40,6 +41,11 @@ export interface SessionMetaUpdatedEvent {
 export interface SessionCreatedEvent {
   readonly type: 'event.session.created';
   readonly session: Session;
+}
+
+export interface SessionArchivedEvent {
+  readonly type: 'event.session.archived';
+  readonly workspace_id: string;
 }
 
 export interface WorkspaceCreatedEvent {
@@ -219,6 +225,7 @@ export type AgentEvent =
   | AgentDisposedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionArchivedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent

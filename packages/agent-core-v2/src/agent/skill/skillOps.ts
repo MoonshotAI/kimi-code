@@ -2,19 +2,21 @@
 import { z } from 'zod';
 
 import type { SkillActivationOrigin, SkillSource } from '#/agent/contextMemory/types';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
 export interface SkillActivatePayload {
+  readonly agentId: string;
   readonly origin: SkillActivationOrigin;
 }
 
-export class SkillActivate extends Event2<SkillActivatePayload> {
+export class SkillActivate extends AgentEvent2<SkillActivatePayload> {
   static override readonly type = 'skill.activate';
 }
 export interface SkillActivate extends SkillActivatePayload {}
 
 export interface SkillActivatedPayload {
+  readonly agentId: string;
   readonly activationId: string;
   readonly skillName: string;
   readonly trigger: string;
@@ -23,7 +25,7 @@ export interface SkillActivatedPayload {
   readonly skillSource?: SkillSource;
 }
 
-export class SkillActivated extends Event2<SkillActivatedPayload> {
+export class SkillActivated extends AgentEvent2<SkillActivatedPayload> {
   static override readonly type = 'skill.activated';
   static override readonly observable = true;
 }
@@ -34,6 +36,7 @@ export const skillKey = defineState('skill', (): null => null)
   .on(SkillActivate, (_s, e, ctx) => {
   ctx.emit(
     new SkillActivated({
+      agentId: e.agentId,
       activationId: e.origin.activationId,
       skillName: e.origin.skillName,
       trigger: e.origin.trigger,

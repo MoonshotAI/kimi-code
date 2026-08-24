@@ -1,13 +1,13 @@
 import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
-import type { HookResult } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
+import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlocked,
   CompactionCancelled,
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/agent/goal/goalOps';
+import type { ContentPart, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -26,6 +26,8 @@ import type {
   PromptCompleted,
   PromptSteered,
 } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
+import type { PromptQueued } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
 import type {
   ShellCompleted,
   ShellOutput,
@@ -46,7 +48,6 @@ import type {
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
-import type { CronFired } from '@moonshot-ai/agent-core-v2/session/cron/cronOps';
 import type {
   SubagentCompleted,
   SubagentFailed,
@@ -89,6 +90,8 @@ export interface ProjectorInteraction {
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
 type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
+type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
+type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
 type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptCompleted;
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
 type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
@@ -121,6 +124,8 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
   | AgentActivityUpdatedEvent
+  | PromptAcceptedEvent
+  | PromptQueuedEvent
   | PromptCompletedEvent
   | PromptAbortedEvent
   | PromptSteeredEvent
@@ -201,6 +206,7 @@ export class AgentTranscriptProjector {
   /** Latest header of the in-flight (or most recent) turn; kept whole so terminal upserts preserve `origin` / `startedAt` by reference. */
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
+  private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   /** turnId → highest step ordinal seen (engine-reported placement hint). */
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
@@ -211,6 +217,40 @@ export class AgentTranscriptProjector {
   private readonly tasks = new Map<string, TranscriptTask>();
   /** shell `commandId` → transcript `taskId` (`shell.output` is keyed by command id only). */
   private readonly shellTasks = new Map<string, string>();
+  /** subagent agent id → registered task id, for Agent-tool runs whose spawned
+      carried the registration (`taskId`): the task row keys by the task id so
+      `/tasks/{id}` actions resolve, and lifecycle events fold back to it. */
+  private readonly subagentTaskIds = new Map<string, string>();
+
+  /** Pre-seed the association and the row for a task registered before
+      attach: a foreground Agent run emits no `task.started` at all, so
+      without this a late-bound projector never learns the mapping, shows no
+      cancellable row, and lets the terminal event invent foreground-wrong
+      defaults. Only in-flight tasks seed (a terminal one has no lifecycle
+      left to fold). */
+  seedSubagentTask(info: {
+    readonly taskId: string;
+    readonly agentId: string;
+    readonly description: string;
+    readonly status: string;
+    readonly detached: boolean;
+    readonly startedAt: number;
+  }): TranscriptOperation[] {
+    if (info.status !== 'running') return [];
+    this.subagentTaskIds.set(info.agentId, info.taskId);
+    const task = this.upsertTask(info.taskId, (prev) => ({
+      taskId: info.taskId,
+      kind: 'subagent',
+      state: 'running',
+      detached: info.detached,
+      description: info.description,
+      agentId: info.agentId,
+      outputTail: prev?.outputTail ?? '',
+      startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
+      endedAt: prev?.endedAt,
+    }));
+    return [{ op: 'task.upsert', task }];
+  }
   /** interaction id → the pending entity as last emitted (resolve spreads it). */
   private readonly interactions = new Map<string, TranscriptInteraction>();
   /** promptId → the prompt queue entity as last emitted (`prompt.upsert` replaces). */
@@ -278,6 +318,10 @@ export class AgentTranscriptProjector {
         return this.onAgentStatusUpdated(event);
       case 'agent.activity.updated':
         return this.onAgentActivityUpdated(event);
+      case 'prompt.accepted':
+        return this.onPromptAccepted(event);
+      case 'prompt.queued':
+        return this.onPromptQueued(event);
       case 'prompt.submitted':
         return this.onPromptSubmitted(event);
       case 'prompt.completed':
@@ -345,9 +389,11 @@ export class AgentTranscriptProjector {
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
+    this.pendingTaskNotifications = [];
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    ops.push({ op: 'meta.merge', meta: { activity: 'turn' } });
     return ops;
   }
 
@@ -385,7 +431,9 @@ export class AgentTranscriptProjector {
       usage: this.takeTurnUsage(turnId),
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
+    ops.push({ op: 'meta.merge', meta: { activity: 'idle' } });
     this.currentStep = undefined;
+    this.pendingTaskNotifications = [];
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
       ops.push(
         this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
@@ -439,7 +487,23 @@ export class AgentTranscriptProjector {
     this.frameOrdinal = 0;
     this.openText = undefined;
     this.openThinking = undefined;
-    return [{ op: 'step.upsert', turnId, step: this.currentStep }];
+    const ops: TranscriptOperation[] = [{ op: 'step.upsert', turnId, step: this.currentStep }];
+    for (const pending of this.pendingTaskNotifications) {
+      ops.push({
+        op: 'frame.upsert',
+        turnId,
+        stepId,
+        frame: {
+          kind: 'text',
+          frameId: `${stepId}.f${++this.frameOrdinal}`,
+          role: 'user',
+          text: pending.text,
+          taskId: pending.taskId,
+        },
+      });
+    }
+    this.pendingTaskNotifications = [];
+    return ops;
   }
 
   private onStepCompleted(event: {
@@ -831,20 +895,21 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const step = this.currentStep;
     const turn = this.currentTurn;
-    const midTurn =
-      step !== undefined &&
-      turn !== undefined &&
-      step.state === 'running' &&
-      turn.state === 'running';
-    if (!midTurn) return [];
-    const frame: TextFrame = {
-      kind: 'text',
-      frameId: `${step.stepId}.f${++this.frameOrdinal}`,
-      role: 'user',
-      text: `${event.title}\n${event.body}`.trim(),
-      taskId: event.sourceId,
-    };
-    return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
+    if (turn === undefined || turn.state !== 'running') return [];
+    const text = `${event.title}\n${event.body}`.trim();
+    if (step !== undefined && step.state === 'running') {
+      const frame: TextFrame = {
+        kind: 'text',
+        frameId: `${step.stepId}.f${++this.frameOrdinal}`,
+        role: 'user',
+        text,
+        taskId: event.sourceId,
+      };
+      return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
+    }
+    if (turn.origin?.kind === 'task' && (turn.origin.taskId === undefined || turn.origin.taskId === event.sourceId)) return [];
+    this.pendingTaskNotifications.push({ text, taskId: event.sourceId });
+    return [];
   }
 
   private onTaskLifecycle(event: {
@@ -871,9 +936,18 @@ export class AgentTranscriptProjector {
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: info.endedAt === null ? prev?.endedAt : epochMsToIso(info.endedAt),
+      resultSummary: prev?.resultSummary,
+      usage: prev?.usage,
+      error: prev?.error,
+      stateReason: prev?.stateReason,
+      model: prev?.model,
+      thinkingEffort: prev?.thinkingEffort,
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     if (event.type === 'task.started') {
+      if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
+        this.subagentTaskIds.set(info.agentId, info.taskId);
+      }
       ops.push({
         op: 'taskref.upsert',
         item: { kind: 'taskref', refId: `ref-${info.taskId}`, taskId: info.taskId, at: nowIso() },
@@ -1004,9 +1078,18 @@ export class AgentTranscriptProjector {
     description?: string;
     swarmIndex?: number;
     runInBackground: boolean;
+    taskId?: string;
+    model?: string;
+    thinkingEffort?: string;
   }): TranscriptOperation[] {
-    const task = this.upsertTask(event.subagentId, (prev) => ({
-      taskId: event.subagentId,
+    const taskKey = event.taskId ?? event.subagentId;
+    if (event.taskId !== undefined) {
+      this.subagentTaskIds.set(event.subagentId, event.taskId);
+    } else {
+      this.subagentTaskIds.delete(event.subagentId);
+    }
+    const task = this.upsertTask(taskKey, (prev) => ({
+      taskId: taskKey,
       kind: 'subagent',
       state: 'running',
       detached: event.runInBackground,
@@ -1015,6 +1098,8 @@ export class AgentTranscriptProjector {
       outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? nowIso(),
       endedAt: prev?.endedAt,
+      model: event.model ?? prev?.model,
+      thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
     }));
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     const hit =
@@ -1048,8 +1133,9 @@ export class AgentTranscriptProjector {
         : event.type === 'subagent.failed'
           ? 'failed'
           : 'running';
-    const task = this.upsertTask(event.subagentId, (prev) => ({
-      taskId: event.subagentId,
+    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
+    const task = this.upsertTask(taskKey, (prev) => ({
+      taskId: taskKey,
       kind: 'subagent',
       state,
       detached: prev?.detached ?? true,
@@ -1065,8 +1151,34 @@ export class AgentTranscriptProjector {
       usage: event.usage ?? prev?.usage,
       error: event.error ?? prev?.error,
       stateReason: event.reason ?? prev?.stateReason,
+      model: prev?.model,
+      thinkingEffort: prev?.thinkingEffort,
     }));
-    return [{ op: 'task.upsert', task }];
+    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
+    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
+      const agentTask = this.upsertTask(event.subagentId, (prev) => ({
+        taskId: event.subagentId,
+        kind: 'subagent',
+        state,
+        detached: prev?.detached ?? true,
+        description: prev?.description,
+        agentId: event.subagentId,
+        outputTail: prev?.outputTail ?? '',
+        startedAt: prev?.startedAt ?? nowIso(),
+        endedAt:
+          event.type === 'subagent.completed' || event.type === 'subagent.failed'
+            ? nowIso()
+            : prev?.endedAt,
+        resultSummary: event.resultSummary ?? prev?.resultSummary,
+        usage: event.usage ?? prev?.usage,
+        error: event.error ?? prev?.error,
+        stateReason: event.reason ?? prev?.stateReason,
+        model: prev?.model,
+        thinkingEffort: prev?.thinkingEffort,
+      }));
+      ops.push({ op: 'task.upsert', task: agentTask });
+    }
+    return ops;
   }
 
   private onGoalUpdated(event: {
@@ -1081,7 +1193,9 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     const snapshot = event.snapshot;
-    if (snapshot !== null) {
+    if (snapshot === null) {
+      ops.push({ op: 'meta.merge', meta: { goal: null } });
+    } else {
       ops.push({
         op: 'meta.merge',
         meta: {
@@ -1102,6 +1216,7 @@ export class AgentTranscriptProjector {
   private onAgentStatusUpdated(event: {
     planMode?: boolean;
     swarmMode?: boolean;
+    towerMode?: boolean;
     model?: string;
     thinkingEffort?: string;
     usage?: AgentUsageMeta;
@@ -1111,7 +1226,11 @@ export class AgentTranscriptProjector {
     permission?: 'manual' | 'yolo' | 'auto';
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const modes: { plan?: Record<string, never> | null; swarm?: Record<string, never> | null } = {};
+    const modes: {
+      plan?: Record<string, never> | null;
+      swarm?: Record<string, never> | null;
+      tower?: Record<string, never> | null;
+    } = {};
     if (event.planMode === true) {
       modes.plan = {};
       this.planModeActive = true;
@@ -1121,7 +1240,9 @@ export class AgentTranscriptProjector {
     }
     if (event.swarmMode === true) modes.swarm = {};
     else if (event.swarmMode === false) modes.swarm = null;
-    if (modes.plan !== undefined || modes.swarm !== undefined) {
+    if (event.towerMode === true) modes.tower = {};
+    else if (event.towerMode === false) modes.tower = null;
+    if (modes.plan !== undefined || modes.swarm !== undefined || modes.tower !== undefined) {
       ops.push({ op: 'meta.merge', meta: { modes } });
     }
     const agent: {
@@ -1216,6 +1337,31 @@ export class AgentTranscriptProjector {
     eventPayload: unknown,
   ): TranscriptOperation {
     return this.markerOp('notice', { level, message, event: eventPayload });
+  }
+
+  private onPromptAccepted(event: PromptAcceptedEvent): TranscriptOperation[] {
+    const prompt = this.upsertPrompt(event.promptId, () => ({
+      promptId: event.promptId,
+      status: 'running',
+      userMessageId: event.promptId,
+      content:
+        event.content === undefined
+          ? undefined
+          : projectPromptContentParts(event.content as readonly ContentPart[]),
+      createdAt: nowIso(),
+    }));
+    return [{ op: 'prompt.upsert', prompt }];
+  }
+
+  private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {
+    const prompt = this.upsertPrompt(event.promptId, (prev) => ({
+      promptId: event.promptId,
+      status: 'queued',
+      userMessageId: prev?.userMessageId,
+      content: projectPromptContentParts(event.content),
+      createdAt: prev?.createdAt ?? nowIso(),
+    }));
+    return [{ op: 'prompt.upsert', prompt }];
   }
 
   private onPromptSubmitted(event: ProjectorPromptSubmittedEvent): TranscriptOperation[] {

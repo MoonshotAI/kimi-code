@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 18 keys · Agent: 98 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 79 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -37,15 +37,6 @@
 //     workspaceSkillCatalog.merged         src/workspace/workspaceSkillCatalog/workspaceSkillCatalogService.ts
 //     workspaceTrust.trusted               src/workspace/workspaceTrust/workspaceTrustService.ts
 //   Session
-//     cron.inFlight                      src/session/cron/sessionCronServiceImpl.ts
-//     cron.lastSeenAt                    src/session/cron/sessionCronServiceImpl.ts
-//     cron.parsedCache                   src/session/cron/sessionCronServiceImpl.ts
-//     cron.seededFromStore               src/session/cron/sessionCronServiceImpl.ts
-//     cron.started                       src/session/cron/sessionCronServiceImpl.ts
-//     cron.tasks                         src/session/cron/sessionCronServiceImpl.ts
-//     interaction.nextId                 src/session/interaction/interactionService.ts
-//     interaction.pending                src/session/interaction/interactionService.ts
-//     interaction.recentlyResolved       src/session/interaction/interactionService.ts
 //     sessionActivity.current            src/session/sessionActivity/sessionActivityService.ts
 //     sessionActivity.folds              src/session/sessionActivity/sessionActivityService.ts
 //     sessionLog.rootLevel               src/session/sessionLog/sessionLogService.ts
@@ -67,30 +58,14 @@
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
-//     cron                                            src/session/cron/cronOps.ts
 //     dateChange.seed                                 src/features/dateChange/dateChangeService.ts
-//     externalHooks.stopHookContinuationUsed          src/agent/externalHooks/externalHooksService.ts
+//     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
-//     goal                                            src/agent/goal/goalOps.ts
-//     goal.budgetGraceTurns                           src/agent/goal/goalService.ts
-//     goal.countedGoalTurns                           src/agent/goal/goalService.ts
-//     goal.exhaustedTurnBudgetGoals                   src/agent/goal/goalService.ts
-//     goal.goalDrivenTurns                            src/agent/goal/goalService.ts
-//     goal.goalOutcomeContinuationTurns               src/agent/goal/goalService.ts
-//     goal.goalOutcomeToolResultTurns                 src/agent/goal/goalService.ts
-//     goal.goalStarterTurns                           src/agent/goal/goalService.ts
-//     goal.goalTurnTargets                            src/agent/goal/goalService.ts
-//     goal.liveTurnId                                 src/agent/goal/goalService.ts
-//     goal.liveWallClockStartedAt                     src/agent/goal/goalService.ts
-//     goal.pendingContinuationGoals                   src/agent/goal/goalService.ts
-//     goal.resumeContinuation                         src/agent/goal/goalService.ts
-//     goalForkNotice                                  src/agent/goal/goalService.ts
-//     interaction                                     src/session/interaction/interactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
@@ -126,6 +101,7 @@
 //     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     skill                                           src/agent/skill/skillOps.ts
+//     staleGuard                                      src/features/staleGuard/staleGuardOps.ts
 //     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
 //     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
@@ -135,8 +111,6 @@
 //     task.ghosts                                     src/agent/task/taskService.ts
 //     task.notificationDelivery                       src/agent/task/taskService.ts
 //     task.scheduledNotificationKeys                  src/agent/task/taskService.ts
-//     todo                                            src/session/todo/todoOps.ts
-//     tokenCounting                                   src/agent/tokenCounting/tokenCountingOps.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.callKeyByCallId                      src/agent/toolDedupe/toolDedupeService.ts
@@ -149,10 +123,8 @@
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     tower                                           src/features/tower/towerOps.ts
+//     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
-//     usage                                           src/agent/usage/usageOps.ts
-//     usage.currentTurn                               src/agent/usage/usageService.ts
-//     usage.currentTurnId                             src/agent/usage/usageService.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
 
 /** App-scope keys registered into IAppStateService. */
@@ -428,51 +400,11 @@ export type WorkspaceStateKey = keyof WorkspaceStateSnapshot;
 
 /** Session-scope keys registered into ISessionStateService. */
 export interface SessionStateSnapshot {
-  // src/session/cron/sessionCronServiceImpl.ts
-  'cron.inFlight': Set<string>;
-  'cron.lastSeenAt': Map<string, number>;
-  'cron.parsedCache': Map<string, /* ParsedCronExpression — packages/agent-core-v2/src/app/cron/cron-expr.ts */ {
-    readonly raw: string;
-    readonly minutes: ReadonlySet<number>;
-    readonly hours: ReadonlySet<number>;
-    readonly daysOfMonth: ReadonlySet<number>;
-    readonly months: ReadonlySet<number>;
-    readonly daysOfWeek: ReadonlySet<number>;
-    readonly daysOfMonthWildcard: boolean;
-    readonly daysOfWeekWildcard: boolean;
-  }>;
-  'cron.seededFromStore': Set<string>;
-  'cron.started': boolean;
-  'cron.tasks': Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
-    readonly id: string;
-    readonly cron: string;
-    readonly prompt: string;
-    readonly createdAt: number;
-    readonly recurring?: boolean;
-    readonly lastFiredAt?: number;
-    readonly tags?: Readonly<Record<string, string>>;
-  }>;
-  // src/session/interaction/interactionService.ts
-  'interaction.nextId': number;
-  'interaction.pending': Map<string, /* Pending — packages/agent-core-v2/src/session/interaction/interactionService.ts */ {
-    readonly interaction: {
-      readonly id: string;
-      readonly kind: /* InteractionKind — packages/agent-core-v2/src/session/interaction/interaction.ts */ 'approval' | 'question' | 'user_tool';
-      readonly payload: unknown;
-      readonly origin: /* InteractionOrigin — packages/agent-core-v2/src/session/interaction/interaction.ts */ {
-        readonly agentId?: string;
-        readonly turnId?: number;
-      };
-      readonly createdAt: number;
-    };
-    readonly resolve: (response: unknown) => void;
-  }>;
-  'interaction.recentlyResolved': Map<string, number>;
   // src/session/sessionActivity/sessionActivityService.ts
   'sessionActivity.current': /* SessionActivityState — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ {
     readonly busy: boolean;
     readonly mainTurnActive: boolean;
-    readonly pendingInteraction: /* SessionPendingInteraction — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ 'approval' | 'question' | 'none';
+    readonly pendingInteraction: /* SessionPendingInteraction — packages/agent-core-v2/src/session/sessionActivity/sessionActivity.ts */ 'none' | 'approval' | 'question';
     readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   };
   'sessionActivity.folds': Map<string, /* AgentWorkFold — packages/agent-core-v2/src/session/sessionActivity/sessionActivityService.ts */ {
@@ -1188,8 +1120,6 @@ export interface AgentStateSnapshot {
   })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
-  // src/agent/externalHooks/externalHooksService.ts
-  'externalHooks.stopHookContinuationUsed': boolean;
   // src/agent/fullCompaction/compactionOps.ts
   // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
@@ -1201,45 +1131,6 @@ export interface AgentStateSnapshot {
   'fullCompaction.consecutiveOverflowCompactions': number;
   'fullCompaction.lastCompactedTokenCount': number | null;
   'fullCompaction.observedMaxContextTokensByModel': Map<string, number>;
-  // src/agent/goal/goalOps.ts
-  // replayable · durable — folds: GoalCreate, GoalUpdate, GoalClear, GoalForked
-  'goal': /* GoalModelState — packages/agent-core-v2/src/agent/goal/goalOps.ts */ /* GoalState — packages/agent-core-v2/src/agent/goal/goalOps.ts */ {
-    readonly goalId: string;
-    readonly objective: string;
-    readonly completionCriterion?: string;
-    readonly status: /* GoalStatus — packages/agent-core-v2/src/agent/goal/types.ts */ 'blocked' | 'active' | 'paused' | 'complete';
-    readonly turnsUsed: number;
-    readonly tokensUsed: number;
-    readonly wallClockMs: number;
-    readonly wallClockResumedAt?: number;
-    readonly budgetLimits: /* GoalBudgetLimits — packages/agent-core-v2/src/agent/goal/types.ts */ {
-      readonly tokenBudget?: number;
-      readonly turnBudget?: number;
-      readonly wallClockBudgetMs?: number;
-    };
-    readonly terminalReason?: string;
-  } | null;
-  // src/agent/goal/goalService.ts
-  'goal.budgetGraceTurns': Set<number>;
-  'goal.countedGoalTurns': Set<number>;
-  'goal.exhaustedTurnBudgetGoals': Map<number, string>;
-  'goal.goalDrivenTurns': Map<number, string>;
-  'goal.goalOutcomeContinuationTurns': Set<number>;
-  'goal.goalOutcomeToolResultTurns': Map<number, string>;
-  'goal.goalStarterTurns': Set<number>;
-  'goal.goalTurnTargets': Map<number, string>;
-  'goal.liveTurnId': number | undefined;
-  'goal.liveWallClockStartedAt': number | undefined;
-  'goal.pendingContinuationGoals': Map<number, string>;
-  'goal.resumeContinuation': /* ResumeContinuation — packages/agent-core-v2/src/agent/goal/goalService.ts */ {
-    readonly turnId: number;
-    readonly goalId: string;
-  } | undefined;
-  // replayable · durable — folds: GoalCreate, GoalClear, GoalForked, ContextAppendMessage
-  'goalForkNotice': /* GoalForkNoticeState — packages/agent-core-v2/src/agent/goal/goalService.ts */ {
-    readonly goalPresent: boolean;
-    readonly reminderPending: boolean;
-  };
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
@@ -1342,10 +1233,10 @@ export interface AgentStateSnapshot {
   // src/agent/media/mediaToolsRegistrar.ts
   'media.registeredKey': string | undefined;
   // src/agent/permissionMode/injection/permissionModeInjection.ts
-  'permissionMode.lastMode': 'manual' | 'yolo' | 'auto' | undefined;
+  'permissionMode.lastMode': 'manual' | 'auto' | 'yolo' | undefined;
   // src/agent/permissionMode/permissionModeOps.ts
   // replayable · durable — folds: PermissionSetMode
-  'permissionMode': /* PermissionMode — packages/agent-core-v2/src/agent/permissionPolicy/types.ts */ 'manual' | 'yolo' | 'auto';
+  'permissionMode': /* PermissionMode — packages/agent-core-v2/src/agent/permissionPolicy/types.ts */ 'manual' | 'auto' | 'yolo';
   // replayable · durable — folds: PermissionSetMode
   'permissionMode.configured': boolean;
   // src/agent/permissionRules/permissionRulesOps.ts
@@ -1425,13 +1316,10 @@ export interface AgentStateSnapshot {
   'stepRetry.lastFailedDriverId': string | undefined;
   // src/agent/task/taskOps.ts
   // replayable · durable — folds: TaskStarted, TaskTerminated
-  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
-    readonly kind: 'agent';
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly parentToolCallId?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
+  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
+    readonly kind: 'question';
+    readonly questionCount: number;
+    readonly toolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1441,10 +1329,13 @@ export interface AgentStateSnapshot {
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
-  } | /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
-    readonly kind: 'question';
-    readonly questionCount: number;
-    readonly toolCallId?: string;
+  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
+    readonly kind: 'agent';
+    readonly agentId?: string;
+    readonly subagentType?: string;
+    readonly parentToolCallId?: string;
+    readonly model?: string;
+    readonly thinkingEffort?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1472,13 +1363,10 @@ export interface AgentStateSnapshot {
   // src/agent/task/taskService.ts
   'task.activeTaskReminderPending': boolean;
   'task.deliveredNotificationKeys': Set<string>;
-  'task.ghosts': Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
-    readonly kind: 'agent';
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly parentToolCallId?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
+  'task.ghosts': Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
+    readonly kind: 'question';
+    readonly questionCount: number;
+    readonly toolCallId?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1488,10 +1376,13 @@ export interface AgentStateSnapshot {
     readonly stopReason?: string;
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
-  } | /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
-    readonly kind: 'question';
-    readonly questionCount: number;
-    readonly toolCallId?: string;
+  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
+    readonly kind: 'agent';
+    readonly agentId?: string;
+    readonly subagentType?: string;
+    readonly parentToolCallId?: string;
+    readonly model?: string;
+    readonly thinkingEffort?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1516,19 +1407,9 @@ export interface AgentStateSnapshot {
     readonly terminalNotificationSuppressed?: boolean;
     readonly timeoutMs?: number;
   }>;
-  // replayable · durable · undoable — folds: ContextAppendMessage
+  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
-  // src/agent/tokenCounting/tokenCountingOps.ts
-  // replayable · durable — folds: TokenCountingMeasured, TokenCountingTruncated, TokenCountingRebased
-  'tokenCounting': /* TokenCountingState — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
-    readonly anchors: readonly /* TokenAnchor — packages/agent-core-v2/src/agent/tokenCounting/tokenCountingOps.ts */ {
-      readonly length: number;
-      readonly tokens: number;
-      readonly measured: boolean;
-    }[];
-    readonly tokens: number;
-  };
   // src/agent/toolDedupe/toolDedupeService.ts
   'toolDedupe.activeStep': number;
   'toolDedupe.activeTurnId': number | undefined;
@@ -1543,24 +1424,6 @@ export interface AgentStateSnapshot {
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
-  // src/agent/usage/usageOps.ts
-  // replayable · durable — folds: UsageRecord
-  'usage': /* UsageModelState — packages/agent-core-v2/src/agent/usage/usageOps.ts */ {
-    readonly byModel: Record<string, /* TokenUsage — packages/agent-core-v2/src/kosong/contract/usage.ts */ {
-      inputOther: number;
-      output: number;
-      inputCacheRead: number;
-      inputCacheCreation: number;
-    }>;
-  };
-  // src/agent/usage/usageService.ts
-  'usage.currentTurn': /* TokenUsage — packages/agent-core-v2/src/kosong/contract/usage.ts */ {
-    inputOther: number;
-    output: number;
-    inputCacheRead: number;
-    inputCacheCreation: number;
-  } | undefined;
-  'usage.currentTurnId': number | undefined;
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
@@ -1575,6 +1438,8 @@ export interface AgentStateSnapshot {
     readonly timeZone: string;
     readonly renderGeneration: number;
   } | undefined;
+  // src/features/externalHooks/agent/agentExternalHooksService.ts
+  'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts
@@ -1584,40 +1449,17 @@ export interface AgentStateSnapshot {
     readonly id?: string;
     readonly revisionCount?: Readonly<Record<string, number>>;
   };
+  // src/features/staleGuard/staleGuardOps.ts
+  // replayable · durable — folds: StaleGuardRecorded, StaleGuardCleared
+  'staleGuard': /* StaleGuardModelState — packages/agent-core-v2/src/features/staleGuard/staleGuardOps.ts */ Map<string, number>;
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'task' | 'tool' | 'manual' | null;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;
-  // src/session/cron/cronOps.ts
-  // replayable · transient — folds: CronAdd, CronDelete, CronCursor
-  'cron': /* CronModelState — packages/agent-core-v2/src/session/cron/cronOps.ts */ Map<string, /* CronTask — packages/agent-core-v2/src/app/cron/cronTask.ts */ {
-    readonly id: string;
-    readonly cron: string;
-    readonly prompt: string;
-    readonly createdAt: number;
-    readonly recurring?: boolean;
-    readonly lastFiredAt?: number;
-    readonly tags?: Readonly<Record<string, string>>;
-  }>;
-  // src/session/interaction/interactionOps.ts
-  // replayable · durable — folds: InteractionRequestEvent, InteractionResolvedEvent
-  'interaction': /* InteractionModelState — packages/agent-core-v2/src/session/interaction/interactionOps.ts */ Map<string, /* InteractionRecord — packages/agent-core-v2/src/session/interaction/interactionOps.ts */ {
-    readonly id: string;
-    readonly kind: /* InteractionKind — packages/agent-core-v2/src/session/interaction/interaction.ts */ 'approval' | 'question' | 'user_tool';
-    readonly toolCallId?: string;
-    readonly agentId?: string;
-    readonly request: unknown;
-    readonly resolved: boolean;
-    readonly response?: unknown;
-  }>;
-  // src/session/todo/todoOps.ts
-  // replayable · durable · undoable — folds: ToolsUpdateStore
-  'todo': readonly /* TodoItem — packages/agent-core-v2/src/session/todo/todoItem.ts */ {
-    readonly title: string;
-    readonly status: /* TodoStatus — packages/agent-core-v2/src/session/todo/todoItem.ts */ 'pending' | 'in_progress' | 'done';
-  }[];
+  // replayable · durable — folds: TowerModeEnter, TowerModeExit
+  'tower.owner': string | undefined;
 }
 
 export type AgentStateKey = keyof AgentStateSnapshot;

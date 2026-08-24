@@ -54,18 +54,29 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     }
     const renderGeneration = profileData.renderGeneration ?? 0;
     const current = currentDateDisclosure(this.clock);
+    const profileDate = this.dateFromProfile();
     const baseline = pickDisclosureBaseline<DateDisclosure>(
       lastDisclosure,
-      this.dateFromProfile(),
+      profileDate,
       this.states.get(dateChangeSeedKey),
     );
-    if (baseline === undefined) {
-      this.states.set(dateChangeSeedKey, { ...current, renderGeneration });
-      return undefined;
+    if (baseline !== undefined && baseline.localDate !== current.localDate) {
+      return {
+        content: `The date has changed. Today's date is now ${current.localDate}. Rely on this reminder over any earlier date statement for the current date. DO NOT mention this to the user explicitly.`,
+        disclosure: {
+          kind: 'date',
+          renderGeneration,
+          localDate: current.localDate,
+          timeZone: current.timeZone,
+        },
+      };
     }
-    if (baseline.localDate === current.localDate) return undefined;
+    if (lastDisclosure !== undefined || profileDate !== undefined) return undefined;
+    if (this.states.get(dateChangeSeedKey) === undefined) {
+      this.states.set(dateChangeSeedKey, { ...current, renderGeneration });
+    }
     return {
-      content: `The date has changed. Today's date is now ${current.localDate}. The date and time stated in your system prompt are stale; rely on this reminder for the current date. DO NOT mention this to the user explicitly.`,
+      content: `Today's date is ${current.localDate}. The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date. DO NOT mention this to the user explicitly.`,
       disclosure: {
         kind: 'date',
         renderGeneration,

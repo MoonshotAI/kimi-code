@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createKimiHarness, type Event, type KimiError } from '#/index';
+import { createKimiHarness, ErrorCodes, type Event, type KimiError } from '#/index';
 
 import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -53,6 +53,29 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       await expect(planOff).resolves.toMatchObject({
         type: 'agent.status.updated',
         planMode: false,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('rejects setTowerMode on the v1 engine with not_implemented', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-tower-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-tower-work-');
+    await writeTestConfig(homeDir);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_tower_runtime', workDir });
+
+      await expect(session.setTowerMode('yes' as unknown as boolean)).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+      });
+      await expect(session.setTowerMode(true)).rejects.toMatchObject({
+        code: ErrorCodes.NOT_IMPLEMENTED,
+      });
+      await expect(session.setTowerMode(false)).rejects.toMatchObject({
+        code: ErrorCodes.NOT_IMPLEMENTED,
       });
     } finally {
       await harness.close();

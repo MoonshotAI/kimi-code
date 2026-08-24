@@ -76,12 +76,18 @@ export function attachSessionEvents(args: {
       deliver(toSessionEvent(event as unknown as DomainEvent, sessionId, handle.id));
     }));
   };
-  for (const handle of agents.list()) subscribeAgent(handle);
+  for (const context of agents.list()) {
+    const handle = agents.handleOf(context.agentId);
+    if (handle !== undefined) subscribeAgent(handle);
+  }
   const lifecycleSubscriptions: IDisposable[] = [
-    agents.onDidCreate((handle) => { subscribeAgent(handle); }),
-    agents.onDidDispose((agentId) => {
-      agentSubscriptions.get(agentId)?.dispose();
-      agentSubscriptions.delete(agentId);
+    agents.onDidCreate((context) => {
+      const handle = agents.handleOf(context.agentId);
+      if (handle !== undefined) subscribeAgent(handle);
+    }),
+    agents.onDidClose((context) => {
+      agentSubscriptions.get(context.agentId)?.dispose();
+      agentSubscriptions.delete(context.agentId);
     }),
   ];
   const globalSubscription = app.accessor.get(IEventService).subscribe((event) => {

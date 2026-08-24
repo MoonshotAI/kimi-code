@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import type { MCPToolDefinition } from '#/mcpCore/types';
 import { defineState } from '#/state/state';
 
@@ -27,6 +27,7 @@ const mcpToolCollisionSchema = z.object({
 });
 
 const mcpToolsDiscoveredSchema = z.object({
+  agentId: z.string(),
   serverName: z.string(),
   hash: z.string(),
   tools: z.custom<readonly MCPToolDefinition[]>(),
@@ -34,12 +35,19 @@ const mcpToolsDiscoveredSchema = z.object({
   collisions: z.array(mcpToolCollisionSchema).readonly().optional(),
 });
 
-export class McpToolsDiscovered extends Event2<z.infer<typeof mcpToolsDiscoveredSchema>> {
+export class McpToolsDiscovered extends AgentEvent2<z.infer<typeof mcpToolsDiscoveredSchema>> {
   static override readonly type = 'mcp.tools_discovered';
   static override readonly durable = true;
   static override readonly schema = mcpToolsDiscoveredSchema;
 }
-export interface McpToolsDiscovered extends z.infer<typeof mcpToolsDiscoveredSchema> {}
+export interface McpToolsDiscovered {
+  readonly agentId: string;
+  readonly serverName: string;
+  readonly hash: string;
+  readonly tools: readonly MCPToolDefinition[];
+  readonly enabledNames: readonly string[];
+  readonly collisions?: readonly McpToolCollision[];
+}
 
 export const mcpDiscoveryKey = defineState('mcp.discovery', (): McpDiscoveryState => ({ seen: [] }))
   .replayable({ schema: z.custom<McpDiscoveryState>() })

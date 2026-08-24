@@ -3,7 +3,7 @@
 // smoke run instead). Services are dispatched by the real service identifier
 // objects (same accessor pattern as session.test.ts), so the harness must ask
 // for the exact tokens it documents. `ensureMainAgent` is exercised through
-// its "already exists" branch: each fake session lifecycle's `getHandle('main')`
+// its "already exists" branch: each fake session lifecycle's `handleOf('main')`
 // returns that session's fake main handle.
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  AgentInteraction,
+  AgentTodo,
   IAgentActivityView,
   IAgentBlobService,
   IAgentContextMemoryService,
@@ -22,10 +24,8 @@ import {
   IAgentScopeContext,
   IAgentSwarmService,
   IAgentTaskService,
-  IAgentTokenCountingService,
   IAgentToolPolicyService,
   IAgentToolRegistryService,
-  IAgentUsageService,
   IAppendLogStore,
   IBootstrapService,
   IConfigService,
@@ -37,14 +37,13 @@ import {
   IProviderService,
   ISessionApprovalService,
   ISessionContext,
-  ISessionCronService,
   ISessionExportService,
   ISessionIndex,
-  ISessionInteractionService,
   ISessionManager,
   ISessionMetadata,
   ISessionQuestionService,
-  ISessionTodoService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   ISessionWorkspaceContext,
   IWireService,
   IWorkspaceService,
@@ -130,6 +129,7 @@ function makeFixture(options?: {
 
   const makeAgentServices = (sid: string) => {
     const bus = makeFakeBus();
+    const context = { agentId: 'main', generation: 0 };
     const setModel = (...args: unknown[]) => {
       (calls[`${sid}.setModel`] ??= []).push(args);
       order.push(`${sid}.setModel`);
@@ -138,6 +138,7 @@ function makeFixture(options?: {
     };
     return {
       bus,
+      context,
       entries: [
         [IEventBus, bus],
         [
@@ -170,10 +171,10 @@ function makeFixture(options?: {
           },
         ],
         [IAgentContextMemoryService, { get: () => [] }],
-        [IAgentTokenCountingService, { get: () => ({ size: 42 }) }],
+        [ISessionTokenCountingService, { get: () => ({ size: 42 }) }],
         [IAgentPermissionRulesService, { rules: [] }],
         [IAgentSwarmService, { isActive: false }],
-        [IAgentUsageService, { status: () => usage }],
+        [ISessionUsageService, { status: () => usage }],
         [IAgentToolRegistryService, { list: () => [] }],
         [IAgentTaskService, { list: () => [] }],
         [
@@ -186,7 +187,7 @@ function makeFixture(options?: {
           },
         ],
         [IWireService, { flush: () => Promise.resolve() }],
-        [IAgentScopeContext, { scope: () => 'agent-main' }],
+        [IAgentScopeContext, { scope: () => 'agent-main', agentContext: context }],
         [IAppendLogStore, { read: async function* () {} }],
         [IAgentBlobService, { loadParts: async (parts: readonly unknown[]) => parts }],
       ] as ReadonlyArray<readonly [unknown, unknown]>,
@@ -196,12 +197,18 @@ function makeFixture(options?: {
   const makeSessionHandle = (sid: string, workDir: string) => {
     const agent = makeAgentServices(sid);
     const main = { id: 'main', kind: 'agent', accessor: makeAccessor(agent.entries) };
+    const kernel = makeFakeInteractionKernel();
     const lifecycleAgents = {
-      list: () => [main],
-      get: (id: string) => (id === 'main' ? main : undefined),
-      create: async () => main,
+      list: () => [agent.context],
+      handleOf: (id: string) => (id === 'main' ? main : undefined),
+      create: async () => agent.context,
+      resolve: (_context: unknown, definition: unknown) => {
+        if (definition === AgentTodo) return { get: () => [] };
+        if (definition === AgentInteraction) return kernel;
+        throw new Error('fake lifecycle: unexpected runtime definition');
+      },
       onDidCreate: () => ({ dispose: () => {} }),
-      onDidDispose: () => ({ dispose: () => {} }),
+      onDidClose: () => ({ dispose: () => {} }),
     };
     const meta = {
       id: sid,
@@ -220,8 +227,6 @@ function makeFixture(options?: {
       kind: 'session',
       accessor: makeAccessor([
         [IAgentLifecycleService, lifecycleAgents],
-        [ISessionCronService, { _serviceBrand: undefined }],
-        [ISessionInteractionService, makeFakeInteractionKernel()],
         [ISessionApprovalService, { decide: () => {} }],
         [ISessionQuestionService, { answer: () => {}, dismiss: () => {} }],
         [ISessionContext, { sessionId: sid, workspaceId: 'ws-1', sessionDir: `/sessions/ws-1/${sid}`, cwd: workDir }],
@@ -237,7 +242,6 @@ function makeFixture(options?: {
           ISessionWorkspaceContext,
           { workDir, additionalDirs: ['/extra'] },
         ],
-        [ISessionTodoService, { getTodos: () => [] }],
       ]),
     };
   };

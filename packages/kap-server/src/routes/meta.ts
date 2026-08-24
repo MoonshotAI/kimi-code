@@ -1,7 +1,7 @@
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
-import type { MetaResponse } from '../protocol/rest-meta';
+import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
 
 interface RouteHost {
   get(
@@ -36,6 +36,12 @@ export interface MetaRouteOptions {
    * always reflects the fully loaded config (never pre-load defaults).
    */
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
+  /**
+   * Resolves the engine's current feature list at request time. Backed by
+   * `IFeatureManager.units()` in production, so runtime retraction or a failed
+   * assembly is reflected in the very next response.
+   */
+  readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
@@ -69,6 +75,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       const data: MetaResponse = {
         ...staticData,
         experimental_flags: await opts.getExperimentalFlags(),
+        features: await opts.getFeatures(),
       };
       reply.send(okEnvelope(data, req.id));
     },

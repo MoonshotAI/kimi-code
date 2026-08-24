@@ -12,11 +12,13 @@
  */
 
 import {
+  AgentGoal,
+  AgentTodo,
+  agentContextOf,
   ensureMainAgent,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentMcpService,
@@ -29,21 +31,23 @@ import {
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentTowerService,
   IConfigService,
   IModelCatalog,
   IPluginService,
   ISessionApprovalService,
   ISessionBtwService,
   ISessionContext,
-  ISessionInteractionService,
   ISessionMetadata,
   ISessionQuestionService,
   ISessionSkillCatalog,
-  ISessionTodoService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWorkspaceDirs,
+  listSessionPendingInteractions,
   MAIN_AGENT_ID,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
   summarizeSkill,
   type ContentPart,
   type ContextMessage,
@@ -235,9 +239,13 @@ export class CoreSession {
     });
   }
 
-  /** The session's todo list, read live from the session-scope todo service. */
+  /** The session's todo list, read live from the main agent's todo runtime. */
   async getTodos(): Promise<readonly TodoItem[]> {
-    return this.init.handle.accessor.get(ISessionTodoService).getTodos();
+    const agent = await this.agent();
+    return this.init.handle.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentTodo)
+      .get();
   }
 
   async activatePluginCommand(input: {
@@ -291,6 +299,13 @@ export class CoreSession {
     else swarm.exit();
   }
 
+  async setTowerMode(on: boolean): Promise<void> {
+    const agent = await this.agent();
+    const tower = agent.accessor.get(IAgentTowerService);
+    if (on) await tower.enter();
+    else tower.exit();
+  }
+
   /** Returns `false` when a compaction is already in flight. */
   async compact(instruction?: string): Promise<boolean> {
     const agent = await this.agent();
@@ -317,9 +332,10 @@ export class CoreSession {
   async getStatus(): Promise<SessionStatus> {
     const main = await this.agent();
     const { accessor } = main;
+    const context = agentContextOf(main);
     const profile = accessor.get(IAgentProfileService);
     const model = profile.getModel();
-    const contextTokens = accessor.get(IAgentTokenCountingService).get().size;
+    const contextTokens = accessor.get(ISessionTokenCountingService).get(context).size;
     // Aggregate from the main agent's native services instead of the v1
     // `ISessionLegacyService` wire projection. Mirror v1's
     // `resolveDefaultModelContextTokens`: when no model is bound yet (fresh
@@ -344,11 +360,12 @@ export class CoreSession {
       permission: accessor.get(IAgentPermissionModeService).mode,
       planMode: (await accessor.get(IAgentPlanService).status()) !== null,
       swarmMode: accessor.get(IAgentSwarmService).isActive,
+      towerMode: accessor.get(IAgentTowerService).isActive,
       contextTokens,
-      rawContextTokens: accessor.get(IAgentTokenCountingService).rawSize(),
+      rawContextTokens: accessor.get(ISessionTokenCountingService).rawSize(context),
       maxContextTokens,
       contextUsage: maxContextTokens > 0 ? contextTokens / maxContextTokens : 0,
-      usage: accessor.get(IAgentUsageService).status(),
+      usage: accessor.get(ISessionUsageService).status(context),
     };
   }
 
@@ -359,12 +376,15 @@ export class CoreSession {
 
   async getUsage(options?: { agentId?: string }): Promise<UsageStatus> {
     const agent = await this.agent(options?.agentId);
-    return agent.accessor.get(IAgentUsageService).status();
+    return agent.accessor.get(ISessionUsageService).status(agentContextOf(agent));
   }
 
   async getGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    return agent.accessor.get(IAgentGoalService).getGoal();
+    return agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentGoal)
+      .getGoal();
   }
 
   async getSessionWarnings(): Promise<readonly SessionWarning[]> {
@@ -409,22 +429,26 @@ export class CoreSession {
 
   async createGoal(input: CreateGoalInput): Promise<GoalToolResult> {
     const agent = await this.agent();
-    return { goal: await agent.accessor.get(IAgentGoalService).createGoal(input) };
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    return { goal: await goal.createGoal(input) };
   }
 
   async pauseGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    return { goal: await agent.accessor.get(IAgentGoalService).pauseGoal() };
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    return { goal: await goal.pauseGoal() };
   }
 
   async resumeGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    return { goal: await agent.accessor.get(IAgentGoalService).resumeGoal() };
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    return { goal: await goal.resumeGoal() };
   }
 
   async cancelGoal(): Promise<GoalToolResult> {
     const agent = await this.agent();
-    return { goal: await agent.accessor.get(IAgentGoalService).cancelGoal() };
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    return { goal: await goal.cancelGoal() };
   }
 
   async listBackgroundTasks(options?: {
@@ -543,9 +567,10 @@ export class CoreSession {
 
   /** Resolve the target agent handle; the main agent is created lazily. */
   private async agent(agentId?: string): Promise<IAgentScopeHandle> {
+    const lifecycle = this.init.handle.accessor.get(IAgentLifecycleService);
     const id = agentId ?? MAIN_AGENT_ID;
-    if (id === MAIN_AGENT_ID) return ensureMainAgent(this.init.handle);
-    const handle = this.init.handle.accessor.get(IAgentLifecycleService).get(id);
+    if (id === MAIN_AGENT_ID) await ensureMainAgent(this.init.handle);
+    const handle = lifecycle.handleOf(id);
     if (handle === undefined) {
       throw new CoreError(
         CoreErrorCodes.AGENT_NOT_FOUND,
@@ -579,7 +604,7 @@ export class CoreSession {
   }
 
   private buildApprovals(): CoreApprovals {
-    const kernel = this.init.handle.accessor.get(ISessionInteractionService);
+    const manager = this.init.handle.accessor.get(IAgentLifecycleService);
     const approvals = this.init.handle.accessor.get(ISessionApprovalService);
     const project = (i: Interaction): PendingApproval => {
       const payload = i.payload as CoreApprovalRequest;
@@ -590,13 +615,13 @@ export class CoreSession {
       };
     };
     return {
-      list: () => kernel.listPending('approval').map(project),
+      list: () => listSessionPendingInteractions(manager, 'approval').map(project),
       onDidChangePending: (listener) => {
-        const d = kernel.onDidChangePending(() => listener());
+        const d = onSessionInteractionDidChangePending(manager, () => listener());
         return () => d.dispose();
       },
       onDidResolve: (listener) => {
-        const d = kernel.onDidResolve(({ id }) => listener(id));
+        const d = onSessionInteractionDidResolve(manager, ({ id }) => listener(id));
         return () => d.dispose();
       },
       decide: (id, response) => approvals.decide(id, response),
@@ -604,7 +629,7 @@ export class CoreSession {
   }
 
   private buildQuestions(): CoreQuestions {
-    const kernel = this.init.handle.accessor.get(ISessionInteractionService);
+    const manager = this.init.handle.accessor.get(IAgentLifecycleService);
     const questions = this.init.handle.accessor.get(ISessionQuestionService);
     const project = (i: Interaction): PendingQuestion => ({
       id: i.id,
@@ -614,13 +639,13 @@ export class CoreSession {
       request: i.payload as CoreQuestionRequest,
     });
     return {
-      list: () => kernel.listPending('question').map(project),
+      list: () => listSessionPendingInteractions(manager, 'question').map(project),
       onDidChangePending: (listener) => {
-        const d = kernel.onDidChangePending(() => listener());
+        const d = onSessionInteractionDidChangePending(manager, () => listener());
         return () => d.dispose();
       },
       onDidResolve: (listener) => {
-        const d = kernel.onDidResolve(({ id }) => listener(id));
+        const d = onSessionInteractionDidResolve(manager, ({ id }) => listener(id));
         return () => d.dispose();
       },
       answer: (id, result) => questions.answer(id, result),

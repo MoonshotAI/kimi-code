@@ -1,11 +1,13 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -25,6 +27,7 @@ export interface SubagentSpawnedPayload {
   readonly runInBackground: boolean;
   readonly model?: string;
   readonly thinkingEffort?: string;
+  readonly taskId?: string;
 }
 
 export class SubagentSpawned extends Event2<SubagentSpawnedPayload> {
@@ -74,7 +77,9 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  readonly fork?: boolean;
   readonly model?: string;
+  readonly taskId?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -83,6 +88,7 @@ export interface MirrorAgentRunOptions {
   readonly suppressRateLimitFailureEvent?: boolean;
   readonly signal: AbortSignal;
   readonly cancel?: (reason?: unknown) => void;
+  readonly deferStarted?: boolean;
 }
 
 export function emitAgentRunSpawned(
@@ -92,7 +98,7 @@ export function emitAgentRunSpawned(
 ): void {
   const childProfile = requester.accessor
     .get(IAgentLifecycleService)
-    ?.get(targetAgentId)
+    .handleOf(targetAgentId)
     ?.accessor.get(IAgentProfileService);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
@@ -107,16 +113,20 @@ export function emitAgentRunSpawned(
       runInBackground: meta.runInBackground ?? false,
       model: meta.model,
       thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
+      taskId: meta.taskId,
     }),
   );
   childProfile?.republishStatus();
-  requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
+  const telemetryEvent: SubagentCreatedEvent = {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
+    fork: meta.fork ?? false,
     agent_id: targetAgentId,
     parent_agent_id: requester.id,
     parent_tool_call_id: meta.parentToolCallId ?? '',
-  });
+    model: meta.model,
+  };
+  requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
 }
 
 export async function mirrorAgentRun(
@@ -127,7 +137,9 @@ export async function mirrorAgentRun(
   const dispatcher = requester.accessor.get(IEventDispatcher);
   const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
-  void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+  if (options.deferStarted !== true) {
+    void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+  }
   if (options.prompt !== undefined) {
     const cancelAndRethrow = (reason: unknown): never => {
       options.cancel?.(reason);
@@ -190,6 +202,9 @@ function childContextTokens(
   agentLifecycle: IAgentLifecycleService,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.get(agentId);
-  return child?.accessor.get(IAgentTokenCountingService)?.statusSize();
+  const child = agentLifecycle.handleOf(agentId);
+  if (child === undefined) return undefined;
+  const context = tryAgentContextOf(child);
+  if (context === undefined) return undefined;
+  return child.accessor.get(ISessionTokenCountingService)?.statusSize(context);
 }

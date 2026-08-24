@@ -3,13 +3,14 @@
 // service identifier objects (same pattern as replay.test.ts), so the
 // implementation must ask for the exact tokens it documents. `ensureMainAgent`
 // is exercised through its "already exists" branch: the fake lifecycle's
-// `getHandle('main')` returns the fake main handle.
+// `handleOf('main')` returns the fake main handle.
 import { describe, expect, it } from 'vitest';
 import {
+  AgentGoal,
+  AgentInteraction,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentGoalService,
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentMcpService,
@@ -18,13 +19,13 @@ import {
   IAgentPluginCommandService,
   IAgentProfileService,
   IAgentPromptService,
+  IAgentScopeContext,
   IAgentShellCommandService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentSystemReminderService,
   IAgentTaskService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentTowerService,
   IBootstrapService,
   IEventBus,
   IEventService,
@@ -33,12 +34,12 @@ import {
   ISessionApprovalService,
   ISessionBtwService,
   ISessionContext,
-  ISessionCronService,
-  ISessionInteractionService,
   ISessionMetadata,
   ISessionQuestionService,
   ISessionSkillCatalog,
   ISessionSwarmService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWorkspaceDirs,
 } from '@moonshot-ai/agent-core-v2';
 import { CoreErrorCodes, isCoreError } from '../../src/core/errors';
@@ -126,10 +127,13 @@ function makeFixture(options?: {
 
   const makeAgentServices = (id: string) => {
     const bus = makeFakeBus();
+    const context = { agentId: id, generation: 0 };
     return {
       bus,
+      context,
       entries: [
         [IEventBus, bus],
+        [IAgentScopeContext, { agentId: id, agentContext: context }],
         [
           IAgentPromptService,
           {
@@ -174,21 +178,15 @@ function makeFixture(options?: {
           { enter: record(`${id}.swarm.enter`), exit: record(`${id}.swarm.exit`), isActive: false },
         ],
         [
+          IAgentTowerService,
+          { enter: record(`${id}.tower.enter`), exit: record(`${id}.tower.exit`), isActive: false },
+        ],
+        [
           IAgentFullCompactionService,
           { begin: recordReturning(`${id}.compaction.begin`, true), cancel: record(`${id}.cancelCompaction`) },
         ],
-        [
-          IAgentGoalService,
-          {
-            getGoal: recordReturning(`${id}.getGoal`, goalResult),
-            createGoal: recordReturning(`${id}.createGoal`, Promise.resolve(goalSnapshot)),
-            pauseGoal: recordReturning(`${id}.pauseGoal`, Promise.resolve(goalSnapshot)),
-            resumeGoal: recordReturning(`${id}.resumeGoal`, Promise.resolve(goalSnapshot)),
-            cancelGoal: recordReturning(`${id}.cancelGoal`, Promise.resolve(goalSnapshot)),
-          },
-        ],
-        [IAgentUsageService, { status: () => usage }],
-        [IAgentTokenCountingService, { get: () => ({ size: 100 }), rawSize: () => 120 }],
+        [ISessionUsageService, { status: () => usage }],
+        [ISessionTokenCountingService, { get: () => ({ size: 100 }), rawSize: () => 120 }],
         [IAgentPermissionModeService, { mode: 'auto', setModeAndBroadcast: record(`${id}.setPermission`) }],
         [
           IAgentMcpService,
@@ -210,30 +208,62 @@ function makeFixture(options?: {
 
   const mainServices = makeAgentServices('main');
   const btwServices = makeAgentServices('btw-1');
-  const mainAgent = { id: 'main', kind: 'agent', accessor: makeAccessor(mainServices.entries) };
-  const btwAgent = { id: 'btw-1', kind: 'agent', accessor: makeAccessor(btwServices.entries) };
-  const handles = new Map<string, unknown>([
-    ['main', mainAgent],
-    ['btw-1', btwAgent],
+  const handles = new Map<string, unknown>();
+
+  const kernel = makeFakeInteractionKernel(options?.pendingInteractions ?? []);
+  const goalRuntime = (id: string) => ({
+    getGoal: recordReturning(`${id}.getGoal`, goalResult),
+    createGoal: recordReturning(`${id}.createGoal`, Promise.resolve(goalSnapshot)),
+    pauseGoal: recordReturning(`${id}.pauseGoal`, Promise.resolve(goalSnapshot)),
+    resumeGoal: recordReturning(`${id}.resumeGoal`, Promise.resolve(goalSnapshot)),
+    cancelGoal: recordReturning(`${id}.cancelGoal`, Promise.resolve(goalSnapshot)),
+  });
+  const runtimes = new Map<string, Map<unknown, unknown>>([
+    ['main', new Map<unknown, unknown>([[AgentGoal, goalRuntime('main')], [AgentInteraction, kernel]])],
+    [
+      'btw-1',
+      new Map<unknown, unknown>([[AgentGoal, goalRuntime('btw-1')], [AgentInteraction, makeFakeInteractionKernel([])]]),
+    ],
   ]);
 
   const getHandleCalls: string[] = [];
   const lifecycle = {
-    list: () => [mainAgent],
-    get: (id: string) => {
+    list: () => [mainServices.context],
+    handleOf: (id: string) => {
       getHandleCalls.push(id);
       return handles.get(id);
     },
     create: async (opts?: { agentId?: string }) => {
       const id = opts?.agentId ?? 'main';
       getHandleCalls.push(id);
-      return handles.get(id) ?? mainAgent;
+      return id === 'btw-1' ? btwServices.context : mainServices.context;
+    },
+    resolve: (context: { agentId: string }, definition: unknown) => {
+      const runtime = runtimes.get(context.agentId)?.get(definition);
+      if (runtime === undefined) {
+        throw new Error(`fake lifecycle: unexpected runtime for agent "${context.agentId}"`);
+      }
+      return runtime;
     },
     onDidCreate: () => ({ dispose: () => {} }),
-    onDidDispose: () => ({ dispose: () => {} }),
+    onDidClose: () => ({ dispose: () => {} }),
   };
 
-  const kernel = makeFakeInteractionKernel(options?.pendingInteractions ?? []);
+  // The real DI walks from the agent scope up to the session scope, so the
+  // agent accessor must also answer the session-scope lifecycle token.
+  const mainAgent = {
+    id: 'main',
+    kind: 'agent',
+    accessor: makeAccessor([...mainServices.entries, [IAgentLifecycleService, lifecycle]]),
+  };
+  const btwAgent = {
+    id: 'btw-1',
+    kind: 'agent',
+    accessor: makeAccessor([...btwServices.entries, [IAgentLifecycleService, lifecycle]]),
+  };
+  handles.set('main', mainAgent);
+  handles.set('btw-1', btwAgent);
+
   const swarmRunCalls: unknown[] = [];
   const sessionSwarm = {
     run: (args: { tasks: readonly unknown[] }) => {
@@ -251,8 +281,6 @@ function makeFixture(options?: {
     kind: 'session',
     accessor: makeAccessor([
       [IAgentLifecycleService, lifecycle],
-      [ISessionCronService, { _serviceBrand: undefined }],
-      [ISessionInteractionService, kernel],
       [ISessionApprovalService, { decide: record('approvals.decide') }],
       [ISessionQuestionService, { answer: record('questions.answer'), dismiss: record('questions.dismiss') }],
       [ISessionBtwService, { start: () => Promise.resolve('btw-1') }],
@@ -434,6 +462,7 @@ describe('CoreSession queries', () => {
       permission: 'auto',
       planMode: true,
       swarmMode: false,
+      towerMode: false,
       contextTokens: 100,
       rawContextTokens: 120,
       maxContextTokens: 1000,

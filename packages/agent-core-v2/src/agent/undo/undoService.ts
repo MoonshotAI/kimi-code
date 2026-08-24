@@ -22,7 +22,7 @@ import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadat
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventService } from '#/app/event/event';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -34,11 +34,12 @@ import { keepsUndoCheckpoints } from '#/state/state';
 
 import { IAgentConversationUndoService, type UndoAvailability } from './undo';
 
-export class ContextUndone extends Event2<{ readonly turns: number }> {
+export class ContextUndone extends AgentEvent2<{ readonly agentId: string; readonly turns: number }> {
   static override readonly type = 'context.undone';
   static override readonly observable = true;
 }
 export interface ContextUndone {
+  readonly agentId: string;
   readonly turns: number;
 }
 
@@ -111,7 +112,9 @@ export class AgentConversationUndoService
       await this.flushAfterCommit('state reconciliation');
       await this.reconcileLastPromptSafely();
       this.telemetry.track2('conversation_undo', { count: turns });
-      await this.dispatcher.dispatch(new ContextUndone({ turns }));
+      await this.dispatcher.dispatch(
+        new ContextUndone({ agentId: this.agentCtx.agentId, turns }),
+      );
       return turns;
     } finally {
       quiescence?.dispose();
@@ -127,6 +130,12 @@ export class AgentConversationUndoService
       if (stateDepth < depth) {
         depth = stateDepth;
         model = key.name;
+      }
+    }
+    for (const entry of this.dispatcher.modelCheckpointDepths()) {
+      if (entry.depth < depth) {
+        depth = entry.depth;
+        model = entry.id;
       }
     }
     return { depth, model };

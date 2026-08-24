@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentLLMRequesterService,
@@ -64,13 +65,19 @@ function buildFakes(tasks: readonly SpineSpawnTaskInput[]): {
   const agents: FakeAgent[] = [];
   const runCompletionControllers = tasks.map(() => buildCompletionController());
   const salvageStubs: SalvageStub[] = tasks.map(() => ({}));
+  const contexts = new Map<string, AgentContext>([
+    ['main', { agentId: 'main' } as unknown as AgentContext],
+  ]);
+  const handles = new Map<string, IAgentScopeHandle>();
 
   const lifecycle: IAgentLifecycleService = {
     _serviceBrand: undefined,
     onDidCreate: { event: () => ({ dispose: () => undefined }) } as never,
-    onDidDispose: { event: () => ({ dispose: () => undefined }) } as never,
+    onDidCreateScope: { event: () => ({ dispose: () => undefined }) } as never,
+    onWillClose: { event: () => ({ dispose: () => undefined }) } as never,
+    onDidClose: { event: () => ({ dispose: () => undefined }) } as never,
     create: () => Promise.reject(new Error('not used')),
-    fork: async (_sourceAgentId, opts) => {
+    fork: (_source, _opts) => {
       const index = agents.length;
       const id = `agent-${String(index)}`;
       const agent: FakeAgent = {
@@ -81,7 +88,9 @@ function buildFakes(tasks: readonly SpineSpawnTaskInput[]): {
       };
       agents.push(agent);
       const stub = salvageStubs[index]!;
-      return {
+      const context = { agentId: id } as unknown as AgentContext;
+      contexts.set(id, context);
+      handles.set(id, {
         id,
         accessor: {
           get: (serviceId: unknown) => {
@@ -98,35 +107,48 @@ function buildFakes(tasks: readonly SpineSpawnTaskInput[]): {
           },
         },
         dispose: () => undefined,
-      } as unknown as IAgentScopeHandle;
+      } as unknown as IAgentScopeHandle);
+      return Promise.resolve(context);
     },
-    get: () => undefined,
-    list: () => [],
+    get: (agentId) => contexts.get(agentId),
+    list: () => [...contexts.values()],
+    resolve: () => {
+      throw new Error('not used');
+    },
+    inspect: () => {
+      throw new Error('not used');
+    },
     broadcastPermissionMode: () => undefined,
-    remove: async (agentId) => {
-      const agent = agents.find((a) => a.id === agentId);
-      if (agent !== undefined) agent.removed = true;
+    remove: (agent) => {
+      const target = agents.find((a) => a.id === agent.agentId);
+      if (target !== undefined) target.removed = true;
+      return Promise.resolve();
     },
+    handleOf: (agentId) => handles.get(agentId),
+    adopt: () => {
+      throw new Error('not used');
+    },
+    attachRuntimes: () => undefined,
   };
 
   const subagentService: ISessionSubagentService = {
     _serviceBrand: undefined,
     hooks: { onWillStartAgentTask: { register: () => ({ dispose: () => undefined }) } },
     onDidStopAgentTask: { event: () => ({ dispose: () => undefined }) },
-    run: async (agentId: string, _request: AgentRunRequest, opts: RunAgentOptions) => {
-      const index = agents.findIndex((a) => a.id === agentId);
-      const agent = agents[index];
-      if (agent === undefined) throw new Error(`unknown agent ${agentId}`);
+    run: async (agent: AgentContext, _request: AgentRunRequest, opts: RunAgentOptions) => {
+      const index = agents.findIndex((a) => a.id === agent.agentId);
+      const fake = agents[index];
+      if (fake === undefined) throw new Error(`unknown agent ${agent.agentId}`);
       const controller = runCompletionControllers[index];
-      if (controller === undefined) throw new Error(`no completion controller for ${agentId}`);
+      if (controller === undefined) throw new Error(`no completion controller for ${agent.agentId}`);
 
       const onAbort = () => {
-        agent.cancelled = true;
+        fake.cancelled = true;
       };
       opts.signal.addEventListener('abort', onAbort, { once: true });
 
-      agent.completionValue = controller.promise;
-      const completion = agent.completionValue.finally(() => {
+      fake.completionValue = controller.promise;
+      const completion = fake.completionValue.finally(() => {
         opts.signal.removeEventListener('abort', onAbort);
       });
       return fakeRunHandle(index, completion);
@@ -165,7 +187,7 @@ describe('executeSpawnBranches', () => {
     runCompletionControllers[1]!.resolve({ summary: 'memory B' });
     await promise;
     expect(forkSpy).toHaveBeenCalledTimes(2);
-    expect(forkSpy).toHaveBeenCalledWith('main', {
+    expect(forkSpy).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       trimTrailingToolCallBatch: true,
       labels: { spineBranch: 'true' },
     });

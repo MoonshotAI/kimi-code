@@ -54,6 +54,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
+import { stubAgentContext } from '../agentContext/stubs';
 
 let disposables: DisposableStore;
 let homeDir: string;
@@ -117,6 +118,7 @@ function createHarness(
           _serviceBrand: undefined,
           agentId: 'main',
           labels: {},
+          agentContext: stubAgentContext('main', 0),
           scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
         } satisfies IAgentScopeContext);
         reg.definePartialInstance(IFileSystemStorageService, {

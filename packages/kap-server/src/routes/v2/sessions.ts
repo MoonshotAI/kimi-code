@@ -53,7 +53,11 @@ const v2SortSchema = z.enum([
 ]);
 type V2Sort = z.infer<typeof v2SortSchema>;
 
+const v2ViewSchema = z.enum(['flat', 'by_workspace']);
+type V2View = z.infer<typeof v2ViewSchema>;
+
 const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_GROUP_PAGE_SIZE = 5;
 
 const repeatedParam = <T extends z.ZodTypeAny>(item: T) =>
   z.union([item, z.array(item).min(1)]).optional();
@@ -93,6 +97,9 @@ const v2SessionsListQuerySchema = z
     'meta.updated_after': z.coerce.number().int().nonnegative().optional(),
     'meta.updated_before': z.coerce.number().int().nonnegative().optional(),
     'meta.archived': z.enum(['true', 'false', 'all']).optional(),
+    'meta.has_prompt': z.enum(['true', 'false']).optional(),
+    view: v2ViewSchema.optional(),
+    'group.page_size': z.coerce.number().int().min(1).max(IDS_PROJECTION_PAGE_SIZE_MAX).optional(),
     sort: v2SortSchema.optional(),
     include: z.string().optional(),
     fields: z.string().optional(),
@@ -158,6 +165,25 @@ const v2SessionsListQuerySchema = z
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }
+    if (value['group.page_size'] !== undefined) {
+      if (value.view !== 'by_workspace') {
+        ctx.addIssue({
+          code: 'custom',
+          message: "group.page_size requires view='by_workspace'",
+          path: ['group.page_size'],
+          params: { code: ErrorCode.VALIDATION_FAILED },
+        });
+      } else if (value['group.page_size'] > pageSizeMax) {
+        ctx.addIssue({
+          code: 'custom',
+          message: projection
+            ? `group.page_size must be at most ${IDS_PROJECTION_PAGE_SIZE_MAX}`
+            : `group.page_size must be at most ${FULL_PAGE_SIZE_MAX} without the ids projection`,
+          path: ['group.page_size'],
+          params: { code: ErrorCode.VALIDATION_FAILED },
+        });
+      }
+    }
   });
 
 function asArray<T>(value: T | T[] | undefined): T[] | undefined {
@@ -171,6 +197,9 @@ interface NormalizedQuery {
   readonly updatedAfter?: number;
   readonly updatedBefore?: number;
   readonly archived: 'true' | 'false' | 'all';
+  readonly hasPrompt?: boolean;
+  readonly view: V2View;
+  readonly groupPageSize: number;
   readonly sort: V2Sort;
   readonly includeGit: boolean;
   readonly pageSize: number;
@@ -210,6 +239,19 @@ const v2SessionIdProjectionSchema = z.object({
 
 const v2SessionPageSchema = z.object({
   items: z.array(z.union([v2SessionSchema, v2SessionIdProjectionSchema])),
+  total: z.number().int(),
+  has_more: z.boolean(),
+  next_page_token: z.string().nullable(),
+});
+
+const v2SessionGroupSchema = z.object({
+  workspace: z.object({ id: z.string(), cwd: z.string().nullable() }),
+  sessions: z.array(z.union([v2SessionSchema, v2SessionIdProjectionSchema])),
+  total: z.number().int(),
+});
+
+const v2SessionGroupPageSchema = z.object({
+  groups: z.array(v2SessionGroupSchema),
   total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
@@ -298,6 +340,9 @@ function queryFingerprint(query: NormalizedQuery): string {
     query.updatedAfter ?? null,
     query.updatedBefore ?? null,
     query.archived,
+    query.hasPrompt ?? null,
+    query.view,
+    query.groupPageSize,
     query.sort,
     query.includeGit,
     query.pageSize,
@@ -428,13 +473,13 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       method: 'GET',
       path: '/sessions',
       querystring: v2SessionsListQuerySchema,
-      success: { data: v2SessionPageSchema },
+      success: { data: z.union([v2SessionPageSchema, v2SessionGroupPageSchema]) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
       },
       description:
-        "List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Paginate with the opaque page_token (binds the first page’s query conditions) or with the stateless 1-based page parameter; every page carries total. fields=id,archived trims each item to the lightweight ids projection (select-all-matching flows; page_size ceiling relaxed to 10000).",
+        "List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). Paginate with the opaque page_token (binds the first page’s query conditions) or with the stateless 1-based page parameter; every page carries total. fields=id,archived trims each item to the lightweight ids projection (select-all-matching flows; page_size ceiling relaxed to 10000). meta.has_prompt=true|false filters sessions by whether they carry a prompt. view=by_workspace groups the matching set per workspace — each group carries that workspace's first group.page_size sessions (default 5) under the requested sort plus the group's full matching total; page/page_token then page over groups.",
       tags: ['v2-sessions'],
     },
     async (req, reply) => {
@@ -446,6 +491,10 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         updatedAfter: raw['meta.updated_after'],
         updatedBefore: raw['meta.updated_before'],
         archived: raw['meta.archived'] ?? 'false',
+        hasPrompt:
+          raw['meta.has_prompt'] === undefined ? undefined : raw['meta.has_prompt'] === 'true',
+        view: raw.view ?? 'flat',
+        groupPageSize: raw['group.page_size'] ?? DEFAULT_GROUP_PAGE_SIZE,
         sort: raw.sort ?? 'meta.updated_at_desc',
         includeGit: includeDomains(raw.include).includes('git'),
         pageSize: raw.page_size ?? DEFAULT_PAGE_SIZE,
@@ -492,6 +541,12 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
 
       const filtered = page.items.filter((summary) => {
         if (query.archived === 'true' && !summary.archived) return false;
+        if (
+          query.hasPrompt !== undefined &&
+          ((summary.lastPrompt ?? '').length > 0) !== query.hasPrompt
+        ) {
+          return false;
+        }
         if (query.updatedAfter !== undefined && summary.updatedAt < query.updatedAfter) {
           return false;
         }
@@ -509,6 +564,140 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
 
       const comparator = makeComparator(query.sort);
       const sorted = filtered.toSorted(comparator);
+      const keyOf = sortKeyOf(query.sort);
+      const ascending = query.sort === 'meta.updated_at_asc';
+
+      const loadCwdOf = async (): Promise<(summary: SessionSummary) => string | null> => {
+        const roots = new Map(
+          (await core.accessor.get(IWorkspaceService).list()).map(
+            (workspace) => [workspace.id, workspace.root] as const,
+          ),
+        );
+        return (summary) => summary.cwd ?? roots.get(summary.workspaceId) ?? null;
+      };
+
+      const buildItems = async (
+        summaries: readonly SessionSummary[],
+        cwdOf: (summary: SessionSummary) => string | null,
+      ): Promise<V2SessionWire[]> => {
+        let gitByCwd: ReadonlyMap<string, V2GitDomain> | undefined;
+        if (query.includeGit) {
+          const cwds = new Set<string>();
+          for (const summary of summaries) {
+            const cwd = cwdOf(summary);
+            if (cwd !== null) cwds.add(cwd);
+          }
+          gitByCwd = await gitResolver.resolveAll(cwds);
+        }
+        return summaries.map((summary) => {
+          const cwd = cwdOf(summary);
+          return {
+            id: summary.id,
+            workspace: { id: summary.workspaceId, cwd },
+            meta: {
+              title: summary.title ?? null,
+              last_prompt: summary.lastPrompt ?? null,
+              created_at: summary.createdAt,
+              updated_at: summary.updatedAt,
+              archived: summary.archived,
+              archived_at: summary.archivedAt ?? null,
+            },
+            activity: { status: mapActivityStatus(factsOf(summary.id), summary.lastTurnReason) },
+            git:
+              gitByCwd === undefined
+                ? undefined
+                : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
+          };
+        });
+      };
+
+      const projectIds = (summaries: readonly SessionSummary[]): V2SessionIdProjection[] =>
+        summaries.map((summary) => ({ id: summary.id, archived: summary.archived }));
+
+      if (query.view === 'by_workspace') {
+        interface SessionGroup {
+          readonly workspaceId: string;
+          readonly rep: SessionSummary;
+          readonly items: SessionSummary[];
+        }
+        const aliasService = core.accessor.get(IWorkspaceAliases);
+        const canonicalById = new Map<string, string>();
+        const canonicalIdOf = async (workspaceId: string): Promise<string> => {
+          let canonical = canonicalById.get(workspaceId);
+          if (canonical === undefined) {
+            const set = await aliasService.resolveAliasIds(workspaceId);
+            canonical = set.length === 0 ? workspaceId : set.toSorted()[0] as string;
+            for (const id of set) canonicalById.set(id, canonical);
+          }
+          return canonical;
+        };
+        const byWorkspace = new Map<string, SessionGroup>();
+        for (const summary of sorted) {
+          const groupId = await canonicalIdOf(summary.workspaceId);
+          const group = byWorkspace.get(groupId);
+          if (group === undefined) {
+            byWorkspace.set(groupId, {
+              workspaceId: groupId,
+              rep: summary,
+              items: [summary],
+            });
+          } else {
+            group.items.push(summary);
+          }
+        }
+        const groupList = [...byWorkspace.values()];
+        const groupComparator = (a: SessionGroup, b: SessionGroup): number => {
+          const ka = keyOf(a.rep);
+          const kb = keyOf(b.rep);
+          if (ka !== kb) return ascending ? ka - kb : kb - ka;
+          return a.workspaceId < b.workspaceId ? -1 : a.workspaceId > b.workspaceId ? 1 : 0;
+        };
+        groupList.sort(groupComparator);
+
+        let start = 0;
+        if (raw.page !== undefined) {
+          start = (raw.page - 1) * query.pageSize;
+        } else if (cursor !== undefined) {
+          const [cursorKey, cursorId] = cursor;
+          const cursorGroup: SessionGroup = {
+            workspaceId: cursorId,
+            rep: { id: cursorId, updatedAt: cursorKey, createdAt: cursorKey } as SessionSummary,
+            items: [],
+          };
+          start = groupList.findIndex((group) => groupComparator(group, cursorGroup) > 0);
+          if (start === -1) start = groupList.length;
+        }
+
+        const windowGroups = groupList.slice(start, start + query.pageSize);
+        const hasMore = start + query.pageSize < groupList.length;
+        const lastGroup = windowGroups.at(-1);
+        const nextPageToken =
+          raw.page === undefined && hasMore && lastGroup !== undefined
+            ? encodePageToken(fingerprint, keyOf(lastGroup.rep), lastGroup.workspaceId)
+            : null;
+
+        const cwdOf = await loadCwdOf();
+        const groups = await Promise.all(
+          windowGroups.map(async (group) => {
+            const served = group.items.slice(0, query.groupPageSize);
+            return {
+              workspace: { id: group.workspaceId, cwd: cwdOf(group.rep) },
+              sessions: query.projection
+                ? projectIds(served)
+                : await buildItems(served, cwdOf),
+              total: group.items.length,
+            };
+          }),
+        );
+
+        reply.send(
+          okEnvelope(
+            { groups, total: groupList.length, has_more: hasMore, next_page_token: nextPageToken },
+            req.id,
+          ),
+        );
+        return;
+      }
 
       let start = 0;
       if (raw.page !== undefined) {
@@ -529,18 +718,14 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const lastServed = window.at(-1);
       const nextPageToken =
         raw.page === undefined && hasMore && lastServed !== undefined
-          ? encodePageToken(fingerprint, sortKeyOf(query.sort)(lastServed), lastServed.id)
+          ? encodePageToken(fingerprint, keyOf(lastServed), lastServed.id)
           : null;
 
       if (query.projection) {
-        const projected: V2SessionIdProjection[] = window.map((summary) => ({
-          id: summary.id,
-          archived: summary.archived,
-        }));
         reply.send(
           okEnvelope(
             {
-              items: projected,
+              items: projectIds(window),
               total: sorted.length,
               has_more: hasMore,
               next_page_token: nextPageToken,
@@ -550,44 +735,8 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         );
         return;
       }
-      const roots = new Map(
-        (await core.accessor.get(IWorkspaceService).list()).map(
-          (workspace) => [workspace.id, workspace.root] as const,
-        ),
-      );
-      const cwdOf = (summary: SessionSummary): string | null =>
-        summary.cwd ?? roots.get(summary.workspaceId) ?? null;
 
-      let gitByCwd: ReadonlyMap<string, V2GitDomain> | undefined;
-      if (query.includeGit) {
-        const cwds = new Set<string>();
-        for (const summary of window) {
-          const cwd = cwdOf(summary);
-          if (cwd !== null) cwds.add(cwd);
-        }
-        gitByCwd = await gitResolver.resolveAll(cwds);
-      }
-
-      const items: V2SessionWire[] = window.map((summary) => {
-        const cwd = cwdOf(summary);
-        return {
-          id: summary.id,
-          workspace: { id: summary.workspaceId, cwd },
-          meta: {
-            title: summary.title ?? null,
-            last_prompt: summary.lastPrompt ?? null,
-            created_at: summary.createdAt,
-            updated_at: summary.updatedAt,
-            archived: summary.archived,
-            archived_at: summary.archivedAt ?? null,
-          },
-          activity: { status: mapActivityStatus(factsOf(summary.id), summary.lastTurnReason) },
-          git:
-            gitByCwd === undefined
-              ? undefined
-              : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
-        };
-      });
+      const items = await buildItems(window, await loadCwdOf());
 
       reply.send(
         okEnvelope(

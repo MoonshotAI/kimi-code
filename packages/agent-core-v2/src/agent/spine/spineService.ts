@@ -13,9 +13,8 @@ import { IAgentContextProjectorService } from '#/agent/contextProjector/contextP
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { agentContextOfScope, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
@@ -28,6 +27,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
@@ -157,7 +157,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IHostEnvironment private readonly hostEnv: IHostEnvironment,
@@ -322,7 +322,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (parent !== undefined) {
       this.baselines.set(
         childNodeId(parentId, nextChildIndex(parent.children)),
-        this.tokenCounting.get().size,
+        this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
       );
     }
     return { accepted: true };
@@ -335,7 +335,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     if (trimmed.length === 0) return reject('close memory must not be empty.');
     const cursorId = this.cursorId();
     if (isRootEpoch(cursorId)) return REJECT_ROOT_EPOCH;
-    this.finals.set(cursorId, this.tokenCounting.get().size);
+    this.finals.set(cursorId, this.tokenCounting.get(agentContextOfScope(this.agentScope)).size);
     return { accepted: true };
   }
 
@@ -351,7 +351,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const state = this.derivedState();
     const parentId = parentNodeId(cursorId);
     const parent = parentId === null ? undefined : state.nodes[parentId];
-    const sizeNow = this.tokenCounting.get().size;
+    const sizeNow = this.tokenCounting.get(agentContextOfScope(this.agentScope)).size;
     this.finals.set(cursorId, sizeNow);
     if (parentId !== null && parent !== undefined) {
       this.baselines.set(childNodeId(parentId, nextChildIndex(parent.children)), sizeNow);
@@ -436,7 +436,8 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
     const parentId = parentNodeId(cursorId);
     const parentSummary = parentId === null ? null : (state.nodes[parentId]?.summary ?? null);
     const maxContextTokens = this.profile.getEffectiveMaxContextTokens();
-    const used = this.tokenCounting.get().size;
+    const agent = agentContextOfScope(this.agentScope);
+    const used = this.tokenCounting.get(agent).size;
     const contextLeft =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? Math.max(0, maxContextTokens - used)
@@ -450,7 +451,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
       contextLeft,
       rawContext: estimateTokensForMessages(this.context.get()),
       projectedContext: used,
-      projectedMeasured: this.tokenCounting.latestMeasurement()?.measured === true,
+      projectedMeasured: this.tokenCounting.latestMeasurement(agent)?.measured === true,
     };
   }
 
@@ -560,7 +561,7 @@ export class AgentSpineService extends Disposable implements IAgentSpineService 
    */
   private treeViewInput(): SpineTreeViewInput {
     return {
-      currentUsed: this.tokenCounting.get().size,
+      currentUsed: this.tokenCounting.get(agentContextOfScope(this.agentScope)).size,
       baselines: this.baselines,
       finals: this.finals,
       resolveArchivePath: (id, epoch, closed) => this.nodeArchivePath(id, epoch, closed),

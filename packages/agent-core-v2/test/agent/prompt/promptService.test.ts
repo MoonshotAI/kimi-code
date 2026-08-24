@@ -18,7 +18,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -139,11 +139,15 @@ function harness(
       reg.define(IAgentSystemReminderService, AgentSystemReminderService);
       reg.define(IAgentPromptService, AgentPromptService);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
-      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '' }));
+      const agentScope = makeAgentScopeContext({ agentId, agentScope: '' });
+      reg.defineInstance(IAgentScopeContext, agentScope);
       reg.definePartialInstance(IFileService, { get: intake.get });
       reg.definePartialInstance(ISessionMediaStore, { materialize: intake.materialize });
     }
   });
+  (ix.get(IEventBus) as ISessionEventBus).activateAgent(
+    ix.get(IAgentScopeContext).agentContext,
+  );
   return {
     prompt: ix.get(IAgentPromptService),
     loop,

@@ -12,21 +12,26 @@ import {
   IAppendLogStore,
   IEventBus,
   IAgentLifecycleService,
+  IAgentProfileService,
   IAgentPromptService,
-  ISessionInteractionService,
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
+  ISessionLifecycleService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IWireService,
   ISessionManager,
   ITelemetryService,
   IWorkspaceService,
   SPINE_TOOL_CLOSE,
   SPINE_TOOL_OPEN,
+  agentContextOf,
   getLiveSessionById,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
+import { emptySessionUsage } from '../src/protocol/session';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';
@@ -89,6 +94,22 @@ describe('server-v2 snapshot route enrichment', () => {
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],
         [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
+        [
+          IAgentProfileService,
+          {
+            getModelCapabilities: () => ({ max_input_tokens: 262144 }),
+            getModel: () => 'kimi-for-test',
+          },
+        ],
+        [
+          ISessionUsageService,
+          {
+            status: () => ({
+              total: { inputOther: 120, output: 34, inputCacheRead: 56, inputCacheCreation: 7 },
+            }),
+          },
+        ],
+        [ISessionTokenCountingService, { statusSize: () => 4321, rawSize: () => 4321 }],
       ]),
     };
     const session = {
@@ -106,8 +127,14 @@ describe('server-v2 snapshot route enrichment', () => {
             }),
           },
         ],
-        [IAgentLifecycleService, { get: () => main, create: async () => main }],
-        [ISessionInteractionService, { listPending: () => [] }],
+        [
+          IAgentLifecycleService,
+          {
+            create: async () => ({ agentId: 'main', generation: 1 }) as never,
+            handleOf: () => main,
+            list: () => [],
+          },
+        ],
       ]),
     };
     const core = {
@@ -219,6 +246,15 @@ describe('server-v2 snapshot route enrichment', () => {
       assistant_text: 'Hello',
       current_prompt_id: promptId,
     });
+    expect(snap.session.usage).toEqual({
+      input_tokens: 120,
+      output_tokens: 34,
+      cache_read_tokens: 56,
+      cache_creation_tokens: 7,
+      context_tokens: 4321,
+      context_limit: 262144,
+    });
+    expect(snap.session.agent_config.model).toBe('kimi-for-test');
     expect(snap.subagents).toEqual([
       expect.objectContaining({
         id: 'agent-1',
@@ -324,6 +360,131 @@ describe('server-v2 snapshot route enrichment', () => {
       nodes: [],
     });
   });
+
+  it('keeps the placeholder usage when the main agent exposes no status services', async () => {
+    const sessionId = 'sess_snapshot_degraded';
+    const workspaceId = 'wd_snapshot_abcdef012345';
+    const now = Date.parse('2026-01-01T00:00:00.000Z');
+    const main = {
+      accessor: fakeAccessor([
+        [IAgentContextMemoryService, { get: () => [] }],
+        [IWireService, { flush: async () => {} }],
+        [IAgentScopeContext, { scope: () => 'scope/sess_snapshot_degraded' }],
+        [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
+        [IAgentProfileService, undefined],
+        [ISessionUsageService, undefined],
+        [ISessionTokenCountingService, undefined],
+      ]),
+    };
+    const session = {
+      accessor: fakeAccessor([
+        [ISessionContext, { workspaceId }],
+        [
+          ISessionMetadata,
+          {
+            read: async () => ({
+              id: sessionId,
+              title: 'Snapshot degraded',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [
+          IAgentLifecycleService,
+          {
+            create: async () => ({ agentId: 'main', generation: 1 }) as never,
+            handleOf: () => main,
+            list: () => [],
+          },
+        ],
+      ]),
+    };
+    const handler = {
+      accessor: fakeAccessor([
+        [
+          ISessionLifecycleService,
+          { resume: async () => session, get: () => undefined },
+        ],
+      ]),
+    };
+    const core = {
+      accessor: fakeAccessor([
+        [
+          ISessionIndex,
+          {
+            get: async () => ({
+              id: sessionId,
+              workspaceId,
+              cwd: '/workspace',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [
+          ISessionManager,
+          {
+            resume: async () => session,
+            get: () => undefined,
+            list: () => [],
+          },
+        ],
+        [IWorkspaceService, { get: async () => ({ root: '/workspace' }) }],
+        [ITelemetryService, { withContext: () => ({ track2: () => {} }) }],
+        [
+          IAppendLogStore,
+          {
+            read: async function* () {},
+          },
+        ],
+      ]),
+    };
+    const broadcaster = {
+      getSnapshotState: async () => ({
+        seq: 1,
+        epoch: 'ep_snapshot',
+        inFlightTurn: null,
+        subagents: [],
+      }),
+    };
+
+    let routeHandler:
+      | ((
+          req: { id: string; params: { session_id: string } },
+          reply: { send(payload: unknown): unknown },
+        ) => Promise<void> | void)
+      | undefined;
+    registerSnapshotRoutes(
+      {
+        get: (_path, _options, handler) => {
+          routeHandler = handler;
+        },
+      },
+      {
+        core: core as never,
+        broadcaster: broadcaster as never,
+      },
+    );
+
+    let payload: unknown;
+    await routeHandler?.(
+      { id: 'req_snapshot_degraded', params: { session_id: sessionId } },
+      {
+        send: (value) => {
+          payload = value;
+        },
+      },
+    );
+
+    const body = payload as { code: number; data: unknown };
+    expect(body.code).toBe(0);
+    const snap = sessionSnapshotResponseSchema.parse(body.data);
+    expect(snap.session.usage).toEqual(emptySessionUsage());
+    expect(snap.session.agent_config.model).toBe('');
+  });
 });
 
 describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
@@ -362,12 +523,12 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   function emit(sessionId: string, event: Event2<any>): void {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const main = session!.accessor.get(IAgentLifecycleService).get('main');
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     main!.accessor.get(IEventBus).publish(event);
   }
 
@@ -410,6 +571,32 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
       turn_id: 1,
       assistant_text: 'Hello',
     });
+  });
+
+  it('serves the real usage ledger instead of the zero placeholder', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+    const session = getLiveSessionById(server!.core.accessor, sid);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    await main.accessor.get(ISessionUsageService).record(agentContextOf(main), 'kimi-for-test', {
+      inputOther: 120,
+      output: 34,
+      inputCacheRead: 56,
+      inputCacheCreation: 7,
+    });
+    main.accessor.get(IAgentContextMemoryService).append({
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
+      toolCalls: [],
+    });
+
+    const snap = await snapshot(sid);
+    expect(snap.session.usage.input_tokens).toBe(120);
+    expect(snap.session.usage.output_tokens).toBe(34);
+    expect(snap.session.usage.cache_read_tokens).toBe(56);
+    expect(snap.session.usage.cache_creation_tokens).toBe(7);
+    expect(snap.session.usage.context_tokens).toBeGreaterThan(0);
+    expect(snap.session.usage.context_limit).toBeUndefined();
   });
 
   it('returns 404 for an unknown session', async () => {
@@ -545,7 +732,8 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
 
     const resumed = await resumeSessionById(server!.core.accessor, sid);
     if (resumed === undefined) throw new Error(`session ${sid} failed to resume`);
-    const main = await resumed.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    await resumed.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const main = resumed.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const context = main.accessor.get(IAgentContextMemoryService);
     context.append({ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] });
     context.append({ role: 'assistant', content: [{ type: 'text', text: 'hi' }], toolCalls: [] });
