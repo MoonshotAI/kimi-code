@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ExecutableToolResult } from '../../../src/loop/types';
 import type {
   TelemetryClient,
   TelemetryProperties,
 } from '../../../src/telemetry';
 import { ToolCallDeduplicator, __testing } from '../../../src/agent/turn/tool-dedup';
+import { budgetToolResultForModel } from '../../../src/agent/turn/tool-result-budget';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = __testing;
 
@@ -235,8 +240,57 @@ describe('ToolCallDeduplicator', () => {
     });
   });
 
+  describe('reminder survives oversized-result truncation (regression)', () => {
+    it('keeps the reminder inside the first 2K chars of an oversized result', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const big = 'x'.repeat(60_000);
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult(big));
+        dedup.endStep();
+      }
+      const headPreview = (last!.output as string).slice(0, 2_000);
+      expect(headPreview).toContain('<system-reminder>');
+      expect(headPreview).toContain('what new information you expect');
+    });
+
+    it('prepends the reminder ahead of the original output', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      expect((last!.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
+      expect((last!.output as string).endsWith('R')).toBe(true);
+    });
+
+    it('keeps the reminder visible through the real budgetToolResultForModel offload (composition)', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const big = 'x'.repeat(60_000);
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult(big));
+        dedup.endStep();
+      }
+      const homedir = await mkdtemp(join(tmpdir(), 'dedupe-budget-'));
+      const modelResult = await budgetToolResultForModel({
+        homedir,
+        toolName: 'Read',
+        toolCallId: 'c2',
+        result: last!,
+      });
+      expect(typeof modelResult.output).toBe('string');
+      expect(modelResult.output as string).toContain('<system-reminder>');
+      expect((modelResult.output as string).indexOf('<system-reminder>')).toBeLessThan(2_000);
+    });
+  });
+
   describe('reminder injection into ContentPart[] outputs', () => {
-    it('appends reminder1 to a trailing text part at streak 3', async () => {
+    it('prepends reminder1 to the leading text part at streak 3', async () => {
       const dedup = new ToolCallDeduplicator();
       const arrayResult: ExecutableToolResult = {
         output: [{ type: 'text', text: 'hello' }],
@@ -253,10 +307,10 @@ describe('ToolCallDeduplicator', () => {
       const arr = final.output as Array<{ type: string; text: string }>;
       expect(arr).toHaveLength(1);
       expect(arr[0]!.type).toBe('text');
-      expect(arr[0]!.text).toBe('hello' + REMINDER_TEXT_1);
+      expect(arr[0]!.text).toBe(REMINDER_TEXT_1 + 'hello');
     });
 
-    it('appends reminder2 to a trailing text part at streak 5', async () => {
+    it('prepends reminder2 to the leading text part at streak 5', async () => {
       const dedup = new ToolCallDeduplicator();
       const arrayResult: ExecutableToolResult = {
         output: [{ type: 'text', text: 'hello' }],
@@ -273,10 +327,10 @@ describe('ToolCallDeduplicator', () => {
       const arr = final.output as Array<{ type: string; text: string }>;
       expect(arr).toHaveLength(1);
       expect(arr[0]!.type).toBe('text');
-      expect(arr[0]!.text).toBe('hello' + makeReminderText2(5));
+      expect(arr[0]!.text).toBe(makeReminderText2(5) + 'hello');
     });
 
-    it('pushes a new text part when trailing part is non-text', async () => {
+    it('prepends a new text part when leading part is non-text', async () => {
       const dedup = new ToolCallDeduplicator();
       const arrayResult: ExecutableToolResult = {
         output: [{ type: 'image_url', imageUrl: { url: 'data:foo' } }],
@@ -292,9 +346,9 @@ describe('ToolCallDeduplicator', () => {
       dedup.endStep();
       const arr = final.output as Array<{ type: string; text?: string }>;
       expect(arr).toHaveLength(2);
-      expect(arr[0]!.type).toBe('image_url');
-      expect(arr[1]!.type).toBe('text');
-      expect(arr[1]!.text).toBe(REMINDER_TEXT_1);
+      expect(arr[0]!.type).toBe('text');
+      expect(arr[0]!.text).toBe(REMINDER_TEXT_1);
+      expect(arr[1]!.type).toBe('image_url');
     });
 
     it('preserves isError flag when injecting reminder', async () => {

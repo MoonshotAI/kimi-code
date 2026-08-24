@@ -17,11 +17,15 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
@@ -63,7 +67,7 @@ interface Harness {
 
 function createHarness(
   telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
-  options: { readonly executorEvents?: boolean } = {},
+  options: { readonly executorEvents?: boolean; readonly truncation?: 'real' } = {},
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
@@ -100,7 +104,12 @@ function createHarness(
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
-      registerToolResultTruncationServices(reg);
+      if (options.truncation === 'real') {
+        reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+        reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
+      } else {
+        registerToolResultTruncationServices(reg);
+      }
       reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       registerLogServices(reg);
     },
@@ -452,8 +461,54 @@ describe('AgentToolDedupeService', () => {
     });
   });
 
+  describe('reminder survives oversized-result truncation (regression)', () => {
+    it('keeps the reminder inside the first 2K chars of an oversized result', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('Read', () => ({ output: 'x'.repeat(60_000) }));
+      h.registry.register(tool);
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      const headPreview = (last!.output as string).slice(0, 2_000);
+      expect(headPreview).toContain('<system-reminder>');
+      expect(headPreview).toContain('what new information you expect');
+    });
+
+    it('prepends the reminder ahead of the original output', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      expect((last!.output as string).startsWith('\n\n<system-reminder>')).toBe(true);
+    });
+
+    it('keeps the reminder visible through the real ToolResultTruncationService (composition)', async () => {
+      const h = createHarness(undefined, { truncation: 'real' });
+      const tool = new EchoTool('Read', () => ({ output: 'x'.repeat(60_000) }));
+      h.registry.register(tool);
+      let last: ToolResult | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        const [result] = await runStep(h, 1, i + 1, [toolCall(`c${String(i)}`, 'Read', { p: 1 })]);
+        last = result!.result;
+      }
+      const truncation = h.ix.get(IAgentToolResultTruncationService);
+      const modelResult = await truncation.truncateForModel({
+        toolName: 'Read',
+        toolCallId: 'c2',
+        result: last!,
+      });
+      expect(modelResult.output as string).toContain('<system-reminder>');
+      expect((modelResult.output as string).indexOf('<system-reminder>')).toBeLessThan(2_000);
+    });
+  });
+
   describe('reminder injection into ContentPart[] outputs', () => {
-    it('appends reminder1 to a trailing text part at streak 3', async () => {
+    it('prepends reminder1 to the leading text part at streak 3', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({ output: [{ type: 'text', text: 'hello' }] }));
       h.registry.register(tool);
@@ -461,10 +516,10 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
       }
       const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
-      expect(final!.result.output).toBe('hello' + REMINDER_TEXT_1);
+      expect(final!.result.output).toBe(REMINDER_TEXT_1 + 'hello');
     });
 
-    it('appends reminder2 to a trailing text part at streak 5', async () => {
+    it('prepends reminder2 to the leading text part at streak 5', async () => {
       const h = createHarness();
       const tool = new EchoTool('X', () => ({ output: [{ type: 'text', text: 'hello' }] }));
       h.registry.register(tool);
@@ -472,22 +527,28 @@ describe('AgentToolDedupeService', () => {
         await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', { a: 1 })]);
       }
       const [final] = await runStep(h, 1, 5, [toolCall('final', 'X', { a: 1 })]);
-      expect(final!.result.output).toBe('hello' + makeReminderText2(5));
+      expect(final!.result.output).toBe(makeReminderText2(5) + 'hello');
     });
 
-    it('pushes a new text part when trailing part is non-text', async () => {
-      const h = createHarness();
-      const tool = new EchoTool('X', () => ({
+    it('prepends a new text part when leading part is non-text', async () => {
+      const h = createHarness(undefined, { executorEvents: true });
+      // The executor pipeline prepends its own text part to non-text outputs,
+      // so drive the hooks directly to exercise the dedupe's unshift branch.
+      const imageOnly = (): ExecutableToolResult => ({
         output: [{ type: 'image_url', imageUrl: { url: 'data:foo' } }],
-      }));
-      h.registry.register(tool);
-      for (let i = 0; i < 2; i += 1) {
-        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      });
+      let final: ToolDidExecuteContext | undefined;
+      for (let i = 0; i < 3; i += 1) {
+        await beforeStep(h, 1, i + 1);
+        const id = i === 2 ? 'final' : `p${String(i)}`;
+        await h.fireBefore(willCtx(id, 'X', {}));
+        final = didCtx(id, 'X', {}, imageOnly());
+        await h.executor.hooks.onDidExecuteTool.run(final);
+        await afterStep(h, 1, i + 1);
       }
-      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
       const arr = final!.result.output as Array<{ type: string; text?: string }>;
       expect(arr.some((part) => part.type === 'image_url')).toBe(true);
-      expect(arr.at(-1)).toEqual({ type: 'text', text: REMINDER_TEXT_1 });
+      expect(arr[0]).toEqual({ type: 'text', text: REMINDER_TEXT_1 });
     });
 
     it('preserves isError flag when injecting reminder', async () => {
