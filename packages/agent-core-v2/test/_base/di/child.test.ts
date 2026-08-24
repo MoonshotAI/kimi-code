@@ -242,6 +242,36 @@ describe('InstantiationService.createChild', () => {
     expect(events).toEqual(['gate-entered', 'finalizer']);
   });
 
+  it('disposeAsync awaits asynchronous child container teardown', async () => {
+    const events: string[] = [];
+    let releaseChildGate!: () => void;
+    const parent = new InstantiationService(new ServiceCollection());
+    const child = parent.createChild(new ServiceCollection()) as InstantiationService;
+    child.anchorKernelEntry(() => {
+      events.push('child-finalizer');
+    }, 'child-finalizer');
+    child.anchorKernelEntry(() => {
+      events.push('child-gate-entered');
+      return new Promise<void>((resolve) => {
+        releaseChildGate = resolve;
+      });
+    }, 'child-gate');
+    parent.anchorKernelEntry(() => {
+      events.push('parent-finalizer');
+    }, 'parent-finalizer');
+
+    let settled = false;
+    const disposal = parent.disposeAsync().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['child-gate-entered', 'parent-finalizer']);
+    expect(settled).toBe(false);
+    releaseChildGate();
+    await disposal;
+    expect(events).toEqual(['child-gate-entered', 'parent-finalizer', 'child-finalizer']);
+  });
+
   it('parent dispose propagates to children', () => {
     const events: string[] = [];
     interface IParentSvc {

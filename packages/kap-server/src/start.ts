@@ -356,8 +356,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
-    process.off('unhandledRejection', onUnhandledRejection);
-    process.off('uncaughtException', onUncaughtException);
     await app.close();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
@@ -386,7 +384,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainSessionMetadataWrites();
       await drainLogCloses();
     } finally {
-      await registration.release();
+      try {
+        await registration.release();
+      } finally {
+        process.off('unhandledRejection', onUnhandledRejection);
+        process.off('uncaughtException', onUncaughtException);
+      }
     }
   };
 

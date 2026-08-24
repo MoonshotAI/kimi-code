@@ -669,10 +669,11 @@ export class InstantiationService implements IInstantiationService {
     }
     this._disposed = true;
 
+    const childTeardowns: Promise<void>[] = [];
     let teardown: void | Promise<void> = undefined;
     try {
       for (const child of Array.from(this._children)) {
-        child.dispose();
+        childTeardowns.push(child.disposeAsync());
       }
       this._children.clear();
       teardown = this._ledger.teardown('scope-close');
@@ -690,7 +691,7 @@ export class InstantiationService implements IInstantiationService {
         this._parent._children.delete(this);
       }
     }
-    return Promise.resolve(teardown);
+    return Promise.all([...childTeardowns, Promise.resolve(teardown)]).then(() => undefined);
   }
 
   private _createInstance<T>(ctor: any, args: unknown[], _trace: Trace, unit?: {
