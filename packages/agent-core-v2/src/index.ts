@@ -636,7 +636,7 @@ export * from '#/features/reminder/systemReminder';
 export * from '#/features/reminder/types';
 import '#/features/reminder/reminderFeature';
 export * from '#/features/dateChange/dateChange';
-export * from '#/features/dateChange/dateChangeService';
+export * from '#/features/dateChange/dateChangeAgentRuntime';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
 export * from '#/agent/contextProjector/mediaProjection';

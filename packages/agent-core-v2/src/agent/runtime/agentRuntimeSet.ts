@@ -68,8 +68,11 @@ export class AgentRuntimeSet {
       restored: false,
     };
     this.entries.set(descriptor.id, entry);
-    if (descriptor.durable !== undefined && this.durableHost !== undefined) {
+    if (this.durableHost === undefined) return;
+    if (descriptor.durable !== undefined) {
       this.attachDurableEntry(entry, this.durableHost);
+    } else if (descriptor.eager === true) {
+      this.runtime(entry);
     }
   }
 
@@ -103,7 +106,10 @@ export class AgentRuntimeSet {
     if (this.closed) return;
     this.durableHost = host;
     for (const entry of this.entries.values()) {
-      if (entry.descriptor.durable === undefined) continue;
+      if (entry.descriptor.durable === undefined) {
+        if (entry.descriptor.eager === true) this.runtime(entry);
+        continue;
+      }
       this.attachDurableEntry(entry, host);
     }
   }

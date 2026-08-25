@@ -8,12 +8,14 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentStateService } from '#/agent/state/agentState';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { dateChangeSeedKey } from '#/features/dateChange/dateChangeService';
+import {
+  AgentDateChange,
+  DateChangeRuntime,
+} from '#/features/dateChange/dateChangeAgentRuntime';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
@@ -98,7 +100,7 @@ function messageText(message: ContextMessage): string {
     .join('');
 }
 
-describe('AgentDateChangeService', () => {
+describe('dateChangeAgentRuntime', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
   let clock: TestHostClock;
@@ -467,10 +469,9 @@ describe('AgentDateChangeService', () => {
   });
 
   it('keeps one provider registration across repeated runtime restore', async () => {
-    const states = ctx.get(IAgentStateService);
     updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
 
-    expect(states.has(dateChangeSeedKey)).toBe(true);
+    expect(ctx.resolve(AgentDateChange)).toBeInstanceOf(DateChangeRuntime);
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
