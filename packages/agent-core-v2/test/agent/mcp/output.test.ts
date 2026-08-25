@@ -9,6 +9,9 @@ import { describe, expect, test } from 'vitest';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import { StdioMcpClient } from '#/mcpCore/client-stdio';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -656,4 +659,79 @@ describe('createMcpTool', () => {
     expect(result).toEqual({ output: 'ok' });
     expect(result).not.toHaveProperty('truncated');
   });
+});
+
+describe('mcpResultToExecutableOutput over a real stdio server', () => {
+  const fixture = join(import.meta.dirname, '../../mcpCore/fixtures/structured-content-stdio-server.mjs');
+
+  async function callFixtureTool(name: string) {
+    const runtime = Object.assign(
+      new FakeRuntime(
+        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+        { capabilities: ['process'] },
+      ),
+      { process: new HostProcessService() },
+    );
+    const client = new StdioMcpClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [fixture],
+      },
+      {
+        runtimeResolver: {
+          _serviceBrand: undefined,
+          inspect: () => runtime,
+          acquire: () => ({
+            runtime,
+            track: (resource) => resource,
+            dispose: () => {},
+          }),
+        },
+        workspaceId: 'workspace',
+        runtimeId: 'local',
+        defaultCwd: process.cwd(),
+      },
+    );
+    try {
+      await client.connect();
+      return await mcpResultToExecutableOutput(await client.callTool(name, {}), 'mcp__mock__t');
+    } finally {
+      await client.close();
+    }
+  }
+
+  function joinedText(output: string | ContentPart[]): string {
+    return typeof output === 'string'
+      ? output
+      : output.map((p) => (p.type === 'text' ? p.text : '')).join('');
+  }
+
+  test('dual-emitting servers reach the model once, through content', async () => {
+    const out = await callFixtureTool('dual_emit');
+    const text = joinedText(out.output);
+    expect(text).toContain('{"rows":[{"id":1}],"total":1}');
+    expect(text).not.toContain('<mcp-structured-result>');
+  }, 15000);
+
+  test('structuredContent-only results still reach the model as a fallback block', async () => {
+    const out = await callFixtureTool('structured_only');
+    const text = joinedText(out.output);
+    expect(text).toContain('<mcp-structured-result>');
+    expect(text).toContain('"structuredContent":{"rows":[{"id":1}],"total":1}');
+  }, 15000);
+
+  test('prose content suppresses structuredContent rather than duplicating it', async () => {
+    const out = await callFixtureTool('prose_plus_structured');
+    const text = joinedText(out.output);
+    expect(text).toContain('Found 1 row.');
+    expect(text).not.toContain('"structuredContent"');
+  }, 15000);
+
+  test('vendor _meta keys pass through alongside content text', async () => {
+    const out = await callFixtureTool('meta_vendor');
+    const text = joinedText(out.output);
+    expect(text).toContain('done');
+    expect(text).toContain('"_meta":{"example.com/trace":"abc123"}');
+  }, 15000);
 });

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '../../src/mcp/output';
+import { StdioMcpClient } from '../../src/mcp/client-stdio';
 import type { MCPContentBlock, MCPToolResult } from '../../src/mcp/types';
 import type { TelemetryClient } from '../../src/telemetry';
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
@@ -804,4 +805,60 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined).not.toContain('Output truncated');
     await rm(dir, { recursive: true, force: true });
   });
+});
+
+// Round-trip over a real stdio MCP server: exercises the SDK wire format,
+// toMcpToolResult normalisation, and the output pipeline together, so the
+// structuredContent fallback is verified against real protocol bytes rather
+// than hand-built result objects.
+describe('mcpResultToExecutableOutput over a real stdio server', () => {
+  const fixture = join(import.meta.dirname, 'fixtures', 'structured-content-stdio-server.mjs');
+
+  async function callFixtureTool(name: string) {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [fixture],
+    });
+    try {
+      await client.connect();
+      return await mcpResultToExecutableOutput(await client.callTool(name, {}), 'mcp__mock__t');
+    } finally {
+      await client.close();
+    }
+  }
+
+  function joinedText(output: string | ContentPart[]): string {
+    return typeof output === 'string'
+      ? output
+      : output.map((p) => (p.type === 'text' ? p.text : '')).join('');
+  }
+
+  test('dual-emitting servers reach the model once, through content', async () => {
+    const out = await callFixtureTool('dual_emit');
+    const text = joinedText(out.output);
+    expect(text).toContain('{"rows":[{"id":1}],"total":1}');
+    expect(text).not.toContain('<mcp-structured-result>');
+  }, 15000);
+
+  test('structuredContent-only results still reach the model as a fallback block', async () => {
+    const out = await callFixtureTool('structured_only');
+    const text = joinedText(out.output);
+    expect(text).toContain('<mcp-structured-result>');
+    expect(text).toContain('"structuredContent":{"rows":[{"id":1}],"total":1}');
+  }, 15000);
+
+  test('prose content suppresses structuredContent rather than duplicating it', async () => {
+    const out = await callFixtureTool('prose_plus_structured');
+    const text = joinedText(out.output);
+    expect(text).toContain('Found 1 row.');
+    expect(text).not.toContain('"structuredContent"');
+  }, 15000);
+
+  test('vendor _meta keys pass through alongside content text', async () => {
+    const out = await callFixtureTool('meta_vendor');
+    const text = joinedText(out.output);
+    expect(text).toContain('done');
+    expect(text).toContain('"_meta":{"example.com/trace":"abc123"}');
+  }, 15000);
 });
