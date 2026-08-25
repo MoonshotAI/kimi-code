@@ -1,5 +1,5 @@
 # Fork-native release: builds the kimi binary (with fork changes) on every
-# push to development and publishes it as a GitHub Release.
+# push to master and publishes it as a GitHub Release.
 #
 # Platforms: darwin-x64 (macOS Intel) and linux-x64 only.
 
@@ -8,7 +8,7 @@ name: Fork Native Release
 on:
   push:
     branches:
-      - development
+      - master
   workflow_dispatch:
   schedule:
     # Daily re-release so the binary always tracks the latest upstream sync
@@ -102,7 +102,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_NOTES: |
-            Built from the development branch with fork changes (visual-model command).
+            Built from the master branch with fork changes (visual-model command).
 
             Platforms: darwin-x64 (macOS Intel), linux-x64
             Source commit: ${{ github.sha }}

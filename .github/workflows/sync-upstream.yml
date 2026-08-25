@@ -1,6 +1,6 @@
-# Sync upstream (MoonshotAI/kimi-code) changes into development daily.
+# Sync upstream (MoonshotAI/kimi-code) changes into master daily.
 #
-# Keeps the fork's development branch up to date with upstream while
+# Keeps the fork's master branch up to date with upstream while
 # preserving fork-owned features (visual model assignment, etc.).
 
 name: Sync Upstream
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   sync:
-    name: Sync upstream to development
+    name: Sync upstream to master
     runs-on: ubuntu-latest
 
     steps:
@@ -36,8 +36,8 @@ jobs:
       - name: Fetch upstream
         run: git fetch upstream main
 
-      - name: Switch to development
-        run: git checkout development || git checkout -b development
+      - name: Switch to master
+        run: git checkout master || git checkout -b master
 
       - name: Check if already up to date
         id: check
@@ -67,4 +67,4 @@ jobs:
 
       - name: Push
         if: steps.check.outputs.up_to_date == 'false'
-        run: git push origin development
+        run: git push origin master
