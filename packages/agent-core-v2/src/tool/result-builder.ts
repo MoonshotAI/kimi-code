@@ -24,6 +24,7 @@ export type ExecutableToolResultBuilderResult = (
   readonly brief?: string;
   readonly untruncatedOutput?: string;
   readonly untruncatedOutputTotalChars?: number;
+  readonly untruncatedOutputSuffix?: string;
 };
 
 export class ToolResultBuilder {
@@ -151,7 +152,7 @@ export class ToolResultBuilder {
         : output,
       truncated: this.truncationHappened,
       brief: options.brief,
-      ...this.fullOutputFields(),
+      ...this.fullOutputFields(shouldAppendMessage ? finalMessage : undefined),
     };
   }
 
@@ -177,18 +178,20 @@ export class ToolResultBuilder {
               : `${output}\n${finalMessage}`,
       truncated: this.truncationHappened,
       brief: options.brief,
-      ...this.fullOutputFields(),
+      ...this.fullOutputFields(finalMessage.length > 0 ? finalMessage : undefined),
     };
   }
 
-  private fullOutputFields(): {
+  private fullOutputFields(finalMessage: string | undefined): {
     readonly untruncatedOutput?: string;
     readonly untruncatedOutputTotalChars?: number;
+    readonly untruncatedOutputSuffix?: string;
   } {
     if (this.retained === null || !this.charCapTruncationHappened) return {};
     return {
       untruncatedOutput: this.retained.join(''),
       untruncatedOutputTotalChars: this.totalCharsValue,
+      untruncatedOutputSuffix: finalMessage,
     };
   }
 }

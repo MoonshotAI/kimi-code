@@ -1089,6 +1089,27 @@ describe('truncation pipeline', () => {
     expect(readFileSync(outputPath, 'utf8')).toBe(fullOutput);
   });
 
+  it('keeps the builder completion message after spilling an error result', async () => {
+    const fullOutput = `${'x'.repeat(50_001)}tail`;
+    const tool = new TestTool('failing-noisy', {
+      execute: async () => {
+        const builder = new ToolResultBuilder({ retainFullOutput: true });
+        builder.write(fullOutput);
+        return builder.error('Command failed with exit code: 1.');
+      },
+    });
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_failing_noisy', 'failing-noisy', {})]);
+
+    expect(result?.isError).toBe(true);
+    const rendered = result?.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Command failed with exit code: 1.');
+    expect(readFileSync(renderedOutputPath(rendered), 'utf8')).toBe(fullOutput);
+  });
+
   it('passes spill-exempt results through the truncation pipeline unchanged', async () => {
     const output = `SPILL_CHUNK\n${`${'y'.repeat(100)}\n`.repeat(600)}`;
     registry.register(new TestTool('reader', { result: { output, spillExempt: true } }));

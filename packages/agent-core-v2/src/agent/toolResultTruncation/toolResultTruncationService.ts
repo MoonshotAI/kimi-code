@@ -36,7 +36,12 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
   ): Promise<T> {
     if (input.result.spillExempt === true) return input.result;
 
-    const { untruncatedOutput, untruncatedOutputTotalChars, ...rest } = input.result;
+    const {
+      untruncatedOutput,
+      untruncatedOutputTotalChars,
+      untruncatedOutputSuffix,
+      ...rest
+    } = input.result;
     if (untruncatedOutput !== undefined) {
       const saved = await this.saveToolResult(input.toolName, input.toolCallId, untruncatedOutput);
       if (saved === undefined) return rest as T;
@@ -48,6 +53,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
           untruncatedOutput,
           saved.outputPath,
           untruncatedOutputTotalChars ?? untruncatedOutput.length,
+          untruncatedOutputSuffix,
         ),
         truncated: true,
       } as T;
@@ -110,6 +116,7 @@ function renderPersistedToolResult(
   text: string,
   outputPath: string,
   totalChars: number,
+  outputSuffix?: string,
 ): string {
   const head = text.slice(0, TOOL_RESULT_PREVIEW_HEAD_CHARS);
   const tailStart = Math.max(head.length, text.length - TOOL_RESULT_PREVIEW_TAIL_CHARS);
@@ -134,6 +141,7 @@ function renderPersistedToolResult(
     }
     lines.push('', `[preview: chars [${String(tailStart)}, ${String(text.length)})]`, tail);
   }
+  if (outputSuffix !== undefined) lines.push('', outputSuffix);
   return lines.join('\n');
 }
 

@@ -86,6 +86,8 @@ describe('ToolResultTruncationService', () => {
         truncated: true,
         untruncatedOutput: full,
         untruncatedOutputTotalChars: full.length,
+        untruncatedOutputSuffix:
+          'Command failed with exit code: 1. Output is truncated to fit in the message.',
       },
     });
 
@@ -96,6 +98,9 @@ describe('ToolResultTruncationService', () => {
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
     expect(rendered).toContain(`output_size_chars: ${String(full.length)}`);
+    expect(rendered).toContain(
+      'Command failed with exit code: 1. Output is truncated to fit in the message.',
+    );
     expect(rendered).not.toContain('[...truncated]');
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
   });

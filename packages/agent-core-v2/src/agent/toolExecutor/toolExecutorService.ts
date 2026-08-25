@@ -886,12 +886,14 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     note?: string;
     untruncatedOutput?: string;
     untruncatedOutputTotalChars?: number;
+    untruncatedOutputSuffix?: string;
     spillExempt?: true;
   } = {
     output,
     stopTurn: result.stopTurn,
     untruncatedOutput: result.untruncatedOutput,
     untruncatedOutputTotalChars: result.untruncatedOutputTotalChars,
+    untruncatedOutputSuffix: result.untruncatedOutputSuffix,
     spillExempt: result.spillExempt,
   };
   if (result.truncated === true) base.truncated = true;

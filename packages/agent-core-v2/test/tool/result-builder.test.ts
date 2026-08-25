@@ -167,6 +167,9 @@ describe('ToolResultBuilder', () => {
 
     expect(result.untruncatedOutput).toBe('Very long output that exceeds limit');
     expect(result.untruncatedOutputTotalChars).toBe(35);
+    expect(result.untruncatedOutputSuffix).toBe(
+      'Command failed Output is truncated to fit in the message.',
+    );
   });
 
   it('does not attach full output when retention is off', () => {

@@ -28,6 +28,7 @@ export interface ExecutableToolSuccessResult {
   readonly delivery?: ToolDelivery | undefined;
   readonly untruncatedOutput?: string;
   readonly untruncatedOutputTotalChars?: number;
+  readonly untruncatedOutputSuffix?: string;
   readonly spillExempt?: true | undefined;
 }
 
@@ -40,6 +41,7 @@ export interface ExecutableToolErrorResult {
   readonly delivery?: ToolDelivery | undefined;
   readonly untruncatedOutput?: string;
   readonly untruncatedOutputTotalChars?: number;
+  readonly untruncatedOutputSuffix?: string;
   readonly spillExempt?: true | undefined;
 }
 

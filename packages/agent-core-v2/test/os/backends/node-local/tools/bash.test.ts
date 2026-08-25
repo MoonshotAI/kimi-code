@@ -1158,6 +1158,7 @@ describe('BashTool', () => {
     const output = result.output as string;
     expect(output).toContain('[...truncated]');
     expect(output).toContain('Output is truncated');
+    expect(output).toContain('Command failed with exit code: 1.');
   });
 
   it('saves full foreground output when the inline result is truncated', async () => {
