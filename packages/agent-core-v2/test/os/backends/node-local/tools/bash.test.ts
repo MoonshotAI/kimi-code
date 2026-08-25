@@ -346,7 +346,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
+function createFakeTaskService(
+  options: { maxRunningTasks?: number; outputPersistenceAvailable?: boolean } = {},
+): {
   readonly service: IAgentTaskService;
   readonly tasks: Map<string, ManagedEntry>;
   readonly persisted: Set<string>;
@@ -564,7 +566,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
     },
 
     persistOutput(taskId: string): void {
-      persisted.add(taskId);
+      if (options.outputPersistenceAvailable !== false) persisted.add(taskId);
     },
 
     async getOutputSnapshot(taskId: string): Promise<AgentTaskOutputSnapshot> {
@@ -1161,7 +1163,7 @@ describe('BashTool', () => {
     expect(output).toContain('Command failed with exit code: 1.');
   });
 
-  it('saves full foreground output when the inline result is truncated', async () => {
+  it('uses the persisted task log as the only recovery source when foreground output is truncated', async () => {
     const fullOutput = `${'short line\n'.repeat(6_000)}tail survives\n`;
     const { runner } = createTestRunner(processWithOutput({ stdout: fullOutput }));
     const { service, persisted } = createFakeTaskService();
@@ -1178,6 +1180,23 @@ describe('BashTool', () => {
     expect(output).toContain(`output_path: /fake/tasks/${taskId}/output.log`);
     expect(output).toContain('Use Read with output_path');
     expect(output).toContain(`TaskOutput(task_id="${taskId}")`);
+    expect(result.untruncatedOutput).toBeUndefined();
+    expect(result.untruncatedOutputTotalChars).toBeUndefined();
+    expect(result.untruncatedOutputSuffix).toBeUndefined();
+  });
+
+  it('retains full foreground output for generic spill when task-log persistence is unavailable', async () => {
+    const fullOutput = `${'short line\n'.repeat(6_000)}tail survives\n`;
+    const { runner } = createTestRunner(processWithOutput({ stdout: fullOutput }));
+    const { service, persisted } = createFakeTaskService({ outputPersistenceAvailable: false });
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+    const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
+
+    expect(result.output).not.toContain('[Full output saved]');
+    expect(persisted.size).toBe(0);
+    expect(result.untruncatedOutput).toBe(fullOutput);
+    expect(result.untruncatedOutputTotalChars).toBe(fullOutput.length);
   });
 
   it('omits the TaskOutput hint from the saved-output reference when background tools are disabled', async () => {

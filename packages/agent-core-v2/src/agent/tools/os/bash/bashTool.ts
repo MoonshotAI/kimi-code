@@ -351,7 +351,13 @@ export class BashTool implements IBashTool {
       `output_path: ${output.outputPath}\n` +
       `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
       `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
-    return { ...result, output: `${result.output}${reference}` };
+    return {
+      ...result,
+      output: `${result.output}${reference}`,
+      untruncatedOutput: undefined,
+      untruncatedOutputTotalChars: undefined,
+      untruncatedOutputSuffix: undefined,
+    };
   }
 
   private backgroundStartedResult(
