@@ -118,28 +118,53 @@ describe('useInputHistory — recall', () => {
   });
 });
 
-describe('useInputHistory — caretAtTextStart', () => {
-  it('is true at the very start of the text', () => {
-    const { editor, history } = setup('hello\nworld', 0);
-    editor.value = 'hello\nworld';
-    expect(history.caretAtTextStart()).toBe(true);
+describe('useInputHistory — canRecallOlder (the ArrowUp gate)', () => {
+  it('is false without history even when the draft is empty', () => {
+    const { history } = setup('');
+    expect(history.canRecallOlder()).toBe(false);
   });
 
-  it('is false when the caret is on the first line but not at the start', () => {
-    const { editor, history } = setup('hello\nworld', 3);
-    editor.value = 'hello\nworld';
-    expect(history.caretAtTextStart()).toBe(false);
+  it('is true with history and an empty draft', () => {
+    const { history } = setup('');
+    history.push('a');
+    expect(history.canRecallOlder()).toBe(true);
   });
 
-  it('is false once the caret is past the first newline', () => {
-    const { editor, history } = setup('hello\nworld', 8);
-    editor.value = 'hello\nworld';
-    expect(history.caretAtTextStart()).toBe(false);
+  it('is false with history when the draft has content — recall never hijacks the caret', () => {
+    const { history } = setup('draft');
+    history.push('a');
+    expect(history.canRecallOlder()).toBe(false);
   });
 
-  it('is true for an empty composer', () => {
-    const { history } = setup('', 0);
-    expect(history.caretAtTextStart()).toBe(true);
+  it('treats a whitespace-only draft as content', () => {
+    const { history } = setup('  \n ');
+    history.push('a');
+    expect(history.canRecallOlder()).toBe(false);
+  });
+
+  it('stays true once browsing even though the recalled text fills the composer', () => {
+    const { text, history } = setup('');
+    history.push('a');
+    history.push('b');
+    history.recallOlder(); // -> b; the composer now has content
+    expect(text.value).toBe('b');
+    expect(history.canRecallOlder()).toBe(true);
+  });
+
+  it('follows the draft back to empty after walking home', () => {
+    const { history } = setup('');
+    history.push('a');
+    history.recallOlder();
+    history.recallNewer(); // back to the (empty) live draft
+    expect(history.canRecallOlder()).toBe(true);
+  });
+
+  it('becomes false once an edited recalled entry exits browsing', () => {
+    const { history } = setup('');
+    history.push('a');
+    history.recallOlder();
+    history.resetBrowsing(); // what handleInput does on the first keystroke
+    expect(history.canRecallOlder()).toBe(false);
   });
 });
 

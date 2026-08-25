@@ -1554,22 +1554,20 @@ function handleKeydown(e: KeyboardEvent): boolean {
   // multi-line text, so the arrows always move the caret within the draft and
   // never jump to a previous message.
   //
-  // ENTERING history: a plain ArrowUp only recalls when the caret is at the
-  // very start of the text, so editing a multi-line draft with the arrows
-  // still works — ArrowUp moves the caret within the draft until it reaches
-  // the top, instead of jumping to a previous message mid-navigation.
-  // ONCE BROWSING, the arrows walk history directly, regardless of where the
-  // caret landed — a recalled multi-line entry leaves the caret at its end, and
-  // the old "must be at the start" gate then trapped it there, so further
-  // ArrowUp did nothing ("only one step back"). Walking freely while browsing
-  // fixes that; typing exits history (handleInput resets browsing), after which
-  // the arrows move the caret normally again.
+  // ENTERING history: a plain ArrowUp recalls only when the draft is
+  // COMPLETELY empty — with any content (whitespace included) the arrows
+  // always move the caret, never hijack it into a previous message. ONCE
+  // BROWSING, the arrows walk history directly even though the recalled text
+  // now fills the composer — the browsing cursor (useInputHistory's
+  // historyIndex), not emptiness, carries the walk. Typing exits history
+  // (handleInput resets browsing), after which the arrows are the caret's
+  // again, so an edited recalled entry can no longer be pushed away.
   // An empty-result slash menu is only the status note — it must not
   // block history recall.
   const slashMenuBlocking = slashOpen.value && slashItems.value.length > 0;
   if (!expanded.value && !slashMenuBlocking && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
     const browsing = history.isBrowsing();
-    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtTextStart())) {
+    if (e.key === 'ArrowUp' && history.canRecallOlder()) {
       e.preventDefault();
       if (!browsing) {
         // Entering history: snapshot the draft's attachment entries (entry

@@ -1,11 +1,15 @@
 // packages/app-client/src/composables/useInputHistory.ts
 // Shell-style ↑/↓ recall of previously sent messages, scoped per session.
 //
-// `ArrowUp` at the very start of the text steps back through older entries
-// sent in the current session; `ArrowDown` walks forward again and ultimately
-// restores the draft the user had before they started browsing. Any manual edit
-// drops out of browsing mode (see `resetBrowsing`, called from the composer's
-// input handler).
+// `ArrowUp` on an EMPTY draft steps back through older entries sent in the
+// current session; `ArrowDown` walks forward again and ultimately restores
+// the draft the user had before they started browsing. A draft with ANY
+// content (whitespace included) keeps the arrows for plain caret movement —
+// recall never hijacks them. And once browsing, the arrows walk history
+// freely even though the recalled text now fills the composer: "empty"
+// alone can't carry the walk, the browsing cursor (historyIndex) does.
+// Any manual edit drops out of browsing mode (see `resetBrowsing`, called
+// from the composer's input handler).
 //
 // The history is persisted to localStorage as a `Record<sessionId, string[]>`.
 // A draft session (no id yet — the empty-session composer before its first
@@ -27,7 +31,7 @@ const MAX_HISTORY = 100;
 export interface InputHistoryDeps {
   /** The live composer text — recalled entries overwrite it. */
   text: Ref<string>;
-  /** The editing surface, used to read the caret and move the selection. */
+  /** The editing surface, used to move the selection on a recall. */
   editorRef: Ref<TextFieldLike | null>;
   /** Active session id — scopes the recalled history (getter for reactivity). */
   sessionId: () => string | undefined;
@@ -81,13 +85,19 @@ export function useInputHistory(deps: InputHistoryDeps) {
     safeSetJson(STORAGE_KEYS.inputHistory, historyMap.value);
   }
 
-  function caretAtTextStart(): boolean {
-    const el = editorRef.value;
-    if (!el) return false;
-    // Only recall when the caret sits at the very start of the text. Otherwise
-    // ArrowUp while navigating a multi-line draft would hijack the caret and
-    // jump to a previous message instead of moving within the draft.
-    return (el.selectionStart ?? 0) === 0;
+  // The draft counts as "empty" only at zero characters — whitespace and
+  // newlines are content and keep the arrows for caret movement. (Pills need
+  // no special case: mention/attachment/quote atoms serialize into `text`,
+  // so a pill-only draft is non-empty too.)
+  function isEmpty(): boolean {
+    return text.value.length === 0;
+  }
+
+  /** The ArrowUp gate, single-sourced for both composer mirrors: history
+   *  exists AND (the draft is empty OR a walk is already in progress — the
+   *  recalled text fills the composer, so "empty" alone can't carry it). */
+  function canRecallOlder(): boolean {
+    return currentList.value.length > 0 && (historyIndex !== -1 || isEmpty());
   }
 
   function applyHistoryText(value: string): void {
@@ -154,7 +164,7 @@ export function useInputHistory(deps: InputHistoryDeps) {
 
   return {
     push,
-    caretAtTextStart,
+    canRecallOlder,
     recallOlder,
     recallNewer,
     resetBrowsing,
