@@ -19,7 +19,7 @@ import {
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeToolExecuteEvent,
@@ -1052,14 +1052,14 @@ describe('truncation pipeline', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
-  it('spills builder-truncated output to disk and renders a pointer for the model', async () => {
+  it('spills oversized output to disk and renders a pointer for the model', async () => {
     const line = `${'x'.repeat(100)}\n`;
     const fullOutput = `HEAD_MARKER\n${line.repeat(300)}MIDDLE_MARKER\n${line.repeat(
       300,
     )}TAIL_MARKER\n`;
     const tool = new TestTool('noisy', {
       execute: async () => {
-        const builder = new ToolResultBuilder({ retainFullOutput: true });
+        const builder = new ToolOutputAccumulator();
         builder.write(fullOutput);
         return builder.ok();
       },
@@ -1069,8 +1069,7 @@ describe('truncation pipeline', () => {
     const [result] = await execute([toolCall('call_noisy', 'noisy', {})]);
 
     expect(result?.truncated).toBe(true);
-    expect(result).not.toHaveProperty('untruncatedOutput');
-    expect(result).not.toHaveProperty('untruncatedOutputTotalChars');
+    expect(result).not.toHaveProperty('spill');
     const rendered = result?.output;
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
@@ -1093,7 +1092,7 @@ describe('truncation pipeline', () => {
     const fullOutput = `${'x'.repeat(50_001)}tail`;
     const tool = new TestTool('failing-noisy', {
       execute: async () => {
-        const builder = new ToolResultBuilder({ retainFullOutput: true });
+        const builder = new ToolOutputAccumulator();
         builder.write(fullOutput);
         return builder.error('Command failed with exit code: 1.');
       },
@@ -1107,6 +1106,35 @@ describe('truncation pipeline', () => {
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
     expect(rendered).toContain('Command failed with exit code: 1.');
+    expect(readFileSync(renderedOutputPath(rendered), 'utf8')).toBe(
+      `${fullOutput}\nCommand failed with exit code: 1.`,
+    );
+  });
+
+  it('appends a spill pointer for per-line truncation without replacing the output', async () => {
+    const longLine = 'x'.repeat(60_000);
+    const fullOutput = `short line\n${longLine}\n`;
+    const tool = new TestTool('long-line', {
+      execute: async () => {
+        const builder = new ToolOutputAccumulator();
+        builder.write(fullOutput);
+        return builder.ok();
+      },
+    });
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_long_line', 'long-line', {})]);
+
+    expect(result?.truncated).toBe(true);
+    expect(result).not.toHaveProperty('spill');
+    const rendered = result?.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('short line');
+    expect(rendered).toContain('[...truncated]');
+    expect(rendered).toContain(
+      'Per-line truncation occurred; the complete output was saved to a file.',
+    );
     expect(readFileSync(renderedOutputPath(rendered), 'utf8')).toBe(fullOutput);
   });
 

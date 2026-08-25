@@ -640,7 +640,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/long.txt' });
 
-    expect(result.note).toContain('Lines [1, 3] were truncated.');
+    expect(result.note).toContain('Lines [1, 3] were truncated to 2000 characters; use Bash (e.g. cut or sed) to read the elided content of those lines.');
     expect(result.output).toContain('...');
   });
 
@@ -863,7 +863,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.note).toContain('Total lines in file: 5.');
-    expect(result.note).toContain('Lines [4] were truncated.');
+    expect(result.note).toContain('Lines [4] were truncated to 2000 characters; use Bash (e.g. cut or sed) to read the elided content of those lines.');
   });
 
   it('rechecks runtime availability when execution starts after the tool was shown', async () => {

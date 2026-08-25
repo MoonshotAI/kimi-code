@@ -13,10 +13,6 @@ import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types'
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
 
-const MCP_OUTPUT_TRUNCATED_TEXT =
-  '\n\n[Output truncated: exceeded 100000 character limit. ' +
-  'Use pagination or more specific queries to get remaining content.]';
-
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }
@@ -285,7 +281,7 @@ describe('mcpResultToExecutableOutput', () => {
       result([{ type: 'text', text: 'hello' }]),
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'hello', isError: false });
+    expect(out).toEqual({ output: 'hello' });
   });
 
   test('propagates isError=true on the success-shape return', async () => {
@@ -311,7 +307,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined).toContain('<mcp-structured-result>');
     expect(joined).toContain('"structuredContent":{"foo":1}');
     expect(joined).toContain('"_meta":{"bar":2}');
-    expect(out.isError).toBe(false);
+    expect(out.isError).toBeUndefined();
   });
 
   test('keeps the mcp_tool_result wrap when a media-only result carries structuredContent', async () => {
@@ -378,12 +374,12 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'ok', isError: false });
+    expect(out).toEqual({ output: 'ok' });
   });
 
   test('returns an empty output array when the content array is empty', async () => {
     const out = await mcpResultToExecutableOutput(result([]), 'mcp__s__t');
-    expect(out).toEqual({ output: [], isError: false });
+    expect(out).toEqual({ output: [] });
   });
 
   test('keeps unconvertible blocks as drop notices alongside the rest', async () => {
@@ -408,7 +404,7 @@ describe('mcpResultToExecutableOutput', () => {
       result([{ type: 'image', data: 'AAA', mimeType: 'image/png' }]),
       'mcp__github__create_pr',
     );
-    expect(out.isError).toBe(false);
+    expect(out.isError).toBeUndefined();
     expect(out.output).toEqual([
       { type: 'text', text: '<mcp_tool_result name="mcp__github__create_pr">' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
@@ -443,13 +439,40 @@ describe('mcpResultToExecutableOutput', () => {
     expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
   });
 
-  test('truncates oversized text and merges the notice into the surviving text part', async () => {
+  test('passes oversized text through untouched for the truncation pipeline to shape', async () => {
     const out = await mcpResultToExecutableOutput(
       result([{ type: 'text', text: 'x'.repeat(100_001) }]),
       'mcp__s__t',
     );
-    expect(out.output).toBe('x'.repeat(100_000) + MCP_OUTPUT_TRUNCATED_TEXT);
+    expect(out.output).toBe('x'.repeat(100_001));
+    expect(out.truncated).toBeUndefined();
+    expect(out.spill).toBeUndefined();
+  });
+
+  test('hoists binary drop notices into the spill suffix', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: 'x'.repeat(100_001) },
+        { type: 'image', data: 'y'.repeat(14 * 1024 * 1024), mimeType: 'image/png' },
+      ]),
+      'mcp__s__t',
+    );
     expect(out.truncated).toBe(true);
+    expect(out.spill?.suffix).toContain('image_url dropped');
+    const parts = out.output as ContentPart[];
+    expect(parts[0]).toEqual({ type: 'text', text: 'x'.repeat(100_001) });
+    expect(
+      parts.some((p) => p.type === 'text' && p.text.includes('image_url dropped')),
+    ).toBe(true);
+  });
+
+  test('attaches binary drop notices via spill.suffix even without text truncation', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: 'y'.repeat(14 * 1024 * 1024), mimeType: 'image/png' }]),
+      'mcp__s__t',
+    );
+    expect(out.truncated).toBe(true);
+    expect(out.spill?.suffix).toContain('image_url dropped');
   });
 
   test('drops oversized binary parts in favor of a per-part notice without touching the text budget', async () => {
@@ -597,7 +620,7 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('keeps the caption intact when the tool text exhausts the 100K budget', async () => {
+  test('keeps the caption and the full text alongside the compressed image', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(
       await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
@@ -613,17 +636,17 @@ describe('mcpResultToExecutableOutput', () => {
     );
 
     const parts = out.output as ContentPart[];
-    expect(out.truncated).toBe(true);
+    expect(out.truncated).toBeUndefined();
     expect(parts.some((p) => p.type === 'image_url')).toBe(true);
     const toolText = parts[0];
     if (toolText?.type !== 'text') throw new Error('expected the tool text part first');
-    expect(toolText.text).toContain('Output truncated');
+    expect(toolText.text).toBe('x'.repeat(100_001));
     expect(out.note).toMatch(/<\/system>$/);
     expect(out.note).toContain('saved at');
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('does not slice the caption when the budget is nearly exhausted', async () => {
+  test('does not slice the caption for large text output', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(
       await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
@@ -676,6 +699,6 @@ describe('createMcpTool', () => {
     });
 
     expect(result).toEqual({ output: 'ok' });
-    expect(result).not.toHaveProperty('truncated');
+    expect(result.truncated).toBeUndefined();
   });
 });

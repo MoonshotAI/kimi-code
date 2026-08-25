@@ -517,7 +517,9 @@ export class ReadTool implements IReadTool {
       parts.push('End of file reached.');
     }
     if (input.truncatedLineNumbers.length > 0) {
-      parts.push(`Lines [${input.truncatedLineNumbers.join(', ')}] were truncated.`);
+      parts.push(
+        `Lines [${input.truncatedLineNumbers.join(', ')}] were truncated to ${String(MAX_LINE_LENGTH)} characters; use Bash (e.g. cut or sed) to read the elided content of those lines.`,
+      );
     }
     if (input.lineEndingStyle === 'mixed') {
       parts.push(

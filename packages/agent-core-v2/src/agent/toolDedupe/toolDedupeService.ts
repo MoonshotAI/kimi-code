@@ -105,13 +105,13 @@ function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDed
     }
     newOutput = arr;
   }
-  const untruncatedOutputSuffix =
-    result.untruncatedOutput !== undefined
-      ? (result.untruncatedOutputSuffix ?? '') + reminderText
+  const spill =
+    result.spill !== undefined
+      ? { ...result.spill, suffix: (result.spill.suffix ?? '') + reminderText }
       : undefined;
   return result.isError === true
-    ? { ...result, output: newOutput, isError: true, untruncatedOutputSuffix }
-    : { ...result, output: newOutput, untruncatedOutputSuffix };
+    ? { ...result, output: newOutput, isError: true, spill }
+    : { ...result, output: newOutput, spill };
 }
 
 function forceStopResult(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
