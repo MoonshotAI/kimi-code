@@ -20,6 +20,7 @@
 - **主进程原生界面的文案必须双语（en/zh）**：主进程没有 i18n runtime，新增用户可见字符串（托盘 / 通知 / 对话框等）禁止单语言硬编码——走 `apps/desktop/src/main/tray.ts` 的字符串表模式（措辞与计数无关，规避复数规则）；语言由 renderer 经 `kimi:locale` 通道推送（应用内语言优先，未推送前按 OS 语言兜底），切换语言要带当前状态重渲染。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
 - **提交规范**：Conventional Commits；禁止任何 `Co-Authored-By` 署名；commit message、PR、代码、文档不得出现 agent / AI 工具的名称或身份信息。PR 描述用英文。
+- **不自动合入 PR**：PR 开好、CI 通过后即停手，合入由用户自己操作；`gh pr merge`（及任何把分支并入 main 的操作）只在用户当场明确指示时执行，此前的授权不沿用。
 - **changeset 必走 skill**：提交 PR 前必须运行 `changeset` skill（`.agents/skills/changeset/SKILL.md`）并按其规则在 `.changeset/` 生成 changeset；纯测试 / 重构 / 文档等无用户可见变化的改动除外。**一律 `patch`**；认为需要 `minor` / `major` 时必须先向用户说明并获得明确同意，否则仍写 `patch`。**只写 `kimi-code-app`**：release CI 不 checkout submodule，`pnpm changeset` 列表里严禁选 submodule 的包，选错 release CI 直接挂。
 - **alpha 发布通道**：预发版（`0.0.x-alpha.N`）从常驻 `alpha` 分支发（changeset pre 模式，分支只进不出、禁止合回 main）；alpha 产物只切 CDN `alpha*.yml` 更新指针，`latest*.yml` 与 `download/` 固定入口永远只被正式版触碰。生命周期见 `.changeset/README.md`，发布命令见 `README.md` 发布节，方案见 `docs/plans/2026-08-25-desktop-alpha-channel.md`。
 - **stage 用显式路径，不用 `git add -A` / `git add .`**：本仓有构建产物目录（如 desktop 的 `desktop-dist`），gitignore 变动会让它们突然"显形"被误扫进 commit。
