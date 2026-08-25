@@ -220,15 +220,29 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
 
     const thinkingEffort = defaultEffortForModel(model, defaultThinking, defaultThinkingEffort);
-    set({ currentModel: modelId, thinkingEffort });
+    const effortChanged = thinkingEffort !== previousEffort;
+    set({
+      currentModel: modelId,
+      thinkingEffort,
+      // The save below persists the derived effort when it changed and
+      // clears the gate — keep the seed in sync, or the next switch derives
+      // from a stale value and saves it back over the persisted one.
+      defaultThinkingEffort:
+        effortChanged &&
+        thinkingEffort !== "off" &&
+        thinkingEffort !== "on" &&
+        persistsAsDefaultEffort(model, thinkingEffort)
+          ? thinkingEffort
+          : defaultThinkingEffort,
+    });
     saveConfigWithRollback(
       {
         model: modelId,
         thinking: thinkingEffort !== "off",
         effort: thinkingEffort,
-        effortChanged: thinkingEffort !== previousEffort,
+        effortChanged,
       },
-      { currentModel, thinkingEffort: previousEffort },
+      { currentModel, thinkingEffort: previousEffort, defaultThinkingEffort },
       set,
     );
   },
