@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/MediaThumb.vue -->
 <!-- One image/video attachment rendered as a rounded-rect thumbnail — the
      SAME component for the composer's pending-attachment strip and for media
      in sent messages (files render as attachment pills); composer-only

@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/TurnFold.vue -->
 <!-- Turn-level fold (the second folding level above the activity run): once an
      assistant turn settles, everything BEFORE its final text block — thinking
      segments, quiet tool lines, interim text, standalone cards — folds into a

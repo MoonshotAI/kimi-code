@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/admin/SessionAdminMenu.vue -->
 <!-- The session admin table's action menus, one component three shapes
      (prototype-faithful):
        single      row contextmenu — Open session / Rename… / Fork / Export,

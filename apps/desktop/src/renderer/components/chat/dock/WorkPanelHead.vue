@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/dock/WorkPanelHead.vue -->
 <!-- Head row of a dock work panel: leading icon + title + muted trailing
      meta (running count, wall-clock), with a right-aligned actions slot
      (filter chips / goal controls). -->

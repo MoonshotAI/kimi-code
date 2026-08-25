@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/dialogs/LoginDialog.vue -->
 <!-- Managed Kimi OAuth device-code login dialog. Opens on a login-entry
      choice (one ActionCard per OAuth endpoint), then runs the device-code
      flow for the picked entry — the verification page auto-opens in the

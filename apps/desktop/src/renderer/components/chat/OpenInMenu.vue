@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/chat/OpenInMenu.vue -->
 <!-- Desktop-only "open workspace in <app>" control: a compact pill in the chat
      header. Left half = current target's icon, click opens with it; right
      caret expands the app menu. Picking a menu item opens immediately and

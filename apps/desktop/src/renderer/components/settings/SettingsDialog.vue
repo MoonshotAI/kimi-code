@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/settings/SettingsDialog.vue -->
 <!-- The app's dedicated Settings page (modal). Consolidates what used to be
      scattered in the sidebar account popover: appearance, language, account,
      connection, plus notifications and the troubleshooting-log export. -->

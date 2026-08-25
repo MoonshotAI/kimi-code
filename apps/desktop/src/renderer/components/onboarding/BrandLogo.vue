@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/onboarding/BrandLogo.vue -->
 <!-- Kimi Code app icon for the onboarding wizard, inlined so the mascot's
      eyes hook the shared idle look/blink keyframes in style.css (the same
      .ch-eyes/.ch-eye classes the sidebar logo uses); a click plays one quick

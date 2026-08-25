@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/NotificationCard.vue -->
 <!-- In-transcript notice for a task notification (a hidden `<notification>`
      user message the agent received). Renders in the SAME visual language as
      the cron notice (CronNotice.vue): one small faint provenance line ABOVE

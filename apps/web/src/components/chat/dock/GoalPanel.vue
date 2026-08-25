@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/dock/GoalPanel.vue -->
 <!-- The goal's detail inside the dock's shared work panel (opened from the
      goal pill): the full objective + completion criterion, rendered with the
      app's full chat Markdown renderer. The pause / resume / cancel controls

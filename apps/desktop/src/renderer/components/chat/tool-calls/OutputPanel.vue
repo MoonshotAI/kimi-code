@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/OutputPanel.vue -->
 <!-- Shared monospace output panel for expanded tool rows: sunken surface,
      hairline edge (needed in dark, where sunken == page bg), 12-line scroll
      cap. Used for terminal output, fetched content, and any raw line dump. -->

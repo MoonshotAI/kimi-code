@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/terminal/TerminalResizeHandle.vue -->
 <!-- Desktop-only: horizontal drag bar sizing the bottom terminal panel. -->
 <script setup lang="ts">
 import { watch } from 'vue';

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/settings/PlanUpgradeCard.vue -->
 <!-- Settings → Account: the upgrade entry shown for a free managed account in
      place of the plan-usage module — free accounts can't call usages, so
      there is nothing to meter. Rendered directly by SettingsDialog once the

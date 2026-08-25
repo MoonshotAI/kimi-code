@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/HighlightedCode.vue -->
 <!-- Shiki syntax highlighting for code surfaces: plain content (Write/Read
      tool cards, file preview) or line-diff rows (Edit tool card, diff panel).
      Renders plain first and upgrades in place once the lazily-loaded

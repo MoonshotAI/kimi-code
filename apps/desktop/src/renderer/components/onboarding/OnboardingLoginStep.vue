@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/onboarding/OnboardingLoginStep.vue -->
 <!-- Onboarding wizard step 4 — model-service choice. The two OAuth login
      entries start the embedded device-code flow against the matching OAuth
      endpoint (useOAuthLoginFlow, shared with the standalone LoginDialog); an

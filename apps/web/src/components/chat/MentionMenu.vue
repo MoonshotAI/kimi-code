@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/MentionMenu.vue -->
 <!-- Popup list shown when the user types @ in the Composer: one merged,
      ranked list of file/folder matches from the daemon search and session
      skills (no sections — see useMentionMenu for the ranking bands). -->

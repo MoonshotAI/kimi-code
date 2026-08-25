@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/settings/AddProviderFlow.vue -->
 <!-- The add-provider expand area of the Providers tab: a source switch
      (models.dev directory vs. manual) on top of the shared ProviderForm. The
      directory view browses the server-proxied catalog (search, greyed-out

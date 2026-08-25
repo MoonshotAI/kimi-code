@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/TodoTool.vue -->
 <!-- Todo-list tool: the row shows the currently active task with a done/total
      count and a mini progress bar; expanding lists every item with the same
      status glyphs as the dock todo panel. -->

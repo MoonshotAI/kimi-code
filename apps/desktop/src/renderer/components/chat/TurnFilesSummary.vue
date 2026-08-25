@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/TurnFilesSummary.vue -->
 <!-- A settled turn's file-change summary card, between its final text and footer. -->
 <script setup lang="ts">
 import { computed, ref } from 'vue';

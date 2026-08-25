@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/mobile/MobileSwitcherSheet.vue -->
 <!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: in rc mode
      a device switcher row on top (RcDeviceSwitcher, self-gates on ?rc=1),
      then a "+ New chat" action block (hairline-separated), then collapsible

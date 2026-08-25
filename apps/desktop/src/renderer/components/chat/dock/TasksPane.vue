@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/dock/TasksPane.vue -->
 <!-- Background bash tasks in the dock panel: long rows — a status dot, the
      name, the elapsed time, and stop for running ones. Click a row to open
      the task's detail (command + output) in the right-side panel. -->

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/GenericTool.vue -->
 <!-- Fallback renderer for tools without a bespoke line (cron, skill runs, and
      anything new the daemon emits): the registry glyph + localized label + a
      summary of the key argument; expanding shows the full argument and the

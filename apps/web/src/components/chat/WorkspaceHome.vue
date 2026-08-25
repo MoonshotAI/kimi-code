@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/WorkspaceHome.vue -->
 <!-- Workspace home — the head of the draft (empty-session) landing in the
      status view's workspace flow: folder + workspace name and the root path.
      The centred composer follows; the recent-sessions list

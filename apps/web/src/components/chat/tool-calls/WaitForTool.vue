@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/WaitForTool.vue -->
 <!-- WaitFor (wait for background tasks): a status-flavoured quiet line. The
      row carries the wait target (while running) or the finished task's
      description (once settled); a timed-out wait is NOT an error (the tool

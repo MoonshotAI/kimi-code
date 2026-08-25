@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/GlobTool.vue -->
 <!-- Glob / Ls tools: file-listing quiet lines. The row leads with the
      localized Find / List label, then Glob's pattern in mono with a file-count
      chip; expanding lists the matched paths as rows that open the file

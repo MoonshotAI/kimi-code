@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/ThinkingBlock.vue -->
 <!-- Inline collapsible thinking: a quiet disclosure row in the message stream.
      The k15 bulb (Kimi's reasoning glyph) leads the row in every state; while
      streaming the "thinking…" label breathes and elapsed seconds tick beside it

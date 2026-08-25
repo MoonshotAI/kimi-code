@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/admin/SessionAdminPagination.vue -->
 <!-- Session admin pager: total count on the left; page-size select (10/20/50/
      100) + folded page numbers (1 … 4 5 6 … 10) + prev/next on the right.
      Page numbers hide entirely when there is nothing to page (prototype). -->

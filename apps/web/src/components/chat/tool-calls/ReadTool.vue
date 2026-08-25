@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/ReadTool.vue -->
 <!-- Read tool: a file-centric quiet line. The row leads with the localized Read
      label, then the file name (a real button opening the preview) + its
      directory + the read line range; the trailing chip reports how many lines

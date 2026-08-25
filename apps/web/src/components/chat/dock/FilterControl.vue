@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/dock/FilterControl.vue -->
 <!-- Panel-head task filter: a SegmentedControl while the head has room, a
      dropdown menu once the title plus the chips would overflow — so the head
      title is never squeezed into wrapping. The switch is measured on the

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/BashTool.vue -->
 <!-- Bash / shell tool: a terminal-flavoured quiet line. The row leads with the
      localized Run label, then the command itself in mono (CSS-truncated to the
      available width); expanding shows the full command echo plus the terminal

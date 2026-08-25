@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/PinnedSessionList.vue -->
 <!-- The pinned section above all workspace groups: every pinned session across
      workspaces, in pure recency order (updatedAt desc — no manual ordering,
      no attention tiering; the facade owns the order). Rows are the shared

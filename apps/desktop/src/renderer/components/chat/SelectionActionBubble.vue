@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/chat/SelectionActionBubble.vue -->
 <!-- Selection quote bubble (synced with apps/web): selecting text inside an
      assistant message pops this floating menu anchored to the selection —
      comment / add-to-chat / add-to-side-chat. "Comment" swaps the menu for an

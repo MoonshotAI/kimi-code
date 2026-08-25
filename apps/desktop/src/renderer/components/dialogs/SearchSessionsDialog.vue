@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/dialogs/SearchSessionsDialog.vue -->
 <!-- Spotlight-style search: type to filter workspaces (by name + path) and
      sessions (by title + last prompt + workspace). Workspaces land in their own
      section above the session hits (section heads carry counts); the empty

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/RcDeviceSwitcher.vue -->
 <!-- rc (remote control) device switcher for rc mode (URL carries ?rc=1).
      Mounts: desktop — the sidebar's top row; mobile — the top of
      MobileSwitcherSheet (the switcher bottom sheet). Shows the current device

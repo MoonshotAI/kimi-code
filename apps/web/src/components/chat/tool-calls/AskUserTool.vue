@@ -1,5 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/AskUserTool.vue
-     Result rendering for the AskUserQuestion tool. On a successful answer the
+<!-- Result rendering for the AskUserQuestion tool. On a successful answer the
      output is a single JSON line ({ answers, note? }); answers are keyed by
      question text and the values are option labels (comma-joined for
      multi-select) or free-text (Other). Legacy transcripts instead carry

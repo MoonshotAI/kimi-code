@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/settings/PlanUsageCard.vue -->
 <!-- Settings → Account: managed-account plan usage + booster wallet, two
      separate sections (like the TUI `/usage` panel's "Plan usage" and "Extra
      Usage"). Fetches on mount through the injected callback; renders inline

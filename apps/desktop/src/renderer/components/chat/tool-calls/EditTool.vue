@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/EditTool.vue -->
 <!-- Edit / MultiEdit / Write tool: a diff-centric quiet line. The row leads
      with the localized Edit / Write label, then the file name (a button opening
      the preview) + directory, with the change stats and a mini segmented

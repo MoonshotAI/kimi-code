@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/UpdateIndicator.vue -->
 <!-- Auto-update entry: a yellow pill in the Windows titlebar or the sidebar
      header on other desktop surfaces. Both may be window-drag strips, so the
      wrapper opts out of app-region drag. Clicking opens the canonical §03 Dialog (Anatomy A,

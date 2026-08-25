@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/onboarding/OnboardingWizard.vue -->
 <!-- First-run onboarding wizard: a full-page, two-step flow — preferences
      (language + appearance, both apply live) then the model-service (Kimi
      login) step. Finishing OR skipping the login step completes onboarding.

@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/dialogs/AddWorkspaceDialog.vue -->
 <!-- Daemon-driven folder browser for adding a workspace: starts at $HOME -->
 <!-- (fs:home), shows recent roots as quick-picks, a clickable breadcrumb, and -->
 <!-- the folder list (fs:browse). "Open this folder" adds the current path. -->

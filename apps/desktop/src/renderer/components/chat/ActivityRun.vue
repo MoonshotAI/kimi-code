@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/ActivityRun.vue -->
 <!-- A run of consecutive activity (thinking segments + tool calls of any
      kind, cards included) folded into ONE disclosure row. The row leads with
      a status glyph

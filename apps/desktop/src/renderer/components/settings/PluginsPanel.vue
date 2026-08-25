@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/settings/PluginsPanel.vue -->
 <!-- Desktop-only "Plugins" settings tab. Four sections, all daemon REST:
      - Built-in: capability rows (kimi-cu, kimi-webbridge) reading as plain
        install / installed like the TUI shelf (no readiness step detail on

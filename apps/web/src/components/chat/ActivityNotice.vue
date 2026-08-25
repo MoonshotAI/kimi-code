@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/ActivityNotice.vue -->
 <!-- Generic in-transcript "working on X" notice: a plain spinner plus a
      body-sized label. Used for long-running session activities that are not a
      chat turn (e.g. "Compacting context…"). Uses the plain Spinner primitive

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/dialogs/BottomSheet.vue -->
 <!-- Reusable mobile bottom sheet: a fading scrim + a panel that slides up from -->
 <!-- the bottom (rounded top, grab handle). v-model controls open state; tapping -->
 <!-- the scrim or the grab handle closes it. Restyled to the unified v2 dialog -->

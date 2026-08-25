@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/PrPreviewIndicator.vue -->
 <!-- PR preview entry (desktop-only, dev builds): a pill in the sidebar header
      that opens a Dialog to build a code-app pull request's renderer in an
      isolated git worktree (main/pr-preview.ts) and load it into this window.

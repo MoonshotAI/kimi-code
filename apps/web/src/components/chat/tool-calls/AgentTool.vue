@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/AgentTool.vue -->
 <!-- The single-subagent `Agent` tool: a quiet IDENTITY CARD — one per call,
      never folded into a tool group (a delegation has a name and a task, it
      deserves its own weight). The card shows the TASK (the short description)

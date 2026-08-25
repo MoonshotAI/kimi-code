@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/FilePreview.vue -->
 <!-- File preview pane: renders text/markdown/json/image/binary by mime and encoding. -->
 <script setup lang="ts">
 import { computed, inject, nextTick, provide, ref, watch } from 'vue';

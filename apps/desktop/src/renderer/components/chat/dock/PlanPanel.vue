@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/PlanPanel.vue -->
 <!-- The session's latest plan inside the dock's shared work panel (opened
      from the plan pill): the model's written plan rendered with the app's
      full chat Markdown renderer (tables, code, links — same fidelity as the

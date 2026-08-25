@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/admin/SessionAdminView.vue -->
 <!-- Session admin page (/admin/sessions): the cross-workspace management view
      opened from the sidebar's list-options menu. P2 = page head, filter bar,
      the server-side paged table, and the pager; P3 = selection/batch, row

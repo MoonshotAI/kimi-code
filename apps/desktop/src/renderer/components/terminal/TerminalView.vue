@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/terminal/TerminalView.vue -->
 <!-- Desktop-only: one xterm instance bound to a main-process PTY tab -->
 <!-- (composables/useNativeTerminal.ts); the data path is the native bridge. -->
 <script setup lang="ts">

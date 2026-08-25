@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/settings/ProviderForm.vue -->
 <!-- The shared vertical provider form of the Providers tab accordion: mode
      'add' (blank, footer = cancel + add) and mode 'edit' (prefilled, footer =
      delete + save with an inline delete-confirm bar; managed OAuth providers

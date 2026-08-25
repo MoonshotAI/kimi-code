@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/CronNotice.vue -->
 <!-- In-transcript notice for a turn triggered by a scheduled reminder rather
      than a real user. It reads like a user message with a provenance label:
      one small faint line ABOVE the bubble (clock icon + title + schedule +

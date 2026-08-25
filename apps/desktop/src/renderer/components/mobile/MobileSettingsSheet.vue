@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/mobile/MobileSettingsSheet.vue -->
 <!-- Mobile settings bottom sheet, grouped the way the desktop Settings dialog -->
 <!-- is: a "Current session" card (model → ModelPicker, thinking segments, plan -->
 <!-- / swarm toggles, permission, read-only context meter + cache note), an -->

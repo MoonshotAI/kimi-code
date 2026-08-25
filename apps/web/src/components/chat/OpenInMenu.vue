@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/OpenInMenu.vue -->
 <!-- "Open" button group for the chat header: workspace path label + quick-open
      (last used target) + dropdown caret, matching the kimi-cli/web pattern.
      Falls back to a simple icon+text "Open" button on non-mac platforms. -->

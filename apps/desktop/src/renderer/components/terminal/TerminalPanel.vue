@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/terminal/TerminalPanel.vue -->
 <!-- Desktop-only: the bottom terminal panel — a tab strip over the xterm -->
 <!-- views. State lives in composables/useNativeTerminal.ts; pure presentation. -->
 <script setup lang="ts">

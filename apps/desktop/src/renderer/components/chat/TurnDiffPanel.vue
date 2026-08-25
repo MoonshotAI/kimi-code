@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/TurnDiffPanel.vue -->
 <!-- Right-side turn diff for one summary file: the turn's own X→Y change, not
      the git diff. Rendered with HighlightedCode like the Edit tool's inline diff. -->
 <script setup lang="ts">

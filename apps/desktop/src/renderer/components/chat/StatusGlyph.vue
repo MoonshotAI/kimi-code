@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/StatusGlyph.vue -->
 <!-- Shared status glyph for dock list rows (todo + background bash/subagent
      tasks). One glyph per state, drawn from the registry icons / StatusDot
      vocabulary (never hardcoded characters), colored by state — keeps the

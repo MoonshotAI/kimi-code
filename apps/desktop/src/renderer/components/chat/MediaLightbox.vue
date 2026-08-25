@@ -1,5 +1,4 @@
-<!-- apps/web/src/components/chat/MediaLightbox.vue
-     Preview entry for media attachments — the sent-message thumbnails, the
+<!-- Preview entry for media attachments — the sent-message thumbnails, the
      composer's pending-attachment strip, and ReadMedia tool cards all open
      here. Two implementations behind one component:
        - image: PhotoSwipe (@moonshot-ai/app-client's lib/mediaPreview.ts) —

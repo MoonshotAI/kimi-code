@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/WorkspaceRecentSessions.vue -->
 <!-- The workspace home's recent-sessions list (below the centred composer):
      the draft workspace's open sessions first, then its done ones, capped by
      the facade. Rows carry the status view's Open/Done tag; click selects

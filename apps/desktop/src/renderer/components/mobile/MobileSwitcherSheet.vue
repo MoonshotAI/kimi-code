@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/mobile/MobileSwitcherSheet.vue -->
 <!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: a "+ New
      chat" action block (hairline-separated), then collapsible workspace
      groups — a single-line header (folder icon + name + faint inline path +

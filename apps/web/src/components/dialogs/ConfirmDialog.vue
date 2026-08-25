@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/dialogs/ConfirmDialog.vue -->
 <!-- Design-system §03 modal confirmation: a thin wrapper over the canonical
      Dialog (height auto, right-aligned footer). The single confirmation surface
      for user actions — driven app-wide by useConfirmDialog(). -->

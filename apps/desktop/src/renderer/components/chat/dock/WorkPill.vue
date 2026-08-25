@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/dock/WorkPill.vue -->
 <!-- One dock workbar pill: leading icon + label + an optional trailing meta
      (task count, live goal status). The look stays in ChatDock's
      .dock-workbar :deep rules — this is only the structure the four work

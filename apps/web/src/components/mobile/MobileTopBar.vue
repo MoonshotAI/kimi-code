@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/mobile/MobileTopBar.vue -->
 <!-- Mobile title bar (50px + safe-top), frosted glass — the design system's -->
 <!-- sole glassmorphism exception, reserved for sticky nav bars (§03 TopBar -->
 <!-- .frost). One full-height tap target opens the switcher sheet: an optional -->

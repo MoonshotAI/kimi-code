@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/admin/MultiSelectMenu.vue -->
 <!-- Workspace multi-select for the session admin filter bar: an antd-style
      tag trigger (selected workspaces as removable tags — at most two shown,
      then +N) over an anchored panel whose first row is a search box filtering

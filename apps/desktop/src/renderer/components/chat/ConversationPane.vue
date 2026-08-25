@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/UserMenu.vue -->
 <!-- Sidebar footer account area. Signed in: avatar + nickname; signed out: a
      plain sign-in hint. The trigger opens an upward fixed menu — plan usage
      (weekly + 5h rows, refreshed on every open), the upgrade entry below the

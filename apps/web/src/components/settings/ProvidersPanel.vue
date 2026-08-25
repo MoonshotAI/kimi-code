@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/settings/ProvidersPanel.vue -->
 <!-- Providers settings tab (accordion, design F): each provider is a full-width
      row (id + type badge + model count + chevron) that expands inline into the
      shared ProviderForm — view = edit = add. At most one item is open; the add

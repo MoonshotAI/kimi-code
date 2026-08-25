@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/SessionEmojiPicker.vue -->
 <!-- Session emoji picker popover (SessionRow's "Set Emoji…" entry / title emoji
      click): bare search row → scrollable sections (Recently used from
      localStorage, cap 8 → the grouped dataset) → MenuItem footer. -->

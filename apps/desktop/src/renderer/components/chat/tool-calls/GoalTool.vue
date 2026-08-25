@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/GoalTool.vue -->
 <!-- Goal-mode tools (create / get / set budget / update): a status-flavoured
      quiet line. The row carries the objective (create), the new status as a
      coloured pill (update), or the budget (set budget); expanding shows the

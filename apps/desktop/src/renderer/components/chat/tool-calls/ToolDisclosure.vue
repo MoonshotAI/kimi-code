@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/tool-calls/ToolDisclosure.vue -->
 <!-- Shared shell for every bespoke tool-call row in the conversation stream.
 
      Design language (§04 "quiet activity stream"): a tool call is ONE quiet

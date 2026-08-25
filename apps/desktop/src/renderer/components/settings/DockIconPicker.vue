@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/settings/DockIconPicker.vue -->
 <!-- macOS Dock icon appearance picker: tile options in a radiogroup (desktop-only). -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/dialogs/ConfirmDialogHost.vue -->
 <!-- Renders the single global ConfirmDialog driven by useConfirmDialog(). Mount
      once at the app root; callers elsewhere just `await confirm(...)`. -->
 <script setup lang="ts">

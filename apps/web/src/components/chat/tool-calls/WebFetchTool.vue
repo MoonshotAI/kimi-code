@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/WebFetchTool.vue -->
 <!-- WebFetch tool: the row leads with the localized Fetch label, then the
      target host + first path segment; expanding shows the full URL above the
      fetched-content panel. -->

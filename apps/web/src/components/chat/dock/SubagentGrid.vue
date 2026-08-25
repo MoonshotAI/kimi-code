@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/dock/SubagentGrid.vue -->
 <!-- Background subagents as the swarm card grid (the redesign): name + index,
      the prompt as description, and a status row with timing. Click a card to
      open the agent's live detail; running cards offer cancel on hover. -->

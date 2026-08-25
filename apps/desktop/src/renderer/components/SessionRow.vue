@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/SessionRow.vue -->
 <!-- A single session row: status dot + title + time + attention pill + hover -->
 <!-- actions (pin / archive). There is no kebab button — the full menu only -->
 <!-- opens on right-click, anchored to the cursor. -->

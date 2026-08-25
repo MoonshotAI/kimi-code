@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/chat/WorkspaceHome.vue -->
 <!-- Workspace home — the head of the draft (empty-session) landing in the
      status view's workspace flow: folder + workspace name, the root path,
      and the environment actions (open-in-app, native terminal). The centred

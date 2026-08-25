@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/admin/SessionAdminTable.vue -->
 <!-- Session admin table. P3 adds: the selection column (header checkbox =
      select-this-page with indeterminate, row checkboxes), the GitHub-style
      batch header (the row transforms in place — checkbox column untouched,

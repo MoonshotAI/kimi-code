@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../types';

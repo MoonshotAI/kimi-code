@@ -1,5 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/AuthMedia.vue
-     Renders a user-uploaded image/video whose bytes live in the daemon file
+<!-- Renders a user-uploaded image/video whose bytes live in the daemon file
      store (global /files, or the session media store when `sessionId` is set).
      The bare getFileUrl(fileId) 401s when used as a <video>/<img> src
      because the browser loads those natively and never attaches our Bearer

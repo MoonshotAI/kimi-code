@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/AgentDetailPanel.vue -->
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';

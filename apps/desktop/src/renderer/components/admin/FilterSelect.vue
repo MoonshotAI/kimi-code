@@ -1,4 +1,3 @@
-<!-- apps/desktop/src/renderer/components/admin/FilterSelect.vue -->
 <!-- Quiet single-select for the session admin filter bar / pager (status,
      page size): a hairline trigger button + anchored Menu with a leading
      check slot and an optional status dot per option. Page-private — the

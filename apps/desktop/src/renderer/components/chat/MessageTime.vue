@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/MessageTime.vue -->
 <!-- Static timestamp shown under a message bubble (a real user message or a
      cron-fired message), via formatMessageTime (today "HH:MM", yesterday
      "昨天 HH:MM", this year "MM-DD HH:MM", older "YYYY-MM-DD HH:MM"). One

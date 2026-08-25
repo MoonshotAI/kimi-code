@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/WarningToasts.vue -->
 <!-- Floating stack of warning/error messages collected in the app state. -->
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';

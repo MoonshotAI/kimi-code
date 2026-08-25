@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/ThinkingPanel.vue -->
 <!-- Long-form muted text in the right-side panel (App's shared preview slot —
      opening this replaces a file preview and vice versa). Thinking blocks no
      longer open here (they expand inline in the message stream); this panel is

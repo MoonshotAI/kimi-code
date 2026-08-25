@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/SlashMenu.vue -->
 <!-- Popup list of slash commands shown above the Composer textarea. -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';

@@ -1,4 +1,3 @@
-<!-- apps/web/src/components/chat/TranscriptSearch.vue -->
 <!-- Transcript find bar (Cmd/Ctrl+F): a floating card pinned to the
      transcript's top-right — input pill that expands a prev/next + count
      footer once a query settles. Matches are counted over the rendered

@@ -1,4 +1,3 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/GrepTool.vue -->
 <!-- Grep / content-search tool: the row leads with the localized Search label,
      then the pattern in mono plus its scope; expanding lists the matches as
      clickable rows (path:line → file preview). WebSearch results are not

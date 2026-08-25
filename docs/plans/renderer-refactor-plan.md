@@ -13,12 +13,12 @@
 | Pinia 引入范围（2026-08-01，已落地 P8–P12） | **全量引入**：app-client 内 domain stores 全部用 Pinia setup store 承载，`useKimiWebClient` facade 降级为兼容聚合层逐步废弃 |
 | 共享代码落点（2026-08-01，已落地 P1–P7b） | **两包分工**：纯逻辑进 `packages/app-core`；Vue composables / 状态层 / Pinia stores 进 `@moonshot-ai/app-client` |
 | 组件化标准落地方式 | 一期定为「规范文档 + 1-2 个示范 PR」；**二期升级为「全面下沉」（该示范决策作废）**：新建 `packages/app-components`（或并入 app-ui，执行时定），零差异组件文件全量下沉（73 个，2026-08-25 复测；P17–P22） |
-| 平台差异收口方式 | 组件层同样走注入缝（ProductTracker / OpenInService / ComposerEditor），禁止整文件分叉存活；残留分叉配 CI drift guard |
+| 平台差异收口方式 | 组件层同样走注入缝（ProductTracker / OpenInService / ComposerEditor），禁止整文件分叉存活；真实分叉以 native-todos 台账登记为准（2026-08-25 决定不上 CI drift guard，见 P13） |
 | 协议契约化（2026-08-20 新增战线） | wire 边界 zod 校验 + client_hello 版本协商（需 daemon 侧配合，跨仓库）；按新契约直接消费，不做旧 daemon 兼容路径（与仓规「不做旧服务端兼容逻辑」一致） |
 | 现代化特性批次 | defineModel / defineSlots / InjectionKey 化作为一个独立机械批次（P26），配 lint 防回退 |
 | 错误边界 | 新增：全局 errorHandler + 关键子树 onErrorCaptured + async 组件错误态（随 P13 护栏批次落地） |
 | kimi-code 仓 `apps/kimi-web` 第三副本 | 一期决策冻结、不动 submodule、不回迁；P35 正式推动删除（见 §6） |
-| 执行顺序 | 一期「先收敛副本，再拆解」已完成；剩余工作 **护栏先行**（P13：drift guard / build job / 错误边界 / 真 bug 修复），再续主线拆解，组件下沉与 god object 收尾可并行 |
+| 执行顺序 | 一期「先收敛副本，再拆解」已完成；剩余工作 **护栏先行**（P13：build job / 错误边界 / 真 bug 修复 / provenance 注释清理），再续主线拆解，组件下沉与 god object 收尾可并行 |
 
 ## 1. 现状盘点
 
@@ -70,7 +70,7 @@
 
 **目标**
 1. god object 按一期矩阵拆完（P14–P16 三域 + 残余修复清单），facade 降为薄聚合层。
-2. 组件层单源化：零差异组件文件全量下沉（73 个，2026-08-25 复测）+ 真实分叉全部改注入缝 + CI 防漂移。
+2. 组件层单源化：零差异组件文件全量下沉（73 个，2026-08-25 复测）+ 真实分叉全部改注入缝。
 3. 三个巨型组件（ConversationPane / Composer / Sidebar）拆到达标（script ≤ ~600 行）。
 4. 错误边界、现代化特性、数据层浅响应化、协议契约化落地。
 5. 防护网补齐：组件测试地板、CI build job、打包冒烟。
@@ -112,7 +112,7 @@
 
 | PR | 阶段 | 规模 | 依赖 |
 |---|---|---|---|
-| P13 | 护栏与快赢批次（drift guard / build job / 错误边界 / ProviderForm key / provenance 注释清理） | 中 | — |
+| P13 | 护栏与快赢批次（build job / 错误边界 / ProviderForm key / provenance 注释清理） | 中 | — |
 | P14 | workspace store（原一期 P13 原样承接） | 中 | — |
 | P15 | prompt store（原一期 P14 原样承接） | 中 | P14 |
 | P16 | connection store + SessionRuntime 容器化（原一期 P15 扩大；先补测试保护网 P33） | 大 | P15 |
@@ -144,13 +144,13 @@
 
 先上护栏再动工，防止治理期间新债继续产生。可拆 3-4 个小 PR：
 
-1. **CI drift guard**：脚本 diff 两端 `components/` 同名文件，超白名单（native-todos 台账）即 fail；白名单随 P17–P22 逐批缩短。同步删 51 个文件的第一行 provenance 注释（文件路径即 provenance）。
+1. ~~**CI drift guard**~~（2026-08-25 决定**不上**：已实现并开 PR 后经 review 认为字节一致强约束收益存疑、维护成本高，撤回——组件层防漂移回归评审纪律 + native-todos 双登记，P17 下沉时逐文件 diff 核对）。本项只做 **provenance 注释清理**：删除两端组件/视图文件的第一行来源注释（文件路径即 provenance），顺带让零差异文件在 diff 工具下直接可比。
 2. **CI PR build job**：`tsdown` + `vite build`（不打包），build 坏了不再等 release 才发现。
 3. **错误边界三件套**：`app.config.errorHandler`（desktop 上报走 renderer-log/track IPC，web console + 可见降级）；ChatPane/transcript、SettingsDialog 子树 `onErrorCaptured`；2 处 defineAsyncComponent 补 errorComponent + timeout。
 4. **ProviderForm.vue:340** 表单行 key 改稳定 id（`form.models` 行加内部 id 字段）。
 5. 附带：`useTaskPoller.ts:339` deep-watch getter 返新对象改 computed；`open-external` 主进程补 http(s) 白名单（复用 `isHttpUrl`）；删死 channel `onMenu`/`kimi:menu`。
 
-验收：五件套 + drift guard 对存量白名单外文件误报为零。
+验收：五件套。
 
 ### P14–P16 — god object 收尾（承接原一期 P13–P15）
 
@@ -168,7 +168,7 @@
 
 - 新建 `packages/app-components`（deps：app-ui / app-client / app-core / app-i18n / app-markdown；peer vue）。**先定包名与依赖面再动工**（参照本计划 P4 的教训：两端 package.json 必须显式声明 workspace 依赖；约束条目随本阶段更新 AGENTS.md，不等收尾）。
 - 下沉零差异文件（2026-08-25 复测 73 个：字节一致 33 + 仅首行 40；执行时以当日重测清单为准）：`tool-calls/`（16/17）、`dialogs/`、`admin/`、`mobile/MobileTopBar`、`debug/` 等，git mv 保历史，两端 import 批量改指包。
-- 每个文件逐一人肉确认在 P13 的 drift guard 白名单内（防误收真实分叉）。
+- 每个文件逐一人肉 diff 确认零真实差异（防误收真实分叉；真实分叉以 native-todos 登记为准）。
 
 验收：五件套 + 双端全量页面人工巡检一遍（这是组件层第一次大搬家）。
 
@@ -280,7 +280,7 @@ P16 前置（「先补网再动刀」），单独成 PR。场景清单按 #279 �
 
 ### P35 — 收尾
 
-- 原一期 P18 原样承接：AGENTS.md「开发顺序」「双仓工作流」改写为 packages 正本模式；native-todos.md 重写为「剩余 desktop 专属实现清单」；drift guard 白名单应收窄到接近空——**白名单残留量即本计划的最终验收指标**。
+- 原一期 P18 原样承接：AGENTS.md「开发顺序」「双仓工作流」改写为 packages 正本模式；native-todos.md 重写为「剩余 desktop 专属实现清单」；真实分叉文件应收窄到接近零——**分叉文件残留量（当日 diff 实测）即本计划的最终验收指标**。
 - kimi-code 仓 `apps/kimi-web` 第三副本：正式提删除 PR（见 §6，code-app 已全量接管）。
 - Vue 3.6 / Vapor Mode 评估：3.6 stable + 生态兼容后，以 ChatPane turn/block 树为首个试点（前置 = P23/P30 完成后的组件粒度）。
 - zod override 治理：推动 kimi-code 上游统一 catalog，撤掉本仓 `zod → 4.3.6` 降级 override。
@@ -291,8 +291,8 @@ P16 前置（「先补网再动刀」），单独成 PR。场景清单按 #279 �
 
 | # | 风险 | 对策 |
 |---|---|---|
-| R1 | 组件下沉（P17–P22）期间团队在两端副本上继续叠功能 | P13 drift guard 先行；reviewer 拒绝对白名单外文件的双端不对称修改 |
-| R2 | P17 大搬家 review 困难 | git mv 保历史 + commit 按「纯移动 / import 切换」拆分（P7b 同款手法）；drift guard 白名单逐个核对 |
+| R1 | 组件下沉（P17–P22）期间团队在两端副本上继续叠功能 | reviewer 拒绝零差异文件的双端不对称修改（真实分叉以 native-todos 登记为准）；下沉批次本身逐文件 diff 核对 |
+| R2 | P17 大搬家 review 困难 | git mv 保历史 + commit 按「纯移动 / import 切换」拆分（P7b 同款手法）；清单逐个 diff 核对 |
 | R3 | P27 浅响应化漏改就地变更读写点 → 更新不触发 | slice 形态与写路径配套选定（shallowReactive 或整引用替换，二者只选其一）；动手前全量清单化；五件套 + 双端流式冒烟；必要时分 slice 渐进 |
 | R4 | P28 需要 daemon 侧排期，跨仓库不可控 | 客户端先行（zod 校验纯客户端可做）；协商字段按新契约直接消费，不为旧 daemon 留双形态——排期谈不拢时只推迟 client_hello 部分，zod 校验不受影响 |
 | R5 | P16/P29 动连接与 turn 生命周期引入回归 | P33 保护网先行；ws-lifecycle / daemon-client 既有测试 + 浏览器实测双端断线冒烟（一期同款验收） |
