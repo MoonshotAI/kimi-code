@@ -218,12 +218,12 @@ export async function mcpResultToExecutableOutput(
   if (Object.keys(structuredExtras).length > 0) {
     try {
       const serialized = JSON.stringify(structuredExtras).replaceAll(
-        '</mcp-structured-result>',
+        '</mcp-result-extras>',
         '',
       );
       wrapped.push({
         type: 'text',
-        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+        text: `\n<mcp-result-extras>\n${serialized}\n</mcp-result-extras>`,
       });
     } catch {
       // Non-serialisable payloads are dropped rather than failing the call.
