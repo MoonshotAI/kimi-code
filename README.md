@@ -115,6 +115,16 @@ OAuth 授权完成页唤起桌面端窗口（登录态由 daemon 轮询完成，
 
    产物双推两条 CDN 链路——国内 `code.kimi.com/kimi-code/desktop/`（TOS `kimi-code`）与海外 `code.kimi.ai/kimi-code/desktop/`（TOS `kimi-code-oversea`），内容一致：版本目录 `binaries/<version>/`（immutable，含安装包与双语更新说明 `changelog.{zh,en}.md`；过渡期 changelog 会同时往旧布局 `<version>/` 传一份副本供未升级客户端拉取，两个版本后停）、自动更新指针 `latest*.yml`（no-cache）、固定下载入口 `download/`（官网链接见上方"下载"一节）。
 
+### alpha 通道
+
+桌面端另有 alpha 预发版通道：常驻 `alpha` 分支处于 changeset pre 模式，合并它的版本 PR 即自动发 `0.0.x-alpha.N`（GH Release 为 prerelease；分支规则见 `.changeset/README.md`）。CDN 发布用同一个脚本，版本号即通道：
+
+```bash
+./publish-desktop-cdn.sh 0.0.4-alpha.0   # 只切 alpha*.yml 更新指针；latest*.yml 与 download/ 不动
+```
+
+alpha 安装包从 GitHub Release（prerelease）分发，不发双语更新说明；alpha 用户随通道指针持续吃后续 alpha，回正式版需手动安装正式包。方案见 `docs/plans/2026-08-25-desktop-alpha-channel.md`。
+
 ## 目录
 
 - `apps/desktop`：Electron 桌面端（`kimi-code-app`）

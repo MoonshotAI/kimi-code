@@ -149,14 +149,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 两个 mac leg 各自产出 latest-mac.yml，release.yml 合并下载 artifact
-          # 时同名文件 last-writer-wins，会丢掉一个 arch 的更新 feed。这里按
-          # arch 改名避让；release.yml 发布前再把两份合并回单个 latest-mac.yml
-          #（electron-updater 在 files 列表里按 arch 自选 zip）。
+          # 两个 mac leg 各自产出 <channel>-mac.yml（channel 随版本号推导：
+          # 正式版 latest，预发版如 0.0.x-alpha.N 为 alpha），release.yml 合并
+          # 下载 artifact 时同名文件 last-writer-wins，会丢掉一个 arch 的更新
+          # feed。这里按 arch 改名避让；release.yml 发布前再把两份合并回单个
+          # <channel>-mac.yml（electron-updater 在 files 列表里按 arch 自选 zip）。
           cd apps/desktop/dist-app
           arch="${{ matrix.target }}"
           arch="${arch##*-}"
-          mv latest-mac.yml "latest-mac-${arch}.yml"
+          channel_yml=$(ls *-mac.yml)
+          channel="${channel_yml%-mac.yml}"
+          mv "$channel_yml" "${channel}-mac-${arch}.yml"
 
       - name: Cleanup macOS keychain
         if: always() && runner.os == 'macOS' && env.SIGN_MACOS == 'true'

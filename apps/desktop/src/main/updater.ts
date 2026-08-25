@@ -85,8 +85,9 @@ export interface UpdaterLike {
   off(event: 'update-not-available', listener: () => void): void;
   off(event: 'update-downloaded', listener: (info: { version: string; releaseDate?: string }) => void): void;
   off(event: 'error', listener: (error: Error) => void): void;
-  /** Repoint the generic feed (region switching); absent on minimal fakes. */
-  setFeedURL?(options: { provider: 'generic'; url: string }): void;
+  /** Repoint the generic feed (region switching); absent on minimal fakes.
+      channel must be carried along on every call — see updateChannelFromVersion. */
+  setFeedURL?(options: { provider: 'generic'; url: string; channel?: string }): void;
   checkForUpdates(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
@@ -125,6 +126,9 @@ export interface StartAutoUpdaterDeps {
       rejection or absence keeps the previously applied feed — initially the
       cn default baked into app-update.yml. */
   resolveFeedUrl?: () => Promise<string>;
+  /** Update channel passed along on every setFeedURL (production: derived
+      from the app version — updateChannelFromVersion). Default 'latest'. */
+  updateChannel?: string;
 }
 
 const INITIAL_DELAY_MS = 10_000;
@@ -136,6 +140,18 @@ const MANUAL_CHECK_TIMEOUT_MS = 30_000;
 // not park every later check behind it (the manual UI timeout alone only
 // rescues the waiter, not the queue). Deliberately above the manual timeout.
 const CHECK_CHAIN_TIMEOUT_MS = 60_000;
+
+/** The update channel of this build, derived with the same rule electron-
+ *  builder's detectUpdateChannel applies at build time (prerelease segment
+ *  of the version: 0.0.x-alpha.N → 'alpha'; stable → 'latest').
+ *  Must be passed on every setFeedURL: that call REPLACES the whole provider
+ *  configuration — including the channel baked into app-update.yml — so a
+ *  prerelease build would otherwise fall back to polling latest*.yml. (Not
+ *  autoUpdater.channel = …: that setter also force-enables allowDowngrade.) */
+export function updateChannelFromVersion(version: string): string {
+  const tag = version.split('-')[1]?.split('.')[0];
+  return tag === undefined || tag === '' ? 'latest' : tag;
+}
 
 export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController | null {
   if (!deps.isPackaged) {
@@ -259,6 +275,7 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
   const resolveFeed = deps.resolveFeedUrl;
   const setFeed = updater.setFeedURL?.bind(updater);
   const canSwitchFeed = resolveFeed !== undefined && setFeed !== undefined;
+  const updateChannel = deps.updateChannel ?? 'latest';
   let appliedFeedUrl: string | undefined;
   const applyFeedUrl = async (): Promise<void> => {
     if (!canSwitchFeed) {
@@ -267,7 +284,9 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
     try {
       const url = await resolveFeed();
       if (url !== appliedFeedUrl) {
-        setFeed({ provider: 'generic', url });
+        // channel 必须随 setFeedURL 一起给——它会整体替换 provider 配置，
+        // 不带 channel 预发版会退回轮询 latest*.yml（见 updateChannelFromVersion）。
+        setFeed({ provider: 'generic', url, channel: updateChannel });
         appliedFeedUrl = url;
       }
     } catch {
@@ -554,6 +573,9 @@ export function initAutoUpdater(): void {
       const region = await refreshServerRegion();
       return `${serverRegionProfile(region).cdnBase}/desktop/`;
     },
+    // setFeedURL 会丢弃 app-update.yml 里烘焙的 channel，必须显式带上
+    // （预发版 → alpha，正式版 → latest）。
+    updateChannel: updateChannelFromVersion(app.getVersion()),
   });
 }
 

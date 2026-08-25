@@ -18,7 +18,7 @@ vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: trackMock }));
 
-import { fetchReleaseNotes, startAutoUpdater, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateController, type UpdateStatus } from '../../src/main/updater';
+import { fetchReleaseNotes, startAutoUpdater, updateChannelFromVersion, UPDATE_CHECK_TIMED_OUT, type ReleaseNotes, type UpdateController, type UpdateStatus } from '../../src/main/updater';
 import { log } from '../../src/main/log';
 import { setServerRegionSource } from '../../src/main/region';
 import { markQuitting } from '../../src/main/window';
@@ -642,7 +642,7 @@ describe('feed switching (resolveFeedUrl)', () => {
 
   function setupFeed(
     resolveFeedUrl: () => Promise<string>,
-    opts: { initialDelayMs?: number } = {},
+    opts: { initialDelayMs?: number; updateChannel?: string } = {},
   ) {
     const updater = new FakeUpdaterWithFeed();
     const sent: UpdateStatus[] = [];
@@ -653,6 +653,7 @@ describe('feed switching (resolveFeedUrl)', () => {
       initialDelayMs: opts.initialDelayMs ?? 1_000,
       intervalMs: 60_000,
       resolveFeedUrl,
+      updateChannel: opts.updateChannel,
     });
     if (controller === null) {
       throw new Error('expected a controller for a packaged app');
@@ -670,6 +671,7 @@ describe('feed switching (resolveFeedUrl)', () => {
     expect(updater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
       url: 'https://code.kimi.ai/kimi-code/desktop/',
+      channel: 'latest',
     });
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
     // The feed is repointed BEFORE the check goes out.
@@ -691,9 +693,32 @@ describe('feed switching (resolveFeedUrl)', () => {
     expect(updater.setFeedURL).toHaveBeenLastCalledWith({
       provider: 'generic',
       url: 'https://code.kimi.com/kimi-code/desktop/',
+      channel: 'latest',
     });
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(3);
     controller.stop();
+  });
+
+  it('carries the build channel onto the repointed feed (prerelease builds)', async () => {
+    const resolveFeedUrl = vi.fn().mockResolvedValue('https://code.kimi.com/kimi-code/desktop/');
+    const { updater, controller } = setupFeed(resolveFeedUrl, { updateChannel: 'alpha' });
+
+    vi.advanceTimersByTime(1_000);
+    await flush();
+    // setFeedURL replaces the provider configuration wholesale — without an
+    // explicit channel an alpha build would silently poll latest*.yml.
+    expect(updater.setFeedURL).toHaveBeenCalledWith({
+      provider: 'generic',
+      url: 'https://code.kimi.com/kimi-code/desktop/',
+      channel: 'alpha',
+    });
+    controller.stop();
+  });
+
+  it('derives the update channel from the app version (electron-builder rule)', () => {
+    expect(updateChannelFromVersion('0.0.21-alpha.0')).toBe('alpha');
+    expect(updateChannelFromVersion('0.0.21-beta.3')).toBe('beta');
+    expect(updateChannelFromVersion('0.0.21')).toBe('latest');
   });
 
   it('keeps the baked-in feed and still checks when resolution fails', async () => {

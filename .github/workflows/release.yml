@@ -3,17 +3,20 @@ name: Release
 # 参考 kimi-code 仓库的 release.yml，区别在于本仓不发布 npm——发布物是
 # 桌面端安装包，以 GitHub Release 形式分发。
 #
-# 流程（push 到 main 时）：
+# 流程（push 到 main / alpha 时）：
 # 1. changesets/action 维护 "ci: release desktop" 版本 PR（有未消费的
-#    changeset 时创建 / 更新；没有则跳过）。
+#    changeset 时创建 / 更新；没有则跳过）。alpha 分支处于 changeset pre
+#    模式，版本 PR 出的是 0.0.x-alpha.N 预发版。
 # 2. 版本 PR 合入后，若判定本次 push 改动了 apps/desktop/package.json 的
 #    版本号且该版本还没有对应 tag，则调 desktop-build.yml（签名 + 公证）
 #    打出四平台安装包，创建 GitHub Release（tag v<version>，notes 自动
-#    生成），并把 dmg / zip / exe / AppImage / deb 以及自动更新元数据
-#    （latest*.yml、*.blockmap）全部上传为该 release 的 assets。
-# 3. CDN 分发不在本 workflow：release 就绪后在 kimi-cli-cdn-sync 仓本地执行
-#    ./publish-desktop.sh <version>（TOS 凭证限内网），把产物同步到
-#    code.kimi.com 并切换 latest*.yml 指针，客户端自动更新随即生效。
+#    生成；版本号含 prerelease 段时 --prerelease），并把 dmg / zip / exe /
+#    AppImage / deb 以及自动更新元数据（latest*.yml 或 alpha*.yml、
+#    *.blockmap）全部上传为该 release 的 assets。
+# 3. CDN 分发不在本 workflow：release 就绪后本地执行本仓根目录的
+#    ./publish-desktop-cdn.sh <version>（TOS 凭证限内网），把产物同步到
+#    CDN 并切换对应通道的更新指针（正式版 latest*.yml / alpha 版 alpha*.yml），
+#    客户端自动更新随即生效。
 #
 # 触发语义：发版只在"版本号被这次 push 改变"（版本 PR 合入，或手动改版本
 # 号 = 手动发版）时发生；普通 PR 合入不会改变版本号，不会发版——包括发版
@@ -26,6 +29,7 @@ on:
   push:
     branches:
       - main
+      - alpha
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -38,6 +42,7 @@ jobs:
       desktop_release: ${{ steps.desktop-release.outputs.should_release }}
       desktop_release_tag: ${{ steps.desktop-release.outputs.tag }}
       desktop_release_sha: ${{ steps.desktop-release.outputs.sha }}
+      desktop_release_prerelease: ${{ steps.desktop-release.outputs.prerelease }}
     permissions:
       contents: write # changesets/action 推版本 PR 分支
       pull-requests: write
@@ -95,11 +100,19 @@ jobs:
             echo "tag ${tag} already exists on origin — nothing to release"
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "will release ${tag} at ${GITHUB_SHA}"
+            # 版本号含 prerelease 段（0.0.x-alpha.N）即预发版：GH Release 打
+            # --prerelease，electron-builder 也已据此把更新元数据命名为
+            # alpha*.yml（detectUpdateChannel）。
+            prerelease=false
+            case "$version" in
+              *-*) prerelease=true ;;
+            esac
+            echo "will release ${tag} at ${GITHUB_SHA} (prerelease=${prerelease})"
             {
               echo "should_release=true"
               echo "tag=${tag}"
               echo "sha=${GITHUB_SHA}"
+              echo "prerelease=${prerelease}"
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -151,9 +164,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 两个 mac leg 的 latest-mac-<arch>.yml（desktop-build.yml 里按 arch
-          # 改的名）合并回单个 latest-mac.yml：files 含两个 arch 的包，
-          # electron-updater 按当前 arch 自选 zip；path/sha512 保留 arm64 兜底。
+          # 两个 mac leg 的 <channel>-mac-<arch>.yml（desktop-build.yml 里按
+          # arch 改的名；channel 为 latest 或 alpha，随版本号推导）合并回单个
+          # <channel>-mac.yml：files 含两个 arch 的包，electron-updater 按当前
+          # arch 自选 zip；path/sha512 保留 arm64 兜底。
           # 纯仓内脚本、零第三方依赖（文本级合并，见脚本头注释）。
           node scripts/merge-mac-update-yml.mjs dist-desktop-release
 
@@ -163,13 +177,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.desktop_release_tag }}
           RELEASE_SHA: ${{ needs.release.outputs.desktop_release_sha }}
+          RELEASE_PRERELEASE: ${{ needs.release.outputs.desktop_release_prerelease }}
         run: |
           set -euo pipefail
           ls -la dist-desktop-release
           # tag 一并创建，钉在触发本次发版的 merge commit 上（而不是当时的
-          # main HEAD——打包期间 main 可能已前移）。
+          # main HEAD——打包期间 main 可能已前移）。alpha 版本打 prerelease。
+          prerelease_args=()
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then
+            prerelease_args=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" \
             --target "$RELEASE_SHA" \
             --title "Kimi Code Desktop $RELEASE_TAG" \
-            --generate-notes
+            --generate-notes \
+            ${prerelease_args[@]+"${prerelease_args[@]}"}
           gh release upload "$RELEASE_TAG" dist-desktop-release/* --clobber

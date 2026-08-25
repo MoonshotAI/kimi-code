@@ -21,6 +21,7 @@
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
 - **提交规范**：Conventional Commits；禁止任何 `Co-Authored-By` 署名；commit message、PR、代码、文档不得出现 agent / AI 工具的名称或身份信息。PR 描述用英文。
 - **changeset 必走 skill**：提交 PR 前必须运行 `changeset` skill（`.agents/skills/changeset/SKILL.md`）并按其规则在 `.changeset/` 生成 changeset；纯测试 / 重构 / 文档等无用户可见变化的改动除外。**一律 `patch`**；认为需要 `minor` / `major` 时必须先向用户说明并获得明确同意，否则仍写 `patch`。**只写 `kimi-code-app`**：release CI 不 checkout submodule，`pnpm changeset` 列表里严禁选 submodule 的包，选错 release CI 直接挂。
+- **alpha 发布通道**：预发版（`0.0.x-alpha.N`）从常驻 `alpha` 分支发（changeset pre 模式，分支只进不出、禁止合回 main）；alpha 产物只切 CDN `alpha*.yml` 更新指针，`latest*.yml` 与 `download/` 固定入口永远只被正式版触碰。生命周期见 `.changeset/README.md`，发布命令见 `README.md` 发布节，方案见 `docs/plans/2026-08-25-desktop-alpha-channel.md`。
 - **stage 用显式路径，不用 `git add -A` / `git add .`**：本仓有构建产物目录（如 desktop 的 `desktop-dist`），gitignore 变动会让它们突然"显形"被误扫进 commit。
 - Node `>=24.15.0`，pnpm `10.33.0`（`.npmrc` 设 `engine-strict=true`，Node 不符装不上依赖）。
 
