@@ -17,7 +17,7 @@ import { Button, Icon, IconButton, Tooltip } from '@moonshot-ai/app-ui';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import type { SessionAdminStatusFilter } from '@moonshot-ai/app-client/client';
-import type { SessionAdminBatchDirection } from './adminBatchToast';
+import type { SessionAdminBatchDirection } from '@moonshot-ai/app-components';
 import FilterSelect from './FilterSelect.vue';
 import MultiSelectMenu from './MultiSelectMenu.vue';
 import SessionAdminTable from './SessionAdminTable.vue';

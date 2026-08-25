@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { argFilePath, num, parseArgRecord, pathDirname, str, urlHost } from '../src/components/chat/tool-calls/toolArgs';
+import { argFilePath, num, parseArgRecord, pathDirname, str, urlHost } from '@moonshot-ai/app-components';
 
 describe('parseArgRecord', () => {
   it('parses a JSON object argument', () => {

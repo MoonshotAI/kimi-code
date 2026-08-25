@@ -6,7 +6,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import type { AppSession } from '../../api/types';
-import { useDialogFocus } from '../../composables/useDialogFocus';
+import { useDialogFocus } from '@moonshot-ai/app-components';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';

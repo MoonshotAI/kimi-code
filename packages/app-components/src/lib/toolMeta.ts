@@ -1,8 +1,7 @@
-// apps/web/src/lib/toolMeta.ts
 // Helpers for tool display. The localized text builders (toolLabel /
 // toolSummary / toolChip) live in @moonshot-ai/app-core/lib (toolText) with
-// the translator injected; this shell binds them to the app i18n instance so
-// existing `lib/toolMeta` call sites keep working unchanged. The icon mapping
+// the translator injected; this shell binds them to the app-client deps
+// translator (registered by each app's main.ts). The icon mapping
 // (toolIconName / toolGlyph) stays here — it depends on the app icon registry
 // (lib/icons.ts, P5).
 
@@ -13,11 +12,8 @@ import {
   toolSummary as toolSummaryBase,
   type ToolChipInput,
 } from '@moonshot-ai/app-core/lib';
-import type { Translator } from '@moonshot-ai/app-core/contracts';
-import { i18n } from '../i18n';
+import { t } from '@moonshot-ai/app-client/client';
 import { iconSvg, type IconName } from '@moonshot-ai/app-client/icons';
-
-const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
 
 export { normalizeToolName };
 export type { ToolChipInput };

@@ -13,7 +13,7 @@ import { Icon } from '@moonshot-ai/app-ui';
 import type { FilePreviewRequest, ToolCall } from '../../../types';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { parseReadOutput } from '@moonshot-ai/app-core/lib';
-import { argFilePath, num, parseArgRecord, pathDirname } from './toolArgs';
+import { argFilePath, num, parseArgRecord, pathDirname } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import HighlightedCode from '../../HighlightedCode.vue';
 import OutputPanel from './OutputPanel.vue';

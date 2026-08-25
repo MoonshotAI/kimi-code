@@ -1,4 +1,3 @@
-// apps/desktop/src/renderer/components/admin/useAnchoredMenu.ts
 // Anchored-dropdown mechanics shared by the admin page's menus (FilterSelect /
 // MultiSelectMenu / SessionAdminMenu): a fixed-position Menu, flipping up when
 // the bottom edge wouldn't fit, clamped to the viewport. Closed by outside

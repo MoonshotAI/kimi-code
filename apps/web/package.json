@@ -19,6 +19,7 @@
     "@chenglou/pretext": "0.0.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@moonshot-ai/app-client": "workspace:*",
+    "@moonshot-ai/app-components": "workspace:*",
     "@moonshot-ai/app-composer": "workspace:*",
     "@moonshot-ai/app-core": "workspace:*",
     "@moonshot-ai/app-i18n": "workspace:*",

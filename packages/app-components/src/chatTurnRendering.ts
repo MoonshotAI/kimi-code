@@ -1,12 +1,11 @@
-// apps/web/src/components/chatTurnRendering.ts
 // Pure turn-rendering helpers: pure functions of their arguments (no Vue
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
-import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock, TurnFileChange } from '../types';
+import type { ChatTurn, DiffViewLine, TaskNotification, TurnBlock, TurnFileChange } from '@moonshot-ai/app-core/client/types';
 import { diffStats } from '@moonshot-ai/app-core/client';
 import { buildEditDiffLines, toolFilePath } from '@moonshot-ai/app-core/client';
 import { stripAttachmentLinks } from '@moonshot-ai/app-composer';
-import { normalizeToolName } from '../lib/toolMeta';
+import { normalizeToolName } from './lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
 // existing ChatPane import keeps working.

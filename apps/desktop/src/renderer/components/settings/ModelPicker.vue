@@ -3,7 +3,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
-import { useDialogFocus } from '../../composables/useDialogFocus';
+import { useDialogFocus } from '@moonshot-ai/app-components';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import { Dialog, Icon, IconButton, Input, Kbd, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { useIsMobile } from '@moonshot-ai/app-client/composables';

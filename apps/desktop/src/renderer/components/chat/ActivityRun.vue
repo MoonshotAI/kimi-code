@@ -25,12 +25,12 @@ import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon } from '@moonshot-ai/app-ui';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
-import { formatDuration, toolStackKey } from '../chatTurnRendering';
-import type { ActivityItem } from '../chatTurnRendering';
+import { formatDuration, toolStackKey } from '@moonshot-ai/app-components';
+import type { ActivityItem } from '@moonshot-ai/app-components';
 import type { FilePreviewRequest, OpenMediaRequest } from '../../types';
-import { summarizeActivity, summarizeLive } from '../../lib/activitySummary';
-import type { SummaryClause, SummaryTone } from '../../lib/activitySummary';
-import { toolIconName } from '../../lib/toolMeta';
+import { summarizeActivity, summarizeLive } from '@moonshot-ai/app-components';
+import type { SummaryClause, SummaryTone } from '@moonshot-ai/app-components';
+import { toolIconName } from '@moonshot-ai/app-components';
 
 const props = withDefaults(
   defineProps<{

@@ -6,7 +6,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../../types';
-import { toolChip, toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
+import { toolChip, toolGlyph, toolLabel, toolSummary } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import OutputPanel from './OutputPanel.vue';
 

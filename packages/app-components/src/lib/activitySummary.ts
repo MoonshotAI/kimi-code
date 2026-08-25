@@ -1,7 +1,6 @@
-// apps/kimi-web/src/lib/activitySummary.ts
 // App shell over @moonshot-ai/app-core/lib's activitySummary: the summary
 // builders live in the package with the translator injected; this module binds
-// them to the app i18n instance so existing call sites keep working unchanged.
+// them to the app-client deps translator (registered by each app's main.ts).
 
 import {
   summarizeActivity as summarizeActivityBase,
@@ -10,10 +9,7 @@ import {
   type ActivitySummaryItem,
   type LiveSummary,
 } from '@moonshot-ai/app-core/lib';
-import type { Translator } from '@moonshot-ai/app-core/contracts';
-import { i18n } from '../i18n';
-
-const t: Translator = (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params));
+import { t } from '@moonshot-ai/app-client/client';
 
 export type {
   ActivitySummary,

@@ -6,7 +6,7 @@ import { computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '../../../types';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
-import { formatDuration } from '../../chatTurnRendering';
+import { formatDuration } from '@moonshot-ai/app-components';
 
 const props = defineProps<{ tasks: TaskItem[]; filter?: 'active' | 'running' | 'done' | 'all' }>();
 const EMPTY_KEYS = {

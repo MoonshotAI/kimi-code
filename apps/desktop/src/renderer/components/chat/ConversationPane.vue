@@ -15,7 +15,7 @@ import WorkspaceHome from './WorkspaceHome.vue';
 import WorkspaceRecentSessions from './WorkspaceRecentSessions.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import TranscriptSearch from './TranscriptSearch.vue';
-import KimiDoodle from '../KimiDoodle.vue';
+import { KimiDoodle } from '@moonshot-ai/app-components';
 import { Icon, IconButton, Spinner, Tooltip, trackMenuSurface, useImeComposition } from '@moonshot-ai/app-ui';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { getVisibleWorkspaces } from '@moonshot-ai/app-core/lib';
@@ -29,8 +29,8 @@ import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
 import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
-import { turnHasOutput, turnTocTitle } from '../chatTurnRendering';
-import type { TurnFileChange } from '../chatTurnRendering';
+import { turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
+import type { TurnFileChange } from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
 

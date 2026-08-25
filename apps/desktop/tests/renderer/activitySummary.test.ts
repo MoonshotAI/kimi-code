@@ -1,11 +1,12 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { i18n } from '../../src/renderer/i18n';
 import {
   summarizeActivity,
   summarizeLive,
   type ActivitySummaryItem,
   type SummaryClause,
-} from '../../src/renderer/lib/activitySummary';
+} from '@moonshot-ai/app-components';
 
 function tool(name: string, over: Partial<{ arg: string; status: 'ok' | 'running' | 'error' }> = {}): ActivitySummaryItem {
   return { kind: 'tool', tool: { name, arg: over.arg ?? '{}', status: over.status ?? 'ok' } };
@@ -24,6 +25,16 @@ function render(clauses: SummaryClause[]): string {
 
 beforeAll(() => {
   i18n.global.locale.value = 'zh';
+  setKimiClientDeps({
+    api: () => {
+      throw new Error('api is not used by these tests');
+    },
+    t: (key, params) => (params === undefined ? i18n.global.t(key) : i18n.global.t(key, params)),
+  });
+});
+
+afterAll(() => {
+  resetKimiClientDeps();
 });
 
 describe('summarizeActivity', () => {

@@ -17,7 +17,7 @@ import {
   turnTocTitle,
   turnVisibleFinalText,
   turnWorkMs,
-} from '../../src/renderer/components/chatTurnRendering';
+} from '@moonshot-ai/app-components';
 
 function tool(id: string, over: Partial<ToolCall> = {}): ToolCall {
   return { id, name: 'read', arg: `· ${id}.ts`, status: 'ok', ...over };

@@ -5,7 +5,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import type { FilePreviewRequest, ToolCall } from '../../../types';
-import { toolGlyph, toolLabel } from '../../../lib/toolMeta';
+import { toolGlyph, toolLabel } from '@moonshot-ai/app-components';
 import OutputPanel from './OutputPanel.vue';
 import ToolDisclosure from './ToolDisclosure.vue';
 

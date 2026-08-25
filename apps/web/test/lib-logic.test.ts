@@ -12,7 +12,7 @@ import { codeLanguageFromPath } from '@moonshot-ai/app-core/lib';
 import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';
 import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
 import { keepLiveSubagents } from '@moonshot-ai/app-core/lib';
-import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
+import { normalizeToolName, toolSummary } from '@moonshot-ai/app-components';
 import { collapsePrompt } from '@moonshot-ai/app-core/lib';
 import {
   currentValidatedWorkspacePath,

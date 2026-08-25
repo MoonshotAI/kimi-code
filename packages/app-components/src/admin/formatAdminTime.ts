@@ -1,4 +1,3 @@
-// apps/web/src/components/admin/formatAdminTime.ts
 // Absolute timestamp for the session admin table's time columns:
 // always `YYYY-MM-DD HH:mm` local (the admin page is an audit view —
 // relative times like "2 hours ago" would make scanning dates harder).

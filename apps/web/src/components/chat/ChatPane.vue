@@ -35,8 +35,8 @@ import {
   turnHasOutput,
   turnToMarkdown,
   turnVisibleFinalText,
-} from '../chatTurnRendering';
-import type { AssistantFold, AssistantRenderBlock, TurnFileChange } from '../chatTurnRendering';
+} from '@moonshot-ai/app-components';
+import type { AssistantFold, AssistantRenderBlock, TurnFileChange } from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
 

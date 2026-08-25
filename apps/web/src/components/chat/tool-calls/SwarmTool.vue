@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '../../../types';
 import type { AppSubagentPhase } from '../../../api/types';
 import type { SwarmMember } from '@moonshot-ai/app-core/client';
-import { toolLabel } from '../../../lib/toolMeta';
+import { toolLabel } from '@moonshot-ai/app-components';
 import { parseSwarmResult } from '@moonshot-ai/app-core/lib';
 import { buildSwarmCardRows, type SwarmCardRow } from '@moonshot-ai/app-core/client';
 import { Icon, StatusDot, Tooltip } from '@moonshot-ai/app-ui';

@@ -15,8 +15,8 @@ import { useI18n } from 'vue-i18n';
 import { Badge, Icon } from '@moonshot-ai/app-ui';
 import { formatDuration, parseWaitForResult, type WaitForResult } from '@moonshot-ai/app-core/lib';
 import type { ToolCall } from '../../../types';
-import { toolLabel } from '../../../lib/toolMeta';
-import { parseArgRecord, str } from './toolArgs';
+import { toolLabel } from '@moonshot-ai/app-components';
+import { parseArgRecord, str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import OutputPanel from './OutputPanel.vue';
 

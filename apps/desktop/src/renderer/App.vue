@@ -11,7 +11,7 @@ import {
   undoBatchDirectionOf,
   type AdminBatchToastPlan,
   type SessionAdminBatchDirection,
-} from './components/admin/adminBatchToast';
+} from '@moonshot-ai/app-components';
 import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';

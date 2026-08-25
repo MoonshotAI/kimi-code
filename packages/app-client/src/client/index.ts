@@ -6,6 +6,8 @@ export * from './useModelProviderState';
 export {
   setKimiClientDeps,
   resetKimiClientDeps,
+  getKimiWebApi,
+  t,
   type KimiClientDeps,
   type SessionCreatedSource,
 } from './deps';

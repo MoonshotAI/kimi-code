@@ -11,7 +11,7 @@
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { formatDuration } from '../chatTurnRendering';
+import { formatDuration } from '@moonshot-ai/app-components';
 
 const props = withDefaults(
   defineProps<{

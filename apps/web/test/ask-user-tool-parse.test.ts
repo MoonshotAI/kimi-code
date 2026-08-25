@@ -4,7 +4,7 @@ import {
   parseAskInput,
   parseAskOutput,
   resolveAnswer,
-} from '../src/components/chat/tool-calls/askUserToolParse';
+} from '@moonshot-ai/app-components';
 
 const ARG = JSON.stringify({
   questions: [

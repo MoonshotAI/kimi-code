@@ -3,7 +3,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Card, Icon } from '@moonshot-ai/app-ui';
-import type { TurnFileChange } from '../chatTurnRendering';
+import type { TurnFileChange } from '@moonshot-ai/app-components';
 import type { FilePreviewRequest } from '../../types';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';

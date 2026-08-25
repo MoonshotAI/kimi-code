@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useIsDark } from '@moonshot-ai/app-core';
-import rivUrl from '../assets/doodle/k3_doodle1.riv?url';
+import rivUrl from './assets/doodle/k3_doodle1.riv?url';
 import { bindRivePlayback } from '@moonshot-ai/app-core/lib';
 
 const ready = ref(false);

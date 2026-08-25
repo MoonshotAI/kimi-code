@@ -8,8 +8,8 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import type { FilePreviewRequest, ToolCall } from '../../../types';
-import { normalizeToolName } from '../../../lib/toolMeta';
-import { parseArgRecord, str } from './toolArgs';
+import { normalizeToolName } from '@moonshot-ai/app-components';
+import { parseArgRecord, str } from '@moonshot-ai/app-components';
 import ToolDisclosure from './ToolDisclosure.vue';
 import OutputPanel from './OutputPanel.vue';
 

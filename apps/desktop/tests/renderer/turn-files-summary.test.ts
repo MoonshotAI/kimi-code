@@ -20,7 +20,7 @@ vi.mock('vue-i18n', async (importActual) => {
 
 import ChatPane from '../../src/renderer/components/chat/ChatPane.vue';
 import TurnFilesSummary from '../../src/renderer/components/chat/TurnFilesSummary.vue';
-import type { TurnFileChange } from '../../src/renderer/components/chatTurnRendering';
+import type { TurnFileChange } from '@moonshot-ai/app-components';
 
 const editChange: TurnFileChange = {
   path: '/repo/src/a.ts',

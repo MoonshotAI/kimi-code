@@ -2,7 +2,7 @@
      while the submit is in flight, "Working…" once the main turn is live.
      Replaces the MoonSpinner sending placeholder. -->
 <script setup lang="ts">
-import KimiMascot from '../KimiMascot.vue';
+import { KimiMascot } from '@moonshot-ai/app-components';
 
 defineProps<{
   label: string;

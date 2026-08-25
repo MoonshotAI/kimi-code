@@ -1,4 +1,3 @@
-// apps/desktop/src/renderer/components/admin/adminBatchToast.ts
 // Toast plan for the session admin page's batch archive/restore: what the
 // ActionToast should carry after a batch outcome, and the undo direction.
 // Pure — App.vue applies the plan to its shared actionToast state (and shows

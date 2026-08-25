@@ -35,6 +35,7 @@
     "@iconify-json/tabler": "^1.2.35",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/app-client": "workspace:*",
+    "@moonshot-ai/app-components": "workspace:*",
     "@moonshot-ai/app-composer": "workspace:*",
     "@moonshot-ai/app-core": "workspace:*",
     "@moonshot-ai/app-i18n": "workspace:*",

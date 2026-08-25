@@ -21,12 +21,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(ROOT, '..', '..');
 const SRC = path.join(ROOT, 'src');
-// §06 guard also covers the design-system primitives that moved into app-ui.
+// §06 guard also covers the design-system primitives that moved into app-ui and
+// the product components that moved into app-components.
 // Apps/web keys keep a '' label so the exemption sets below stay keyed to
-// apps/web-relative paths; app-ui files are reported under a 'app-ui/' prefix.
+// apps/web-relative paths; package files are reported under their prefix.
 const SCAN_ROOTS = [
   { dir: SRC, label: '' },
   { dir: path.join(REPO_ROOT, 'packages', 'app-ui', 'src'), label: 'app-ui/' },
+  { dir: path.join(REPO_ROOT, 'packages', 'app-components', 'src'), label: 'app-components/' },
 ];
 const STRICT = process.argv.includes('--strict');
 
@@ -45,7 +47,7 @@ const DOMAIN_HEX_EXEMPT = new Set([
 // is not exempted here.
 const ICON_EXEMPT = new Set([
   'components/GlobalLoading.vue',
-  'components/KimiMascot.vue', // static brand-blob fallback for the Rive canvas
+  'app-components/KimiMascot.vue', // static brand-blob fallback for the Rive canvas
 ]);
 
 // Files entirely exempt from the §06 scan. The design-system showcase view is

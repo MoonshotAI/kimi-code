@@ -20,7 +20,7 @@ import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, StatusDot } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '../../../types';
-import { toolLabel } from '../../../lib/toolMeta';
+import { toolLabel } from '@moonshot-ai/app-components';
 import OutputPanel from './OutputPanel.vue';
 
 const { t } = useI18n();

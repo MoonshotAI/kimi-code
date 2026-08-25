@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useIsDark } from '@moonshot-ai/app-core';
-import rivUrl from '../assets/mascot/kimi_avatar_default.riv?url';
+import rivUrl from './assets/mascot/kimi_avatar_default.riv?url';
 import { bindRivePlayback, fireTrigger, setInputValue, type RiveLike } from '@moonshot-ai/app-core/lib';
 
 // Input names inside the asset (from its published strings).

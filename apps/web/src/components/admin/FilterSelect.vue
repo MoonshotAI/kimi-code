@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
-import { useAnchoredMenu } from './useAnchoredMenu';
+import { useAnchoredMenu } from '@moonshot-ai/app-components';
 
 export interface FilterSelectOption {
   value: string;

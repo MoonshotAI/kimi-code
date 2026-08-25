@@ -24,7 +24,7 @@ import FilterControl from './dock/FilterControl.vue';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { installImeCompositionLatch, isImeKeyEvent } from '@moonshot-ai/app-client/lib';
-import { formatDuration } from '../chatTurnRendering';
+import { formatDuration } from '@moonshot-ai/app-components';
 
 const props = defineProps<{
   sessionId?: string;

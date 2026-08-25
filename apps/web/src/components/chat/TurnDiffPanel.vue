@@ -4,7 +4,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Icon, IconButton, PanelHeader, Tooltip } from '@moonshot-ai/app-ui';
-import type { TurnFileChange } from '../chatTurnRendering';
+import type { TurnFileChange } from '@moonshot-ai/app-components';
 import HighlightedCode from '../HighlightedCode.vue';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 

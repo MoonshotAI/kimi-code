@@ -10,7 +10,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
-import { useAnchoredMenu } from './useAnchoredMenu';
+import { useAnchoredMenu } from '@moonshot-ai/app-components';
 
 const props = defineProps<{
   /** Selectable workspaces, in display order (the tags keep this order). */

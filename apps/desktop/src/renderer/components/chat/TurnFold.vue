@@ -35,8 +35,8 @@ import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityRun from './ActivityRun.vue';
 import ToolCall from './ToolCall.vue';
 import NotificationCard from './NotificationCard.vue';
-import { formatDuration, renderBlockKey, turnWorkMs } from '../chatTurnRendering';
-import type { AssistantRenderBlock } from '../chatTurnRendering';
+import { formatDuration, renderBlockKey, turnWorkMs } from '@moonshot-ai/app-components';
+import type { AssistantRenderBlock } from '@moonshot-ai/app-components';
 import type { FilePreviewRequest, OpenMediaRequest } from '../../types';
 
 const props = withDefaults(
