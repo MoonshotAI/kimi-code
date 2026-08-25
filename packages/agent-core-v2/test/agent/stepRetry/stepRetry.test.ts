@@ -26,6 +26,7 @@ describe('stepRetry plugin', () => {
       await ctx.expectResumeMatches();
     } finally {
       await ctx.dispose();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -287,6 +288,86 @@ describe('stepRetry plugin', () => {
     failing = false;
     const second = await runTurn(2);
     expect(second).toEqual({ type: 'completed', steps: 1, truncated: false });
+  });
+
+  it('retries any request error inside the request when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) throw new APIStatusError(400, 'endpoint broken');
+        if (calls === 2) throw new APIStatusError(404, 'model not found');
+        if (calls === 3) throw new APIStatusError(429, 'slow down');
+        return {
+          id: 'infinite-retry-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 1, truncated: false });
+    expect(calls).toBe(4);
+    expect(rpcEvents('turn.step.retrying')).toEqual([]);
+    expect(rpcEvents('turn.step.interrupted')).toEqual([]);
+  });
+
+  it('keeps retrying past the per-step attempt budget when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls <= 12) throw new APIStatusError(429, 'slow down');
+        return {
+          id: 'infinite-retry-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 1, truncated: false });
+    expect(calls).toBe(13);
+    expect(rpcEvents('turn.step.retrying')).toEqual([]);
+  });
+
+  it('cancels the turn when aborted during an infinite retry backoff', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    const controller = new AbortController();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        throw new APIStatusError(400, 'endpoint broken');
+      }),
+    );
+    setTimeout(() => controller.abort(new Error('stop')), 100);
+
+    const result = await runTurn(1, controller.signal);
+
+    expect(result.type).toBe('cancelled');
+    expect(calls).toBe(1);
   });
 });
 
