@@ -294,6 +294,7 @@ function toWireTask(
   if (info.kind === 'agent' && info.parentToolCallId !== undefined) {
     base.parent_tool_call_id = info.parentToolCallId;
   }
+  base.run_in_background = info.detached;
   if (output !== undefined) {
     base.output_preview = output.preview;
     base.output_bytes = output.bytes;
