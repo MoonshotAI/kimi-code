@@ -3,14 +3,15 @@ import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { SessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCountingService';
-import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
+
+import { tokenCountingAgentRuntimeProvider } from './tokenCountingAgentRuntime';
 
 export class TokenCountingFeature extends Feature {
   static override readonly name = 'tokenCounting';
 
   constructor() {
     super();
-    this.contributeAgentModel(TokenCountingAgentModelDefinition);
+    this.contributeAgentRuntime(tokenCountingAgentRuntimeProvider);
     this.contributeService(
       LifecycleScope.Session,
       ISessionTokenCountingService,

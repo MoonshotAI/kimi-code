@@ -33,7 +33,7 @@
 #   swarm                    src/features/swarm/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
-#   tokenCounting            src/agent/tokenCounting/configSection.ts
+#   tokenCounting            src/features/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
@@ -431,7 +431,7 @@ timeout_ms = 7200000
 
 # ##########################################################################
 # tokenCounting (config.toml: token_counting)
-#   owner: src/agent/tokenCounting/configSection.ts
+#   owner: src/features/tokenCounting/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:

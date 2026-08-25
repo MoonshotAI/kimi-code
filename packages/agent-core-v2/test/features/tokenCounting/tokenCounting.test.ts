@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentContextMemory, type ContextMemoryRuntime, IAgentProfileService } from '#/index';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
+import { ContextAppendMessage } from '#/features/contextMemory/contextEvents';
+import {
+  TokenCountingMeasured,
+  TokenCountingTurnRecorded,
+} from '#/features/tokenCounting/tokenCountingOps';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IWireService } from '#/wire/wire';
@@ -15,11 +18,7 @@ function totalOf(usage: TokenUsage | undefined): number {
   return usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
 }
 
-function tokenCountingState(ctx: TestAgentContext) {
-  return ctx.readModel(TokenCountingAgentModelDefinition, (model) => model._state());
-}
-
-describe('Agent token counting', () => {
+describe('Agent token counting (AgentTokenCounting)', () => {
   let ctx: TestAgentContext;
   let context: ContextMemoryRuntime;
   let tokenCounting: TestAgentContext['tokenCounting'];
@@ -53,15 +52,11 @@ describe('Agent token counting', () => {
     expect(exchangeTotal).toBeGreaterThan(0);
     expect(context.get()).toHaveLength(2);
 
-    expect(tokenCountingState(ctx)).toEqual({
-      anchors: [{ length: context.get().length, tokens: exchangeTotal, measured: true }],
-      tokens: exchangeTotal,
-    });
-
     const size = tokenCounting.get();
     expect(size.measured).toBe(exchangeTotal);
     expect(size.estimated).toBe(0);
     expect(size.size).toBe(exchangeTotal);
+    expect(tokenCounting.latestMeasured()).toBe(exchangeTotal);
     expect((await ctx.rpc.getContext({})).tokenCount).toBe(exchangeTotal);
   });
 
@@ -80,13 +75,8 @@ describe('Agent token counting', () => {
     expect(lastExchangeTotal).toBeGreaterThan(0);
     expect(context.get()).toHaveLength(4);
 
-    expect(tokenCountingState(ctx).anchors).toHaveLength(2);
-    expect(tokenCountingState(ctx).anchors[1]).toEqual({
-      length: context.get().length,
-      tokens: lastExchangeTotal,
-      measured: true,
-    });
     expect(tokenCounting.get().measured).toBe(lastExchangeTotal);
+    expect(tokenCounting.latestMeasured()).toBe(lastExchangeTotal);
     expect((await ctx.rpc.getContext({})).tokenCount).toBe(lastExchangeTotal);
   });
 
@@ -108,6 +98,23 @@ describe('Agent token counting', () => {
     expect(size.size).toBe(estimateTokensForMessages(context.get()));
   });
 
+  it('ignores a measured report whose input does not match the live context', () => {
+    ctx.appendUserMessage([{ type: 'text', text: 'real tail' }]);
+
+    const report: TokenUsage = { inputOther: 100, output: 1, inputCacheRead: 0, inputCacheCreation: 0 };
+    tokenCounting.measured(
+      [{ role: 'user', content: [{ type: 'text', text: 'foreign' }], toolCalls: [] }],
+      [],
+      report,
+    );
+    expect(tokenCounting.get().measured).toBe(0);
+    expect(tokenCounting.latestMeasured()).toBe(0);
+
+    tokenCounting.measured(context.get(), [], report);
+    expect(tokenCounting.get().measured).toBe(101);
+    expect(tokenCounting.latestMeasured()).toBe(101);
+  });
+
   it('restores the REAL size of the surviving prefix when undo truncates the ledger', async () => {
     ctx.appendTurnExchange('u1', 'a1', 1_000);
     ctx.appendTurnExchange('u2', 'a2', 2_000);
@@ -122,6 +129,7 @@ describe('Agent token counting', () => {
 
   it('rebases the ledger on compaction and blends in the measured summary tokens', () => {
     ctx.appendTurnExchange('u1', 'a1', 1_000);
+    expect(tokenCounting.latestMeasured()).toBe(1_000);
 
     void context.applyCompaction({
       summary: 'summary of u1',
@@ -133,10 +141,8 @@ describe('Agent token counting', () => {
     const history = context.get();
     const kept = estimateTokensForMessages(history.filter((m) => m.origin?.kind === 'user'));
     const expected = 500 + kept;
-    expect(tokenCountingState(ctx).anchors).toEqual([
-      { length: history.length, tokens: expected, measured: false },
-    ]);
     expect(tokenCounting.get()).toEqual({ size: expected, measured: expected, estimated: 0 });
+    expect(tokenCounting.latestMeasured()).toBe(0);
   });
 
   it('resets the ledger when the context is cleared', () => {
@@ -146,9 +152,7 @@ describe('Agent token counting', () => {
     void context.clear();
 
     expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
-    expect(tokenCountingState(ctx).anchors).toEqual([
-      { length: 0, tokens: 0, measured: true },
-    ]);
+    expect(tokenCounting.latestMeasured()).toBe(0);
   });
 
   it('keeps estimates and anchors live for internal reads under the measured strategy', () => {
@@ -203,14 +207,54 @@ describe('Agent token counting', () => {
       try {
         await resumed.restorePersisted();
         const resumedCounting = resumed.tokenCounting;
-        expect(tokenCountingState(resumed)).toEqual(tokenCountingState(live));
+        expect(resumedCounting.get()).toEqual(liveCounting.get());
         expect(resumedCounting.latestMeasured()).toBe(2_000);
         expect(resumedCounting.statusSize()).toBe(liveCounting.statusSize());
+
+        await resumed.undoHistory(1);
+        expect(resumedCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
       } finally {
         await resumed.dispose();
       }
     } finally {
       await live.dispose();
+    }
+  });
+
+  it('replays a legacy journal into the same ledger projections', async () => {
+    const persistence = new InMemoryWireRecordPersistence([
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'user', content: [{ type: 'text', text: 'u1' }], toolCalls: [] },
+      }, 1).serialize(),
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+      }, 2).serialize(),
+      new TokenCountingMeasured({ agentId: 'main', length: 2, tokens: 1_000 }, 3).serialize(),
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'user', content: [{ type: 'text', text: 'u2' }], toolCalls: [] },
+      }, 4).serialize(),
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'a2' }], toolCalls: [] },
+      }, 5).serialize(),
+      new TokenCountingMeasured({ agentId: 'main', length: 4, tokens: 2_000 }, 6).serialize(),
+      new TokenCountingTurnRecorded({ agentId: 'main', turnId: 0, length: 4, tokens: 2_000 }, 7).serialize(),
+    ]);
+    const replayed = createTestAgent({ persistence, autoConfigure: false });
+    try {
+      await replayed.restorePersisted();
+      const counting = replayed.tokenCounting;
+      expect(counting.get()).toEqual({ size: 2_000, measured: 2_000, estimated: 0 });
+      expect(counting.latestMeasured()).toBe(2_000);
+      expect(counting.statusSize()).toBe(2_000);
+
+      await replayed.undoHistory(1);
+      expect(counting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+    } finally {
+      await replayed.dispose();
     }
   });
 
@@ -267,12 +311,12 @@ describe('Agent token counting', () => {
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         agentId: 'main',
+        turnId: 0,
         length: live.resolve(AgentContextMemory).get().length,
         tokens: reported,
       });
-      expect(tokenCountingState(live).anchors).toEqual([
-        { length: 2, tokens: reported, measured: true },
-      ]);
+      expect(counting.get().measured).toBe(reported);
+      expect(counting.latestMeasured()).toBe(reported);
     } finally {
       await live.dispose();
     }
@@ -282,16 +326,19 @@ describe('Agent token counting', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'unmeasured tail' }]);
     const expected = tokenCounting.statusSize();
     expect(expected).toBeGreaterThan(0);
-    expect(tokenCountingState(ctx).anchors).toEqual([]);
+    expect(tokenCounting.latestMeasured()).toBe(0);
 
     await ctx.dispatcher.dispatch(
       new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }),
     );
 
-    expect(tokenCountingState(ctx).anchors).toEqual([
-      { length: 1, tokens: expected, measured: false },
-    ]);
     expect(tokenCounting.statusSize()).toBe(expected);
+    expect(tokenCounting.latestMeasured()).toBe(0);
+    const records = (await ctx.persistedWireRecords()).filter(
+      (record) => record.type === 'token_counting.turn_recorded',
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ agentId: 'main', turnId: 1, length: 1, tokens: expected });
   });
 
   it('drops the pinned turn reading on compaction', async () => {
@@ -299,7 +346,7 @@ describe('Agent token counting', () => {
     await ctx.dispatcher.dispatch(
       new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }),
     );
-    expect(tokenCountingState(ctx).anchors).toHaveLength(1);
+    expect(tokenCounting.statusSize()).toBeGreaterThan(0);
 
     void context.applyCompaction({
       summary: 'summary of the tail',
@@ -308,14 +355,8 @@ describe('Agent token counting', () => {
       summaryOutputTokens: 50,
     });
 
-    const history = context.get();
-    const anchors = tokenCountingState(ctx).anchors;
-    expect(anchors).toHaveLength(1);
-    expect(anchors[0]).toEqual({
-      length: history.length,
-      tokens: tokenCounting.get().size,
-      measured: false,
-    });
+    expect(tokenCounting.get().size).toBeGreaterThan(0);
     expect(tokenCounting.statusSize()).toBe(tokenCounting.get().size);
+    expect(tokenCounting.latestMeasured()).toBe(0);
   });
 });

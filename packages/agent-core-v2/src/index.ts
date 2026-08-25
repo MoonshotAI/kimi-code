@@ -646,10 +646,13 @@ export * from '#/features/dateChange/dateChangeAgentRuntime';
 export * from '#/agent/contextProjector/contextProjector';
 export * from '#/agent/contextProjector/contextProjectorService';
 export * from '#/agent/contextProjector/mediaProjection';
-export * from '#/agent/tokenCounting/tokenCounting';
-export * from '#/agent/tokenCounting/tokenCountingOps';
+export * from '#/features/tokenCounting/tokenCounting';
+export * from '#/features/tokenCounting/tokenCountingOps';
+export {
+  AgentTokenCounting,
+  TokenCountingRuntime,
+} from '#/features/tokenCounting/tokenCountingAgentRuntime';
 export * from '#/session/tokenCounting/sessionTokenCounting';
-export * from '#/session/tokenCounting/tokenCountingAgentModel';
 export * from '#/session/tokenCounting/sessionTokenCountingService';
 import '#/features/tokenCounting/tokenCountingFeature';
 export * from '#/agent/plugin/agentPlugin';

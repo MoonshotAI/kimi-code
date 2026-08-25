@@ -1,18 +1,16 @@
-import { Disposable } from '#/_base/di/lifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
-import { TurnEnded } from '#/agent/loop/turnOps';
 import { IConfigService } from '#/app/config/config';
-import { ISessionEventBus } from '#/app/event/eventBus';
-import {
-  TOKEN_COUNTING_SECTION,
-  type TokenCountingConfig,
-} from '#/agent/tokenCounting/configSection';
+import { readTokenCountingStrategy } from '#/features/tokenCounting/configSection';
 import type {
   ContextSize,
+  TokenCountingRebaseInput,
   TokenCountingRequest,
   TokenCountingStrategy,
-} from '#/agent/tokenCounting/tokenCounting';
+} from '#/features/tokenCounting/tokenCounting';
+import {
+  AgentTokenCounting,
+  type TokenCountingRuntime,
+} from '#/features/tokenCounting/tokenCountingAgentRuntime';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import {
@@ -24,79 +22,47 @@ import {
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
-import {
-  ISessionTokenCountingService,
-  type TokenCountingRebaseInput,
-} from './sessionTokenCounting';
-import { TokenCountingAgentModelDefinition } from './tokenCountingAgentModel';
+import { ISessionTokenCountingService } from './sessionTokenCounting';
 
-export class SessionTokenCountingService extends Disposable implements ISessionTokenCountingService {
+export class SessionTokenCountingService implements ISessionTokenCountingService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @IConfigService private readonly config: IConfigService,
-    @ISessionEventBus eventBus: ISessionEventBus,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-  ) {
-    super();
-    this._register(
-      eventBus.subscribe(TurnEnded, (event) => {
-        const agent = agentLifecycle.get(event.agentId);
-        if (agent === undefined) return;
-        void agentSpaceOf(agent).use(
-          TokenCountingAgentModelDefinition,
-          (model) => model.recordTurn(event.turnId, this.strategy),
-        );
-      }),
-    );
-  }
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+  ) {}
 
   get strategy(): TokenCountingStrategy {
-    return (
-      this.config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)?.strategy ??
-      'measured+estimated'
-    );
+    return readTokenCountingStrategy(this.config);
   }
 
   get(agent: AgentContext, start?: number, end?: number): ContextSize {
-    return agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.get(start, end),
-    );
+    return this.runtime(agent).get(start, end);
   }
 
   measured(
     agent: AgentContext,
     input: readonly Message[],
-    output: readonly Message[],
+    _output: readonly Message[],
     usage: TokenUsage,
   ): void {
-    void agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.measured(input, output, usage),
-    );
+    void this.runtime(agent).measured(input, usage);
   }
 
   latestMeasured(agent: AgentContext): number {
-    return agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.latestMeasured(),
-    );
+    return this.runtime(agent).latestMeasured();
   }
 
   statusSize(agent: AgentContext): number {
-    return agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.statusSize(this.strategy),
-    );
+    return this.runtime(agent).statusSize();
   }
 
   recordTruncation(agent: AgentContext, cutIndex: number): void {
-    void agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.recordTruncation(cutIndex),
-    );
+    void this.runtime(agent).recordTruncation(cutIndex);
   }
 
   rebase(agent: AgentContext, input: TokenCountingRebaseInput): void {
-    void agentSpaceOf(agent).use(TokenCountingAgentModelDefinition, (model) =>
-      model.rebase(input),
-    );
+    void this.runtime(agent).rebase(input);
   }
 
   requestSize(request: TokenCountingRequest): number {
@@ -121,5 +87,9 @@ export class SessionTokenCountingService extends Disposable implements ISessionT
 
   estimateTools(tools: readonly Tool[]): number {
     return estimateTokensForTools(tools);
+  }
+
+  private runtime(agent: AgentContext): TokenCountingRuntime {
+    return this.agentLifecycle.resolve(agent, AgentTokenCounting);
   }
 }

@@ -64,10 +64,10 @@
 //   task.started                       task                                       src/agent/task/taskOps.ts
 //   task.terminated                    task                                       src/agent/task/taskOps.ts
 //   task.waitDelivered                 task.notificationDelivery                  src/agent/task/taskOps.ts
-//   token_counting.measured            (none)                                     src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.rebased             (none)                                     src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.truncated           (none)                                     src/agent/tokenCounting/tokenCountingOps.ts
-//   token_counting.turn_recorded       (none)                                     src/agent/tokenCounting/tokenCountingOps.ts
+//   token_counting.measured            (none)                                     src/features/tokenCounting/tokenCountingOps.ts
+//   token_counting.rebased             (none)                                     src/features/tokenCounting/tokenCountingOps.ts
+//   token_counting.truncated           (none)                                     src/features/tokenCounting/tokenCountingOps.ts
+//   token_counting.turn_recorded       (none)                                     src/features/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool                                   src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools                        src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools                        src/agent/profile/profileOps.ts
@@ -599,7 +599,7 @@ interface TaskWaitDeliveredPayload {
 
 /**
  * states: (none)
- * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ * owner: src/features/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingMeasuredPayload {
   _name: 'token_counting.measured';
@@ -610,7 +610,7 @@ interface TokenCountingMeasuredPayload {
 
 /**
  * states: (none)
- * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ * owner: src/features/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingRebasedPayload {
   _name: 'token_counting.rebased';
@@ -622,7 +622,7 @@ interface TokenCountingRebasedPayload {
 
 /**
  * states: (none)
- * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ * owner: src/features/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingTruncatedPayload {
   _name: 'token_counting.truncated';
@@ -633,7 +633,7 @@ interface TokenCountingTruncatedPayload {
 
 /**
  * states: (none)
- * owner: src/agent/tokenCounting/tokenCountingOps.ts
+ * owner: src/features/tokenCounting/tokenCountingOps.ts
  */
 interface TokenCountingTurnRecordedPayload {
   _name: 'token_counting.turn_recorded';

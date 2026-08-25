@@ -14,3 +14,9 @@ export interface TokenCountingRequest {
   readonly tools: readonly Tool[];
   readonly messages: readonly Message[];
 }
+
+export interface TokenCountingRebaseInput {
+  readonly length: number;
+  readonly tokens: number;
+  readonly measured: boolean;
+}

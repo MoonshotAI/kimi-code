@@ -105,6 +105,10 @@ import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/in
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 import { AgentSkill, skillAgentRuntimeProvider } from '#/features/skill/skillAgentRuntime';
+import {
+  AgentTokenCounting,
+  tokenCountingAgentRuntimeProvider,
+} from '#/features/tokenCounting/tokenCountingAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -481,6 +485,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentSkill,
           provider: skillAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentTokenCounting,
+          provider: tokenCountingAgentRuntimeProvider,
           generation: 1,
           active: true,
         },
@@ -3944,8 +3954,8 @@ describe('Agent tools', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-        [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 176, "time": "<time>" }
         [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
+        [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 176, "time": "<time>" }
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 176 }
         [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
         [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }

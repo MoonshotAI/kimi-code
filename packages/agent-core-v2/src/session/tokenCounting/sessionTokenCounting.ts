@@ -2,18 +2,13 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type {
   ContextSize,
+  TokenCountingRebaseInput,
   TokenCountingRequest,
   TokenCountingStrategy,
-} from '#/agent/tokenCounting/tokenCounting';
+} from '#/features/tokenCounting/tokenCounting';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';
-
-export interface TokenCountingRebaseInput {
-  readonly length: number;
-  readonly tokens: number;
-  readonly measured: boolean;
-}
 
 export interface ISessionTokenCountingService {
   readonly _serviceBrand: undefined;

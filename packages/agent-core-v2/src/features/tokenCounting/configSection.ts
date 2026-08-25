@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   type ConfigSchema,
   type EnvBindings,
+  type IConfigService,
   envBindings,
   stripEnvBoundFields,
 } from '#/app/config/config';
@@ -42,6 +43,13 @@ export const stripTokenCountingEnv = stripEnvBoundFields<TokenCountingConfig>(
 export const DEFAULT_TOKEN_COUNTING_CONFIG: TokenCountingConfig = {
   strategy: 'measured+estimated',
 };
+
+export function readTokenCountingStrategy(config: IConfigService): TokenCountingStrategy {
+  return (
+    config.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)?.strategy ??
+    DEFAULT_TOKEN_COUNTING_CONFIG.strategy
+  );
+}
 
 registerConfigSection(TOKEN_COUNTING_SECTION, TokenCountingConfigSchema, {
   defaultValue: DEFAULT_TOKEN_COUNTING_CONFIG,
