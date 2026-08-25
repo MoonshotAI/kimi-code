@@ -6,7 +6,12 @@ import type {
   SkillActivationOrigin,
 } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
+import {
+  IAgentPromptService,
+  reservePrompt,
+  type PromptHandle,
+  type PromptLaunchResult,
+} from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import {
   defineAgentRuntimeContract,
@@ -14,8 +19,11 @@ import {
   type AgentRuntimeContext,
 } from '#/agent/runtime/agentRuntime';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
+import { FLOW_FLAG_ID, IAgentFlowService } from '#/features/flow/flow';
+import { isProjectedFlowSkill } from '#/features/flow/flowsSkillSource';
 import type { ContentPart } from '#/kosong/contract/message';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -31,10 +39,40 @@ import type {
   PromptWithSkillsResult,
   SkillActivationInput,
 } from './skill';
+import { ISkillActivationDataService } from './skillActivationData';
 import { SkillActivated } from './skillOps';
 
 export class SkillRuntime {
   constructor(private readonly context: AgentRuntimeContext<null>) {}
+
+  private readonly queuedFlowPrompts = new Set<string>();
+
+  private trackQueuedFlowPrompt(handle: PromptHandle): void {
+    this.queuedFlowPrompts.add(handle.id);
+    void handle.completion.then(() => {
+      this.queuedFlowPrompts.delete(handle.id);
+    });
+  }
+
+  private abortIfFlowDisabled(handle: PromptHandle): void {
+    if (this.context.get(IFlagService).enabled(FLOW_FLAG_ID)) return;
+    this.context.get(IAgentPromptService).abort(handle.id);
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      'The flow feature was disabled while this activation was being queued; the prompt was aborted.',
+    );
+  }
+
+  abortQueuedFlowPrompts(): void {
+    const queued = Array.from(this.queuedFlowPrompts);
+    for (const promptId of queued) {
+      try {
+        this.context.get(IAgentPromptService).abort(promptId);
+      } catch {
+        this.queuedFlowPrompts.delete(promptId);
+      }
+    }
+  }
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
     const catalog = this.context.get(ISessionSkillCatalog);
@@ -48,6 +86,15 @@ export class SkillRuntime {
         ErrorCodes.SKILL_TYPE_UNSUPPORTED,
         `Skill "${skill.name}" cannot be activated by the user`,
       );
+    }
+    if (isProjectedFlowSkill(skill.name, skill.metadata.type)) {
+      if (this.context.agent.agentId !== MAIN_AGENT_ID) {
+        throw new Error2(
+          ErrorCodes.REQUEST_INVALID,
+          `Flow skill "${skill.name}" can only be activated on the main agent`,
+        );
+      }
+      this.rejectWhileFlowRunActive();
     }
 
     const skillArgs = input.args ?? '';
@@ -66,20 +113,30 @@ export class SkillRuntime {
       ...(input.content ?? []),
     ];
 
-    const turn = await this.recordActivation(
-      {
-        kind: 'skill_activation',
-        activationId: randomUUID(),
-        skillName: skill.name,
-        trigger: 'user-slash',
-        skillType: skill.metadata.type,
-        skillPath: skill.path,
-        skillSource: skill.source,
-        skillArgs: input.args,
-      },
-      content,
-    );
+    const origin: SkillActivationOrigin = {
+      kind: 'skill_activation',
+      activationId: randomUUID(),
+      skillName: skill.name,
+      trigger: 'user-slash',
+      skillType: skill.metadata.type,
+      skillPath: skill.path,
+      skillSource: skill.source,
+      skillArgs: input.args,
+    };
+    const activationData = this.context.get(ISkillActivationDataService);
+    activationData.put(origin.activationId, skill.data);
+    const flow = this.context.get(IAgentFlowService);
+    let turn: Turn | undefined;
+    try {
+      turn = await this.recordActivation(origin, content);
+    } catch (error) {
+      activationData.take(origin.activationId);
+      flow.discardPendingActivation(origin.activationId);
+      throw error;
+    }
     if (turn === undefined) {
+      activationData.take(origin.activationId);
+      flow.discardPendingActivation(origin.activationId);
       throw new Error2(
         ErrorCodes.TURN_AGENT_BUSY,
         'Cannot activate skill while another turn is active',
@@ -110,16 +167,57 @@ export class SkillRuntime {
     }
     const catalog = this.context.get(ISessionSkillCatalog);
     await catalog.ready;
-    const prepared = input.skills.map((skill) => this.prepareBundled(skill));
-    if (this.context.agent.agentId === MAIN_AGENT_ID) {
-      await applyPromptMetadataUpdate(
-        {
-          metadata: this.context.get(ISessionMetadata),
-          eventService: this.context.get(IEventService),
-          sessionId: this.context.get(ISessionContext).sessionId,
-        },
-        promptMetadataTextFromContentParts(input.input),
+    const activationData = this.context.get(ISkillActivationDataService);
+    const flow = this.context.get(IAgentFlowService);
+    const prepared: {
+      origin: SkillActivationOrigin;
+      part: ContentPart;
+      entry: BundledSkillActivation;
+    }[] = [];
+    const discardPrepared = (): void => {
+      for (const activation of prepared) {
+        activationData.take(activation.origin.activationId);
+      }
+    };
+    try {
+      for (const skill of input.skills) prepared.push(this.prepareBundled(skill));
+    } catch (error) {
+      discardPrepared();
+      throw error;
+    }
+    const flowActivations = prepared.filter((activation) =>
+      isProjectedFlowSkill(activation.origin.skillName, activation.origin.skillType),
+    );
+    if (flowActivations.length > 1) {
+      discardPrepared();
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'A prompt can bundle at most one flow skill: each flow run needs its own prompt.',
       );
+    }
+    if (flowActivations.length > 0 && this.context.agent.agentId !== MAIN_AGENT_ID) {
+      discardPrepared();
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'Flow skills can only be activated on the main agent',
+      );
+    }
+    try {
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive();
+      if (this.context.agent.agentId === MAIN_AGENT_ID) {
+        await applyPromptMetadataUpdate(
+          {
+            metadata: this.context.get(ISessionMetadata),
+            eventService: this.context.get(IEventService),
+            sessionId: this.context.get(ISessionContext).sessionId,
+          },
+          promptMetadataTextFromContentParts(input.input),
+        );
+      }
+      if (flowActivations.length > 0) this.rejectWhileFlowRunActive();
+    } catch (error) {
+      discardPrepared();
+      throw error;
     }
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
@@ -136,6 +234,24 @@ export class SkillRuntime {
           skillActivations: prepared.map((activation) => activation.entry),
         },
       });
+      if (flowActivations.length > 0) {
+        this.trackQueuedFlowPrompt(handle);
+        const flowIds = flowActivations.map((activation) => activation.origin.activationId);
+        void handle.completion.then((completion) => {
+          if (
+            completion.state !== 'cancelled' &&
+            completion.state !== 'failed' &&
+            completion.state !== 'blocked'
+          ) {
+            return;
+          }
+          for (const id of flowIds) {
+            flow.discardPendingActivation(id);
+            activationData.take(id);
+          }
+        });
+        this.abortIfFlowDisabled(handle);
+      }
       if (handle.state === 'pending') {
         return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
       }
@@ -187,6 +303,7 @@ export class SkillRuntime {
       skillSource: skill.source,
       skillArgs: input.args,
     };
+    this.context.get(ISkillActivationDataService).put(origin.activationId, skill.data);
     return {
       origin,
       part: {
@@ -210,6 +327,21 @@ export class SkillRuntime {
     };
   }
 
+  private rejectWhileFlowRunActive(): void {
+    if (!this.context.get(IFlagService).enabled(FLOW_FLAG_ID)) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'The flow feature is disabled ([experimental].flow); enable it before activating a flow skill.',
+      );
+    }
+    const flow = this.context.get(IAgentFlowService);
+    if (!flow.run().active && !flow.hasPendingActivation()) return;
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      'A flow run is already active or queued in this session. Finish or abort it (FlowAbort) before starting another flow.',
+    );
+  }
+
   private async recordActivation(
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
@@ -223,6 +355,7 @@ export class SkillRuntime {
         skillArgs: origin.skillArgs,
         skillPath: origin.skillPath,
         skillSource: origin.skillSource,
+        skillType: origin.skillType,
       }),
     );
     this.publishActivation(origin);
@@ -238,7 +371,18 @@ export class SkillRuntime {
     if (this.context.get(IAgentLoopService).status().state === 'running') {
       return prompt.inject(message);
     }
-    return (await prompt.enqueue({ message })).launched;
+    const handle = await prompt.enqueue({ message });
+    if (isProjectedFlowSkill(origin.skillName, origin.skillType)) {
+      this.trackQueuedFlowPrompt(handle);
+      try {
+        this.abortIfFlowDisabled(handle);
+      } catch (error) {
+        this.context.get(IAgentFlowService).discardPendingActivation(origin.activationId);
+        this.context.get(ISkillActivationDataService).take(origin.activationId);
+        throw error;
+      }
+    }
+    return handle.launched;
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
@@ -253,7 +397,7 @@ export class SkillRuntime {
       skill_name: origin.skillName,
       trigger: origin.trigger,
     });
-    if (origin.skillType === 'flow') {
+    if (isProjectedFlowSkill(origin.skillName, origin.skillType)) {
       telemetry.track2('flow_invoked', {
         flow_name: origin.skillName,
       });

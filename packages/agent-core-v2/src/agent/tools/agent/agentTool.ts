@@ -6,6 +6,7 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
+import { FLOW_TOOL_NAMES } from '#/features/flow/flow';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -511,7 +512,7 @@ registerAgentToolService(ISubagentTool, SubagentTool, {
   requiredRuntimeCapabilities: ['process'],
 });
 
-function buildProfileDescriptions(
+export function buildProfileDescriptions(
   profiles: readonly AgentProfile[],
   tools: readonly ToolReference[],
   isToolActive: (
@@ -520,20 +521,28 @@ function buildProfileDescriptions(
     source: ToolReference['source'],
   ) => boolean,
 ): string {
+  const supervisorOnlyFlowTool = (name: string): boolean =>
+    FLOW_TOOL_NAMES.has(name) &&
+    !tools.some((tool) => tool.name === name && tool.source !== 'builtin');
+  const advertisableTools = tools.filter(
+    (tool) => !(FLOW_TOOL_NAMES.has(tool.name) && tool.source === 'builtin'),
+  );
   return profiles
     .map((profile) => {
       const details = [profile.description, profile.whenToUse].filter(
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
-      const activeTools = resolveActiveToolNames(profile);
-      const externallyRestricted = tools.some(
+      const activeTools = resolveActiveToolNames(profile)?.filter(
+        (name) => !supervisorOnlyFlowTool(name),
+      );
+      const externallyRestricted = advertisableTools.some(
         (tool) =>
           evaluateToolActive(profile, tool.name, tool.source) &&
           !isToolActive(profile, tool.name, tool.source),
       );
       if (externallyRestricted) {
-        const effectiveTools = tools
+        const effectiveTools = advertisableTools
           .filter((tool) => isToolActive(profile, tool.name, tool.source))
           .map((tool) => tool.name);
         if (effectiveTools.length === 0) {

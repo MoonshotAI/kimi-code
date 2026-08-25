@@ -147,6 +147,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
         args,
       },
       origin: {
+        agentId: this.scopeContext.agentId,
         turnId: context.turnId,
       },
     });

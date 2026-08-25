@@ -86,6 +86,30 @@ export interface BackgroundTaskDisplayBlock {
   description: string;
 }
 
+/** A flow run about to start: the parsed blueprint awaiting the user's approval. */
+export interface FlowStartDisplayBlock {
+  type: 'flow_start';
+  flow_id: string;
+  task: string;
+  source_path: string;
+  stages: { id: string; gate: string; objective: string; completion: string }[];
+}
+
+/** A flow stage-gate review: per-criterion verdicts for a human-gated pass. */
+export interface FlowGateDisplayBlock {
+  type: 'flow_gate';
+  flow_id: string;
+  task?: string;
+  stage_id: string;
+  stage_index: number;
+  stage_total: number;
+  objective: string;
+  completion: string;
+  next_stage_id?: string;
+  criteria: { criterion: string; met: boolean; evidence: string }[];
+  note?: string;
+}
+
 export type DisplayBlock =
   | BriefDisplayBlock
   | DiffDisplayBlock
@@ -96,7 +120,9 @@ export type DisplayBlock =
   | SearchDisplayBlock
   | InvocationDisplayBlock
   | TodoDisplayBlock
-  | BackgroundTaskDisplayBlock;
+  | BackgroundTaskDisplayBlock
+  | FlowStartDisplayBlock
+  | FlowGateDisplayBlock;
 
 export interface ApprovalPanelChoice {
   label: string;

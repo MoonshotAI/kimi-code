@@ -185,6 +185,13 @@ function stripOriginDisclosure(history: readonly unknown[]): readonly unknown[] 
   });
 }
 
+// The flow feature (flag-gated multi-stage runs) exists only in the v2
+// engine: v1 has no flow surface, so the builtin `flow` drafting skill and
+// any projected `flow:*` skills are dropped from both catalogs wherever
+// skill listings compare.
+const isFlowSkill = (skill: SkillSummary): boolean =>
+  skill.name === 'flow' || skill.name.startsWith('flow:');
+
 const KNOWN_DIFFS = {
   // v2's flag registry is per-domain and already carries flags v1 does not
   // have (minidb backend, subagent); v1-only flags would be the symmetric
@@ -351,9 +358,9 @@ const KNOWN_DIFFS = {
   },
   // Session skills: `path`s point into each engine's own home (user skills)
   // or the shared packages (builtins) — after the home-prefix scrub the
-  // summaries compare in full.
+  // summaries compare in full. Flow entries are dropped: see isFlowSkill.
   listSkills: (skills: readonly SkillSummary[], home: HomePair): unknown =>
-    scrubHomePrefixes(skills, home),
+    scrubHomePrefixes(skills.filter((skill) => !isFlowSkill(skill)), home),
 } satisfies Record<string, (value: never, other: never) => unknown>;
 
 /** See the KNOWN_DIFFS goal note above for what this projects and why. */
@@ -460,7 +467,9 @@ function projectResumedAgents(
  *   primitive); all are v2-only, so the tools are projected out of both
  *   rosters. A model-less
  *   agent's roster is not compared at all (v1 initializes builtin tools
- *   only on a profiled agent; v2 exposes them unbound).
+ *   only on a profiled agent; v2 exposes them unbound). The flag-gated
+ *   flow feature is likewise v2-only, so `FlowStart`/`FlowAdvance`/
+ *   `FlowAbort`/`FlowJump` are projected out the same way.
  */
 function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown {
   const projected = scrubHomePrefixes(agent, home) as Record<string, unknown>;
@@ -480,6 +489,10 @@ function projectResumedAgent(agent: ResumedAgentState, home: HomePair): unknown 
       .filter((tool) => tool['name'] !== 'TowerStatus')
       .filter((tool) => tool['name'] !== 'TowerTeardown')
       .filter((tool) => tool['name'] !== 'WaitFor')
+      .filter((tool) => tool['name'] !== 'FlowStart')
+      .filter((tool) => tool['name'] !== 'FlowAdvance')
+      .filter((tool) => tool['name'] !== 'FlowAbort')
+      .filter((tool) => tool['name'] !== 'FlowJump')
       .map((tool) => ({ name: tool['name'], active: tool['active'], source: tool['source'] }))
       .toSorted((a, b) => String(a.name).localeCompare(String(b.name)));
   }
@@ -697,7 +710,10 @@ describe('v1↔v2 return-value parity', () => {
         v1.listWorkspaceSkills(workDir),
         v2.listWorkspaceSkills(workDir),
       ]);
-      expect(normalize(v2Skills, 'name')).toEqual(normalize(v1Skills, 'name'));
+      // Flow entries are dropped from both catalogs: see isFlowSkill.
+      expect(normalize(v2Skills.filter((skill) => !isFlowSkill(skill)), 'name')).toEqual(
+        normalize(v1Skills.filter((skill) => !isFlowSkill(skill)), 'name'),
+      );
     } finally {
       await closeAll(v1, v2);
     }

@@ -42,6 +42,25 @@ describe('parseSkillText', () => {
     ).toThrow(SkillParseError);
   });
 
+  it('rejects a skill name inside the reserved flow namespace', () => {
+    expect(() =>
+      parseSkillText({
+        skillMdPath: '/skills/x/SKILL.md',
+        skillDirName: 'x',
+        source: 'user',
+        text: '---\nname: "flow:foo"\ndescription: d\ntype: flow\n---\nbody',
+      }),
+    ).toThrow(/reserved "flow:" namespace/);
+    expect(() =>
+      parseSkillText({
+        skillMdPath: '/skills/flow:bar.md',
+        skillDirName: 'flow:bar',
+        source: 'user',
+        text: 'body only',
+      }),
+    ).toThrow(/reserved "flow:" namespace/);
+  });
+
   it('throws when a directory skill has no frontmatter', () => {
     expect(() =>
       parseSkillText({

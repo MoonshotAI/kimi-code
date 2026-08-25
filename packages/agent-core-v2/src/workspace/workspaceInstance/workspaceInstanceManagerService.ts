@@ -214,6 +214,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         agentProfiles: this.agentProfiles,
         builtinAgentProfiles: this.builtinAgentProfiles,
         builtinSkills: this.builtinSkills,
+        flags: this.flags,
         telemetry: this.telemetry,
         docs: this.docs,
         createSessionController: (input) => new SessionLifecycleService(

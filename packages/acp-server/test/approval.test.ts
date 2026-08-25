@@ -48,6 +48,32 @@ describe('approvalRequestToPermissionOptions', () => {
     ]);
   });
 
+  it('offers no session-wide approval for a flow gate review', () => {
+    const display: ToolInputDisplay = {
+      kind: 'flow_gate_review',
+      flow_id: 'issue-fix',
+      stage_id: 'triage',
+      stage_index: 0,
+      stage_total: 2,
+      gate: 'human',
+      objective: 'find it',
+      completion: 'found',
+      criteria: [{ criterion: 'found', met: true, evidence: 'src/x.ts:12' }],
+    } as unknown as ToolInputDisplay;
+    const options = approvalRequestToPermissionOptions(makeRequest(display));
+    expect(options.map((o) => o.optionId)).toEqual([APPROVE_ONCE_OPTION_ID, REJECT_OPTION_ID]);
+    expect(options.some((o) => o.kind === 'allow_always')).toBe(false);
+
+    const req = makeRequest(display);
+    expect(permissionResponseToApprovalResponse(req, selected(APPROVE_ALWAYS_OPTION_ID))).toEqual({
+      decision: 'approved',
+    });
+    const rejectResponse = permissionResponseToApprovalResponse(req, selected(REJECT_OPTION_ID));
+    expect(
+      attachSelectedLabel(selected(REJECT_OPTION_ID), rejectResponse, options),
+    ).toEqual({ decision: 'rejected', selectedLabel: 'Reject' });
+  });
+
   it('expands plan_review into per-option allows plus revise/reject-and-exit', () => {
     const display: ToolInputDisplay = {
       kind: 'plan_review',

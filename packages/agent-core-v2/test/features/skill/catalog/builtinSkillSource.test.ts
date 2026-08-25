@@ -4,6 +4,10 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { BUILTIN_SKILLS, visibleBuiltinSkills } from '#/features/skill/catalog/builtin/builtin';
+import {
+  _clearBuiltinSkillContributionsForTests,
+  registerBuiltinSkill,
+} from '#/features/skill/catalog/builtin/registry';
 import { BuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
 
@@ -35,6 +39,49 @@ async function loadNames(configured?: boolean): Promise<readonly string[]> {
 }
 
 describe('BuiltinSkillSource product-skill switch', () => {
+  it('fires a change when a config update flips a flag-gated builtin skill', () => {
+    registerBuiltinSkill({
+      name: 'flagged-test-skill',
+      description: 'flag-gated test skill',
+      path: 'builtin://flagged-test-skill',
+      dir: 'builtin://flagged-test-skill',
+      content: 'test',
+      metadata: { name: 'flagged-test-skill', description: '', type: 'inline' },
+      source: 'builtin',
+      experimentalFlag: 'test_flag',
+    });
+    try {
+      let flagOn = false;
+      const handlers: ((e: unknown) => void)[] = [];
+      const ix = new TestInstantiationService();
+      ix.set(IConfigService, {
+        ready: Promise.resolve(),
+        get: () => undefined,
+        onDidSectionChange: () => ({ dispose: () => {} }),
+        onDidChangeConfiguration: (handler: (e: unknown) => void) => {
+          handlers.push(handler);
+          return { dispose: () => {} };
+        },
+      } as unknown as IConfigService);
+      ix.set(IFlagService, stubFlag(() => flagOn));
+      const source = ix.createInstance(BuiltinSkillSource);
+      let fired = 0;
+      source.onDidChange(() => {
+        fired += 1;
+      });
+      for (const handler of handlers) handler({});
+      expect(fired).toBe(0);
+      flagOn = true;
+      for (const handler of handlers) handler({});
+      expect(fired).toBe(1);
+      flagOn = false;
+      for (const handler of handlers) handler({});
+      expect(fired).toBe(2);
+    } finally {
+      _clearBuiltinSkillContributionsForTests();
+    }
+  });
+
   it('marks exactly the product-documentation skills', () => {
     expect(BUILTIN_SKILLS.filter((s) => s.productSpecific === true).map((s) => s.name).toSorted())
       .toEqual([...PRODUCT_SKILLS].toSorted());
@@ -95,6 +142,7 @@ describe('BuiltinSkillSource product-skill switch', () => {
       ready,
       get: () => (loaded ? false : undefined),
       onDidSectionChange: () => ({ dispose: () => {} }),
+      onDidChangeConfiguration: () => ({ dispose: () => {} }),
     } as unknown as IConfigService;
 
     const ix = new TestInstantiationService();

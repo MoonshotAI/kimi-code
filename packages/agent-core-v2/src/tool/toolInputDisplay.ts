@@ -77,6 +77,43 @@ export type ToolInputDisplay =
       mode: 'manual' | 'yolo';
     }
   | {
+      kind: 'flow_start_review';
+      flow_id: string;
+      task: string;
+      source_path: string;
+      stages: readonly {
+        id: string;
+        gate: 'ai' | 'human' | 'ai-then-human';
+        objective: string;
+        completion: string;
+      }[];
+    }
+  | {
+      kind: 'flow_gate_review';
+      flow_id: string;
+      task?: string;
+      stage_id: string;
+      stage_index: number;
+      stage_total: number;
+      gate: 'human' | 'ai-then-human';
+      objective: string;
+      completion: string;
+      next_stage_id?: string;
+      criteria: readonly { criterion: string; met: boolean; evidence: string }[];
+      note?: string;
+    }
+  | {
+      kind: 'flow_jump_review';
+      flow_id: string;
+      task?: string;
+      from_stage_id: string;
+      to_stage_id: string;
+      from_index: number;
+      to_index: number;
+      stage_total: number;
+      reason: string;
+    }
+  | {
       kind: 'generic';
       summary: string;
       detail?: unknown;

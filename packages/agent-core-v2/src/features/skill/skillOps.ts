@@ -10,6 +10,7 @@ export interface SkillActivatedPayload {
   readonly skillArgs?: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+  readonly skillType?: string;
 }
 
 export class SkillActivated extends AgentEvent2<SkillActivatedPayload> {

@@ -40,6 +40,10 @@ const AGENT_TOOLS = [
   'TowerInit',
   'TowerStatus',
   'TowerTeardown',
+  'FlowStart',
+  'FlowAdvance',
+  'FlowAbort',
+  'FlowJump',
   'mcp__*',
 ] as const;
 

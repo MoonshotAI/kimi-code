@@ -84,6 +84,68 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     // auto-approves the goal without a prompt.
     mode: z.enum(['manual', 'yolo']),
   }),
+  // A flow stage-gate review: the supervisor submitted a pass verdict for a
+  // human-gated stage and the user decides whether the run advances. Carries
+  // the per-criterion verdicts so clients render a structured checklist
+  // instead of a markdown blob.
+  z.object({
+    kind: z.literal('flow_gate_review'),
+    flow_id: z.string(),
+    task: z.string().optional(),
+    stage_id: z.string(),
+    // 0-based position of the stage under review.
+    stage_index: z.number(),
+    stage_total: z.number(),
+    gate: z.enum(['human', 'ai-then-human']),
+    objective: z.string(),
+    completion: z.string(),
+    // Omitted when the stage under review is the last one — approving
+    // finishes the run.
+    next_stage_id: z.string().optional(),
+    criteria: z
+      .array(
+        z.object({
+          criterion: z.string(),
+          met: z.boolean(),
+          evidence: z.string(),
+        }),
+      )
+      .readonly(),
+    note: z.string().optional(),
+  }),
+  // A flow run about to start, awaiting the user's approval: the parsed
+  // blueprint (every stage with its gate, objective, and completion) so the
+  // user confirms the plan of record before any stage work begins.
+  z.object({
+    kind: z.literal('flow_start_review'),
+    flow_id: z.string(),
+    task: z.string(),
+    source_path: z.string(),
+    stages: z
+      .array(
+        z.object({
+          id: z.string(),
+          gate: z.enum(['ai', 'human', 'ai-then-human']),
+          objective: z.string(),
+          completion: z.string(),
+        }),
+      )
+      .readonly(),
+  }),
+  // A pending stage jump awaiting the user's approval: where the run is,
+  // where the supervisor wants to move it, and why.
+  z.object({
+    kind: z.literal('flow_jump_review'),
+    flow_id: z.string(),
+    task: z.string().optional(),
+    from_stage_id: z.string(),
+    to_stage_id: z.string(),
+    // 0-based stage positions of the jump's endpoints.
+    from_index: z.number(),
+    to_index: z.number(),
+    stage_total: z.number(),
+    reason: z.string(),
+  }),
   z.object({
     kind: z.literal('generic'),
     summary: z.string(),

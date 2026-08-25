@@ -1,0 +1,202 @@
+import { z } from 'zod';
+
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { DeepReadonly } from '#/state/state';
+
+export const FLOW_FLAG_ID = 'flow';
+
+export const FLOW_REVIEWER_PROFILE = 'flow-reviewer';
+
+export const FLOW_START_TOOL_NAME = 'FlowStart';
+export const FLOW_ADVANCE_TOOL_NAME = 'FlowAdvance';
+export const FLOW_ABORT_TOOL_NAME = 'FlowAbort';
+export const FLOW_JUMP_TOOL_NAME = 'FlowJump';
+
+/**
+ * Builtin flow tool names. They are registered supervisor-only (main agent),
+ * so a spawned worker never receives them regardless of its profile's
+ * allowlist.
+ */
+export const FLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
+  FLOW_START_TOOL_NAME,
+  FLOW_ADVANCE_TOOL_NAME,
+  FLOW_ABORT_TOOL_NAME,
+  FLOW_JUMP_TOOL_NAME,
+]);
+
+export const FLOWS_PROJECT_DIR = '.kimi-code/flows';
+
+export const FlowGateKindSchema = z.enum(['ai', 'human', 'ai-then-human']);
+export type FlowGateKind = z.infer<typeof FlowGateKindSchema>;
+
+export const FlowJumpPolicySchema = z.enum(['disabled', 'approval', 'free']);
+export type FlowJumpPolicy = z.infer<typeof FlowJumpPolicySchema>;
+
+export const DEFAULT_FLOW_JUMP_POLICY: FlowJumpPolicy = 'approval';
+
+export const FlowStageDefinitionSchema = z.object({
+  id: z.string(),
+  objective: z.string(),
+  completion: z.string(),
+  gate: FlowGateKindSchema,
+  notes: z.string().optional(),
+});
+export type FlowStageDefinition = z.infer<typeof FlowStageDefinitionSchema>;
+
+export interface FlowDefinition {
+  readonly id: string;
+  readonly when?: string;
+  readonly jumps?: FlowJumpPolicy;
+  readonly stages: readonly FlowStageDefinition[];
+}
+
+/**
+ * Structural schema of a parsed flow definition, used to revalidate a
+ * definition carried as opaque `data` on a projected flow skill before an
+ * automatic run start.
+ */
+export const FlowDefinitionSchema = z.object({
+  id: z.string().min(1),
+  when: z.string().optional(),
+  jumps: FlowJumpPolicySchema.optional(),
+  stages: z.array(FlowStageDefinitionSchema).min(1),
+});
+
+export interface FlowRunState {
+  active: boolean;
+  flowId?: string;
+  task?: string;
+  runId?: string;
+  stages?: FlowStageDefinition[];
+  currentStageIndex?: number;
+  jumpPolicy?: FlowJumpPolicy;
+  endedReason?: 'finished' | 'aborted';
+  endedNote?: string;
+}
+
+export const FlowCriterionVerdictSchema = z.object({
+  criterion: z
+    .string()
+    .trim()
+    .min(1)
+    .describe('One completion criterion of the current stage, quoted or tightly paraphrased.'),
+  met: z.boolean().describe('Whether the evidence shows this criterion is satisfied.'),
+  evidence: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      'Objective evidence backing the verdict: file paths, test output excerpts, produced artifacts. Never the worker summary alone.',
+    ),
+});
+export type FlowCriterionVerdict = z.infer<typeof FlowCriterionVerdictSchema>;
+
+export type FlowVerdictResult = 'pass' | 'reject';
+export type FlowVerdictDecider = 'ai' | 'human' | 'auto';
+
+export interface FlowGateRecord {
+  readonly kind?: 'verdict';
+  readonly stage: string;
+  readonly result: FlowVerdictResult;
+  readonly decidedBy: FlowVerdictDecider;
+  readonly criteria: readonly FlowCriterionVerdict[];
+  readonly feedback?: string;
+}
+
+export interface FlowJumpRecord {
+  readonly kind: 'jump';
+  readonly fromStage: string;
+  readonly toStage: string;
+  readonly reason: string;
+  readonly decidedBy: FlowVerdictDecider;
+}
+
+export type FlowAuditRecord = FlowGateRecord | FlowJumpRecord;
+
+export interface FlowGatesState {
+  records: FlowAuditRecord[];
+  flowId?: string;
+  task?: string;
+  runId?: string;
+}
+
+export interface FlowAdvanceOutcome {
+  readonly stage: string;
+  readonly result: FlowVerdictResult;
+  readonly decidedBy: FlowVerdictDecider;
+  readonly criteria: readonly FlowCriterionVerdict[];
+  readonly feedback?: string;
+}
+
+export interface FlowAdvanceResult {
+  readonly recorded: boolean;
+  readonly runFinished: boolean;
+  readonly nextStage?: DeepReadonly<FlowStageDefinition>;
+}
+
+export interface FlowJumpOutcome {
+  readonly to: string;
+  readonly reason: string;
+  readonly decidedBy: FlowVerdictDecider;
+}
+
+export interface FlowJumpResult {
+  readonly recorded: boolean;
+  readonly stage?: DeepReadonly<FlowStageDefinition>;
+}
+
+export interface IAgentFlowService {
+  readonly _serviceBrand: undefined;
+
+  run(): DeepReadonly<FlowRunState>;
+  gates(): DeepReadonly<FlowGatesState>;
+  currentStage(): DeepReadonly<FlowStageDefinition> | undefined;
+  start(definition: FlowDefinition, task: string): boolean;
+  advance(outcome: FlowAdvanceOutcome): FlowAdvanceResult;
+  /** Move the run to another stage (backward to redo, forward to skip),
+   *  recording the jump in the audit trail and bumping the run epoch so
+   *  every verdict and reminder prepared before the jump is void. */
+  jump(outcome: FlowJumpOutcome): FlowJumpResult;
+  /** The jump policy snapshotted at run start (definition `jumps`, default
+   *  approval): disabled = strictly linear, approval = jumps need the user
+   *  gate, free = the supervisor may jump on its own. */
+  jumpPolicy(): FlowJumpPolicy;
+  abort(note?: string): void;
+  /** Monotonic run generation — bumped on start, abort, and conversation
+   *  undo. Lets consumers (stage reminders, gate reviews) tell a restarted
+   *  run apart from the one they observed, even when every rendered field
+   *  matches. */
+  runEpoch(): number;
+  /** Consume a pending activation-triggered start if the latest user prompt
+   *  in context is that activation — called from the step-head stage
+   *  reminder so the run begins after the activation prompt's undo anchor
+   *  and is already active when the first step is built. */
+  reconcilePendingActivation(): void;
+  /** Whether an activation-triggered start is queued but not yet consumed —
+   *  activation entry points reject a new flow activation while one is
+   *  pending, exactly as they do while a run is active. */
+  hasPendingActivation(): boolean;
+  /** Drop a queued activation start whose prompt will never land (aborted or
+   *  failed before reaching a step head), releasing the reserved capacity. */
+  discardPendingActivation(activationId: string): void;
+  /** Record the current epoch for a prepared FlowAdvance call (keyed by its
+   *  args object), so the gate review can bind approval to the run the
+   *  verdict was prepared against. */
+  stampPreparedEpoch(args: object): void;
+  /** The epoch recorded by stampPreparedEpoch for this args object. */
+  preparedEpochOf(args: object): number | undefined;
+  /** One-shot check that the user actually approved this call's gate review
+   *  (set by the gate hook when the approval resolves approved; consumed by
+   *  FlowAdvance's execution so the verdict provenance cannot be inferred
+   *  from prepare-time mode/display state). */
+  consumeGateApproval(toolCallId: string): boolean;
+  /** One-shot snapshot of the definition the user approved in this call's
+   *  start review (set by the start hook when the approval resolves
+   *  approved). FlowStart's execution starts the run from this snapshot
+   *  instead of re-reading the definition file, so the blueprint the user
+   *  approved is exactly the one that runs. */
+  consumeStartApproval(toolCallId: string): FlowDefinition | undefined;
+}
+
+export const IAgentFlowService: ServiceIdentifier<IAgentFlowService> =
+  createDecorator<IAgentFlowService>('agentFlowService');

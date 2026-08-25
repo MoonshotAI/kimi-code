@@ -570,6 +570,66 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     await expect(pending).resolves.toEqual(expected);
   });
 
+  it("marks only a flow gate rejection with the observed Reject label", async () => {
+    const { runtime, sdk, broadcasts } = createRuntime();
+    const pending = sdk.requestApproval({
+      toolCallId: "tool-gate",
+      toolName: "FlowAdvance",
+      action: "Review stage gate",
+      display: {
+        kind: "flow_gate_review",
+        flow_id: "issue-fix",
+        stage_id: "triage",
+        stage_index: 0,
+        stage_total: 2,
+        gate: "human",
+        objective: "find it",
+        completion: "found",
+        criteria: [{ criterion: "found", met: true, evidence: "src/x.ts:12" }],
+      },
+    });
+    const request = streamData(broadcasts).find(
+      (event) =>
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "ApprovalRequest",
+    ) as { payload: { id: string } };
+
+    expect(runtime.respondApproval(request.payload.id, "reject")).toBe(true);
+    await expect(pending).resolves.toEqual({ decision: "rejected", selectedLabel: "Reject" });
+  });
+
+  it("downgrades a flow gate session approval to a one-shot approval", async () => {
+    const { runtime, sdk, broadcasts } = createRuntime();
+    const pending = sdk.requestApproval({
+      toolCallId: "tool-gate-session",
+      toolName: "FlowAdvance",
+      action: "Review stage gate",
+      display: {
+        kind: "flow_gate_review",
+        flow_id: "issue-fix",
+        stage_id: "triage",
+        stage_index: 0,
+        stage_total: 2,
+        gate: "human",
+        objective: "find it",
+        completion: "found",
+        criteria: [{ criterion: "found", met: true, evidence: "src/x.ts:12" }],
+      },
+    });
+    const request = streamData(broadcasts).find(
+      (event) =>
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "ApprovalRequest",
+    ) as { payload: { id: string } };
+
+    expect(runtime.respondApproval(request.payload.id, "approve_for_session")).toBe(true);
+    await expect(pending).resolves.toEqual({ decision: "approved" });
+  });
+
   it("forwards SDK approval requests to the Webview in legacy yolo mode", async () => {
     const { runtime, sdk, broadcasts } = createRuntime({ yolo: true, afk: false });
     const pending = sdk.requestApproval({

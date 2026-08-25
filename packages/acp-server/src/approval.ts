@@ -86,6 +86,30 @@ const CANONICAL_OPTIONS: readonly PermissionOption[] = [
 export function approvalRequestToPermissionOptions(
   req: ApprovalRequest,
 ): readonly PermissionOption[] {
+  if (req.display.kind === 'flow_start_review') {
+    // Same sovereignty rule as the gate: starting a run is a one-shot
+    // decision on this blueprint — never a session-wide waiver.
+    return [
+      { optionId: APPROVE_ONCE_OPTION_ID, name: 'Start the run', kind: 'allow_once' },
+      { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
+    ];
+  }
+  if (req.display.kind === 'flow_gate_review') {
+    // A flow gate is a per-stage sovereignty decision: session-wide approval
+    // would let one click waive every remaining gate, so the allow-always
+    // option is deliberately absent.
+    return [
+      { optionId: APPROVE_ONCE_OPTION_ID, name: 'Pass gate', kind: 'allow_once' },
+      { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
+    ];
+  }
+  if (req.display.kind === 'flow_jump_review') {
+    // Same sovereignty rule as the gate: each jump is its own decision.
+    return [
+      { optionId: APPROVE_ONCE_OPTION_ID, name: 'Approve jump', kind: 'allow_once' },
+      { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
+    ];
+  }
   if (req.display.kind !== 'plan_review') {
     return CANONICAL_OPTIONS;
   }
@@ -153,6 +177,16 @@ export function permissionResponseToApprovalResponse(
     // allow-always optionId. Same backward-compatibility rationale as the
     // 'approve' branch above.
     case 'approve_for_session':
+      // A flow gate or jump never installs a session rule — the option is not
+      // offered for them, so an id arriving anyway degrades to a one-shot
+      // approval.
+      if (
+        req.display.kind === 'flow_start_review' ||
+        req.display.kind === 'flow_gate_review' ||
+        req.display.kind === 'flow_jump_review'
+      ) {
+        return { decision: 'approved' };
+      }
       return { decision: 'approved', scope: 'session' };
     case REJECT_OPTION_ID:
       return { decision: 'rejected' };

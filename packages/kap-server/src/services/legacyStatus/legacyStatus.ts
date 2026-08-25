@@ -1,15 +1,20 @@
 import {
   agentContextOf,
+  FLOW_FLAG_ID,
+  IAgentFlowService,
   IAgentProfileService,
+  IFlagService,
   ISessionTokenCountingService,
   ISessionUsageService,
   IModelCatalog,
   IModelService,
+  MAIN_AGENT_ID,
+  type AgentActivityState,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { AgentFlowRunStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 
 /**
  * The v1 `phase` field of the combined `agent.status.updated` payload — a
@@ -85,6 +90,8 @@ export interface LegacyStatusSnapshot {
   /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
   readonly maxContextTokens?: number;
   readonly model: string;
+  /** Main agent only: the live flow-run summary (`null` when no run is active), so any status frame doubles as a level-triggered flow signal. Omitted for other agents — a `null` from a worker frame would wrongly clear the session's badge downstream. */
+  readonly flowRun?: AgentFlowRunStatus | null;
 }
 
 /** Read the current combined status when the handle exposes a complete agent. */
@@ -115,6 +122,26 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
     contextTokens,
     maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
     model,
+    flowRun: agent.id === MAIN_AGENT_ID ? readFlowRun(agent) : undefined,
+  };
+}
+
+function readFlowRun(agent: IAgentScopeHandle): AgentFlowRunStatus | null {
+  const flags = agent.accessor.get(IFlagService) as IFlagService | undefined;
+  if (flags === undefined || !flags.enabled(FLOW_FLAG_ID)) return null;
+  const flow = agent.accessor.get(IAgentFlowService) as IAgentFlowService | undefined;
+  if (flow === undefined) return null;
+  const run = flow.run();
+  if (!run.active || run.flowId === undefined) return null;
+  const stageIndex = run.currentStageIndex ?? 0;
+  const stage = run.stages?.[stageIndex];
+  if (stage === undefined) return null;
+  return {
+    flowId: run.flowId,
+    stageId: stage.id,
+    stageIndex,
+    stageTotal: run.stages?.length ?? 0,
+    gate: stage.gate,
   };
 }
 

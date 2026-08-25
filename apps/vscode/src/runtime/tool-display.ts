@@ -26,6 +26,12 @@ export function describeToolDisplay(display: ToolInputDisplay): string {
       return display.task_description;
     case "plan_review":
       return display.plan;
+    case "flow_start_review":
+      return `Start flow ${display.flow_id} (${display.stages.length} stages)`;
+    case "flow_gate_review":
+      return `Stage ${display.stage_id} gate review (${display.stage_index + 1}/${display.stage_total})`;
+    case "flow_jump_review":
+      return `Stage jump review: ${display.from_stage_id} → ${display.to_stage_id}`;
     case "goal_start":
       return display.objective;
     case "generic":
@@ -61,6 +67,46 @@ export function toLegacyDisplay(display: ToolInputDisplay): DisplayBlock[] {
           status: item.status === "done" || item.status === "in_progress" ? item.status : "pending",
         })),
       }];
+    case "flow_start_review": {
+      const lines = [
+        describeToolDisplay(display),
+        `task: ${display.task}`,
+        `definition: ${display.source_path}`,
+        ...display.stages.map(
+          (stage, index) =>
+            `${index + 1}. ${stage.id} (gate: ${stage.gate}) — ${stage.objective}`,
+        ),
+      ];
+      return [{ type: "brief", text: lines.join("\n") }];
+    }
+    case "flow_gate_review": {
+      const lines = [
+        describeToolDisplay(display),
+        `flow ${display.flow_id}${display.task ? ` — ${display.task}` : ""}`,
+        `objective: ${display.objective}`,
+        `completion: ${display.completion}`,
+        ...display.criteria.map(
+          (criterion) =>
+            `${criterion.met ? "✓" : "✗"} ${criterion.criterion}${criterion.evidence ? ` — ${criterion.evidence}` : ""}`,
+        ),
+      ];
+      if (display.note) lines.push(`note: ${display.note}`);
+      lines.push(
+        display.next_stage_id === undefined
+          ? "passing finishes the run"
+          : `passing advances to stage ${display.next_stage_id}`,
+      );
+      return [{ type: "brief", text: lines.join("\n") }];
+    }
+    case "flow_jump_review": {
+      const lines = [
+        describeToolDisplay(display),
+        `flow ${display.flow_id}${display.task ? ` — ${display.task}` : ""}`,
+        `jump ${display.from_stage_id} (${display.from_index + 1}/${display.stage_total}) → ${display.to_stage_id} (${display.to_index + 1}/${display.stage_total})`,
+        `reason: ${display.reason}`,
+      ];
+      return [{ type: "brief", text: lines.join("\n") }];
+    }
     case "search":
     case "url_fetch":
     case "agent_call":

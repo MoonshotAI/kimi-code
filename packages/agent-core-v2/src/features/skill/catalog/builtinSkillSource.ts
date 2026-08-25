@@ -43,6 +43,22 @@ export class BuiltinSkillSource extends Disposable implements IBuiltinSkillSourc
         if (event.domain === BUILTIN_PRODUCT_SKILLS_SECTION) this.onDidChangeEmitter.fire();
       }),
     );
+    let flagged = this.flaggedVisibilitySnapshot();
+    this._register(
+      this.config.onDidChangeConfiguration(() => {
+        const now = this.flaggedVisibilitySnapshot();
+        if (now === flagged) return;
+        flagged = now;
+        this.onDidChangeEmitter.fire();
+      }),
+    );
+  }
+
+  private flaggedVisibilitySnapshot(): string {
+    return visibleBuiltinSkills(true, this.flags)
+      .filter((skill) => skill.experimentalFlag !== undefined)
+      .map((skill) => skill.name)
+      .join(',');
   }
 
   async load(): Promise<SkillContribution> {

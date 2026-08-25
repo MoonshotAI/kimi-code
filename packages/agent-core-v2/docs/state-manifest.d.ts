@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 80 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 82 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -60,6 +60,8 @@
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     dateChange.seed                                 src/features/dateChange/dateChangeService.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
+//     flow                                            src/features/flow/flowOps.ts
+//     flow.gates                                      src/features/flow/flowOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
 //     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
@@ -165,6 +167,7 @@ export interface WorkspaceStateSnapshot {
         readonly d2?: string;
         readonly productSpecific?: boolean;
         readonly experimentalFlag?: string;
+        readonly data?: unknown;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly path: string;
@@ -202,6 +205,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -229,6 +233,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -264,6 +269,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -291,6 +297,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -318,6 +325,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -347,6 +355,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -374,6 +383,7 @@ export interface WorkspaceStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -430,6 +440,7 @@ export interface SessionStateSnapshot {
         readonly d2?: string;
         readonly productSpecific?: boolean;
         readonly experimentalFlag?: string;
+        readonly data?: unknown;
       }[];
       readonly skipped?: readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly path: string;
@@ -467,6 +478,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }) => void;
     register: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -494,6 +506,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, options?: {
       readonly replace?: boolean;
     }) => void;
@@ -529,6 +542,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     getPluginSkill: (pluginId: string, name: string) => /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -556,6 +570,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     } | undefined;
     renderSkillPrompt: (skill: /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -583,6 +598,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }, rawArgs: string, context?: {
       readonly sessionId?: string;
     }) => string;
@@ -612,6 +628,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     listInvocableSkills: () => readonly /* SkillDefinition — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
       readonly name: string;
@@ -639,6 +656,7 @@ export interface SessionStateSnapshot {
       readonly d2?: string;
       readonly productSpecific?: boolean;
       readonly experimentalFlag?: string;
+      readonly data?: unknown;
     }[];
     getSkillRoots: () => readonly string[];
     getSkippedByPolicy: () => readonly /* SkippedSkill — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
@@ -1443,6 +1461,49 @@ export interface AgentStateSnapshot {
   } | undefined;
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
+  // src/features/flow/flowOps.ts
+  // replayable · durable · undoable — folds: FlowRunStarted, FlowJumped, FlowVerdict, FlowRunEnded
+  'flow': /* FlowRunState — packages/agent-core-v2/src/features/flow/flow.ts */ {
+    active: boolean;
+    flowId?: string;
+    task?: string;
+    runId?: string;
+    stages?: {
+      id: string;
+      objective: string;
+      completion: string;
+      gate: 'ai' | 'human' | 'ai-then-human';
+      notes?: string;
+    }[];
+    currentStageIndex?: number;
+    jumpPolicy?: 'approval' | 'disabled' | 'free';
+    endedReason?: 'aborted' | 'finished';
+    endedNote?: string;
+  };
+  // replayable · durable — folds: FlowRunStarted, FlowVerdict, FlowJumped
+  'flow.gates': /* FlowGatesState — packages/agent-core-v2/src/features/flow/flow.ts */ {
+    records: (/* FlowAuditRecord — packages/agent-core-v2/src/features/flow/flow.ts */ /* FlowGateRecord — packages/agent-core-v2/src/features/flow/flow.ts */ {
+      readonly kind?: 'verdict';
+      readonly stage: string;
+      readonly result: /* FlowVerdictResult — packages/agent-core-v2/src/features/flow/flow.ts */ 'pass' | 'reject';
+      readonly decidedBy: /* FlowVerdictDecider — packages/agent-core-v2/src/features/flow/flow.ts */ 'auto' | 'ai' | 'human';
+      readonly criteria: readonly {
+        criterion: string;
+        met: boolean;
+        evidence: string;
+      }[];
+      readonly feedback?: string;
+    } | /* FlowJumpRecord — packages/agent-core-v2/src/features/flow/flow.ts */ {
+      readonly kind: 'jump';
+      readonly fromStage: string;
+      readonly toStage: string;
+      readonly reason: string;
+      readonly decidedBy: /* FlowVerdictDecider — packages/agent-core-v2/src/features/flow/flow.ts */ 'auto' | 'ai' | 'human';
+    })[];
+    flowId?: string;
+    task?: string;
+    runId?: string;
+  };
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts

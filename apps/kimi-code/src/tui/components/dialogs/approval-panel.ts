@@ -46,6 +46,8 @@ interface BlockStyles {
   accent: (s: string) => string;
   gutter: (s: string) => string;
   errorBold: (s: string) => string;
+  ok: (s: string) => string;
+  bad: (s: string) => string;
 }
 
 function makeBlockStyles(): BlockStyles {
@@ -55,6 +57,8 @@ function makeBlockStyles(): BlockStyles {
     accent: (s) => currentTheme.fg('accent', s),
     gutter: (s) => currentTheme.fg('diffGutter', s),
     errorBold: (s) => currentTheme.boldFg('error', s),
+    ok: (s) => currentTheme.fg('success', s),
+    bad: (s) => currentTheme.fg('error', s),
   };
 }
 
@@ -96,6 +100,61 @@ function renderShellDisplayBlock(
   });
   if (block.description !== undefined && block.description.length > 0) {
     lines.push(`  ${s.dim(block.description)}`);
+  }
+  return lines;
+}
+
+function renderFlowStartDisplayBlock(
+  block: Extract<DisplayBlock, { type: 'flow_start' }>,
+  s: BlockStyles,
+  width: number,
+): string[] {
+  const lines: string[] = [
+    `${s.accent(`flow ${block.flow_id}`)} ${s.strong(`· ${String(block.stages.length)} stages`)} ${s.dim(`· ${block.source_path}`)}`,
+  ];
+  appendWrappedLine(lines, s.dim('task: '), '  ', s.dim(block.task), width);
+  block.stages.forEach((stage, index) => {
+    appendWrappedLine(
+      lines,
+      `${s.strong(`${String(index + 1)}.`)} `,
+      '   ',
+      `${s.strong(stage.id)} ${s.dim(`(gate: ${stage.gate})`)}`,
+      width,
+    );
+    appendWrappedLine(lines, '   ', '   ', s.dim(stage.objective), width);
+    appendWrappedLine(lines, `   ${s.dim('done when: ')}`, '   ', s.dim(stage.completion), width);
+  });
+  return lines;
+}
+
+function renderFlowGateDisplayBlock(
+  block: Extract<DisplayBlock, { type: 'flow_gate' }>,
+  s: BlockStyles,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  const position = `${String(block.stage_index + 1)}/${String(block.stage_total)}`;
+  const outcome =
+    block.next_stage_id === undefined
+      ? 'passing finishes the run'
+      : `next stage: ${block.next_stage_id}`;
+  lines.push(
+    `${s.accent(`flow ${block.flow_id}`)} ${s.strong(`· stage ${block.stage_id} (${position})`)} ${s.dim(`· ${outcome}`)}`,
+  );
+  if (block.task !== undefined && block.task.length > 0) {
+    appendWrappedLine(lines, s.dim('task: '), '  ', s.dim(block.task), width);
+  }
+  appendWrappedLine(lines, s.dim('objective: '), '  ', s.dim(block.objective), width);
+  appendWrappedLine(lines, s.dim('completion: '), '  ', s.dim(block.completion), width);
+  for (const criterion of block.criteria) {
+    const mark = criterion.met ? s.ok('✓') : s.bad('✗');
+    appendWrappedLine(lines, `${mark} `, '  ', s.strong(criterion.criterion), width);
+    if (criterion.evidence.length > 0) {
+      appendWrappedLine(lines, '  ', '  ', s.dim(criterion.evidence), width);
+    }
+  }
+  if (block.note !== undefined && block.note.length > 0) {
+    appendWrappedLine(lines, s.dim('note: '), '  ', s.dim(block.note), width);
   }
   return lines;
 }
@@ -162,6 +221,10 @@ function renderDisplayBlock(
       return block.text
         ? block.text.split('\n').map((line) => (line.length > 0 ? s.strong(line) : ''))
         : [];
+    case 'flow_start':
+      return renderFlowStartDisplayBlock(block, s, contentWidth);
+    case 'flow_gate':
+      return renderFlowGateDisplayBlock(block, s, contentWidth);
     case 'background_task':
       return [
         s.strong(`${block.status} ${block.kind} task ${block.task_id}: ${block.description}`),
@@ -200,6 +263,10 @@ function headerFor(toolName: string): string {
       return 'Stop this task?';
     case 'ExitPlanMode':
       return 'Ready to build with this plan?';
+    case 'FlowStart':
+      return 'Start this flow run?';
+    case 'FlowAdvance':
+      return 'Pass this stage gate?';
     default:
       return `Approve ${toolName}?`;
   }
@@ -240,6 +307,9 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   private submit(index: number, feedback: string = ''): void {
     const option = this.choiceAt(index);
     if (!option) return;
+    if (option.requires_feedback === true && feedback.trim().length === 0) {
+      return;
+    }
     this.onResponse({
       response: option.response,
       feedback: feedback || undefined,

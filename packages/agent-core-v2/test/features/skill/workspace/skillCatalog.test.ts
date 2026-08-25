@@ -23,6 +23,8 @@ import {
   type HostFsWatchOptions,
   type IHostFsWatchHandle,
 } from '#/os/interface/hostFsWatch';
+import { FLOWS_SKILL_SOURCE_ID, IFlowsSkillSource } from '#/features/flow/flowsSkillSource';
+import { SKILL_SOURCE_PRIORITY } from '#/features/skill/catalog/skillSource';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -228,10 +230,21 @@ async function withSkillCatalogWorkspace(
   }
 }
 
+class StubFlowsSkillSource implements IFlowsSkillSource {
+  declare readonly _serviceBrand: undefined;
+  readonly id = FLOWS_SKILL_SOURCE_ID;
+  readonly priority = SKILL_SOURCE_PRIORITY.flows;
+  async load(): Promise<SkillContribution> {
+    return { skills: [] };
+  }
+  dispose(): void {}
+}
+
 describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);
+    registerScopedService('program', IFlowsSkillSource, StubFlowsSkillSource);
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
     registerScopedService(LifecycleScope.App, IPluginService, PluginService);
     registerScopedService(

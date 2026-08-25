@@ -9,6 +9,14 @@ import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
 
+export interface AgentFlowRunStatus {
+  readonly flowId: string;
+  readonly stageId: string;
+  readonly stageIndex: number;
+  readonly stageTotal: number;
+  readonly gate: string;
+}
+
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
   readonly model?: string;
@@ -18,6 +26,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly flowRun?: AgentFlowRunStatus | null;
   readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
