@@ -26,20 +26,8 @@ export interface ExecutableToolSuccessResult {
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
-  /**
-   * Engine-internal: full output before the tool truncated it, handed to the
-   * truncation service for spill-to-disk. Never sent to the model or the wire.
-   */
   readonly untruncatedOutput?: string;
-  /**
-   * Engine-internal: true total size of `untruncatedOutput` when retention was
-   * capped; greater than `untruncatedOutput.length` means only a prefix was preserved.
-   */
   readonly untruncatedOutputTotalChars?: number;
-  /**
-   * Engine-internal: opts the result out of spill-to-disk (e.g. reading a file
-   * that already lives in the spill directory).
-   */
   readonly spillExempt?: true | undefined;
 }
 
@@ -50,20 +38,8 @@ export interface ExecutableToolErrorResult {
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
-  /**
-   * Engine-internal: full output before the tool truncated it, handed to the
-   * truncation service for spill-to-disk. Never sent to the model or the wire.
-   */
   readonly untruncatedOutput?: string;
-  /**
-   * Engine-internal: true total size of `untruncatedOutput` when retention was
-   * capped; greater than `untruncatedOutput.length` means only a prefix was preserved.
-   */
   readonly untruncatedOutputTotalChars?: number;
-  /**
-   * Engine-internal: opts the result out of spill-to-disk (e.g. reading a file
-   * that already lives in the spill directory).
-   */
   readonly spillExempt?: true | undefined;
 }
 

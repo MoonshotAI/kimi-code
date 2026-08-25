@@ -16,10 +16,6 @@ export interface IAgentToolResultTruncationService {
     input: ToolResultTruncationInput<T>,
   ): Promise<T>;
 
-  /**
-   * Whether an absolute path lives inside this agent's spill directory
-   * (files previously persisted by this service).
-   */
   isSpillFilePath(path: string): boolean;
 }
 

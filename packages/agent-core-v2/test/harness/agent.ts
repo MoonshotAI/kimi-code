@@ -2897,7 +2897,7 @@ async function generateBackedResponse(
       usage: null,
       finishReason: null,
       rawFinishReason: null,
-      error,
+      error: error instanceof Error ? error : new Error('generateBackedResponse failed'),
     });
   }
   return createStreamedMessage(
@@ -2964,7 +2964,7 @@ function createStreamedMessage(
     Awaited<ReturnType<GenerateFn>>,
     'id' | 'usage' | 'finishReason' | 'rawFinishReason'
   > &
-    Partial<Pick<Awaited<ReturnType<GenerateFn>>, 'traceId'>> & { error?: unknown },
+    Partial<Pick<Awaited<ReturnType<GenerateFn>>, 'traceId'>> & { error?: Error },
 ): StreamedMessage {
   return {
     id: meta.id,
