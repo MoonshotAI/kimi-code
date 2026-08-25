@@ -32,8 +32,11 @@ export const taskSchema = z.object({
   thinking_effort: z.string().optional(),
   agent_id: z.string().optional(),
   /** Whether the task runs detached from the caller's turn (background).
-   *  Absent when the producer predates the field. */
-  run_in_background: z.boolean().optional(),
+   *  Always present: the server knows every task's detached flag (a
+   *  ghost-restored record predating it reads true — the persisted store
+   *  only lists such tasks when they are terminal-and-detached or running
+   *  with a concrete flag). */
+  run_in_background: z.boolean(),
 });
 export type Task = z.infer<typeof taskSchema>;
 

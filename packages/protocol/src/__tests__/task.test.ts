@@ -43,10 +43,17 @@ describe('taskSchema', () => {
     status: 'running',
     created_at: '2026-06-04T10:00:00.000Z',
     started_at: '2026-06-04T10:00:00.000Z',
+    run_in_background: true,
   };
 
   it('round-trips a running task', () => {
     expect(taskSchema.parse(full)).toEqual(full);
+  });
+
+  it('requires run_in_background', () => {
+    const { run_in_background: _omitted, ...withoutFlag } = full;
+    expect(taskSchema.safeParse(withoutFlag).success).toBe(false);
+    expect(taskSchema.safeParse({ ...full, run_in_background: false }).success).toBe(true);
   });
 
   it('round-trips a completed task with completed_at + output fields', () => {

@@ -272,6 +272,7 @@ function toWireTask(
     status,
     created_at: createdIso,
     started_at: createdIso,
+    run_in_background: info.detached ?? true,
   };
   if (info.endedAt !== null && info.endedAt !== undefined) {
     base.completed_at = new Date(info.endedAt).toISOString();
@@ -294,7 +295,6 @@ function toWireTask(
   if (info.kind === 'agent' && info.parentToolCallId !== undefined) {
     base.parent_tool_call_id = info.parentToolCallId;
   }
-  base.run_in_background = info.detached;
   if (output !== undefined) {
     base.output_preview = output.preview;
     base.output_bytes = output.bytes;

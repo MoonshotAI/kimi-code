@@ -49,6 +49,7 @@ describe('getTaskResponseSchema', () => {
       description: 'spin up x',
       status: 'running' as const,
       created_at: '2026-06-04T10:00:00.000Z',
+      run_in_background: true,
     };
     expect(getTaskResponseSchema.parse(t).kind).toBe('subagent');
   });
