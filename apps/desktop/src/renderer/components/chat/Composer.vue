@@ -36,11 +36,9 @@ import {
   nextAttachmentSeq,
   parseAttachmentLinks,
   registerLiveComposerEditor,
-  removeAttachmentLinks,
   serializeAttachment,
   startMentionSelectionSync,
   rewriteAttachmentLinksForSubmit,
-  stripAttachmentLinks,
   type AttachmentEntry,
   type ComposerEditorApi,
 } from '@moonshot-ai/app-composer';
@@ -53,7 +51,9 @@ import {
   planFileAttachment,
   planFolderAttachment,
   restampRefillByOrderHint,
+  rewriteQuoteLinks,
   seedEntriesForTurnAttachments,
+  steerHistoryText,
   unreferencedSeedFiles,
   type SubmitDecision,
 } from '@moonshot-ai/app-client/lib';
@@ -150,7 +150,7 @@ const emit = defineEmits<{
   /** `restoreText` + `restoreEntries` are the gate-failure restore's draft
       (the PRE-REWRITE text, attId links intact, with the original registry
       entries) — see the command emit's contract. */
-  submit: [payload: { text: string; restoreText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[] }];
+  submit: [payload: { text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; restoreEntries: AttachmentEntry[] }];
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
@@ -162,7 +162,7 @@ const emit = defineEmits<{
       rewrite would have degraded a folder pill into a plain path mention);
       `restoreEntries` pairs it with the original registry entries (folder
       paths included), or the revived pills would come back dead. */
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; restoreEntries?: AttachmentEntry[] }];
+  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; restoreEntries?: AttachmentEntry[]; editText?: string }];
   interrupt: [];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
@@ -994,6 +994,14 @@ function focus(): void {
   // or if focus is triggered during an animation/transition.
   editor?.focus({ preventScroll: true });
 }
+
+/** Insert a quote pill at the document end (selection quote actions — 划词);
+    the 评论 flow's comment rides in the same paragraph after the pill (see
+    composerEditor's insertQuote). */
+function insertQuote(quote: string, comment?: string): void {
+  editor?.insertQuote({ text: quote }, comment);
+}
+
 function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
   const fileSources = atts.filter((att) => att.kind === 'file' && att.fileId !== undefined);
   const seedEntries = seedEntriesForTurnAttachments(atts);
@@ -1128,11 +1136,13 @@ function submitAssembly(): { promptAttachments: PromptAttachment[]; rewriteAttId
   };
 }
 
-/** Rewrite the attachment links of a submit-bound text copy: file pills →
+/** Rewrite the ATTACHMENT links of a submit-bound text copy: file pills →
  *  1..N index links (payload order), folder pills → real-path mention links.
- *  The composer doc and the persisted draft keep the attId form (the
- *  transcript stores this rewritten output); links without a ready entry
- *  degrade to bare names inside the rewrite. */
+ *  The composer doc and the persisted draft keep the attId form; links
+ *  without a ready entry degrade to bare names inside the rewrite. QUOTE
+ *  pills keep their link form here — the quote rewrite is applied only to
+ *  daemon-bound texts (decideComposerSubmit's branches, handleSteer's
+ *  payload), so history recall and gate-failure restores revive the pill. */
 function rewriteForSubmit(trimmed: string, rewriteAttIds: readonly string[]): string {
   return rewriteAttachmentLinksForSubmit(trimmed, rewriteAttIds, {
     resolveFolder: (attId) => attachmentEntries.value.find((e) => e.attId === attId)?.path,
@@ -1331,12 +1341,12 @@ function handleSubmit(): void {
         // composer in the same flush — persist the kept pills synchronously
         // instead of the nextTick restore (see persistPillsForDeparture).
         persistPillsForDeparture();
-        emit('command', { cmd: decision.cmd, attachments: [] });
+        emit('command', { cmd: decision.cmd, attachments: [], restoreText: decision.restoreText, restoreEntries: attachmentEntries.value });
         return;
       }
       const restorePills = preserveAttachmentPills();
       restorePills();
-      emit('command', { cmd: decision.cmd, attachments: [] });
+      emit('command', { cmd: decision.cmd, attachments: [], restoreText: decision.restoreText, restoreEntries: attachmentEntries.value, editText: decision.editText });
       return;
     }
 
@@ -1351,7 +1361,7 @@ function handleSubmit(): void {
       slashOpen.value = false;
       closeMentionMenu();
       collapseAndRefit();
-      emit('submit', { text: decision.text, restoreText: decision.restoreText, attachments: decision.attachments, restoreEntries: attachmentEntries.value });
+      emit('submit', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries: attachmentEntries.value });
       return;
     }
   }
@@ -1372,15 +1382,19 @@ function handleSteer(): void {
   const assembly = submitAssembly();
   if (!trimmed && assembly.promptAttachments.length === 0 && props.queued.length === 0) return;
 
+  // Steer is daemon-bound: quote pills serialize to their `> ` blocks here
+  // (same decision-level rewrite as handleSubmit's branches).
   const payload = {
-    text: rewriteForSubmit(trimmed, assembly.rewriteAttIds),
+    text: rewriteQuoteLinks(rewriteForSubmit(trimmed, assembly.rewriteAttIds)).trim(),
     attachments: assembly.promptAttachments,
   };
   clearAfterSubmit();
   // Same strip as handleSubmit: history recall must not revive dead pills —
   // and a pill-ONLY steer records nothing (a bare name is not a draft — its
-  // recall would come back registry-less and resend just the filename).
-  history.push(trimmed !== '' && removeAttachmentLinks(trimmed).trim() === '' ? '' : stripAttachmentLinks(payload.text));
+  // recall would come back registry-less and resend just the filename). The
+  // entry derives from the PRE-REWRITE draft: quote links survive and revive
+  // on recall (the daemon-bound payload's flattened blocks would not).
+  history.push(steerHistoryText(trimmed));
   // Same abandonment as handleSubmit: the pre-browse draft's snapshot dies
   // with the send.
   historyEntrySnapshot = null;
@@ -1751,7 +1765,7 @@ const anyPopupOpen = computed(
 
 const isEmpty = () => text.value.trim().length === 0 && attachments.value.length === 0 && attachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, loadAttachmentsForEdit, restoreDraftEntries, focus, anyPopupOpen, isEmpty });
 
 function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;

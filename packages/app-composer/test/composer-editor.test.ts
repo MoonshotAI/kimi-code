@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorState } from 'prosemirror-state';
 import type { Decoration, DecorationSet } from 'prosemirror-view';
 import { attachmentKeyFor, attachmentRegistryKey, createAttachmentRegistryPlugin, type AttachmentEntry } from '../src/attachmentRegistry';
-import { attachmentErrorDecorations, composerPlugins, deliverPillEntryPatch, liveComposerEditorFor, registerLiveComposerEditor, type ComposerEditorApi } from '../src/composerEditor';
+import { attachmentErrorDecorations, composerClipboardSerializer, composerPlugins, deliverPillEntryPatch, liveComposerEditorFor, registerLiveComposerEditor, type ComposerEditorApi } from '../src/composerEditor';
 import { clearStashedEditorStates, stashEditorState, takeEditorState } from '../src/editorStateCache';
-import { composerSchema, textToDoc } from '../src/composerTextDoc';
+import { composerSchema, quoteNode, textToDoc } from '../src/composerTextDoc';
 
 const WIRE = 'see [a.pdf](kimi-code-composer://attachments/aaaaaaaa) and [b.pdf](kimi-code-composer://attachments/bbbbbbbb)';
 
@@ -287,5 +287,25 @@ describe('live editor registry + deliverPillEntryPatch (async upload-outcome del
     });
     expect(updateAttachmentEntry).toHaveBeenCalledWith('aaaaaaaa', { fileId: 'f_first', uploading: false, error: undefined });
     release();
+  });
+});
+
+describe('composerClipboardSerializer — quote pill HTML flavor', () => {
+  it('serializes the FULL quote text, not the truncated pill label', () => {
+    const long = '这是一段远超二十四字素截断上限的完整引用文本\n第二行也要完整保留';
+    const spec = composerClipboardSerializer.nodes.quote!;
+    const dom = spec(quoteNode({ text: long }), null as never);
+    const serialized = JSON.stringify(dom);
+    expect(serialized).toContain('这是一段远超二十四字素截断上限的完整引用文本');
+    expect(serialized).toContain('第二行也要完整保留');
+    // Sanity: the pill label would have been truncated — the HTML flavor
+    // must NOT cap at it.
+    expect(serialized).not.toContain('…');
+  });
+
+  it('keeps line boundaries in the HTML flavor (pre-wrap — default white-space would collapse newlines)', () => {
+    const spec = composerClipboardSerializer.nodes.quote!;
+    const dom = spec(quoteNode({ text: '第一行\n第二行' }), null as never);
+    expect(JSON.stringify(dom)).toContain('white-space: pre-wrap');
   });
 });

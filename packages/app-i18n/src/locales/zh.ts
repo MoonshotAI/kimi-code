@@ -28,6 +28,7 @@ import onboarding from './zh/onboarding';
 import settings from './zh/settings';
 import header from './zh/header';
 import sideChat from './zh/sideChat';
+import selection from './zh/selection';
 import shortcuts from './zh/shortcuts';
 import terminal from './zh/terminal';
 import prPreview from './zh/prPreview';
@@ -63,6 +64,7 @@ export default {
   settings,
   header,
   sideChat,
+  selection,
   shortcuts,
   terminal,
   prPreview,

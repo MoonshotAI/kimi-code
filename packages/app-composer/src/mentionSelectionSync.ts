@@ -1,5 +1,5 @@
 // packages/app-composer/src/mentionSelectionSync.ts
-// Selection paint for mention and attachment pills. Browsers paint the
+// Selection paint for mention, attachment and quote pills. Browsers paint the
 // text-selection highlight over text and <img>, but NOT over inline <svg> —
 // so a selection crossing a pill used to leave its glyph visibly unselected.
 // There's no CSS-only way around it (see csswg-drafts#5395), so we toggle a
@@ -38,7 +38,7 @@ export function startMentionSelectionSync(getRoot: () => ParentNode | null): () 
       return;
     }
     const covered = new Set<Element>();
-    for (const pill of root.querySelectorAll('.mention-pill, .attachment-pill')) {
+    for (const pill of root.querySelectorAll('.mention-pill, .attachment-pill, .quote-pill')) {
       try {
         if (range.intersectsNode(pill)) covered.add(pill);
       } catch {

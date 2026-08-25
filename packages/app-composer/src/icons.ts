@@ -17,8 +17,9 @@ import RawTarget from '~icons/kimi/target?raw';
 import RawEdit from '~icons/kimi/edit?raw';
 import RawClose from '~icons/kimi/close?raw';
 import RawAttachment2 from '~icons/ri/attachment-2?raw';
+import RawChatQuoteLine from '~icons/ri/chat-quote-line?raw';
 
-type IconName = 'file' | 'folder' | 'skill' | 'copy' | 'check' | 'external-link' | 'target' | 'file-edit' | 'close' | 'attachment';
+type IconName = 'file' | 'folder' | 'skill' | 'copy' | 'check' | 'external-link' | 'target' | 'file-edit' | 'close' | 'attachment' | 'quote';
 type IconSize = 'sm' | 'md' | 'lg';
 
 const SIZE_PX: Record<IconSize, number> = { sm: 14, md: 16, lg: 20 };
@@ -34,6 +35,7 @@ const RAW: Record<IconName, string> = {
   'file-edit': RawEdit,
   close: RawClose,
   attachment: RawAttachment2,
+  quote: RawChatQuoteLine,
 };
 
 /** Render one of the mention icons to a sized <svg> string (v-html contexts). */

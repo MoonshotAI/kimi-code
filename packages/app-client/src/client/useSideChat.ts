@@ -13,6 +13,7 @@ import type { AppApprovalRequest, AppMessage, KimiEventConnection, KimiWebApi, T
 import { createTurnsProjector } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending } from '@moonshot-ai/app-core/lib';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
+import { joinDraftSegments } from '../lib/quoteSelection';
 import type { ExtendedState } from './types';
 
 export interface UseSideChatDeps {
@@ -225,6 +226,87 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     return openSideChatOn(parent, initialPrompt);
   }
 
+  // In-flight AGENT CREATIONS keyed by parent session — the dedup slot behind
+  // openSideChatOn's concurrency guard (cleared on settle). Only the creation
+  // is deduped: each caller sends its own initial prompt independently, so a
+  // failed first send never eats a concurrent caller's prompt.
+  const createInFlightBySession = new Map<string, Promise<boolean>>();
+
+  // Quotes dropped off by the GUARDED side-chat open (selection quote
+  // actions: the user moved on mid-flight, so the panel must not force
+  // itself open) — keyed by parent session, consumed by the next
+  // SideChatPanel mount for that session.
+  const pendingDraftBySession = ref<Record<string, string>>({});
+
+  // Session-deletion generation: bumped by clearSideChatForSession, captured
+  // by createSideChatAgent so an async create result writes back only when
+  // the session is still alive (a stale generation = tombstoned mid-flight).
+  // Also the tombstone behind setSideChatPendingDraft's refusal.
+  const sideChatClearGenerationBySession = new Map<string, number>();
+
+  function clearGeneration(sessionId: string): number {
+    return sideChatClearGenerationBySession.get(sessionId) ?? 0;
+  }
+
+  /** Stash a draft for the session's side chat (guarded-open fallback).
+   *  Repeat stashes JOIN like the panel's own insertDraft — one normalized
+   *  draft, never last-write-wins. A cleared-and-never-reopened session is
+   *  tombstoned: stashing is refused (its agent target is gone for good). */
+  function setSideChatPendingDraft(sessionId: string, text: string): void {
+    if (clearGeneration(sessionId) > 0 && sideChatTargetBySession.value[sessionId] === undefined) return;
+    const existing = pendingDraftBySession.value[sessionId];
+    pendingDraftBySession.value = {
+      ...pendingDraftBySession.value,
+      [sessionId]: existing === undefined ? text : joinDraftSegments(existing, text),
+    };
+  }
+
+  /** Read AND clear the session's pending side-chat draft (null when none). */
+  function takeSideChatPendingDraft(sessionId: string): string | null {
+    const text = pendingDraftBySession.value[sessionId];
+    if (text === undefined) return null;
+    const { [sessionId]: _removed, ...rest } = pendingDraftBySession.value;
+    void _removed;
+    pendingDraftBySession.value = rest;
+    return text;
+  }
+
+  // The WHOLE side-chat draft, keyed by parent session: the panel instance is
+  // reused across session switches (not keyed) and unmounts when the target
+  // session has no BTW tab, so the draft cannot live in component state —
+  // typed text is saved as it changes and re-loaded by the panel on mount /
+  // switch. Same layer and record style as pendingDraftBySession.
+  const sideChatDraftBySession = ref<Record<string, string>>({});
+
+  /** Persist the session's side-chat draft; an empty draft evicts the key. */
+  function saveSideChatDraft(sessionId: string, text: string): void {
+    if (text) {
+      sideChatDraftBySession.value = { ...sideChatDraftBySession.value, [sessionId]: text };
+      return;
+    }
+    if (sideChatDraftBySession.value[sessionId] === undefined) return;
+    const { [sessionId]: _removed, ...rest } = sideChatDraftBySession.value;
+    void _removed;
+    sideChatDraftBySession.value = rest;
+  }
+
+  /** The session's persisted side-chat draft ('' when none). */
+  function sideChatDraft(sessionId: string): string {
+    return sideChatDraftBySession.value[sessionId] ?? '';
+  }
+
+  /** Clear the session's persisted draft ONLY when it still equals the given
+   *  snapshot — the post-send cleanup. A draft that moved on mid-flight (the
+   *  user typed more before the send resolved, possibly after the panel
+   *  closed or switched sessions, so its draft watcher can no longer run) is
+   *  the user's new content and must survive. */
+  function clearSideChatDraftIfUnchanged(sessionId: string, snapshot: string): void {
+    if (sideChatDraftBySession.value[sessionId] !== snapshot) return;
+    const { [sessionId]: _removed, ...rest } = sideChatDraftBySession.value;
+    void _removed;
+    sideChatDraftBySession.value = rest;
+  }
+
   /** Low-level: open the side chat on an explicit parent session id.
    *  Used when the parent was just created from the empty composer so the call
    *  can target it directly instead of reading the active session (which could
@@ -233,27 +315,64 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
    *  caller can restore the text (the composer consumed the /btw command). */
   async function openSideChatOn(parent: string, initialPrompt?: string): Promise<boolean> {
     if (!sideChatTargetBySession.value[parent]) {
-      let agentId: string;
-      try {
-        ({ agentId } = await api.startBtw(parent));
-      } catch (err) {
-        pushOperationFailure('openSideChat', err, { sessionId: parent });
-        return false;
+      // Concurrent first opens for the SAME session share one in-flight
+      // CREATION: two opens landing before the first startBtw returns would
+      // otherwise both take the create branch and spawn an orphan agent (the
+      // second target write clobbers the first). The dedup covers only the
+      // creation — a piggybacked caller sends its own prompt afterwards and
+      // gets its own result.
+      const inFlight = createInFlightBySession.get(parent);
+      if (inFlight) {
+        const created = await inFlight;
+        if (!created) return false;
+      } else {
+        const create = createSideChatAgent(parent);
+        createInFlightBySession.set(parent, create);
+        try {
+          const created = await create;
+          if (!created) return false;
+        } finally {
+          // Identity-guarded: clearSideChatForSession may have invalidated
+          // this slot mid-flight, and a LATER call may already have opened a
+          // fresh one — never evict another call's slot.
+          if (createInFlightBySession.get(parent) === create) {
+            createInFlightBySession.delete(parent);
+          }
+        }
       }
-      rawState.sideChatMessagesByAgent = {
-        ...rawState.sideChatMessagesByAgent,
-        [agentId]: rawState.sideChatMessagesByAgent[agentId] ?? [],
-      };
-      sideChatTargetBySession.value = {
-        ...sideChatTargetBySession.value,
-        [parent]: { agentId },
-      };
-      connectEventsIfNeeded();
-      getEventConn()?.markSideChannelAgent(parent, agentId);
     }
     if (initialPrompt && initialPrompt.trim()) {
       return sendSideChatPromptOn(parent, initialPrompt.trim());
     }
+    return true;
+  }
+
+  /** The deduped half of openSideChatOn: startBtw + target registration. The
+   *  async result writes back ONLY when no clear landed during the flight —
+   *  a stale clear-generation means the parent session was archived/deleted
+   *  mid-create, and registering the fresh agent would resurrect hidden
+   *  state for a dead session (a LATER explicit open captures the bumped
+   *  generation and proceeds normally, e.g. after a restore). */
+  async function createSideChatAgent(parent: string): Promise<boolean> {
+    const generation = clearGeneration(parent);
+    let agentId: string;
+    try {
+      ({ agentId } = await api.startBtw(parent));
+    } catch (err) {
+      pushOperationFailure('openSideChat', err, { sessionId: parent });
+      return false;
+    }
+    if (clearGeneration(parent) !== generation) return false;
+    rawState.sideChatMessagesByAgent = {
+      ...rawState.sideChatMessagesByAgent,
+      [agentId]: rawState.sideChatMessagesByAgent[agentId] ?? [],
+    };
+    sideChatTargetBySession.value = {
+      ...sideChatTargetBySession.value,
+      [parent]: { agentId },
+    };
+    connectEventsIfNeeded();
+    getEventConn()?.markSideChannelAgent(parent, agentId);
     return true;
   }
 
@@ -373,6 +492,13 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   // monotonically for the app's lifetime (one dead entry per archived/deleted
   // session that ever opened a BTW).
   function clearSideChatForSession(sessionId: string): void {
+    // Bump the deletion generation FIRST: any in-flight create holds a stale
+    // one from here on and must not write its result back. The in-flight
+    // dedup slot dies with it too — a LATER open (e.g. the session was
+    // archived and restored) must start a fresh creation at the new
+    // generation instead of piggybacking on the stale one.
+    sideChatClearGenerationBySession.set(sessionId, clearGeneration(sessionId) + 1);
+    createInFlightBySession.delete(sessionId);
     // Session-keyed, so always cleanable — even when the target is already
     // gone (the user closed the BTW tab before the session died). The
     // agent-keyed buckets below can only be resolved while a target exists.
@@ -380,6 +506,19 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       const { [sessionId]: _ids, ...restIds } = rawState.sideChatUserMessageIdsBySession;
       void _ids;
       rawState.sideChatUserMessageIdsBySession = restIds;
+    }
+    // A stashed pending draft (guarded-open fallback) dies with the session
+    // too — a long quote must not linger forever.
+    if (pendingDraftBySession.value[sessionId] !== undefined) {
+      const { [sessionId]: _draft, ...restDrafts } = pendingDraftBySession.value;
+      void _draft;
+      pendingDraftBySession.value = restDrafts;
+    }
+    // The persisted whole draft dies with the session as well.
+    if (sideChatDraftBySession.value[sessionId] !== undefined) {
+      const { [sessionId]: _draft, ...restDrafts } = sideChatDraftBySession.value;
+      void _draft;
+      sideChatDraftBySession.value = restDrafts;
     }
 
     const target = sideChatTargetBySession.value[sessionId];
@@ -415,6 +554,11 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     openSideChatOn,
     closeSideChat,
     sendSideChatPrompt,
+    setSideChatPendingDraft,
+    takeSideChatPendingDraft,
+    saveSideChatDraft,
+    sideChatDraft,
+    clearSideChatDraftIfUnchanged,
     clearSideChatForSession,
   };
 }

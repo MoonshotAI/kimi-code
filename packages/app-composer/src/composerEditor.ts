@@ -12,14 +12,15 @@ import { DOMSerializer, type Node as PMNode } from 'prosemirror-model';
 import { history, redo, undo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, selectTextblockEnd, selectTextblockStart, splitBlock } from 'prosemirror-commands';
-import { composerSchema, buildAttachmentInsertion, buildMentionInsertion, collectSkillMentions, degradeForeignAttachmentLinks, docToText, extendToTextblock, inlineRunStartOffset, parseClipboardText, posToTextOffset, serializeClipboardSlice, textOffsetToPos, textToDoc } from './composerTextDoc';
+import { composerSchema, buildAttachmentInsertion, buildMentionInsertion, buildQuoteInsertion, collectSkillMentions, degradeForeignAttachmentLinks, docToText, extendToTextblock, inlineRunStartOffset, parseClipboardText, posToTextOffset, serializeClipboardSlice, textOffsetToPos, textToDoc } from './composerTextDoc';
 import { takeComposerClipboardFlavor } from './clipboardWrite';
-import type { AttachmentAttrs, MentionAttrs, SkillMentionRef } from './composerTextDoc';
+import type { AttachmentAttrs, MentionAttrs, QuoteAttrs, SkillMentionRef } from './composerTextDoc';
 import { attachmentRegistryKey, buildAttachmentClipboardPaste, buildComposerClipboardCopy, COMPOSER_CLIPBOARD_MIME, createAttachmentRegistryPlugin, orderedDocAttachments, resolveComposerClipboardMime, stashComposerFlavor } from './attachmentRegistry';
 import type { AttachmentEntry } from './attachmentRegistry';
 import { buildMentionPill } from './mentionPill';
 import { buildComposerDecorations, type ComposerDecoState, type WorkModePillSpec } from './workModePill';
 import { buildAttachmentPill } from './attachmentPill';
+import { buildQuotePill } from './quotePill';
 import { setAttachmentTooltipResolver } from './mentionTooltip';
 import { stashEditorState, takeEditorState } from './editorStateCache';
 import type { TextFieldLike } from './textField';
@@ -106,6 +107,13 @@ export interface ComposerEditorApi extends TextFieldLike {
    *  registry side (upsertAttachmentEntry with the entry's metadata) and any
    *  upload the entry tracks. */
   insertAttachment(attrs: AttachmentAttrs, pos?: number): void;
+  /** Append a quote pill at the document END (selection quote actions —
+   *  划词): the composer's caret may be stale when the transcript action
+   *  fires, and the blockquote-prefix wire form only composes as its own
+   *  block. `comment` (the 评论 flow) rides in the same paragraph after the
+   *  pill, in the same undoable transaction. The caret lands at the very end
+   *  and the editor takes focus. Fires onChange like any user edit. */
+  insertQuote(attrs: QuoteAttrs, comment?: string): void;
   /** Create or overwrite a registry entry (upload start, metadata backfill).
    *  Dispatches a meta-only transaction — the doc and the undo stack are
    *  untouched, and onChange does not fire (onRegistryChange does). */
@@ -154,7 +162,7 @@ const trailingPillCaretAnchor = new Plugin({
       const decos: Decoration[] = [];
       state.doc.forEach((para, paraStart) => {
         const last = para.lastChild;
-        if (last && (last.type === composerSchema.nodes.mention || last.type === composerSchema.nodes.attachment)) {
+        if (last && (last.type === composerSchema.nodes.mention || last.type === composerSchema.nodes.attachment || last.type === composerSchema.nodes.quote)) {
           // The end of the paragraph's content (before its closing tag).
           const pos = paraStart + para.nodeSize - 1;
           decos.push(
@@ -304,6 +312,39 @@ class AttachmentNodeView {
     this.dom = buildAttachmentPill(node.attrs as AttachmentAttrs);
   }
 }
+
+/** Static renderer for a quote atom — same presentational contract, built
+ *  through the shared quote pill builder. */
+class QuoteNodeView {
+  readonly dom: HTMLElement;
+
+  constructor(node: PMNode) {
+    this.dom = buildQuotePill(node.attrs as QuoteAttrs);
+  }
+}
+
+// The quote pill's schema toDOM renders only the truncated pill label — the
+// editor's own rendering depends on that. The HTML clipboard flavor must
+// carry the FULL quote instead, or a rich-text paste target (Google Docs,
+// mail) silently drops the excerpt beyond the 24-grapheme label — and keep
+// its line boundaries (`white-space: pre-wrap`: HTML's default white-space
+// would collapse a multi-line quote into spaces). text/plain is unaffected:
+// serializeClipboardSlice already degrades to the full text.
+// Exported for the node tests (spec shape, without a DOM).
+export const composerClipboardSerializer = new DOMSerializer(
+  {
+    ...DOMSerializer.nodesFromSchema(composerSchema),
+    quote: (node: PMNode) => {
+      const attrs = node.attrs as QuoteAttrs;
+      return [
+        'span',
+        { class: 'quote-pill', 'data-quote-text': attrs.text, style: 'white-space: pre-wrap' },
+        attrs.text,
+      ];
+    },
+  },
+  DOMSerializer.marksFromSchema(composerSchema),
+);
 
 /** Run an Undo/Redo menu command on the composer editor mounted at `dom`
  *  (typically document.activeElement). False when no composer editor is
@@ -455,6 +496,7 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     nodeViews: {
       mention: (node) => new MentionNodeView(node),
       attachment: (node) => new AttachmentNodeView(node),
+      quote: (node) => new QuoteNodeView(node),
     },
     handleKeyDown: (_view, event) => options.handleKeyDown(event),
     handleDOMEvents: {
@@ -475,7 +517,10 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       },
     },
     // Single-newline clipboard contract (see composerTextDoc.ts): pasting
-    // keeps consecutive blank lines, copying does not invent extra ones.
+    // keeps consecutive blank lines, copying does not invent extra ones. The
+    // serializer is customized so the quote pill's HTML flavor carries the
+    // FULL quote text (the schema toDOM renders only the truncated label).
+    clipboardSerializer: composerClipboardSerializer,
     clipboardTextParser: (text) => parseClipboardText(text),
     clipboardTextSerializer: (slice) => serializeClipboardSlice(slice),
     handlePaste: (view, event) => {
@@ -687,6 +732,11 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     insertAttachment(attrs: AttachmentAttrs, pos?: number): void {
       const range = pos === undefined ? undefined : { start: pos, end: pos };
       view.dispatch(buildAttachmentInsertion(view.state, attrs, range));
+      view.focus();
+    },
+
+    insertQuote(attrs: QuoteAttrs, comment?: string): void {
+      view.dispatch(buildQuoteInsertion(view.state, attrs, comment));
       view.focus();
     },
 

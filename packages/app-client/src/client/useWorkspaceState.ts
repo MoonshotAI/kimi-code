@@ -2415,7 +2415,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  async function sendPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
+  async function sendPrompt(text: string, attachments?: PromptAttachment[], editText?: string): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
 
@@ -2424,7 +2424,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // directly. The in-flight flag closes the window where two rapid prompts
     // would both submit and race.
     if (activity.value !== 'idle' || rawState.inFlightBySession[sid]) {
-      enqueue(text, attachments);
+      enqueue(text, attachments, editText);
       return;
     }
 
@@ -2443,7 +2443,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       (rawState.queuedBySession[sid]?.length ?? 0) > 0 ||
       (steerInFlightCounts.get(sid) ?? 0) > 0
     ) {
-      enqueue(text, attachments);
+      enqueue(text, attachments, editText);
       flushQueueHead(sid);
       return;
     }
@@ -2712,13 +2712,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Enqueue a message for the active session; flushed when activity returns to idle */
-  function enqueue(text: string, attachments?: PromptAttachment[]): void {
+  function enqueue(text: string, attachments?: PromptAttachment[], editText?: string): void {
     const sid = rawState.activeSessionId;
     if (!sid) return;
     const current = rawState.queuedBySession[sid] ?? [];
     // The id keys the per-entry flush failure budget (removing/reordering
-    // the head then resets the next entry's budget).
-    const entry = { text, attachments, id: nextQueueEntryId() };
+    // the head then resets the next entry's budget). `text` stays the
+    // daemon-bound wire form; `editText` is the pre-rewrite draft the queue
+    // edit-reload revives pills from (attachment entries ride the payload,
+    // quote pills are self-contained links).
+    const entry = { text, attachments, editText, id: nextQueueEntryId() };
     rawState.queuedBySession = {
       ...rawState.queuedBySession,
       [sid]: [...current, entry],

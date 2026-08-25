@@ -17,10 +17,12 @@ import AuthMedia from './AuthMedia.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import MediaThumb from './MediaThumb.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
+import SelectionActionBubble from './SelectionActionBubble.vue';
 import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
+import { selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import { startMentionSelectionSync, ComposerText, canUndoSkillActivation, skillActivationEditText, skillActivationHasPill, serializeMention, attachmentIconSvg, attachmentTargetFor, buildMessageCopyFlavor, copyTextWithFlavor, parseAttachmentLinks, stripAttachmentLinks, truncateMentionName } from '@moonshot-ai/app-composer';
 import {
   formatTokens,
@@ -113,6 +115,10 @@ const props = withDefaults(
     isFollowing?: boolean;
     /** Suppress main-conversation mutation affordances in transcript-only views. */
     readOnly?: boolean;
+    /** The selection quote bubble (划词) — disabled in transcript-only embeds
+        (side chat, agent detail) whose App-level handler only targets the
+        main composer/side chat. */
+    selectionActions?: boolean;
     /** Inspector mode (subagent detail panel): keep every turn fully expanded
         (no TurnFold row) and skip the run-end footer — an inspection view
         exists to show the whole trajectory, so nothing folds away. */
@@ -164,6 +170,7 @@ const props = withDefaults(
     loadingMoreError: false,
     isFollowing: false,
     readOnly: false,
+    selectionActions: true,
     inspector: false,
     queued: () => [],
     undoHintTurnId: null,
@@ -339,6 +346,9 @@ const emit = defineEmits<{
   /** The failed-turn card's continue action — the parent routes it through the
    *  normal submit path as a short "continue" prompt. */
   resumeTurn: [];
+  /** Selection quote action from an assistant message (划词): comment / quote
+   *  go to the composer draft, sidechat opens the /btw side chat. */
+  quoteAction: [payload: SelectionActionPayload];
 }>();
 
 // Stable event relays for the per-turn child components: inline arrow props
@@ -348,6 +358,111 @@ const onOpenFile = (target: FilePreviewRequest) => emit('openFile', target);
 const onOpenMedia = (payload: OpenMediaRequest) => emit('openMedia', payload);
 const onOpenAgent = (toolCallId: string) => emit('openAgent', toolCallId);
 const onOpenTurnDiff = (change: TurnFileChange) => emit('openTurnDiff', change);
+
+// ---- Selection quote bubble (划词) -----------------------------------------
+// Delegated mouseup AND keyup on the chat root (keyboard selections —
+// Shift+Arrows / cursor browse mode — fire no mouseup): a non-collapsed
+// selection whose range sits ENTIRELY inside one assistant message's
+// markdown body (selectionQuoteAnchor — both boundary containers share the
+// same .a-msg .msg ancestor, shadow chains included) pops the bubble,
+// anchored to the selection rect; anything else (plain click, caret typing)
+// closes it. The bubble itself owns outside-click / Esc / scroll dismissal.
+const selectionBubble = ref<{ x: number; y: number; bottom: number; quote: string } | null>(null);
+/** True when the last selection gesture was keyboard-driven (Shift+Arrows /
+    cursor browse mode) — the bubble focuses its first item for a keyboard
+    open only (mouse opens keep focus in the transcript). */
+const selectionKeyboard = ref(false);
+
+function refreshSelectionBubble(): void {
+  // Deferred: at mouseup/keyup time the selection may not reflect the
+  // just-finished gesture yet (same pattern as the prototype's setTimeout(0)).
+  setTimeout(() => {
+    selectionBubble.value = selectionQuoteAnchor(window.getSelection());
+  }, 0);
+}
+
+function onChatMouseup(): void {
+  selectionKeyboard.value = false;
+  refreshSelectionBubble();
+}
+
+function onChatPointerdown(): void {
+  // Any pointer gesture (mouse, touch, pen) restores the source semantics —
+  // a sticky true from an earlier keyup must not misread a later touch-handle
+  // selection as keyboard-driven and steal the native handles' focus.
+  selectionKeyboard.value = false;
+}
+
+function onChatKeyup(e: KeyboardEvent): void {
+  // The bubble's own Esc handling keeps the DOM selection in place — an Esc
+  // keyup must not immediately reopen the bubble it just closed.
+  if (e.key === 'Escape') return;
+  selectionKeyboard.value = true;
+  refreshSelectionBubble();
+}
+
+// Touch devices adjust the selection through native handles — no mouseup or
+// keyup fires, only selectionchange. Debounce it (~250ms) through the same
+// deferred evaluation; it is idempotent with the mouseup/keyup entries (all
+// recompute from the live selection) and cheap when idle (a collapsed caret
+// just re-closes an already-closed state — a null→null ref write does not
+// re-render). While focus sits INSIDE the bubble (comment input, menu
+// interaction) the refresh is skipped entirely: the bubble is mid-interaction
+// and must not be re-anchored or closed from under the user. The refresh is
+// also OWNERSHIP-GATED: a live selection belonging to another pane (side
+// chat, agent detail — same .a-msg .msg markup) closes ours instead of
+// re-anchoring to it. Transcript-only embeds (selectionActions=false) never
+// register the listener at all.
+const SELECTION_CHANGE_DEBOUNCE_MS = 250;
+let selectionChangeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onDocSelectionChange(): void {
+  if (selectionChangeTimer !== null) clearTimeout(selectionChangeTimer);
+  selectionChangeTimer = setTimeout(() => {
+    selectionChangeTimer = null;
+    const active = document.activeElement;
+    if (active instanceof Element && active.closest('.sab')) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && !selectionOwnedByRoot(sel, chatRootRef.value)) {
+      // The live selection belongs to another pane — close ours if open,
+      // never re-anchor to someone else's text.
+      selectionBubble.value = null;
+      return;
+    }
+    refreshSelectionBubble();
+  }, SELECTION_CHANGE_DEBOUNCE_MS);
+}
+
+onMounted(() => {
+  if (props.selectionActions) {
+    document.addEventListener('selectionchange', onDocSelectionChange);
+  }
+});
+onUnmounted(() => {
+  document.removeEventListener('selectionchange', onDocSelectionChange);
+  if (selectionChangeTimer !== null) {
+    clearTimeout(selectionChangeTimer);
+    selectionChangeTimer = null;
+  }
+});
+
+function onSelectionBubbleClose(): void {
+  selectionBubble.value = null;
+  // An outside dismiss (scroll / outside click / Esc) is FINAL: the DOM
+  // selection survives a scroll, so a selectionchange refresh queued inside
+  // the debounce window would re-anchor to the still-live selection and
+  // revive the bubble the user just dismissed. Cancel the pending timer.
+  if (selectionChangeTimer !== null) {
+    clearTimeout(selectionChangeTimer);
+    selectionChangeTimer = null;
+  }
+}
+
+function onSelectionAction(payload: SelectionActionPayload): void {
+  selectionBubble.value = null;
+  window.getSelection()?.removeAllRanges();
+  emit('quoteAction', payload);
+}
 
 // ---- Inline queue (pending messages while running) ------------------------
 // Edit/remove are one-click; reorder is HTML5 drag-and-drop initiated from the
@@ -919,7 +1034,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   <!-- Chat bubbles: user turns are right-aligned soft-blue bubbles; assistant
        turns are left-aligned plain text with no role/name label, in order:
        thinking → message text → tool cards. -->
-  <div class="chat" ref="chatRootRef">
+  <div class="chat" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown">
     <div v-if="sessionLoading" class="chat-loading">
       <Spinner size="sm" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
@@ -1345,6 +1460,22 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       mediaLightbox = null;
       mediaLightboxImg = null;
     "
+  />
+
+  <!-- Selection quote bubble (划词) — teleports to body, anchored to the
+       selection inside an assistant message. Disabled in transcript-only
+       embeds (side chat, agent detail). -->
+  <SelectionActionBubble
+    v-if="selectionActions"
+    :visible="selectionBubble !== null"
+    :x="selectionBubble?.x ?? 0"
+    :y="selectionBubble?.y ?? 0"
+    :bottom="selectionBubble?.bottom ?? 0"
+    :quote="selectionBubble?.quote ?? ''"
+    :focus-on-open="selectionKeyboard"
+    :focus-return-el="chatRootRef"
+    @action="onSelectionAction"
+    @close="onSelectionBubbleClose"
   />
 </template>
 

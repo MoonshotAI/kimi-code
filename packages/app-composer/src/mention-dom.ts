@@ -7,6 +7,7 @@ export * from './mentionIcons';
 export * from './mentionMatch';
 export * from './mentionPill';
 export * from './attachmentPill';
+export * from './quotePill';
 export * from './attachmentTarget';
 export * from './clipboardWrite';
 export * from './mentionSelectionSync';

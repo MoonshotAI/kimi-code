@@ -392,6 +392,7 @@ const subtitle = computed(() => {
           :is-following="following"
           read-only
           inspector
+          :selection-actions="false"
           @load-older-messages="emit('loadOlderMessages')"
           @open-agent="emit('openAgent', $event)"
           @open-file="emit('openFile', $event)"

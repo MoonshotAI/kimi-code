@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ATTACHMENT_LINK_BASE } from '@moonshot-ai/app-composer';
-import { decideComposerSubmit, type SubmitDecisionInput } from '../src/lib/composerSubmit';
+import { ATTACHMENT_LINK_BASE, serializeQuote } from '@moonshot-ai/app-composer';
+import { decideComposerSubmit, steerHistoryText, type SubmitDecisionInput } from '../src/lib/composerSubmit';
 import type { PromptAttachment } from '../src/client/types';
 
 const FILE_ATT: PromptAttachment = { fileId: 'f_pdf', kind: 'file', name: 'a.pdf' };
@@ -25,6 +25,7 @@ function input(partial: Partial<SubmitDecisionInput> = {}): SubmitDecisionInput 
 }
 
 const fileLink = (attId: string, name = 'a.pdf') => `[${name}](${ATTACHMENT_LINK_BASE}${attId})`;
+const quoteLink = (text: string) => serializeQuote({ text });
 
 describe('decideComposerSubmit — the gate', () => {
   it('is a noop while the send gate is blocked', () => {
@@ -53,6 +54,9 @@ describe('decideComposerSubmit — plain submit', () => {
       // The gate-failure restore carries the PRE-REWRITE draft (attId links
       // intact) — the rewrite would degrade pills on the way back.
       restoreText: `read ${fileLink('abc12345')} please`,
+      // The queue's edit-reload draft: attachment already index-rewritten
+      // (the reload's ordinal seeding contract), quote links intact.
+      editText: `read ${fileLink('1')} please`,
       attachments: [FILE_ATT],
       // History recall is stripped to bare names — a recalled entry must not
       // revive dead pills out of the submit-time 1..N index links.
@@ -232,6 +236,85 @@ describe('decideComposerSubmit — slash commands', () => {
     });
   });
 
+  it('an arg-taking built-in rewrites quote pills to `> ` blocks — the private scheme never leaks into args', () => {
+    // The quote pill serializes as a composer-private link in the draft; a
+    // built-in command's args must carry its `> 引用` block form instead.
+    const text = `/btw ${quoteLink('引用')}`;
+    const plan = decideComposerSubmit(input({ text, rewritten: text }));
+    expect(plan).toMatchObject({ kind: 'builtin-command', cmd: '/btw > 引用', leave: false });
+    expect((plan as { cmd?: string }).cmd).not.toContain('kimi-code-composer://');
+    // historyText keeps the PRE-REWRITE draft instead: the quote pill's link
+    // survives, so a recall revives the pill instead of the flattened block.
+    expect((plan as { historyText?: string }).historyText).toBe(text);
+    // restoreText rides too: a REJECTED command gate restores the draft with
+    // the pill's link intact (attachment links pair with restoreEntries).
+    expect((plan as { restoreText?: string }).restoreText).toBe(text);
+    // Multi-line quote + surrounding text: every line gets the `> ` prefix,
+    // the block always starts at a line head (a break is inserted before it
+    // when the pill sits mid-line), and history records the executed form.
+    const multi = decideComposerSubmit(
+      input({ text: `/goal 看这里 ${quoteLink('a\nb')} 对吗`, rewritten: `/goal 看这里 ${quoteLink('a\nb')} 对吗` }),
+    );
+    expect(multi).toMatchObject({ kind: 'builtin-command', cmd: '/goal 看这里\n> a\n> b\n\n对吗' });
+  });
+
+  it('an arg-taking built-in carries the arg-level editText for the busy-enqueue edit-reload', () => {
+    // `/swarm <task>` on a busy session enqueues the arg as a prompt; editing
+    // the queued item reloads editText, so it must revive the quote pill
+    // (link INTACT) instead of the cmd's flattened blockquote.
+    const text = `/swarm 看 ${fileLink('abc12345')} 和 ${quoteLink('引用')}`;
+    const plan = decideComposerSubmit(input({ text, rewritten: `/swarm 看 ${fileLink('1')} 和 ${quoteLink('引用')}` }));
+    expect(plan).toMatchObject({ kind: 'builtin-command', cmd: '/swarm 看 a.pdf 和\n> 引用' });
+    const editText = (plan as { editText?: string }).editText!;
+    // The command token is dropped; the attachment degrades to a bare name
+    // (no payload rides a built-in); the quote pill's self-contained link
+    // survives for revival.
+    expect(editText).toBe(`看 a.pdf 和 ${quoteLink('引用')}`);
+    expect(editText).toContain('kimi-code-composer://quote/');
+    expect(editText).not.toContain('abc12345');
+  });
+
+  it('submit serializes quote pills for the daemon but keeps the pill link in history/restore', () => {
+    const draft = quoteLink('引用');
+    const plan = decideComposerSubmit(input({ text: draft, rewritten: draft }));
+    // Daemon-bound text: the `> 引用` block, no composer-private scheme.
+    expect(plan).toMatchObject({ kind: 'submit', text: '> 引用', restoreText: draft });
+    expect((plan as { text?: string }).text).not.toContain('kimi-code-composer://');
+    // historyText / restoreText keep the pill link form — a history recall or
+    // a gate-failure restore revives the pill via textToDoc.
+    expect((plan as { historyText?: string }).historyText).toContain('kimi-code-composer://quote/');
+    expect((plan as { restoreText?: string }).restoreText).toContain('kimi-code-composer://quote/');
+    // A comment typed after the pill lands right after the block's blank line.
+    const withComment = decideComposerSubmit(
+      input({ text: `${quoteLink('引用')} 评论`, rewritten: `${quoteLink('引用')} 评论` }),
+    );
+    expect(withComment).toMatchObject({ kind: 'submit', text: '> 引用\n\n评论' });
+  });
+
+  it('editText is the attachment-rewritten (1..N), quote-link-INTACT form the queue edit-reload expects', () => {
+    const draft = `看 ${fileLink('abc12345')} 和 ${quoteLink('引用')}`;
+    const rewritten = `看 ${fileLink('1')} 和 ${quoteLink('引用')}`;
+    const plan = decideComposerSubmit(
+      input({
+        text: draft,
+        rewritten,
+        assembly: { promptAttachments: [FILE_ATT], rewriteAttIds: ['abc12345'] },
+      }),
+    );
+    // Daemon-bound text: attachment index link kept, quote flattened to its
+    // block (line-broken to a head because text precedes it).
+    expect(plan).toMatchObject({ kind: 'submit', restoreText: draft });
+    expect((plan as { text?: string }).text).toBe(`看 ${fileLink('1')} 和\n> 引用`);
+    // editText: attachment already at its 1..N ordinal (the reload's seeding
+    // contract) — the pre-rewrite random attId is GONE — while the quote
+    // pill's self-contained link survives for revival.
+    const editText = (plan as { editText?: string }).editText!;
+    expect(editText).toBe(rewritten);
+    expect(editText).toContain(`${ATTACHMENT_LINK_BASE}1`);
+    expect(editText).toContain('kimi-code-composer://quote/');
+    expect(editText).not.toContain('abc12345');
+  });
+
   it('an unresolved /skill: line still travels as an activation attempt', () => {
     const plan = decideComposerSubmit(
       input({
@@ -297,5 +380,18 @@ describe('decideComposerSubmit — the gate only covers attachment-carrying bran
     ['a single-pill activation', input({ text: 'go', rewritten: 'go', skillMentions: [{ name: 'deploy' }], skills: [DEPLOY], blocked: true })],
   ])('blocks %s while the gate is closed', (_label, gateInput) => {
     expect(decideComposerSubmit(gateInput).kind).toBe('noop');
+  });
+});
+
+describe('steerHistoryText', () => {
+  it('keeps quote links, degrades attachments to bare names (or nothing)', () => {
+    // A quote-only steer records the pill link — recall revives the pill.
+    expect(steerHistoryText(quoteLink('引用'))).toBe(quoteLink('引用'));
+    // An attachment-only steer records nothing (a bare name is not a draft).
+    expect(steerHistoryText(fileLink('abc12345'))).toBe('');
+    // Mixed: attachment → bare name, quote pill → link preserved.
+    expect(steerHistoryText(`看 ${fileLink('abc12345')} 和 ${quoteLink('引用')}`)).toBe(
+      `看 a.pdf 和 ${quoteLink('引用')}`,
+    );
   });
 });

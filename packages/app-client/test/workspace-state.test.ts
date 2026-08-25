@@ -4609,3 +4609,23 @@ describe('useWorkspaceState — grouped initial session load (view=by_workspace)
     expect(state.sessions.find((s) => s.id === 's1')?.cwd).toBe('/repo/ws1');
   });
 });
+
+describe('useWorkspaceState — queued prompt keeps the editable draft (editText)', () => {
+  it('stores the daemon-bound wire text AND the pre-rewrite draft separately', async () => {
+    const state = createState();
+    // createDeps' default activity is 'running' — sendPrompt enqueues.
+    const ws = useWorkspaceState(state, createDeps());
+    const wire = '> 引用';
+    const draft = '[引用](kimi-code-composer://quote/%E5%BC%95%E7%94%A8) ';
+
+    await ws.sendPrompt(wire, undefined, draft);
+
+    const entry = state.queuedBySession['sess_1']?.[0];
+    // The wire form is what the daemon will eventually receive — untouched.
+    expect(entry?.text).toBe(wire);
+    // The editable draft rides along: the queue edit-reload revives the
+    // quote pill from its self-contained link instead of reloading the
+    // flattened blockquote.
+    expect(entry?.editText).toBe(draft);
+  });
+});

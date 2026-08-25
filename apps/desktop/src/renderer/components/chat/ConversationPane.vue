@@ -28,6 +28,7 @@ import { canUndoSkillActivation, skillActivationEditText, type AttachmentEntry }
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { track } from '../../lib/track';
 import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
+import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import { turnHasOutput, turnTocTitle } from '../chatTurnRendering';
 import type { TurnFileChange } from '../chatTurnRendering';
 
@@ -189,6 +190,9 @@ const emit = defineEmits<{
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
   editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
+  /** Selection quote action (划词) — forwarded from ChatPane for App to route
+   *  (composer append vs side chat). */
+  quoteAction: [payload: SelectionActionPayload];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -325,6 +329,31 @@ function loadComposerForEdit(
   }
   composer.loadAttachmentsForEdit(attachments ?? []);
   return true;
+}
+
+/** Insert a quote pill into whichever composer is currently mounted (selection
+    quote actions — 划词); the 评论 flow's comment rides after the pill.
+    Returns false when no composer can receive it (e.g. the dock is showing a
+    pending question/approval), same contract as loadComposerForEdit. */
+function insertComposerQuote(quote: string, comment?: string): boolean {
+  const composer = dockedComposerRef.value ?? emptyComposerRef.value;
+  if (!composer?.insertQuote) return false;
+  const ok = composer.insertQuote(quote, comment);
+  return ok !== false;
+}
+
+/** Whether a composer able to receive a quote pill is currently mounted (the
+    dock hides its nested Composer while a question/approval card shows). App
+    watches this to replay a stashed selection quote insert instead of
+    dropping it. Exposed as a function: an exposed computed would cross the
+    public-instance boundary as a ref object, not a plain boolean. The docked
+    check delegates to ChatDock's own — only IT knows whether the nested
+    Composer is actually mounted (an outer handle exists even while the card
+    hides it). */
+function hasInsertableComposer(): boolean {
+  const docked = dockedComposerRef.value;
+  if (docked?.hasInsertableComposer !== undefined) return docked.hasInsertableComposer();
+  return emptyComposerRef.value?.insertQuote !== undefined;
 }
 
 /** Whether the active composer has no text and no attachments — a late
@@ -706,6 +735,11 @@ const chatLayoutStyle = computed(() => ({
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
+  /** Insert a quote pill at the document end (selection quote actions). */
+  insertQuote?: (quote: string, comment?: string) => boolean | void;
+  /** Whether the (docked) composer is actually mounted — the dock's nested
+   *  Composer unmounts while a question/approval card shows. */
+  hasInsertableComposer?: () => boolean;
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   /** Re-seed the pill registry from a command emit's restoreEntries (the
    *  gate-failure restore of a skill command) — see Composer. */
@@ -769,6 +803,14 @@ function bindChatDock(el: RefArg): void {
   ) {
     dockedComposerRef.value = {
       loadForEdit: el.loadForEdit.bind(el),
+      insertQuote:
+        'insertQuote' in el && typeof el.insertQuote === 'function'
+          ? el.insertQuote.bind(el)
+          : undefined,
+      hasInsertableComposer:
+        'hasInsertableComposer' in el && typeof el.hasInsertableComposer === 'function'
+          ? el.hasInsertableComposer.bind(el)
+          : undefined,
       loadAttachmentsForEdit:
         'loadAttachmentsForEdit' in el && typeof el.loadAttachmentsForEdit === 'function'
           ? el.loadAttachmentsForEdit.bind(el)
@@ -1598,7 +1640,9 @@ function handleEditMessage(payload: {
 // so dequeuing would drop the prompt instead of making it editable.
 function handleEditQueued(index: number): void {
   const item = props.queued?.[index];
-  const text = item?.text ?? '';
+  // editText is the pre-rewrite draft (quote pills revive from their link
+  // form); the daemon-bound text stays untouched on the wire.
+  const text = item?.editText ?? item?.text ?? '';
   const loaded = loadComposerForEdit(text, item?.attachments);
   if (loaded) emit('editQueued', index);
 }
@@ -2232,7 +2276,7 @@ function toggleTerminalPanel(): void {
   terminalStore.toggle(props.workspaceRoot);
 }
 
-defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion, focusGoal });
+defineExpose({ loadComposerForEdit, insertComposerQuote, hasInsertableComposer, isComposerEmpty, focusComposer, notifyUndone, onAbortOutcome, selectAllRegion, focusGoal });
 </script>
 
 <template>
@@ -2507,6 +2551,7 @@ defineExpose({ loadComposerForEdit, isComposerEmpty, focusComposer, notifyUndone
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @edit-message="handleEditMessage"
+              @quote-action="emit('quoteAction', $event)"
               @armed-undo="executeEscUndo"
               @load-older-messages="handleLoadOlderMessages"
               @unqueue="emit('unqueue', $event)"

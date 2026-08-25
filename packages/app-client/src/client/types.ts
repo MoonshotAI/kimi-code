@@ -49,6 +49,10 @@ interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
   id?: string;
+  /** The pre-rewrite draft for edit-reload (selection quote pills revive
+      from their link form) — the queued `text` stays the daemon-bound wire
+      form and is never touched by editing. */
+  editText?: string;
 }
 
 /** Membership of the signed-in managed account: 'member' or 'free' once

@@ -41,9 +41,18 @@ export function truncateMentionName(name: string): string {
   if (head < 8) {
     // Pathological extension (e.g. ".d.ts"-plus chains longer than the
     // budget) — plain end-ellipsis is the least-bad fallback.
-    return `${chars.slice(0, MENTION_NAME_MAX - 1).join('')}…`;
+    return truncateGraphemes(name, MENTION_NAME_MAX);
   }
   return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - tail).join('')}`;
+}
+
+/** End-ellipsis truncate to `max` grapheme clusters (user-perceived chars —
+ *  a surrogate pair or ZWJ emoji sequence counts once, however many UTF-16
+ *  units it takes). Pure; node-tested. */
+export function truncateGraphemes(text: string, max: number): string {
+  const chars = graphemes(text);
+  if (chars.length <= max) return text;
+  return `${chars.slice(0, max - 1).join('')}…`;
 }
 
 export function buildMentionPill(attrs: MentionAttrs): HTMLElement {

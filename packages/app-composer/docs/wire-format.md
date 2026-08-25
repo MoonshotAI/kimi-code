@@ -187,21 +187,31 @@ composer 内复制(选区覆盖 attachment pill 时)除 text/plain、text/html �
 
 - `slice` 是 PM `Slice.toJSON()` 的产物(open sides 包含在内);`attachments` 是该 slice 的 pill 引用到的 registry entries,按 slice 内首现序。从**气泡**复制时没有 registry 可查,entries 以 `blob:<attId>` key 尽力构造(只有 attId/kind/name,path/fileId 不可知),且 attId 一律重新铸造(`remintAttachmentLinkIds`)——气泡里的 id 是消息内序号(提交重写的 1..N),两条消息的同号 id 会在 `blob:<attId>` key 上撞车,把不同文件收编成同一 entry。
 - ref 解析出 flavor(或 v1 原样放行)后先校验:flavor JSON 超过 1MB 直接拒绝;信封(`v` 必须为 1)或 slice(必须能按 composer schema 反序列化)不合法 → 整体丢弃本 flavor,回退纯文本路径。entries 逐条校验——身份字段(attId/key/name/kind)必须齐全且 attId 匹配 `^[0-9a-z]{1,64}$`(序列化逐字写入 bare dest,非法字符会破坏 wire),可选字段(size/mediaType/path/fileId/error)按类型收窄,类型不符置缺省;**畸形 entry 单独跳过,良好 entry 保留**。上传中(`uploading: true` 且无 fileId)被粘出的 entry 规范化为 `uploading: false` + `error: 'upload-interrupted'`——上传的 fileId 回填只发生在源 composer(可能另一个窗口/会话),不规范化会让目标 composer 的发送门永久卡住(与草稿 sidecar 加载的恢复语义一致)。随后 `mergePastedEntries` 逐个裁决 entry 身份:同 key 同 attId 不动;同 key 异 attId 收编到现有 entry(一次上传、多个 pill 共享)并把粘贴 attId 记入 remap;新 key 且 attId 空闲直接收编;attId 冲突铸新 id。slice 内 attId 按 remap 重写后插入,entries 在**同一事务** upsert——doc reconcile(§6 首段)随即建立 refCount。
-- text/plain 刻意降级:pill 只剩裸 name(folder 带尾 `/`)——attId 链接永不以明文离开 app,外部粘贴目标只能看到纯文件名。
+- text/plain 刻意降级:pill 只剩裸 name(folder 带尾 `/`)——attId 链接永不以明文离开 app,外部粘贴目标只能看到纯文件名。quote pill 同理降级为纯引用文本(§6.6)。
+
+### 6.6 Quote 链接(划词引用,自包含)
+
+quote(划词动作的引用 excerpt)是第三类 inline atom,attrs `{ text }`(完整引用文本,可跨行)。与 attachment 的根本区别:quote **自包含**——没有上传状态,全部元数据就是引用文本本身,直接编码进 dest,因此不需要 registry / sidecar。
+
+- 文本形态:`[excerpt](kimi-code-composer://quote/<encoded>)`。label 是首行截断的显示摘要(§4.1 转义;revive 时不读回,重新序列化按 attrs 重算),dest 是完整引用文本按 §4.2 同一 canonical 字母表编码(`/` 也编为 `%2F`,换行为 `%0A`,非 ASCII 保持字面),一层 `decodeURIComponent` 还原。
+- 分类:候选先查 attachments 前缀,再查 quote 前缀(**尾部非空**——空 quote 的 `[x](kimi-code-composer://quote/)` 保持字面文本),最后才走 §5.3 的 mention 分类;三族构造性不相交(§6.3 同理)。
+- 提交时重写(app-client `rewriteQuoteLinks`):只作用于**发送出去的文本副本**——每个 quote 链接重写为其 `> ` blockquote 块(每行加 `> ` 前缀,尾部空行),并吃掉紧随链接的一个空格(插入时的 caret 分隔符,使「评论」文本直接接在块后)。输出与文本时代 `> 引用\n\n[评论]` 逐字节一致(app-client 的 quote-selection 测试逐条断言);composer doc 与持久化草稿保持链接形态,composer 私有 scheme 永不进 transcript / 模型 prompt。
+- 插入(`buildQuoteInsertion`):一律落在**文档末尾**——非空文档先补一个空段落分隔(文本时代 appendText 的 `\n\n` 连接,保持重写字节等价),评论文本骑在同一段落 pill 之后;单事务、可撤销,caret 落在末尾。
+- 消息表面不消费 quote 链接:漏网的手敲链接在 `ComposerText` 里降级为纯引用文本,不渲染 scheme;text/plain 复制同样降级为纯引用文本(§6.5 末条)。
 
 ## 7. 偏移映射(char offset ↔ PM position)
 
 editor 的 @token 替换、caret 放置等需要在"序列化文本偏移"和"PM position"之间换算:
 
 - 段落间的 `\n` 计 1 个字符;
-- mention / attachment 节点各计**其序列化链接形式的完整长度**;
+- mention / attachment / quote 节点各计**其序列化链接形式的完整长度**;
 - 其余文本节点计自身长度。
 
 即:偏移语义 === 对序列化文本做字符串下标。
 
 ## 8. 不变式
 
-1. **round-trip**:对合法 attrs,`parse(serialize(x)) ≡ x`。唯一例外是 skill:`name` 被规范化为 dest 尾部的解码值(label 不一致时以 dest 为准,这是刻意行为)。attachment 同规则成立:attId 逐字往返,kind 经 name 尾 `/` 还原(§6.1/§6.2)。
+1. **round-trip**:对合法 attrs,`parse(serialize(x)) ≡ x`。唯一例外是 skill:`name` 被规范化为 dest 尾部的解码值(label 不一致时以 dest 为准,这是刻意行为)。attachment 同规则成立:attId 逐字往返,kind 经 name 尾 `/` 还原(§6.1/§6.2);quote 同规则成立:text 经 canonical 解码逐字往返(§6.6,label 只是显示摘要,revive 时不读回)。
 2. **字面保真**:不能解析为 mention 链接的文本(未闭合括号、其他 Markdown 语法、伪 scheme 链接等)在 parse→serialize 后逐字节不变。
 3. **双 parser 存活**:同一文本既被 §5 的 mention 解析器解析,也要在真 Markdown 渲染器(markdown-it/markstream)里渲染成同义链接——§4.2 的 canonical 编码就是为渲染器侧准备的:产物是纯 ASCII 加合法三元组,渲染器的 URI 规范化对它是恒等变换,href 逐字节到达。assistant 消息不做子集解析,而是在渲染产物的 anchor href 上按 §5.3 分类、对 file/folder href 做单层 `decodeURIComponent` 还原路径。渲染产物的 **label** 只还原私有 percent 层(`unescapeRenderedLinkText`):渲染器在生成文本时已消费 CommonMark 反斜杠层,文件名自带的字面反斜杠(`a\[b.md`)必须原样保留,不能再走 `unescapeLinkText` 的完整两层。
 4. **性能**:parse 总耗时 O(n)。候选识别由 micromark 的线性 tokenizer 完成(construct disable 只裁剪语法、不改变复杂度),reject 管道对每个候选做 O(1) 判定;逐行切分只做一次线性扫描,行数不改变总量级。
@@ -240,6 +250,8 @@ editor 的 @token 替换、caret 放置等需要在"序列化文本偏移"和"PM
 | `[assets/](kimi-code-composer://attachments/ab12cd34)` | attachment pill(folder) | name 尾 `/` 兼任 kind 标记(§6.1) |
 | `[a.pdf](kimi-code-composer://attachments/2)` | attachment pill(file,attId=`2`) | §6.4 提交重写后的 index 形态,revive 规则相同 |
 | `[x](kimi-code-composer://attachments/)` | 纯文本 | 空 attId 不 revive(§6.2) |
+| `[CDN 侧分两层](kimi-code-composer://quote/CDN%20侧分两层)` | quote pill(text=`CDN 侧分两层`) | quote 基本形态(§6.6):dest 即完整引用,空格 → `%20`、非 ASCII 字面 |
+| `[x](kimi-code-composer://quote/)` | 纯文本 | 空 quote 不 revive(§6.6) |
 | `![img](a.png)` | 纯文本 | 图片语法不 revive |
 | `\[a](b)` | 纯文本 | 转义的 `[` 不是起点 |
 | `prefix [unfinished [README](README.md)` | text `prefix [unfinished ` + file pill | 链接不能嵌套,内层链接优先(CommonMark) |

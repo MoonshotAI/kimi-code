@@ -636,6 +636,8 @@ html[data-color-scheme="dark"] {
   --p-mention-menu-h: 296px;
   /* Mention tooltip (hover card) width cap. */
   --p-mention-tip-w: 320px;
+  /* Selection quote bubble (划词浮窗) width in its comment state. */
+  --p-selection-bubble-w: 280px;
   /* Plain tooltip bubble width cap (code-block action hints; mirrors
      TooltipBubble's default maxWidth). */
   --p-tip-max-w: 280px;
@@ -910,9 +912,13 @@ html[data-color-scheme="dark"] {
    the pill apart from plain text. Kind glyph + name label; files open the
    preview, skills open their SKILL.md, folders are inert for now. Hover
    deepens the ink toward --color-text; the full path / skill card lives on
-   the mentionTooltip singleton's bubble (.mention-tip below). */
+   the mentionTooltip singleton's bubble (.mention-tip below). The "NOT a
+   filled chip" line is deliberate for mention/attachment — the quote pill is
+   the ONE registered exception (filled, accent-soft; see its own block
+   below). */
 .mention-pill,
-.attachment-pill {
+.attachment-pill,
+.quote-pill {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-05);
@@ -928,11 +934,13 @@ html[data-color-scheme="dark"] {
   transition: color var(--duration-fast) var(--ease-out);
 }
 .mention-pill:hover,
-.attachment-pill:hover {
+.attachment-pill:hover,
+.quote-pill:hover {
   color: var(--color-text);
 }
 .mention-pill:hover .mention-pill-icon,
-.attachment-pill:hover .attachment-pill-icon {
+.attachment-pill:hover .attachment-pill-icon,
+.quote-pill:hover .quote-pill-icon {
   color: inherit;
 }
 /* Message-surface affordances: file and skill pills open on click, and so
@@ -957,7 +965,8 @@ html[data-color-scheme="dark"] {
    focus visibility rule. Composer pills are text atoms, never focusable, so
    no override is needed below. */
 .mention-pill:focus-visible,
-.attachment-pill:focus-visible {
+.attachment-pill:focus-visible,
+.quote-pill:focus-visible {
   outline: none;
   box-shadow: var(--p-focus-ring);
   border-radius: var(--radius-sm);
@@ -965,7 +974,9 @@ html[data-color-scheme="dark"] {
 .ProseMirror .mention-pill,
 .ProseMirror .mention-pill:hover,
 .ProseMirror .attachment-pill,
-.ProseMirror .attachment-pill:hover {
+.ProseMirror .attachment-pill:hover,
+.ProseMirror .quote-pill,
+.ProseMirror .quote-pill:hover {
   cursor: text;
   text-decoration: none;
 }
@@ -986,7 +997,8 @@ a.mention-folder {
    also caps by inline size and ellipsizes instead of stretching the message
    column. The full name stays in the data attributes and the tooltip. */
 .mention-pill-name,
-.attachment-pill-name {
+.attachment-pill-name,
+.quote-pill-name {
   max-width: 24em;
   min-width: 0;
   overflow: hidden;
@@ -994,7 +1006,8 @@ a.mention-folder {
 }
 
 .mention-pill-icon,
-.attachment-pill-icon {
+.attachment-pill-icon,
+.quote-pill-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1005,7 +1018,8 @@ a.mention-folder {
   flex-shrink: 0;
 }
 .mention-pill-icon svg,
-.attachment-pill-icon svg {
+.attachment-pill-icon svg,
+.quote-pill-icon svg {
   width: var(--p-ic-sm);
   height: var(--p-ic-sm);
   display: block;
@@ -1019,10 +1033,38 @@ a.mention-folder {
    <svg>, so the covered pill is marked with a class instead (see
    mentionSelectionSync.ts). */
 .mention-pill.pill-in-selection,
-.attachment-pill.pill-in-selection {
+.attachment-pill.pill-in-selection,
+.quote-pill.pill-in-selection {
   background: var(--p-selection);
   border-radius: var(--radius-sm);
 }
+
+/* ---------------------------------------------------------------------------
+   Quote pill — the quote content type's variant of the pill vocabulary above
+   (selection quote actions — 划词), and the family's ONE registered filled
+   member: user feedback was that a quoted excerpt reads indistinguishable
+   from body text at the bare-ink recipe, so the quote pill carries an
+   accent-soft ground — the same accent link in the reference visual chain as
+   the text-selection highlight (划词高亮) and the blockquote's leading bar.
+   The leading glyph takes accent at rest; ink and hover ink stay the shared
+   group's (muted → --color-text), while hover deepens the GROUND to
+   --color-accent-bd. Geometry otherwise unchanged (baseline-flush, sm radius,
+   hair of air around the fill); the selection-paint rule above still wins
+   over the ground, and the ProseMirror override keeps editing semantics —
+   composer-only (the submit rewrite folds it into a `> ` block before the
+   message surface), so it never carries click affordances. Hover shows the
+   full quoted text on the mentionTooltip singleton's bubble (.mention-tip). */
+.quote-pill {
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--space-05) / 2) var(--space-1-5);
+  margin-inline: calc(var(--space-05) / 2);
+}
+.quote-pill-icon { color: var(--color-accent); }
+.quote-pill:hover { background: var(--color-accent-bd); }
+/* Selection paint always wins over the accent ground, hover included. */
+.quote-pill.pill-in-selection,
+.quote-pill.pill-in-selection:hover { background: var(--p-selection); }
 
 /* ---------------------------------------------------------------------------
    Attachment pill — the attachment content type's variant of the pill
@@ -1149,6 +1191,14 @@ a.mention-folder {
 }
 .mention-tip-att-size {
   color: color-mix(in srgb, currentColor 65%, transparent);
+}
+/* Quote tooltip: the full quoted text, whitespace preserved, capped with
+   scroll beyond a few lines (a quote can be a whole answer). */
+.mention-tip-quote-text {
+  min-width: 0;
+  max-height: 8lh;
+  overflow-y: auto;
+  white-space: pre-wrap;
 }
 /* The attachment tooltip's error line (a failed/interrupted upload): danger
    lifted toward the bubble's own ink so it reads on the inverted skin. */

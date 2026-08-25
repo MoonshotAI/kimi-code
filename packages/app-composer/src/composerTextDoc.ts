@@ -19,6 +19,7 @@
 import { parse, postprocess, preprocess } from 'micromark';
 import { Schema, Slice, type Node as PMNode, type ResolvedPos } from 'prosemirror-model';
 import { TextSelection, type EditorState, type Transaction } from 'prosemirror-state';
+import { truncateGraphemes } from './mentionPill';
 
 // ---------------------------------------------------------------------------
 // Mentions
@@ -242,6 +243,7 @@ export function serializeMention(attrs: MentionAttrs): string {
 function inlineSerializedLength(node: PMNode): number {
   if (node.isText) return node.text!.length;
   if (node.type === composerSchema.nodes.attachment) return serializeAttachment(node.attrs as AttachmentAttrs).length;
+  if (node.type === composerSchema.nodes.quote) return serializeQuote(node.attrs as QuoteAttrs).length;
   return serializeMention(node.attrs as MentionAttrs).length;
 }
 
@@ -281,6 +283,70 @@ export interface AttachmentAttrs {
  *  verbatim attId. */
 export function serializeAttachment(attrs: AttachmentAttrs): string {
   return `[${escapeLinkText(attrs.name)}](${ATTACHMENT_LINK_BASE}${attrs.attId})`;
+}
+
+// ---------------------------------------------------------------------------
+// Quotes (selection quote actions — 划词)
+// ---------------------------------------------------------------------------
+
+/** Link-destination marker for a quote pill. Unlike an attachment, a quote is
+ *  SELF-CONTAINED: the full quoted text rides in the destination (canonical
+ *  percent-encoding — the same alphabet as the mention dest rule: every ASCII
+ *  character outside the RFC 3986 unreserved set encodes, '/' included, and
+ *  non-ASCII stays literal), so the pill needs no registry and revives from
+ *  its link form alone. The scheme is composer-private like the attachment
+ *  one: classifyMentionHref rejects schemed hrefs, so a quote link is plain
+ *  literal text to every mention consumer, and the submit rewrite
+ *  (app-client's rewriteQuoteLinks) folds it into the `> ` blockquote wire
+ *  form before anything downstream can see the scheme. */
+export const QUOTE_LINK_BASE = 'kimi-code-composer://quote/';
+
+export interface QuoteAttrs {
+  /** The full quoted text (may span lines — newlines encode as %0A). */
+  text: string;
+}
+
+function encodeQuoteText(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!;
+    if (code > 0x7f || /[A-Za-z0-9\-._~]/.test(ch)) {
+      out += ch;
+    } else {
+      out += `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`;
+    }
+  }
+  return out;
+}
+
+function decodeQuoteText(encoded: string): string {
+  // One decode restores every serializer layer ('%25' → '%', '%0A' → '\n',
+  // '%2F' → '/') — a malformed percent sequence (hand-typed text) keeps the
+  // raw form instead of throwing.
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
+/** Pill labels cap at this many grapheme clusters. */
+export const QUOTE_LABEL_MAX = 24;
+
+/** Pill label: the first non-empty line, whitespace-trimmed and
+ *  end-ellipsized — the full text stays in the data attributes and the
+ *  tooltip. Never empty: the link form needs a label to parse back. */
+export function quotePillLabel(text: string): string {
+  const firstLine = text.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
+  const label = truncateGraphemes(firstLine, QUOTE_LABEL_MAX);
+  return label.length > 0 ? label : '…';
+}
+
+/** A quote node → its plain-text (Markdown link) form: the label is the
+ *  truncated excerpt (escaped like any link label), the destination the
+ *  marker plus the encoded full text. */
+export function serializeQuote(attrs: QuoteAttrs): string {
+  return `[${escapeLinkText(quotePillLabel(attrs.text))}](${QUOTE_LINK_BASE}${encodeQuoteText(attrs.text)})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +415,30 @@ export const composerSchema = new Schema({
             'data-attachment-name': attrs.name,
           },
           attrs.name,
+        ];
+      },
+    },
+    quote: {
+      group: 'inline',
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        text: {},
+      },
+      // Same leafText contract as the mention/attachment: textBetween
+      // consults it, so docToText and the clipboard serializer emit the link
+      // form.
+      leafText: (node: PMNode) => serializeQuote(node.attrs as QuoteAttrs),
+      // Rendered by a NodeView (icon + label); this toDOM only feeds PM's
+      // clipboard HTML serializer and DOM fallbacks — the data attribute
+      // carries the full quote for the tooltip.
+      toDOM: (node: PMNode) => {
+        const attrs = node.attrs as QuoteAttrs;
+        return [
+          'span',
+          { class: 'quote-pill', 'data-quote-text': attrs.text },
+          quotePillLabel(attrs.text),
         ];
       },
     },
@@ -426,6 +516,63 @@ export function buildAttachmentInsertion(
   return tr.scrollIntoView();
 }
 
+/** Build a quote node. */
+export function quoteNode(attrs: QuoteAttrs): PMNode {
+  return composerSchema.nodes.quote!.create(attrs);
+}
+
+/** Transaction that appends a quote pill (and the 评论 flow's optional
+ *  comment) at the END of the document, as ONE undoable step. The selection
+ *  quote actions fire from the transcript — the composer's caret may be stale
+ *  or mid-paragraph, and a blockquote-prefix wire form only composes as its
+ *  own block anyway — so the pill always lands at the end: a non-empty doc
+ *  gets exactly ONE empty paragraph of separation first (the '\n\n' join of
+ *  the text-era appendText, keeping the submit rewrite's output
+ *  byte-identical to it). A Shift+Enter tail already IS that separator — a
+ *  trailing run of empty paragraphs is collapsed to one and reused, never
+ *  stacked upon ('hello\n' would otherwise append as 'hello\n\n\n<quote>',
+ *  each tail newline sending that much blank wire text). A trailing space
+ *  follows the pill (same caret-home contract as buildMentionInsertion); the
+ *  comment rides after that space in the same paragraph. The caret lands at
+ *  the very end. */
+export function buildQuoteInsertion(state: EditorState, attrs: QuoteAttrs, comment?: string): Transaction {
+  const inline: PMNode[] = [quoteNode(attrs), composerSchema.text(' ')];
+  if (comment !== undefined && comment.length > 0) inline.push(composerSchema.text(comment));
+  const last = state.doc.lastChild;
+  if (docToText(state.doc).length === 0 && state.doc.childCount === 1 && last && last.content.size === 0) {
+    // Empty draft: fill the single placeholder paragraph instead of leaving a
+    // leading blank line.
+    const tr = state.tr.insert(1, inline);
+    tr.setSelection(TextSelection.atEnd(tr.doc));
+    return tr.scrollIntoView();
+  }
+  // Count the trailing run of empty paragraphs (an empty paragraph's nodeSize
+  // is 2 — open and close tokens only).
+  let trailing = 0;
+  for (let i = state.doc.childCount - 1; i >= 0; i -= 1) {
+    const child = state.doc.child(i);
+    if (child.type !== composerSchema.nodes.paragraph || child.content.size > 0) break;
+    trailing += 1;
+  }
+  if (trailing > 0) {
+    // Reuse exactly ONE trailing empty paragraph as the separator; extras die
+    // with the insertion.
+    const tr = state.tr;
+    if (trailing > 1) {
+      tr.delete(state.doc.content.size - (trailing - 1) * 2, state.doc.content.size);
+    }
+    tr.insert(tr.doc.content.size, composerSchema.node('paragraph', null, inline));
+    tr.setSelection(TextSelection.atEnd(tr.doc));
+    return tr.scrollIntoView();
+  }
+  const tr = state.tr.insert(state.doc.content.size, [
+    composerSchema.node('paragraph'),
+    composerSchema.node('paragraph', null, inline),
+  ]);
+  tr.setSelection(TextSelection.atEnd(tr.doc));
+  return tr.scrollIntoView();
+}
+
 // ---------------------------------------------------------------------------
 // text ↔ doc
 // ---------------------------------------------------------------------------
@@ -497,6 +644,15 @@ export interface AttachmentLinkMatch {
   rawDest: string;
 }
 
+export interface QuoteLinkMatch {
+  start: number;
+  end: number;
+  attrs: QuoteAttrs;
+  /** Same contract as MentionLinkMatch.rawDest: the destination exactly as
+   *  written (angle brackets stripped). */
+  rawDest: string;
+}
+
 /** One label+resource candidate out of the micromark walk, still
  *  unclassified. The structural rejects are already applied (image label,
  *  link title, empty label/destination — see the walk), so what remains is a
@@ -508,6 +664,10 @@ interface LinkCandidate {
   rawText: string;
   rawDest: string;
   angle: boolean;
+  /** True when the link sits inside an image token (`![...](...)` — a '!'
+   *  typed against a pill fuses into an image). Only the quote family
+   *  revives from this form (see classifyLinkCandidate). */
+  image: boolean;
 }
 
 /** All well-formed inline links in a text, in order — the shared candidate
@@ -548,7 +708,9 @@ function walkLinkCandidates(text: string): LinkCandidate[] {
   // With `definition` disabled, a top-level `label` token only survives when
   // an inline `resource` follows it immediately — so link assembly is just
   // pairing a label with the resource that starts where the label ends.
-  // Tokens inside an `image` token are skipped: images never revive.
+  // Tokens inside an `image` token are tagged (`image: true`) rather than
+  // skipped: classification decides which families revive from that form
+  // (quote only — see classifyLinkCandidate).
   let label: { start: number; end: number } | null = null;
   let inResource = false;
   let hasTitle = false;
@@ -559,7 +721,6 @@ function walkLinkCandidates(text: string): LinkCandidate[] {
       imageDepth += event === 'enter' ? 1 : -1;
       continue;
     }
-    if (imageDepth > 0) continue;
     if (event === 'enter') {
       if (token.type === 'label') {
         label = { start: token.start.offset, end: token.end.offset };
@@ -579,12 +740,15 @@ function walkLinkCandidates(text: string): LinkCandidate[] {
     const { start, end: labelEnd } = label;
     label = null;
     const end = token.end.offset;
-    // Rejects: a link title (`[a](b "t")` has a resourceTitle token), an
-    // image label that leaked through (`text[start]` would be '!'), an empty
+    const image = imageDepth > 0;
+    // Rejects: a link title (`[a](b "t")` has a resourceTitle token), an empty
     // label or destination (`[](x)`, `[a]()` — no resourceDestination token,
-    // or an empty <>) — all stay literal text.
-    if (hasTitle || text[start] !== '[' || destSpan === null) continue;
-    const rawText = text.slice(start + 1, labelEnd - 1);
+    // or an empty <>) — all stay literal text. An image label spans `![...]`
+    // (its token starts at the '!'), so its raw text begins one char later;
+    // the candidate span keeps the '!', letting the quote family consume the
+    // whole image form on classification.
+    if (hasTitle || text[start] !== (image ? '!' : '[') || destSpan === null) continue;
+    const rawText = text.slice(start + (image ? 2 : 1), labelEnd - 1);
     let rawDest = text.slice(destSpan.start, destSpan.end);
     let angle = false;
     if (rawDest.startsWith('<')) {
@@ -593,21 +757,30 @@ function walkLinkCandidates(text: string): LinkCandidate[] {
       rawDest = rawDest.slice(1, -1);
     }
     if (!rawText || !rawDest) continue;
-    candidates.push({ start, end, rawText, rawDest, angle });
+    candidates.push({ start, end, rawText, rawDest, angle, image });
   }
   return candidates;
 }
 
 type InlineLinkMatch =
   | { type: 'mention'; start: number; end: number; attrs: MentionAttrs; rawDest: string }
-  | { type: 'attachment'; start: number; end: number; attrs: AttachmentAttrs; rawDest: string };
+  | { type: 'attachment'; start: number; end: number; attrs: AttachmentAttrs; rawDest: string }
+  | { type: 'quote'; start: number; end: number; attrs: QuoteAttrs; rawDest: string };
 
-/** Classify one link candidate: attachment, mention, or null (stays literal
- *  text). The attachment check runs FIRST — an attachment dest is a schemed
- *  href, which classifyMentionHref rejects on sight, so the two families can
- *  never both claim a candidate and the order is documentation, not defense. */
+/** Classify one link candidate: attachment, quote, mention, or null (stays
+ *  literal text). The composer-private checks run FIRST — their dests are
+ *  schemed hrefs, which classifyMentionHref rejects on sight, so the families
+ *  can never both claim a candidate and the order is documentation, not
+ *  defense. */
 function classifyLinkCandidate(candidate: LinkCandidate): InlineLinkMatch | null {
-  const { start, end, rawText, rawDest, angle } = candidate;
+  const { start, end, rawText, rawDest, angle, image } = candidate;
+  // The image form (`![label](dest)` — a '!' typed against a pill fuses into
+  // an image token) revives ONLY for the quote family: the composer-private
+  // quote scheme must never reach the wire or sit in the draft as literal
+  // text, so the whole image span ('!' included) is treated as the pill
+  // link. Mentions and attachments keep their old literal behavior (their
+  // dests are plain paths / handled by their own submit passes).
+  if (image && !rawDest.startsWith(QUOTE_LINK_BASE)) return null;
   if (rawDest.startsWith(ATTACHMENT_LINK_BASE) && rawDest.length > ATTACHMENT_LINK_BASE.length) {
     // The attId is taken VERBATIM (the serializer writes it verbatim — an
     // opaque app-generated id, not a path). The label decodes like any link
@@ -619,6 +792,18 @@ function classifyLinkCandidate(candidate: LinkCandidate): InlineLinkMatch | null
       start,
       end,
       attrs: { attId: rawDest.slice(ATTACHMENT_LINK_BASE.length), name, kind: name.endsWith('/') ? 'folder' : 'file' },
+      rawDest,
+    };
+  }
+  if (rawDest.startsWith(QUOTE_LINK_BASE) && rawDest.length > QUOTE_LINK_BASE.length) {
+    // Self-contained: the destination IS the full quote (one canonical decode
+    // restores it — '%0A' → newline, '%25' → '%', …). The label is only a
+    // display excerpt, so it is recomputed on re-serialize, never read back.
+    return {
+      type: 'quote',
+      start,
+      end,
+      attrs: { text: decodeQuoteText(rawDest.slice(QUOTE_LINK_BASE.length)) },
       rawDest,
     };
   }
@@ -647,6 +832,39 @@ function classifyLinkCandidate(candidate: LinkCandidate): InlineLinkMatch | null
   };
 }
 
+/** Supplementary scan for the BACKSLASH-ESCAPED quote link form
+ *  (`\[label](kimi-code-composer://quote/...)` — a '\' typed against a pill
+ *  escapes the bracket, micromark tokenizes the whole thing as literal text
+ *  and the walk finds nothing). The composer-private scheme must never
+ *  survive to the wire, so the escaped form classifies as a normal quote
+ *  link, the single escaping backslash included in the span. A '[' is
+ *  escaped iff preceded by an ODD run of backslashes; an even run
+ *  (`\\[...]`) is a real link the walk already found, so the two scans can
+ *  never overlap. Quote-only on purpose: mention/attachment dests are plain
+ *  paths with their own submit passes. */
+const ESCAPED_QUOTE_LINK_RE = /\[(?:\\.|[^\\[\]\n])*\]\((kimi-code-composer:\/\/quote\/[^\s)]+)\)/g;
+
+function scanEscapedQuoteLinks(text: string): InlineLinkMatch[] {
+  const matches: InlineLinkMatch[] = [];
+  ESCAPED_QUOTE_LINK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ESCAPED_QUOTE_LINK_RE.exec(text)) !== null) {
+    let backslashes = 0;
+    for (let i = m.index - 1; i >= 0 && text[i] === '\\'; i -= 1) backslashes += 1;
+    if (backslashes % 2 === 0) continue;
+    const rawDest = m[1];
+    if (rawDest === undefined || rawDest.length <= QUOTE_LINK_BASE.length) continue;
+    matches.push({
+      type: 'quote',
+      start: m.index - 1, // Consume the ONE escaping backslash.
+      end: m.index + m[0].length,
+      attrs: { text: decodeQuoteText(rawDest.slice(QUOTE_LINK_BASE.length)) },
+      rawDest,
+    });
+  }
+  return matches;
+}
+
 /** Every classified pill link in a text, in document order — the single scan
  *  behind parseMentionLinks, parseAttachmentLinks and splitInlineSegments. */
 function collectInlineLinkMatches(text: string): InlineLinkMatch[] {
@@ -655,6 +873,8 @@ function collectInlineLinkMatches(text: string): InlineLinkMatch[] {
     const match = classifyLinkCandidate(candidate);
     if (match) matches.push(match);
   }
+  matches.push(...scanEscapedQuoteLinks(text));
+  matches.sort((a, b) => a.start - b.start);
   return matches;
 }
 
@@ -686,15 +906,26 @@ export function parseAttachmentLinks(text: string): AttachmentLinkMatch[] {
     .map(({ start, end, attrs, rawDest }) => ({ start, end, attrs, rawDest }));
 }
 
-/** One line of serialized text → inline nodes, reviving mention AND
- *  attachment links into atoms. Anything that doesn't parse as our link form
+/** All serialized quote links in a text, in order — the quote twin of
+ *  parseAttachmentLinks (same micromark pipeline, same per-line boundaries).
+ *  This is the scan behind the submit rewrite (app-client's
+ *  rewriteQuoteLinks). */
+export function parseQuoteLinks(text: string): QuoteLinkMatch[] {
+  return collectInlineLinkMatches(text)
+    .filter((match): match is Extract<InlineLinkMatch, { type: 'quote' }> => match.type === 'quote')
+    .map(({ start, end, attrs, rawDest }) => ({ start, end, attrs, rawDest }));
+}
+
+/** One line of serialized text → inline nodes, reviving mention, attachment
+ *  AND quote links into atoms. Anything that doesn't parse as our link form
  *  stays literal text. Segmentation is single-sourced in splitInlineSegments
- *  (the dual-class scan) — this only maps segments to PM nodes. */
+ *  (the multi-class scan) — this only maps segments to PM nodes. */
 function lineToInlineNodes(line: string): PMNode[] {
   if (!line) return [];
   return splitInlineSegments(line).map((segment) => {
     if (segment.type === 'mention') return mentionNode(segment.attrs);
     if (segment.type === 'attachment') return attachmentNode(segment.attrs);
+    if (segment.type === 'quote') return quoteNode(segment.attrs);
     return composerSchema.text(segment.value);
   });
 }
@@ -893,21 +1124,23 @@ export function parseClipboardText(text: string, opts?: { reviveMentions?: boole
  *  textBetween only walks a node's content — a top-level leaf would come out
  *  as '', so its form is emitted directly. Paragraphs are walked per child
  *  for the same reason: text goes verbatim, a mention keeps its link form,
- *  and an attachment degrades to its bare name (the folder name carries its
- *  trailing '/') — NEVER the leafText link form, which would leak the
- *  composer-private attId scheme into plaintext (the custom clipboard flavor
- *  carries the structured form, see attachmentRegistry.ts). leafText itself
- *  is untouched: docToText and the offset math rely on it. */
+ *  an attachment degrades to its bare name (the folder name carries its
+ *  trailing '/'), and a quote degrades to its plain quoted text — NEVER the
+ *  leafText link form, which would leak the composer-private schemes into
+ *  plaintext (the custom clipboard flavor carries the structured form for
+ *  attachments, see attachmentRegistry.ts). leafText itself is untouched:
+ *  docToText and the offset math rely on it. */
 export function serializeClipboardSlice(slice: Slice): string {
   const serializeInline = (node: PMNode): string => {
     if (node.isText) return node.text ?? '';
     if (node.type === composerSchema.nodes.mention) return serializeMention(node.attrs as MentionAttrs);
     if (node.type === composerSchema.nodes.attachment) return (node.attrs as AttachmentAttrs).name;
+    if (node.type === composerSchema.nodes.quote) return (node.attrs as QuoteAttrs).text;
     return node.textBetween(0, node.content.size, '');
   };
   const lines: string[] = [];
   slice.content.forEach((node) => {
-    if (node.type === composerSchema.nodes.mention || node.type === composerSchema.nodes.attachment) {
+    if (node.type === composerSchema.nodes.mention || node.type === composerSchema.nodes.attachment || node.type === composerSchema.nodes.quote) {
       lines.push(serializeInline(node));
     } else {
       let line = '';
@@ -953,16 +1186,17 @@ export function splitMentionSegments(text: string): MentionSegment[] {
   return segments;
 }
 
-/** One piece of a wire text after dual-class segmentation: a verbatim text
- *  run, a mention, or an attachment. */
+/** One piece of a wire text after multi-class segmentation: a verbatim text
+ *  run, a mention, an attachment, or a quote. */
 export type InlineSegment =
   | { type: 'text'; value: string }
   | { type: 'mention'; attrs: MentionAttrs; rawDest: string }
-  | { type: 'attachment'; attrs: AttachmentAttrs; rawDest: string };
+  | { type: 'attachment'; attrs: AttachmentAttrs; rawDest: string }
+  | { type: 'quote'; attrs: QuoteAttrs; rawDest: string };
 
-/** The dual-class twin of splitMentionSegments: ONE scan segments both
- *  mention and attachment links (collectInlineLinkMatches). textToDoc revives
- *  from this, so a reload brings back both pill kinds. */
+/** The multi-class twin of splitMentionSegments: ONE scan segments mention,
+ *  attachment and quote links (collectInlineLinkMatches). textToDoc revives
+ *  from this, so a reload brings back every pill kind. */
 export function splitInlineSegments(text: string): InlineSegment[] {
   const matches = collectInlineLinkMatches(text);
   if (matches.length === 0) return [{ type: 'text', value: text }];
@@ -971,7 +1205,8 @@ export function splitInlineSegments(text: string): InlineSegment[] {
   for (const match of matches) {
     if (match.start > cursor) segments.push({ type: 'text', value: text.slice(cursor, match.start) });
     if (match.type === 'mention') segments.push({ type: 'mention', attrs: match.attrs, rawDest: match.rawDest });
-    else segments.push({ type: 'attachment', attrs: match.attrs, rawDest: match.rawDest });
+    else if (match.type === 'attachment') segments.push({ type: 'attachment', attrs: match.attrs, rawDest: match.rawDest });
+    else segments.push({ type: 'quote', attrs: match.attrs, rawDest: match.rawDest });
     cursor = match.end;
   }
   if (cursor < text.length) segments.push({ type: 'text', value: text.slice(cursor) });

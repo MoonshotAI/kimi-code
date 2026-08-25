@@ -53,8 +53,15 @@ const props = withDefaults(
 );
 
 /** text → segments, recomputed only when the text changes; the template
- *  renders this sequence 1:1. */
-const segments = computed(() => splitInlineSegments(props.text));
+ *  renders this sequence 1:1. A quote link never legitimately reaches the
+ *  message surface (the submit rewrite folds it into a `> ` block first), so
+ *  one that slips through (hand-typed) degrades to its plain quoted text —
+ *  the composer-private scheme never renders. */
+const segments = computed(() =>
+  splitInlineSegments(props.text).map((segment) =>
+    segment.type === 'quote' ? { type: 'text' as const, value: segment.attrs.text } : segment,
+  ),
+);
 
 /** Tab semantics for actionable pills in message context. Folder pills stay
  *  inert (no click target); skill pills get button semantics but NO handlers

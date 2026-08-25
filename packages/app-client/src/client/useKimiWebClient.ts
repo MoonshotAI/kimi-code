@@ -2818,6 +2818,7 @@ const queued = computed<QueuedPromptView[]>(() => {
       // it the reload would collapse to media-first).
       promptAttachmentToTurnAttachment(api, a, index),
     ),
+    editText: q.editText,
   }));
 });
 
@@ -4102,6 +4103,11 @@ export function useKimiWebClient() {
     openSideChat: sideChat.openSideChat,
     closeSideChat: sideChat.closeSideChat,
     sendSideChatPrompt: sideChat.sendSideChatPrompt,
+    setSideChatPendingDraft: sideChat.setSideChatPendingDraft,
+    takeSideChatPendingDraft: sideChat.takeSideChatPendingDraft,
+    saveSideChatDraft: sideChat.saveSideChatDraft,
+    sideChatDraft: sideChat.sideChatDraft,
+    clearSideChatDraftIfUnchanged: sideChat.clearSideChatDraftIfUnchanged,
     uploadImage: workspaceState.uploadImage,
     abortCurrentPrompt: workspaceState.abortCurrentPrompt,
     respondApproval: workspaceState.respondApproval,

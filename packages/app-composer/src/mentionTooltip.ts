@@ -1,6 +1,6 @@
 // packages/app-composer/src/mentionTooltip.ts
-// Hover tooltip + click routing for mention AND attachment pills, as ONE
-// document-level singleton. Pills are raw DOM in three places (the
+// Hover tooltip + click routing for mention, attachment AND quote pills, as
+// ONE document-level singleton. Pills are raw DOM in three places (the
 // composer's ProseMirror NodeView, ChatPane's pillify pass, Markdown link
 // decoration), so a Vue wrapper like Tooltip.vue can't reach them — this
 // service delegates on document mouseover instead and renders into a single
@@ -30,6 +30,7 @@
 
 import { iconSvg } from './icons';
 import { attachmentIconSvg } from './attachmentPill';
+import { quoteIconSvg } from './quotePill';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 
 /** The metadata an attachment pill tooltip can show, resolved from the
@@ -113,6 +114,9 @@ export interface MentionTooltipHost {
    *  its localized attachment-tooltip line; undefined falls back to the raw
    *  marker. */
   attachmentErrorLabel?: (error: string) => string | undefined;
+  /** Localized aria-label for the quote tooltip's copy button (a getter —
+   *  same language-change reasoning as openSkillLabel). */
+  copyQuoteLabel?: () => string;
   /**
    * Whether the current scope's skill list has finished loading. The
    * unactionable degrade strips the pill from the tab order ONLY when this
@@ -224,6 +228,21 @@ function buildCopyButton(value: string, label?: string): HTMLButtonElement {
   return copy;
 }
 
+/** The scroll-dismiss guard: a scroll originating INSIDE the bubble (the
+ *  long-quote tooltip scrolls internally) is not an outside scroll. A
+ *  non-Node target (window.resize's Window, synthetic events) can't be
+ *  inside anything — treat it as an outside event instead of throwing in
+ *  contains(). */
+export function isBubbleInternalScroll(bubble: HTMLElement | null, target: EventTarget | null): boolean {
+  return (
+    bubble !== null &&
+    target !== null &&
+    typeof Node !== 'undefined' &&
+    target instanceof Node &&
+    bubble.contains(target)
+  );
+}
+
 /** Path tooltip body: a flex row — the path text on the left (see
  *  buildPathText) and a top-aligned copy button on the right. */
 export function buildMentionPathTooltip(path: string, opts: { copyLabel?: string } = {}): HTMLElement {
@@ -283,6 +302,25 @@ export function buildAttachmentTooltip(info: AttachmentTooltipInfo, opts: { copy
   error.textContent = opts.errorLabel ?? info.error;
   wrap.append(error);
   return wrap;
+}
+
+/** Quote pill tooltip body: the same flex row as the file mention path
+ *  tooltip, led by the chat-quote glyph — the full quoted text (whitespace
+ *  preserved, scroll-capped) and a copy button that copies it. */
+export function buildQuoteTooltip(text: string, opts: { copyLabel?: string } = {}): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'mention-tip-path';
+  const icon = document.createElement('span');
+  icon.className = 'mention-tip-att-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = quoteIconSvg();
+  el.append(icon);
+  const quoteText = document.createElement('div');
+  quoteText.className = 'mention-tip-quote-text';
+  quoteText.textContent = text;
+  el.append(quoteText);
+  el.append(buildCopyButton(text, opts.copyLabel));
+  return el;
 }
 
 /** Skill tooltip card: title row (name + open button when the md path is
@@ -483,6 +521,10 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   }
 
   function contentFor(pill: HTMLElement): HTMLElement {
+    if (pill.classList.contains('quote-pill')) {
+      // Self-contained: the full quote rides in the pill's data attribute.
+      return buildQuoteTooltip(pill.dataset.quoteText ?? '', { copyLabel: host.copyQuoteLabel?.() });
+    }
     if (pill.classList.contains('attachment-pill')) {
       const att = pillAttachment(pill);
       // The resolver speaks for the COMPOSER registry only: a pill inside the
@@ -626,7 +668,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
           probeRequest = { path: info.path, kind: att.kind, strike: (missing) => markAttachmentMissing(att.attId, missing) };
         }
       }
-    } else {
+    } else if (!pill.classList.contains('quote-pill')) {
       const mention = pillMention(pill);
       shownPath = mention.kind !== 'skill' && mention.path !== '' ? mention.path : null;
       if (shownPath !== null) {
@@ -705,7 +747,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
   }
 
   function closestPill(target: EventTarget | null): HTMLElement | null {
-    return target instanceof Element ? target.closest<HTMLElement>('.mention-pill, .attachment-pill') : null;
+    return target instanceof Element ? target.closest<HTMLElement>('.mention-pill, .attachment-pill, .quote-pill') : null;
   }
 
   function onMouseOver(event: MouseEvent): void {
@@ -802,7 +844,10 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
     hide();
   }
 
-  function onScrollOrResize(): void {
+  function onScrollOrResize(event?: Event): void {
+    // The long-quote tooltip scrolls internally — its own scroll events must
+    // not read as the outside-scroll dismiss.
+    if (isBubbleInternalScroll(bubble, event?.target ?? null)) return;
     hide();
   }
 

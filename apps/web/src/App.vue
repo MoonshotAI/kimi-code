@@ -36,6 +36,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient, promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { buildQuoteBlock, sweepPendingQuotes, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { PromptAttachment } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -338,6 +339,7 @@ onMounted(() => {
     openAttachment: (target) => onAttachmentOpen(target),
     openSkillLabel: () => t('mention.openSkill'),
     copyPathLabel: () => t('mention.copyPath'),
+    copyQuoteLabel: () => t('selection.copyQuote'),
     attachmentErrorLabel: (error) =>
       error === 'upload-failed'
         ? t('mention.attachmentUploadFailed')
@@ -458,7 +460,7 @@ const sideChatPanelRef = ref<InstanceType<typeof SideChatPanel> | null>(null);
 // focus too. The composer autofocus itself yields once the side chat is
 // focused (it drops its request when focus sits in any text-entry element),
 // so either ordering of the two lands focus here.
-function armSideChatFocus(): () => void {
+function armSideChatFocus(): { acted: () => boolean; focusWhenReady: () => void } {
   let userActed = false;
   const onUserAction = (e: Event): void => {
     // Key auto-repeat from the still-held trigger (the `/btw` Enter, the
@@ -472,24 +474,29 @@ function armSideChatFocus(): () => void {
   // the window losing focus too.
   window.addEventListener('blur', onUserAction);
   document.addEventListener('visibilitychange', onUserAction);
-  return () => {
-    void nextTick(() => {
-      document.removeEventListener('pointerdown', onUserAction, true);
-      document.removeEventListener('keydown', onUserAction, true);
-      window.removeEventListener('blur', onUserAction);
-      document.removeEventListener('visibilitychange', onUserAction);
-      if (userActed) return;
-      // The window went (or still is) in the background — never move focus
-      // behind the user's back.
-      if (!document.hasFocus()) return;
-      // Mobile skips auto-focus entirely — it would pop the on-screen
-      // keyboard over the transcript (same convention as the composer
-      // autofocus), and outside the user gesture iOS wouldn't show the
-      // keyboard anyway.
-      if (isMobile.value) return;
-      if (anyOverlayOpen.value) return;
-      sideChatPanelRef.value?.focusInput();
-    });
+  return {
+    /** Live until focusWhenReady() detaches the listeners: whether the user
+     *  has moved on since arming. */
+    acted: () => userActed,
+    focusWhenReady: () => {
+      void nextTick(() => {
+        document.removeEventListener('pointerdown', onUserAction, true);
+        document.removeEventListener('keydown', onUserAction, true);
+        window.removeEventListener('blur', onUserAction);
+        document.removeEventListener('visibilitychange', onUserAction);
+        if (userActed) return;
+        // The window went (or still is) in the background — never move focus
+        // behind the user's back.
+        if (!document.hasFocus()) return;
+        // Mobile skips auto-focus entirely — it would pop the on-screen
+        // keyboard over the transcript (same convention as the composer
+        // autofocus), and outside the user gesture iOS wouldn't show the
+        // keyboard anyway.
+        if (isMobile.value) return;
+        if (anyOverlayOpen.value) return;
+        sideChatPanelRef.value?.focusInput();
+      });
+    },
   };
 }
 
@@ -543,6 +550,9 @@ type SubmitPayload = {
   /** The gate-failure restore's draft (the PRE-REWRITE text, attId links
       intact) plus the original registry entries — see the Composer emit. */
   restoreText?: string;
+  /** The queue's edit-reload draft (attachment links already at their 1..N
+      payload indices, quote links intact) — see decideComposerSubmit. */
+  editText?: string;
   restoreEntries?: AttachmentEntry[];
 };
 const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
@@ -930,6 +940,111 @@ async function handleInterrupt(): Promise<void> {
   conversationPaneRef.value?.onAbortOutcome(aborted);
 }
 
+// Selection quote actions from the transcript (划词): sidechat opens the /btw
+// side chat and drops the quote into its DRAFT (nothing sent — plan B);
+// comment/quote insert a quote PILL into the composer doc (an inline atom,
+// mention-pill style — the 评论 comment rides after the pill), serialized
+// back to the `> ` blockquote wire form at submit.
+//
+// A quote insert that found no composer (the dock showing a pending
+// question/approval) rides in this per-session QUEUE until the composer
+// comes back, replayed in order — it must never be dropped silently, and
+// consecutive actions while the composer is hidden all accumulate. The
+// watcher source includes the active session, so a switch sweeps that
+// session's queue IMMEDIATELY (an A→B→A round trip with the composer hidden
+// throughout never resurrects A's stash).
+const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; sessionId: string | undefined }>>([]);
+watch(
+  () => [client.activeSessionId.value, conversationPaneRef.value?.hasInsertableComposer() ?? false] as const,
+  ([sid, ready]) => {
+    if (pendingQuoteInserts.value.length === 0) return;
+    pendingQuoteInserts.value = sweepPendingQuotes(pendingQuoteInserts.value, sid, (item) =>
+      ready ? conversationPaneRef.value?.insertComposerQuote(item.quote, item.comment) === true : false,
+    );
+  },
+);
+
+function handleQuoteAction(payload: SelectionActionPayload): void {
+  if (payload.action === 'sidechat') {
+    // Plan B (用户拍板): the quote lands in the side chat's DRAFT — nothing is
+    // sent. Open without a prompt, then write the quote block into the panel's
+    // draft once the panel is mounted. Capture the source session up front:
+    // the open is async, and a switch in between must not write into the
+    // WRONG side chat — discard then (an empty start is the creation path,
+    // whose new session IS the continuation).
+    const sourceSid = client.activeSessionId.value;
+    // Same focus guard as `/btw` (armSideChatFocus): a slow first startBtw
+    // must not hijack the panel OR the focus when the user moved on
+    // mid-flight (typing in the composer, opening another panel). The quote
+    // still never dies — it becomes the session's pending side-chat draft,
+    // adopted by the next SideChatPanel mount.
+    const sideChatFocus = armSideChatFocus();
+    const stashPendingDraft = (sessionId: string | null): void => {
+      if (sessionId) client.setSideChatPendingDraft(sessionId, buildQuoteBlock(payload.quote));
+    };
+    void (async () => {
+      try {
+        if (sourceSid && sideChatFocus.acted()) {
+          // Moved on BEFORE the open even started: never switch anything.
+          stashPendingDraft(sourceSid);
+          return;
+        }
+        // The panel-target write is gated in the detail layer TWICE at write
+        // time: expectedSessionId (a mid-flight session switch never hijacks
+        // the new session's panel) and shouldSwitch (a detail panel the user
+        // opened mid-flight is never covered — so no undo is needed here.
+        const createdId = await openSideChatTab(undefined, {
+          expectedSessionId: sourceSid || undefined,
+          shouldSwitch: () => !sideChatFocus.acted(),
+        });
+        if (sourceSid && client.activeSessionId.value !== sourceSid) {
+          stashPendingDraft(sourceSid);
+          return;
+        }
+        if (sideChatFocus.acted()) {
+          // Moved on DURING a slow open: the detail layer never switched the
+          // panel (shouldSwitch) and the agent stays alive — only keep the
+          // quote as the pending draft.
+          stashPendingDraft(createdId ?? sourceSid);
+          return;
+        }
+        await nextTick();
+        let panel = sideChatPanelRef.value;
+        if (!panel) {
+          // A session-creating open remounts more of the tree — allow a second tick.
+          await nextTick();
+          panel = sideChatPanelRef.value;
+        }
+        if (sourceSid && client.activeSessionId.value !== sourceSid) {
+          stashPendingDraft(sourceSid);
+          return;
+        }
+        if (!panel) {
+          // The open failed (a swallowed startBtw error — network/daemon): the
+          // panel never mounted, so the write would no-op silently. Surface it
+          // instead of pretending success — the user re-selects and retries.
+          client.notify({ severity: 'warning', title: t('selection.sideChatOpenFailed') });
+          return;
+        }
+        panel.insertDraft(buildQuoteBlock(payload.quote), { focus: false });
+      } finally {
+        sideChatFocus.focusWhenReady();
+      }
+    })();
+    return;
+  }
+  const comment = payload.action === 'comment' ? payload.comment : undefined;
+  if (conversationPaneRef.value?.insertComposerQuote(payload.quote, comment) !== true) {
+    // No composer right now (the dock is showing a question/approval card) —
+    // queue it (per session, in order) for replay on recovery instead of
+    // dropping the quote.
+    pendingQuoteInserts.value = [
+      ...pendingQuoteInserts.value,
+      { quote: payload.quote, comment, sessionId: client.activeSessionId.value },
+    ];
+  }
+}
+
 // Handler for slash commands emitted by Composer (via ConversationPane)
 //
 // Rebuild composer-editable attachments for a gated/cancelled payload: the
@@ -1024,12 +1139,12 @@ async function passCommandGates(text: string, attachments: PromptAttachment[] = 
 let sendGeneration = 0;
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
-async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; restoreEntries?: AttachmentEntry[] }): Promise<void> {
+async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; restoreEntries?: AttachmentEntry[]; editText?: string }): Promise<void> {
   const { cmd, attachments, restoreText, restoreEntries } = payload;
   // `/compact <text>` carries an optional free-text instruction steering what
   // the summary should focus on (TUI parity).
   if (cmd === '/compact' || cmd.startsWith('/compact ')) {
-    if (!(await passCommandGates(cmd))) return;
+    if (!(await passCommandGates(cmd, [], restoreText, restoreEntries))) return;
     client.compact(cmd.slice('/compact'.length).trim() || undefined);
     return;
   }
@@ -1040,9 +1155,13 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
     if (arg === 'on') client.setSwarmMode(true);
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) {
-      if (!(await passCommandGates(cmd))) return;
+      if (!(await passCommandGates(cmd, [], restoreText, restoreEntries))) return;
       client.setSwarmMode(true);
-      void client.sendPrompt(arg);
+      // A busy session ENQUEUES this send — carry the arg-level editText (the
+      // decision's pre-rewrite arg: token dropped, attachments bare-named,
+      // quote links intact) so editing the queued item revives the quote
+      // pill instead of the cmd's flattened blockquote.
+      void client.sendPrompt(arg, [], payload.editText);
     }
     else void client.toggleSwarmMode();
     return;
@@ -1053,7 +1172,7 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
     const arg = cmd.slice('/goal'.length).trim();
     if (arg === 'pause' || arg === 'resume' || arg === 'cancel') client.controlGoal(arg);
     else if (arg) {
-      if (!(await passCommandGates(cmd))) return;
+      if (!(await passCommandGates(cmd, [], restoreText, restoreEntries))) return;
       void client.createGoal(arg);
     }
     else client.toggleGoalMode();
@@ -1070,14 +1189,14 @@ async function handleCommand(payload: { cmd: string; attachments: PromptAttachme
     } else {
       // Arm before the (possibly async) command gate so user input during
       // the gate is tracked too; a rejected gate disarms without opening.
-      const focusWhenReady = armSideChatFocus();
-      if (arg && !(await passCommandGates(cmd))) {
-        focusWhenReady();
+      const sideChatFocus = armSideChatFocus();
+      if (arg && !(await passCommandGates(cmd, [], restoreText, restoreEntries))) {
+        sideChatFocus.focusWhenReady();
         return;
       }
       void openSideChatTab(arg || undefined).then(
-        () => focusWhenReady(),
-        () => focusWhenReady(),
+        () => sideChatFocus.focusWhenReady(),
+        () => sideChatFocus.focusWhenReady(),
       );
     }
     return;
@@ -1243,7 +1362,11 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
     }
     return;
   }
-  void client.sendPrompt(payload.text, payload.attachments);
+  // The queue entry keeps the daemon-bound text AND the edit-reload draft
+  // (editText: attachment links already at their 1..N payload indices so the
+  // reload's ordinal seeding matches, quote pills still revivable links —
+  // NOT the pre-rewrite draft, whose random attIds would revive missing).
+  void client.sendPrompt(payload.text, payload.attachments, payload.editText ?? payload.restoreText);
 }
 
 // Drops a queued first-message submission and hands its content back to the
@@ -1524,6 +1647,7 @@ function openPr(url: string): void {
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
       @edit-message="handleEditMessage"
+      @quote-action="handleQuoteAction"
     />
 
     <!-- Session admin page (/admin/sessions): a full-pane main view switched
@@ -1626,6 +1750,11 @@ function openPr(url: string): void {
         :turns="client.sideChatTurns.value"
         :running="client.sideChatRunning.value"
         :sending="client.sideChatSending.value"
+        :parent-session-id="client.activeSessionId.value"
+        :consume-pending-draft="client.takeSideChatPendingDraft"
+        :load-draft="client.sideChatDraft"
+        :save-draft="client.saveSideChatDraft"
+        :clear-draft-if-unchanged="client.clearSideChatDraftIfUnchanged"
         :on-send="client.sendSideChatPrompt"
         @close="closeSideChat"
         @open-media="onOpenMedia"

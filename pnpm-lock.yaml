@@ -524,7 +524,7 @@ importers:
         version: 5.3.2
       immer:
         specifier: ^11.1.0
-        version: 11.1.17
+        version: 11.1.18
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
@@ -4142,8 +4142,8 @@ packages:
   image-q@4.0.0:
     resolution: {integrity: sha512-PfJGVgIfKQJuq3s0tTDOKtztksibuUEbJQIYT3by6wctQo+Rdlh7ef4evJ5NCdxY4CfMbvFkocEwbl4BF8RlJw==}
 
-  immer@11.1.17:
-    resolution: {integrity: sha512-8Vu44Y0MuMBlTQz/jQ8HEMYNq/bBqk87MnBwYR5mC8AthfhEXidZ5aT/oA/CUqboa8THKltnD9L3xyqhU/Sy1Q==}
+  immer@11.1.18:
+    resolution: {integrity: sha512-EQyQtLiYW029lyoczMl/Hh4Xu7cDecSc58JRYpHyL4tIAu3eqd1yJzQX04d2BZHDkzFFvm6qJEJWOtfDSWAXbQ==}
 
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
@@ -9733,7 +9733,7 @@ snapshots:
     dependencies:
       '@types/node': 16.9.1
 
-  immer@11.1.17: {}
+  immer@11.1.18: {}
 
   import-meta-resolve@4.2.0: {}
 

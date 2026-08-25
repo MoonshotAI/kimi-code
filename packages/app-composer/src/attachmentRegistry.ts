@@ -498,6 +498,24 @@ export function sliceAttachmentAttIds(slice: Slice): string[] {
   return attIds;
 }
 
+/** Whether a slice holds any quote node. Quotes are self-contained (no
+ *  registry entry), so a quote-only selection still warrants the structured
+ *  flavor — without it the copy falls back to ProseMirror's built-in handler
+ *  and the pill degrades to plain text on the way back in (a re-send would
+ *  no longer rewrite it to a `> ` block). */
+export function sliceHasQuoteNode(slice: Slice): boolean {
+  let found = false;
+  slice.content.descendants((node) => {
+    if (found) return false;
+    if (node.type === composerSchema.nodes.quote) {
+      found = true;
+      return false;
+    }
+    return true;
+  });
+  return found;
+}
+
 /** The DOM-free products of a composer copy whose selection may cover
  *  attachment pills. */
 export interface ComposerClipboardCopy {
@@ -512,19 +530,21 @@ export interface ComposerClipboardCopy {
 }
 
 /** Build the text/plain and custom-flavor products of a composer copy.
- *  Returns null when the slice holds NO attachment node — the caller leaves
- *  the whole copy to ProseMirror's built-in handler then. text/html is NOT
- *  produced here: HTML serialization needs a document, so the DOM layer
- *  builds it (via the view's clipboardSerializer, mirroring PM's own copy).
- *  When this returns non-null the caller must own the ENTIRE clipboard —
- *  returning false to PM would let its built-in copy handler clearData() and
- *  re-write only text/html + text/plain, silently dropping the flavor. */
+ *  Returns null when the slice holds NO attachment node AND NO quote node —
+ *  the caller leaves the whole copy to ProseMirror's built-in handler then.
+ *  A quote-only selection still gets the flavor (quotes are self-contained,
+ *  so `attachments` comes back empty). text/html is NOT produced here: HTML
+ *  serialization needs a document, so the DOM layer builds it (via the
+ *  view's clipboardSerializer, mirroring PM's own copy). When this returns
+ *  non-null the caller must own the ENTIRE clipboard — returning false to PM
+ *  would let its built-in copy handler clearData() and re-write only
+ *  text/html + text/plain, silently dropping the flavor. */
 export function buildComposerClipboardCopy(
   slice: Slice,
   lookupEntry: (attId: string) => AttachmentEntry | undefined,
 ): ComposerClipboardCopy | null {
   const attIds = sliceAttachmentAttIds(slice);
-  if (attIds.length === 0) return null;
+  if (attIds.length === 0 && !sliceHasQuoteNode(slice)) return null;
   const attachments = attIds
     .map((attId) => lookupEntry(attId))
     .filter((entry): entry is AttachmentEntry => entry !== undefined);

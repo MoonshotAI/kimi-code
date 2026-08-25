@@ -118,6 +118,10 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
       last message" after an undo, or by the dock queue panel when the user edits
       a queued prompt). Focuses with the caret at the end. */
   function loadForEdit(value: string): void {
+    setTextAndFocus(value);
+  }
+
+  function setTextAndFocus(value: string): void {
     text.value = value;
     void nextTick(() => {
       const el = editorRef.value;

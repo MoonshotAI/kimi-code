@@ -4,11 +4,12 @@
      ChatPane for the transcript; its panel-open emits are no-ops here, except
      openMedia which is forwarded so tool media still opens the lightbox. -->
 <script setup lang="ts">
-import { computed, nextTick, provide, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import { Icon, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { joinDraftSegments } from '@moonshot-ai/app-client/lib';
 import type { ChatTurn, OpenMediaRequest } from '../../types';
 
 const props = defineProps<{
@@ -17,6 +18,22 @@ const props = defineProps<{
   sending: boolean;
   title?: string;
   subtitle?: string;
+  /** The parent session the side chat belongs to — the pending-draft lookup
+      key (a guarded quote open stashes by it) and the whole-draft
+      persistence key. */
+  parentSessionId?: string;
+  /** Read-and-clear the session's pending side-chat draft (client facade). */
+  consumePendingDraft?: (sessionId: string) => string | null;
+  /** Whole-draft persistence (client facade): the panel instance is reused
+      across session switches (not keyed) and unmounts when the target
+      session has no BTW tab, so the draft lives in the session-keyed client
+      store — saved on every change, re-loaded on mount / switch. */
+  loadDraft?: (sessionId: string) => string;
+  saveDraft?: (sessionId: string, text: string) => void;
+  /** Post-send cleanup: clear the session's persisted draft ONLY when it
+      still equals the snapshot (a draft that moved on mid-flight is the
+      user's new content and survives). */
+  clearDraftIfUnchanged?: (sessionId: string, snapshot: string) => void;
   /** Resolves false when the prompt provably never left (a pre-submit
       failure) — the draft stays in the box for a retry. */
   onSend: (text: string) => Promise<boolean>;
@@ -50,11 +67,22 @@ async function submit(): Promise<void> {
   const raw = draft.value;
   const text = raw.trim();
   if (!text || submitting.value) return;
+  // Capture the SOURCE session before the await: the panel may close or be
+  // reused on another session while the send is in flight, and
+  // props.parentSessionId would then point at the wrong session — the
+  // persisted draft must be cleared where the text was sent FROM, never on
+  // the session the panel happens to show afterwards.
+  const sourceSid = props.parentSessionId;
   submitting.value = true;
   try {
     const sent = await props.onSend(text);
     // Unsent (the failure already toasted) — keep the draft for a retry.
     if (!sent) return;
+    // The local cleanup below dies with the component (a mid-flight close or
+    // session switch stops the draft watcher), so clear the SOURCE session's
+    // persisted draft here — but only when nothing new was typed there
+    // since: an advanced snapshot is the user's new content and survives.
+    if (sourceSid) props.clearDraftIfUnchanged?.(sourceSid, raw);
     // The box stayed editable while the send was in flight — clear only when
     // nothing new was typed since, never eat in-progress typing.
     if (draft.value !== raw) return;
@@ -137,7 +165,58 @@ function focusInput(): void {
   inputRef.value?.focus();
 }
 
-defineExpose({ focusInput });
+/** Insert text into the side-chat draft WITHOUT sending (selection quote
+    actions — 划词, plan B): newline-normalized join (exactly one blank line
+    between segments — a quote block already ends with `\n\n`), then focus
+    with the caret at the end and re-run autosize. `focus: false` writes
+    without stealing focus (the caller's arm-guard owns focusing then). */
+function insertDraft(text: string, opts?: { focus?: boolean }): void {
+  draft.value = joinDraftSegments(draft.value, text);
+  void nextTick(() => {
+    const el = inputRef.value;
+    if (!el) return;
+    if (opts?.focus !== false) el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    autosize();
+  });
+}
+
+defineExpose({ focusInput, insertDraft });
+
+// A guarded side-chat open (selection quote action where the user moved on
+// mid-flight) stashes the quote as the session's pending draft instead of
+// forcing the panel open — adopt it when the panel next mounts for this
+// session. No focus steal: the user opened the panel themselves.
+onMounted(() => {
+  if (!props.parentSessionId || !props.consumePendingDraft) return;
+  const pending = props.consumePendingDraft(props.parentSessionId);
+  if (pending !== null) insertDraft(pending, { focus: false });
+});
+
+// Whole-draft persistence: load the CURRENT session's draft on mount and on
+// every session switch (the instance is reused — without this, session A's
+// draft would show in session B's box, or die with the unmount), and save on
+// every change. The draft watcher also flushes the reload, but writing the
+// same value back is a no-op save. The session's PENDING draft (the
+// guarded-open stash above) rides the same load: it is session-keyed too,
+// and an instance REUSED across an A→B switch never re-runs onMounted, so B's
+// stash would otherwise wait for a real remount. The take clears it, so the
+// onMounted adoption stays a once-only fallback (an immediate watcher runs
+// before onMounted on a real mount).
+watch(
+  () => props.parentSessionId,
+  (sid) => {
+    let loaded = (sid && props.loadDraft?.(sid)) || '';
+    const pending = sid && props.consumePendingDraft ? props.consumePendingDraft(sid) : null;
+    if (pending !== null) loaded = joinDraftSegments(loaded, pending);
+    draft.value = loaded;
+    void nextTick(autosize);
+  },
+  { immediate: true },
+);
+watch(draft, (text) => {
+  if (props.parentSessionId) props.saveDraft?.(props.parentSessionId, text);
+});
 </script>
 
 <template>
@@ -157,6 +236,7 @@ defineExpose({ focusInput });
         :turn-active="running"
         :working="sending || running"
         :turn-files-interactive="false"
+        :selection-actions="false"
         @open-media="emit('openMedia', $event)"
       />
       <div v-if="showLoading" class="sc-loading">

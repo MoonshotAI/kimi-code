@@ -10,6 +10,7 @@ import {
   parseClipboardText,
   serializeAttachment,
   serializeClipboardSlice,
+  serializeQuote,
   splitInlineSegments,
   textToDoc,
   type AttachmentAttrs,
@@ -34,6 +35,7 @@ import {
 const FILE: AttachmentAttrs = { attId: 'abc12345', name: 'a.ts', kind: 'file' };
 const FOLDER: AttachmentAttrs = { attId: 'def67890', name: 'src/', kind: 'folder' };
 const link = (attrs: AttachmentAttrs): string => serializeAttachment(attrs);
+const quoteLink = (text: string): string => serializeQuote({ text });
 
 function entry(partial: Partial<AttachmentEntry> & { attId: string }): AttachmentEntry {
   return {
@@ -152,6 +154,34 @@ describe('buildComposerClipboardCopy — the copy handler’s DOM-free products'
     const parsed = parseComposerClipboardPayload(copy.flavor)!;
     expect(parsed.attachments.map((e) => e.attId)).toEqual([FOLDER.attId]);
     expect(copy.plain).toBe('a.ts src/ a.ts');
+  });
+
+  it('builds the flavor for a QUOTE-ONLY selection (self-contained, no entries)', () => {
+    const state = createState(`看 ${quoteLink('多行\n引用')} 吧`);
+    const selected = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, 1, state.doc.content.size - 1)),
+    );
+    const copy = buildComposerClipboardCopy(selected.selection.content(), byAttId())!;
+    expect(copy).not.toBeNull();
+    // text/plain keeps the FULL quote text (the quote branch of
+    // serializeClipboardSlice degrades to it — no scheme leaks).
+    expect(copy.plain).toBe('看 多行\n引用 吧');
+    // Quotes are self-contained: the flavor carries NO registry entries.
+    const parsed = parseComposerClipboardPayload(copy.flavor)!;
+    expect(parsed).not.toBeNull();
+    expect(parsed.attachments).toEqual([]);
+  });
+
+  it('quote-only copy → paste round-trips the pill (a re-send still rewrites to a `> ` block)', () => {
+    const source = createState(quoteLink('引用'));
+    const flavor = flavorJson(source);
+    const target = createState('');
+    const tr = buildAttachmentClipboardPaste(target, flavor)!;
+    expect(tr).not.toBeNull();
+    const next = target.apply(tr);
+    // The pasted doc re-serializes to the same quote link — the atom survived
+    // instead of degrading to plain text.
+    expect(docToText(next.doc)).toBe(quoteLink('引用'));
   });
 });
 

@@ -186,3 +186,122 @@ describe('detail panel toggle', () => {
     expect(preview.previewError.value).toBe('filePreview.errors.notFound');
   });
 });
+
+describe('openSideChatTab — panel-target write gated on the expected session', () => {
+  function makePanel(activeSessionId: string | null) {
+    const detailTarget = ref<DetailTarget | null>(null);
+    const client = {
+      activeSessionId: ref(activeSessionId),
+      activeWorkspaceId: ref(null),
+      activeAppTasks: ref([]),
+      turns: ref([]),
+      sideChatVisible: ref(false),
+      auxiliaryTranscripts: { getEntry: vi.fn(), activate: vi.fn(), deactivate: vi.fn() },
+      openSideChat: vi.fn(async () => true),
+      startSessionAndOpenSideChat: vi.fn(async () => 'created-1'),
+      loadGitStatus: vi.fn(),
+      clearFileDiff: vi.fn(),
+      loadFileDiff: vi.fn(),
+    };
+    const panel = useDetailPanel({
+      client: client as never,
+      sideWidth: ref(280),
+      detailTarget,
+      closeFilePreview: vi.fn(),
+    });
+    return { panel, client, detailTarget };
+  }
+
+  it('writes detailTarget when the expected session is still active', async () => {
+    const { panel, detailTarget } = makePanel('sess-a');
+    await panel.openSideChatTab(undefined, { expectedSessionId: 'sess-a' });
+    expect(detailTarget.value).toBe('btw');
+  });
+
+  it('re-reads the session at WRITE time: a mid-flight switch never writes the panel target (agent still created)', async () => {
+    const { panel, client, detailTarget } = makePanel('sess-a');
+    // Deferred startBtw: the session switch (and its panel-close watcher)
+    // lands BEFORE the write, so this assertion can't be masked by cleanup
+    // ordering — only the write-time re-read keeps the panel closed.
+    let resolveOpen!: () => void;
+    client.openSideChat.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = () => resolve(true);
+        }),
+    );
+    const opening = panel.openSideChatTab(undefined, { expectedSessionId: 'sess-a' });
+    client.activeSessionId.value = 'sess-b';
+    resolveOpen();
+    await opening;
+    expect(client.openSideChat).toHaveBeenCalledOnce();
+    expect(detailTarget.value).toBe(null);
+  });
+
+  it('the empty-session creation path stays exempt (no expected session)', async () => {
+    const { panel, client, detailTarget } = makePanel(null);
+    client.activeWorkspaceId.value = 'ws-1' as never;
+    await panel.openSideChatTab(undefined, { expectedSessionId: undefined });
+    expect(client.startSessionAndOpenSideChat).toHaveBeenCalledOnce();
+    expect(detailTarget.value).toBe('btw');
+  });
+});
+
+describe('openSideChatTab — shouldSwitch veto at write time', () => {
+  function makePanel(activeSessionId: string | null) {
+    const detailTarget = ref<DetailTarget | null>('diff');
+    const client = {
+      activeSessionId: ref(activeSessionId),
+      activeWorkspaceId: ref(null),
+      activeAppTasks: ref([]),
+      turns: ref([]),
+      sideChatVisible: ref(false),
+      auxiliaryTranscripts: { getEntry: vi.fn(), activate: vi.fn(), deactivate: vi.fn() },
+      openSideChat: vi.fn(async () => true),
+      startSessionAndOpenSideChat: vi.fn(async () => 'created-1'),
+      loadGitStatus: vi.fn(),
+      clearFileDiff: vi.fn(),
+      loadFileDiff: vi.fn(),
+    };
+    const panel = useDetailPanel({
+      client: client as never,
+      sideWidth: ref(280),
+      detailTarget,
+      closeFilePreview: vi.fn(),
+    });
+    return { panel, client, detailTarget };
+  }
+
+  it('acted mid-flight (shouldSwitch false at write time): panel target untouched, agent still created', async () => {
+    const { panel, client, detailTarget } = makePanel('sess-a');
+    let acted = false;
+    let resolveOpen!: () => void;
+    client.openSideChat.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = () => resolve(true);
+        }),
+    );
+    const opening = panel.openSideChatTab(undefined, {
+      expectedSessionId: 'sess-a',
+      shouldSwitch: () => !acted,
+    });
+    // The user opens a detail panel mid-flight — the write-time veto must
+    // keep it instead of covering it with btw.
+    acted = true;
+    detailTarget.value = 'file' as DetailTarget;
+    resolveOpen();
+    await opening;
+    expect(client.openSideChat).toHaveBeenCalledOnce();
+    expect(detailTarget.value).toBe('file');
+  });
+
+  it('not acted (shouldSwitch true): switches to btw normally', async () => {
+    const { panel, detailTarget } = makePanel('sess-a');
+    await panel.openSideChatTab(undefined, {
+      expectedSessionId: 'sess-a',
+      shouldSwitch: () => true,
+    });
+    expect(detailTarget.value).toBe('btw');
+  });
+});

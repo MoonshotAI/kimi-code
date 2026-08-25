@@ -10,15 +10,20 @@
 import { parseSlash, matchSlashItem, buildSlashItems, SKILL_COMMAND_PREFIX, stripSkillPrefix } from '@moonshot-ai/app-core/lib';
 import { removeAttachmentLinks, stripAttachmentLinks } from '@moonshot-ai/app-composer';
 import type { SkillMentionRef } from '@moonshot-ai/app-composer';
+import { rewriteQuoteLinks } from './quoteSelection';
 import type { PromptAttachment } from '../client/types';
 
 export interface SubmitDecisionInput {
   /** text.value.trim() — the pre-rewrite draft. */
   text: string;
   /** rewriteForSubmit(text, assembly.rewriteAttIds) — the submit copy with
-   *  attachment links rewritten (file pills → 1..N payload indices, folder
+   *  ATTACHMENT links rewritten (file pills → 1..N payload indices, folder
    *  pills → real-path mentions, links without a ready entry → bare names).
-   *  Computed by the caller: folder-path resolution needs the live registry. */
+   *  Quote pills keep their link form here: the quote rewrite is applied
+   *  per-branch to the daemon-bound outputs only, so historyText — stripped
+   *  from this — keeps the revivable link (a recalled entry brings the pill
+   *  back; the bare `> ` text would lose it). Computed by the caller:
+   *  folder-path resolution needs the live registry. */
   rewritten: string;
   /** The send gate: any uploading / errored / missing chip or pill entry.
    *  Applied ONLY to the branches that SEND attachments (a plain submit and
@@ -75,8 +80,18 @@ export type SubmitDecision =
   /** A known built-in command — never carries attachments. `leave` marks
    *  `/new` / `/clear`: the App leaves the session and unmounts the composer
    *  in the same flush, so the executor must persist the kept pills
-   *  SYNCHRONOUSLY instead of the nextTick restore. */
-  | { kind: 'builtin-command'; cmd: string; leave: boolean; historyText: string }
+   *  SYNCHRONOUSLY instead of the nextTick restore. restoreText is the
+   *  PRE-REWRITE draft (attachment links intact, quote links preserved) —
+   *  the gate-failure restore loads it back so a rejected `/compact` /
+   *  `/swarm` / `/goal` / `/btw` never flattens the pills. */
+  | { kind: 'builtin-command'; cmd: string; leave: boolean; historyText: string; restoreText: string;
+      /** Arg-taking built-ins only: the busy-enqueue edit-reload draft at ARG
+       *  level (the `/swarm <task>` handler is the one that can queue) — the
+       *  command token dropped, attachment links degraded to bare names (no
+       *  payload rides a built-in), quote links INTACT, so the reload revives
+       *  the pill instead of the cmd's flattened blockquote. Same revive
+       *  contract as the plain submit's editText. */
+      editText?: string }
   /** A NO-ARG built-in command (SlashCommand.noArgs) with junk after it —
    *  a usage error. The executor shows a notice and keeps the draft
    *  untouched: emitting the parameterized cmd would fall through to the
@@ -92,8 +107,23 @@ export type SubmitDecision =
    *  pill's attId link intact) — the gate-failure restore loads it back
    *  with the original registry entries (the executor's restoreEntries),
    *  or a folder pill would degrade into a plain path mention and a
-   *  path-backed file would come back pathless. */
-  | { kind: 'submit'; text: string; restoreText: string; attachments: PromptAttachment[]; historyText: string };
+   *  path-backed file would come back pathless. editText is the
+   *  ATTACHMENT-REWRITTEN draft (file pills already at their 1..N payload
+   *  indices, quote pills still self-contained links): the queue stores it
+   *  for edit-reload, whose attachment seeding registers entries by that
+   *  same 1..N ordinal — the pre-rewrite random attIds would mismatch and
+   *  mark every revived pill missing. */
+  | { kind: 'submit'; text: string; restoreText: string; editText: string; attachments: PromptAttachment[]; historyText: string };
+
+/** The history entry for a steer (TUI ctrl+s): same contract as the submit
+ *  decision's historyText — attachment links degrade to bare names (a
+ *  recalled entry must not revive dead pills), while self-contained QUOTE
+ *  links survive (they revive on recall). Derived from the PRE-REWRITE
+ *  draft, never the daemon-bound payload (whose quote blocks would come back
+ *  as flat text). */
+export function steerHistoryText(trimmed: string): string {
+  return trimmed !== '' && removeAttachmentLinks(trimmed).trim() === '' ? '' : stripAttachmentLinks(trimmed);
+}
 
 /** Decide what a submit does. The branch order is load-bearing and mirrors
  *  the long-standing handleSubmit flow: empty → bare mode command → (with
@@ -206,7 +236,9 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
       const mention = skillMentions[0]!;
       return {
         kind: 'skill-activation',
-        cmd: `/${SKILL_COMMAND_PREFIX}${mention.name} ${rewritten}`,
+        // Daemon-bound: quote pills serialize to their `> ` block here (the
+        // decision-level quote rewrite — see `rewritten`'s doc).
+        cmd: `/${SKILL_COMMAND_PREFIX}${mention.name} ${rewriteQuoteLinks(rewritten).trim()}`,
         skillName: mention.name,
         restoreText: trimmed,
         attachments: assembly.promptAttachments,
@@ -218,7 +250,7 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
       if (matched.isSkill === true) {
         // Skill commands carry the attachments — the gate applies.
         if (blocked) return { kind: 'noop' };
-        const arg = rewritten.slice(cmdToken.length).trim();
+        const arg = rewriteQuoteLinks(rewritten.slice(cmdToken.length)).trim();
         return {
           kind: 'skill-command',
           cmd: arg ? `${cmdToken} ${arg}` : cmdToken,
@@ -245,16 +277,37 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
         // a skill).
         const bareParsed = parseSlash(bareModeCommand) ?? { cmd: cmdToken, arg: '' };
         if (bareParsed.arg.trim() !== '') return { kind: 'invalid-command', cmd: cmdToken };
-        return { kind: 'builtin-command', cmd: cmdToken, leave: cmdToken === '/new' || cmdToken === '/clear', historyText: cmdToken };
+        return { kind: 'builtin-command', cmd: cmdToken, leave: cmdToken === '/new' || cmdToken === '/clear', historyText: cmdToken, restoreText: trimmed };
       }
       // An arg-taking built-in: the links in the args degrade to bare names.
       // Strip from the PRE-REWRITE text: the rewrite has already turned a
       // folder pill into a plain path mention that stripAttachmentLinks no
       // longer recognizes, so stripping the rewritten args would send
       // `/btw [src](…/)` — a markdown link where the user typed plain text.
-      const rawArg = trimmed.slice(cmdToken.length).trim();
+      // Quote pills take the opposite rewrite, applied here: their
+      // composer-private `kimi-code-composer://quote/` link must never leak
+      // into a command arg sent to the server, so the args consume the quote
+      // rewrite (each quote pill becomes its `> 引用` block) before the
+      // attachment strip.
+      const rawArg = rewriteQuoteLinks(trimmed.slice(cmdToken.length)).trim();
       const cmd = stripAttachmentLinks(rawArg ? `${cmdToken} ${rawArg}` : cmdToken);
-      return { kind: 'builtin-command', cmd, leave: cmdToken === '/new' || cmdToken === '/clear', historyText: cmd };
+      return {
+        kind: 'builtin-command',
+        cmd,
+        leave: cmdToken === '/new' || cmdToken === '/clear',
+        // History records the PRE-REWRITE draft (attachments degraded to bare
+        // names, self-contained quote links preserved) — recalling the
+        // daemon-bound cmd would come back with the quote flattened to a
+        // plain blockquote (same contract as steerHistoryText).
+        historyText: stripAttachmentLinks(trimmed),
+        // The gate-failure restore loads the PRE-REWRITE draft back (every
+        // pill's link intact — paired with restoreEntries like the skill
+        // branches, or a rejected command would flatten the pills.
+        restoreText: trimmed,
+        // The busy-enqueue edit-reload draft at ARG level (see the type doc):
+        // same bare-name/quote-link-INTACT contract, minus the command token.
+        editText: stripAttachmentLinks(trimmed.slice(cmdToken.length)).trim(),
+      };
     }
 
     // An explicit `/skill:<name>` line that resolves against NOTHING in the
@@ -267,7 +320,7 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
     // the gate applies.
     if (cmdToken?.startsWith(`/${SKILL_COMMAND_PREFIX}`)) {
       if (blocked) return { kind: 'noop' };
-      const arg = rewritten.slice(cmdToken.length).trim();
+      const arg = rewriteQuoteLinks(rewritten.slice(cmdToken.length)).trim();
       return {
         kind: 'unresolved-skill-command',
         cmd: arg ? `${cmdToken} ${arg}` : cmdToken,
@@ -280,5 +333,10 @@ export function decideComposerSubmit(input: SubmitDecisionInput): SubmitDecision
 
   // A plain submit sends the attachments — the gate applies.
   if (blocked) return { kind: 'noop' };
-  return { kind: 'submit', text: rewritten, restoreText: trimmed, attachments: assembly.promptAttachments, historyText };
+  // Daemon-bound: quote pills serialize to their `> ` blocks here (the
+  // decision-level quote rewrite); historyText above and restoreText keep the
+  // pill link form so a recall / gate-failure restore revives the pill.
+  // editText is the attachment-rewritten (1..N), quote-link-INTACT form the
+  // queue's edit-reload expects.
+  return { kind: 'submit', text: rewriteQuoteLinks(rewritten).trim(), restoreText: trimmed, editText: rewritten, attachments: assembly.promptAttachments, historyText };
 }

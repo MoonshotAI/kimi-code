@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '@moonshot-ai/app-core/api';
 import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 import { useSideChat } from '../src/client/useSideChat';
+import { joinDraftSegments } from '../src/lib/quoteSelection';
 import type { ExtendedState } from '../src/client/types';
 
 // The api is injected; stub the BTW endpoints.
@@ -443,5 +444,368 @@ describe('useSideChat — session dies mid-submit', () => {
 
     expect(state.sideChatMessagesByAgent.agent_btw_1).toBeUndefined();
     expect(state.sideChatSendingByAgent.agent_btw_1).toBeUndefined();
+  });
+});
+
+describe('useSideChat — concurrent first opens share one in-flight startBtw', () => {
+  function makeDeps() {
+    return {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => undefined,
+    };
+  }
+
+  it('two opens landing before the first startBtw returns spawn only ONE agent', async () => {
+    apiMock.startBtw.mockReset();
+    let resolveStart!: (value: { agentId: string }) => void;
+    apiMock.startBtw.mockImplementation(
+      () =>
+        new Promise<{ agentId: string }>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+
+    const first = sideChat.openSideChatOn('sess_1');
+    const second = sideChat.openSideChatOn('sess_1');
+    // Both calls are in flight before the create resolves — the second must
+    // piggyback on the first instead of taking the create branch again.
+    resolveStart({ agentId: 'agent_btw_1' });
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(apiMock.startBtw).toHaveBeenCalledOnce();
+    expect(apiMock.startBtw).toHaveBeenCalledWith('sess_1');
+  });
+
+  it('a piggybacked open still sends its own initial prompt after the shared open lands', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    let resolveStart!: (value: { agentId: string }) => void;
+    apiMock.startBtw.mockImplementation(
+      () =>
+        new Promise<{ agentId: string }>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_opt_btw' });
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+
+    const first = sideChat.openSideChatOn('sess_1');
+    const second = sideChat.openSideChatOn('sess_1', 'queued question');
+    resolveStart({ agentId: 'agent_btw_1' });
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+
+    expect(apiMock.startBtw).toHaveBeenCalledOnce();
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ agentId: 'agent_btw_1' }),
+    );
+  });
+
+  it('a failed first send does not eat a concurrent caller’s own prompt', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    let resolveStart!: (value: { agentId: string }) => void;
+    apiMock.startBtw.mockImplementation(
+      () =>
+        new Promise<{ agentId: string }>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_opt_btw' });
+    const state = createState();
+    // The FIRST send fails before the submit POST (a provably-unsent failure
+    // → false); the second must still go out on its own.
+    const resolveThinkingForPrompt = vi
+      .fn<() => Promise<undefined>>()
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockResolvedValue(undefined);
+    const sideChat = useSideChat(state, { ...makeDeps(), resolveThinkingForPrompt });
+
+    const first = sideChat.openSideChatOn('sess_1', 'q1');
+    const second = sideChat.openSideChatOn('sess_1', 'q2');
+    resolveStart({ agentId: 'agent_btw_1' });
+
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(true);
+    expect(apiMock.startBtw).toHaveBeenCalledOnce();
+    // Only the second caller's prompt reached the daemon — independently of
+    // the first's failure.
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+  });
+});
+
+describe('useSideChat — pending side-chat draft (guarded-open fallback)', () => {
+  function makeDeps() {
+    return {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => undefined,
+    };
+  }
+
+  it('stores a draft per session and take returns it exactly once', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.setSideChatPendingDraft('sess_1', '> 引用\n\n');
+    sideChat.setSideChatPendingDraft('sess_2', '> other\n\n');
+
+    // Session isolation.
+    expect(sideChat.takeSideChatPendingDraft('sess_1')).toBe('> 引用\n\n');
+    // Taken means cleared — a second take finds nothing.
+    expect(sideChat.takeSideChatPendingDraft('sess_1')).toBeNull();
+    // The other session's draft is untouched.
+    expect(sideChat.takeSideChatPendingDraft('sess_2')).toBe('> other\n\n');
+    expect(sideChat.takeSideChatPendingDraft('sess_2')).toBeNull();
+  });
+
+  it('take on an unknown session resolves null', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    expect(sideChat.takeSideChatPendingDraft('sess_unknown')).toBeNull();
+  });
+});
+
+describe('useSideChat — pending draft joining and eviction', () => {
+  function makeDeps() {
+    return {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => undefined,
+    };
+  }
+
+  it('repeat stashes in one session join as ONE normalized draft (never last-write-wins)', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.setSideChatPendingDraft('sess_1', '> q1\n\n');
+    sideChat.setSideChatPendingDraft('sess_1', '> q2\n\n');
+    // joinDraftSegments semantics: exactly one blank line between the two
+    // quote blocks (never four consecutive newlines).
+    expect(sideChat.takeSideChatPendingDraft('sess_1')).toBe('> q1\n\n> q2\n\n');
+  });
+
+  it('clearSideChatForSession evicts the pending draft (target or not)', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.setSideChatPendingDraft('sess_1', '> 引用\n\n');
+    sideChat.setSideChatPendingDraft('sess_2', '> other\n\n');
+
+    sideChat.clearSideChatForSession('sess_1');
+
+    expect(sideChat.takeSideChatPendingDraft('sess_1')).toBeNull();
+    // Other sessions are untouched.
+    expect(sideChat.takeSideChatPendingDraft('sess_2')).toBe('> other\n\n');
+  });
+});
+
+describe('useSideChat — persisted whole draft (per-session)', () => {
+  function makeDeps() {
+    return {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => undefined,
+    };
+  }
+
+  it('saves and loads a draft per session, isolated across sessions', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.saveSideChatDraft('sess_1', '> 引用\n\n评论');
+    sideChat.saveSideChatDraft('sess_2', '其他草稿');
+
+    expect(sideChat.sideChatDraft('sess_1')).toBe('> 引用\n\n评论');
+    expect(sideChat.sideChatDraft('sess_2')).toBe('其他草稿');
+    expect(sideChat.sideChatDraft('sess_unknown')).toBe('');
+  });
+
+  it('re-saving overwrites; an empty draft evicts the key', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.saveSideChatDraft('sess_1', 'v1');
+    sideChat.saveSideChatDraft('sess_1', 'v2');
+    expect(sideChat.sideChatDraft('sess_1')).toBe('v2');
+
+    sideChat.saveSideChatDraft('sess_1', '');
+    expect(sideChat.sideChatDraft('sess_1')).toBe('');
+    // Evicting an unknown key is a no-op.
+    sideChat.saveSideChatDraft('sess_1', '');
+    expect(sideChat.sideChatDraft('sess_1')).toBe('');
+  });
+
+  it('clearSideChatForSession evicts the persisted draft (target or not)', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.saveSideChatDraft('sess_1', '> 引用\n\n');
+    sideChat.saveSideChatDraft('sess_2', '其他草稿');
+
+    sideChat.clearSideChatForSession('sess_1');
+
+    expect(sideChat.sideChatDraft('sess_1')).toBe('');
+    expect(sideChat.sideChatDraft('sess_2')).toBe('其他草稿');
+  });
+
+  it('clearSideChatDraftIfUnchanged clears only an unchanged draft (post-send cleanup)', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.saveSideChatDraft('sess_1', '> 引用\n\n评论');
+    // The draft moved on mid-flight — the stale snapshot must NOT clear the
+    // user's new content.
+    sideChat.saveSideChatDraft('sess_1', '> 引用\n\n评论 + 新内容');
+    sideChat.clearSideChatDraftIfUnchanged('sess_1', '> 引用\n\n评论');
+    expect(sideChat.sideChatDraft('sess_1')).toBe('> 引用\n\n评论 + 新内容');
+    // Unchanged — the send consumed it.
+    sideChat.clearSideChatDraftIfUnchanged('sess_1', '> 引用\n\n评论 + 新内容');
+    expect(sideChat.sideChatDraft('sess_1')).toBe('');
+  });
+
+  it('clearSideChatDraftIfUnchanged never touches another session with identical text', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    // Two sessions holding the SAME draft text: clearing the source session's
+    // post-send draft must not evict the other's (the panel instance is
+    // reused across sessions, so the key — not the text — decides).
+    sideChat.saveSideChatDraft('sess_1', 'same');
+    sideChat.saveSideChatDraft('sess_2', 'same');
+    sideChat.clearSideChatDraftIfUnchanged('sess_1', 'same');
+    expect(sideChat.sideChatDraft('sess_1')).toBe('');
+    expect(sideChat.sideChatDraft('sess_2')).toBe('same');
+  });
+
+  it('load + pending merge: a reused panel picks up both, the stash once-only', () => {
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    sideChat.saveSideChatDraft('sess_2', '已有草稿');
+    sideChat.setSideChatPendingDraft('sess_2', '> 引用\n\n');
+    // SideChatPanel's parentSessionId watcher on an instance-reusing A→B
+    // switch: the persisted draft and the pending stash join as ONE draft
+    // (joinDraftSegments semantics — exactly one blank line between), and the
+    // take clears the stash so a later remount finds nothing.
+    const loaded = sideChat.sideChatDraft('sess_2');
+    const pending = sideChat.takeSideChatPendingDraft('sess_2');
+    expect(pending).toBe('> 引用\n\n');
+    expect(joinDraftSegments(loaded, pending!)).toBe('已有草稿\n\n> 引用\n\n');
+    expect(sideChat.takeSideChatPendingDraft('sess_2')).toBeNull();
+    // An empty persisted side passes the stash through unchanged.
+    expect(joinDraftSegments(sideChat.sideChatDraft('sess_1'), '> q\n\n')).toBe('> q\n\n');
+  });
+});
+
+describe('useSideChat — session dies mid-create (generation tombstone)', () => {
+  function makeDeps() {
+    return {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => undefined,
+    };
+  }
+
+  it('an in-flight startBtw writes NOTHING back after the session was cleared', async () => {
+    apiMock.startBtw.mockReset();
+    let resolveStart!: (value: { agentId: string }) => void;
+    apiMock.startBtw.mockImplementation(
+      () =>
+        new Promise<{ agentId: string }>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+
+    const pending = sideChat.openSideChatOn('sess_1');
+    sideChat.clearSideChatForSession('sess_1');
+    resolveStart({ agentId: 'agent_btw_1' });
+
+    await expect(pending).resolves.toBe(false);
+    // No target, no message bucket, no pending draft possible.
+    expect(sideChat.sideChatTargetBySession.value['sess_1']).toBeUndefined();
+    expect(state.sideChatMessagesByAgent['agent_btw_1']).toBeUndefined();
+    sideChat.setSideChatPendingDraft('sess_1', '> 引用\n\n');
+    expect(sideChat.takeSideChatPendingDraft('sess_1')).toBeNull();
+  });
+
+  it('a FRESH open after the clear (e.g. restored session) captures the bumped generation and works', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_2' });
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+
+    sideChat.clearSideChatForSession('sess_1');
+    await expect(sideChat.openSideChatOn('sess_1')).resolves.toBe(true);
+
+    expect(sideChat.sideChatTargetBySession.value['sess_1']).toEqual({ agentId: 'agent_btw_2' });
+    // And the tombstone no longer blocks drafts for the re-opened session.
+    sideChat.setSideChatPendingDraft('sess_1', '> 引用\n\n');
+    expect(sideChat.takeSideChatPendingDraft('sess_1')).toBe('> 引用\n\n');
+  });
+});
+
+describe('useSideChat — archive mid-flight, restore and re-open before the stale create lands', () => {
+  function makeDeps() {
+    return {
+      api,
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      refreshSessionStatus: vi.fn(),
+      resolveThinkingForPrompt: async () => undefined,
+    };
+  }
+
+  it('the stale in-flight open never blocks the fresh one (fresh slot after clear)', async () => {
+    apiMock.startBtw.mockReset();
+    let resolveFirst!: (value: { agentId: string }) => void;
+    apiMock.startBtw
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ agentId: string }>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ agentId: 'agent_btw_2' });
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+
+    const first = sideChat.openSideChatOn('sess_1');
+    // Archived mid-flight…
+    sideChat.clearSideChatForSession('sess_1');
+    // …restored and re-opened BEFORE the first startBtw lands.
+    const second = sideChat.openSideChatOn('sess_1');
+    resolveFirst({ agentId: 'agent_btw_1' });
+
+    // The stale create resolves false and writes nothing; the fresh one
+    // (new slot, new generation) succeeds and registers its agent.
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(true);
+    expect(apiMock.startBtw).toHaveBeenCalledTimes(2);
+    expect(sideChat.sideChatTargetBySession.value['sess_1']).toEqual({ agentId: 'agent_btw_2' });
+    expect(state.sideChatMessagesByAgent['agent_btw_1']).toBeUndefined();
   });
 });

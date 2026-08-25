@@ -429,22 +429,37 @@ function resolveAgentTarget(target: string): string {
   // ---------------------------------------------------------------------------
   // Side chat (BTW) — now rendered in the unified right-side detail layer.
   // ---------------------------------------------------------------------------
-  async function openSideChatTab(prompt?: string): Promise<string | null> {
+  async function openSideChatTab(prompt?: string, opts?: { expectedSessionId?: string; shouldSwitch?: () => boolean }): Promise<string | null> {
     // Empty-composer heal: `/btw [<question>]` from the new-session screen needs
     // a parent session before openSideChat can start a BTW sub-agent. Create one
     // in the active workspace (same path as the first prompt / a new-session
     // skill / goal), then open the side chat on it. Returns the created session
     // id (null when a session already existed) for follow-up state anchoring.
+    //
+    // The open is async (startBtw): the session may switch in flight. The
+    // panel-target WRITE re-reads the active session at WRITE time (after
+    // the await, never a value cached before the async boundary) — the agent
+    // is created either way (the caller's pendingDraft semantics carry the
+    // quote), but a switched-to session's panel is never hijacked. The
+    // empty-session creation path is exempt (the created session IS the
+    // continuation). `shouldSwitch` is the caller's LAST-MILE veto, also
+    // evaluated at write time: the selection quote path passes "the user
+    // hasn't moved on", so a detail panel the user opened mid-flight is
+    // never covered.
+    const panelAllowedNow = (): boolean =>
+      opts?.expectedSessionId === undefined || client.activeSessionId.value === opts.expectedSessionId;
+    const shouldSwitch = opts?.shouldSwitch ?? (() => true);
+    const maySwitchPanel = (): boolean => panelAllowedNow() && shouldSwitch();
     if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
       const createdId = await client.startSessionAndOpenSideChat(
         client.activeWorkspaceId.value,
         prompt,
       );
-      detailTarget.value = 'btw';
+      if (maySwitchPanel()) detailTarget.value = 'btw';
       return createdId;
     }
     await client.openSideChat(prompt);
-    detailTarget.value = 'btw';
+    if (maySwitchPanel()) detailTarget.value = 'btw';
     return null;
   }
 

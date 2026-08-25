@@ -263,6 +263,7 @@ function openLatestPlan(): void {
 
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
+  insertQuote: (quote: string, comment?: string) => void;
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   focus: () => void;
   anyPopupOpen?: boolean;
@@ -307,6 +308,22 @@ function loadForEdit(value: string): boolean {
   if (!composerRef.value) return false;
   composerRef.value.loadForEdit(value);
   return true;
+}
+
+// Same hidden-composer guard as loadForEdit: a selection quote action must not
+// report success when there is no composer to receive the pill.
+function insertQuote(quote: string, comment?: string): boolean {
+  if (!composerRef.value) return false;
+  composerRef.value.insertQuote(quote, comment);
+  return true;
+}
+
+/** Whether the nested Composer is actually mounted (it unmounts while a
+    pending question/approval card shows) — ConversationPane's readiness
+    signal for replaying a stashed selection quote insert. A function, so the
+    call reads the live ref through the public-instance boundary. */
+function hasInsertableComposer(): boolean {
+  return composerRef.value !== null;
 }
 
 function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
@@ -443,7 +460,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, hasInsertableComposer, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty });
 </script>
 
 <template>

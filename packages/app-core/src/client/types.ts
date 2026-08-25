@@ -460,6 +460,9 @@ export interface QueuedPromptView {
   /** Attachments waiting with this prompt, with resolved URLs for thumbnails
       (file attachments render an icon chip, no thumbnail). */
   attachments?: TurnAttachment[];
+  /** The pre-rewrite draft for edit-reload (selection quote pills revive
+      from their link form); falls back to `text` when absent. */
+  editText?: string;
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */
