@@ -1,7 +1,7 @@
 {
   "integration": "kimi",
   "version": "0.16.0",
-  "installed_at": "2026-08-22T10:37:05.094022+00:00",
+  "installed_at": "2026-08-24T07:56:09.787569+00:00",
   "files": {
     ".kimi-code/skills/speckit-analyze/SKILL.md": "3011002dcbdc26527bb955723bdfd483922f9acc1e6036ffb8007752304678f3",
     ".kimi-code/skills/speckit-clarify/SKILL.md": "86fc6d05820663594c2a8ff8a59fb60ba8969fe8f6156264b9b57eec1a7997b1",

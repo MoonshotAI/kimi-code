@@ -1,0 +1,63 @@
+schema_version: "1.0"
+
+extension:
+  id: gym
+  name: "GYM — Operator Forging"
+  version: "1.0.0"
+  description: "Train and gate operators of any software: warmup reps grow reflexes, graded exercises prove skill under load, and a gate opens only on full pass. Installable into any Spec Kit project."
+  author: gym
+  repository: https://github.com/arrrrny/gym
+  license: MIT
+
+requires:
+  speckit_version: ">=0.2.0"
+  tools:
+    - name: node
+      required: true
+
+provides:
+  commands:
+    - name: speckit.gym.init
+      file: commands/speckit.gym.init.md
+      description: "Scaffold a starter curriculum (warmup reps + graded exercises) and config"
+    - name: speckit.gym.run
+      file: commands/speckit.gym.run.md
+      description: "Full run: warmup reps, graded exercises, then the gate decision"
+    - name: speckit.gym.warmup
+      file: commands/speckit.gym.warmup.md
+      description: "Warmup only (skip graded exercises)"
+    - name: speckit.gym.gate
+      file: commands/speckit.gym.gate.md
+      description: "Query the current gate state (open/closed) for host enforcement"
+    - name: speckit.gym.drop
+      file: commands/speckit.gym.drop.md
+      description: "Record a drop card from a mis-fire"
+
+  config:
+    - name: "gym-config.yml"
+      template: "config-template.yml"
+      description: "GYM configuration (locations, timeout, drop-card stores)"
+      required: false
+
+hooks:
+  before_implement:
+    command: speckit.gym.gate
+    optional: true
+    prompt: "Require an open GYM gate before implementing?"
+    description: "Block implementation until the operator has cleared the GYM gate"
+
+tags:
+  - "gym"
+  - "training"
+  - "operators"
+  - "gate"
+
+config:
+  defaults:
+    warmup_location: gym/
+    exercises_location: exercises/
+    exercise_timeout_sec: 60
+    warmup_only: false
+    drop_stores:
+      - local
+      - ledger

@@ -1,0 +1,25 @@
+# GYM — Operator Forging configuration
+# Copied to .specify/extensions/gym/gym-config.yml on install.
+
+# Where the author's warmup reps live (relative to the host project root).
+# Each .mjs file must export a default object with a `verify(ctx)` function.
+warmup_location: gym/
+
+# Where the author's graded exercises live (relative to the host project root).
+# Each .mjs file must export a default object with an `evaluate(sandbox)` function.
+exercises_location: exercises/
+
+# Max seconds the runner waits for a `.submitted` marker before grading an exercise.
+exercise_timeout_sec: 60
+
+# Run warmup reps only and skip graded exercises.
+warmup_only: false
+
+# Where drop cards (mis-fire records) are persisted. Two redundant stores by
+# default. Supported tokens:
+#   local  - <project>/drops/DROP-<agent>-<date>.md
+#   ledger - <extension>/.drop-ledger.md (append-only, offline-safe)
+#   issue  - a GitHub issue via `gh` (best effort; requires gh + token)
+drop_stores:
+  - local
+  - ledger
