@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   applyWindowVibrancy: vi.fn(),
   showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] })),
   showSaveDialog: vi.fn(async () => ({ canceled: true, filePath: undefined })),
+  openExternal: vi.fn(async () => undefined),
 }));
 
 vi.mock('electron', () => ({
@@ -32,7 +33,7 @@ vi.mock('electron', () => ({
     on: vi.fn((channel: string, handler: IpcHandler) => mocks.listeners.set(channel, handler)),
   },
   nativeTheme: { themeSource: 'system' },
-  shell: { openExternal: vi.fn(async () => undefined) },
+  shell: { openExternal: mocks.openExternal },
 }));
 
 vi.mock('../../src/main/window', () => ({
@@ -161,5 +162,16 @@ describe('native_ipc_used telemetry', () => {
     await expect(handler(IPC.dialogOpen)({}, {})).rejects.toThrow('dialog failed');
 
     expect(mocks.trackDesktopEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('openExternal whitelist', () => {
+  it('rejects non-http(s) URLs before touching the shell, allows http(s)', async () => {
+    expect(() => handler(IPC.openExternal)({}, 'file:///etc/passwd')).toThrow('http(s)');
+    expect(() => handler(IPC.openExternal)({}, 'javascript:alert(1)')).toThrow('http(s)');
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+
+    await handler(IPC.openExternal)({}, 'https://kimi.com');
+    expect(mocks.openExternal).toHaveBeenCalledWith('https://kimi.com');
   });
 });

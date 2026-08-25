@@ -17,6 +17,7 @@ import {
   PROVIDER_TYPES,
   providerModelRows,
   validateProviderForm,
+  type ModelRow,
   type ProviderFormState,
 } from '@moonshot-ai/app-core/lib';
 import { Banner, Button, Icon, IconButton, Input, Select } from '@moonshot-ai/app-ui';
@@ -49,6 +50,18 @@ const form = reactive<ProviderFormState>({
   baseUrl: '',
   models: [emptyModelRow()],
 });
+// Stable per-row keys: rows have no natural id; object identity survives edits.
+const modelRowKeys = new WeakMap<ModelRow, number>();
+let modelRowKeySeq = 0;
+function modelRowKey(row: ModelRow): number {
+  let key = modelRowKeys.get(row);
+  if (key === undefined) {
+    key = ++modelRowKeySeq;
+    modelRowKeys.set(row, key);
+  }
+  return key;
+}
+
 const error = ref('');
 const submitting = ref(false);
 const confirmingDelete = ref(false);
@@ -251,10 +264,11 @@ function addModelRow(): void {
   markDirty();
 }
 
-function removeModelRow(index: number): void {
+function removeModelRow(row: ModelRow): void {
   // The form always keeps at least one model row (server requires >= 1).
   if (form.models.length <= 1) return;
-  form.models.splice(index, 1);
+  const index = form.models.indexOf(row);
+  if (index >= 0) form.models.splice(index, 1);
   markDirty();
 }
 </script>
@@ -336,7 +350,7 @@ function removeModelRow(index: number): void {
           <span>{{ t('providers.colDisplayName') }}</span>
           <span />
         </div>
-        <div v-for="(row, index) in form.models" :key="index" class="pf-model-grid">
+        <div v-for="row in form.models" :key="modelRowKey(row)" class="pf-model-grid">
           <Input
             v-model="row.model"
             :placeholder="t('providers.modelIdPlaceholder')"
@@ -365,7 +379,7 @@ function removeModelRow(index: number): void {
             :label="t('providers.removeModel')"
             :tooltip="t('providers.removeModel')"
             :disabled="form.models.length <= 1"
-            @click="removeModelRow(index)"
+            @click="removeModelRow(row)"
           >
             <Icon name="trash" size="sm" />
           </IconButton>

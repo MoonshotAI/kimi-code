@@ -389,15 +389,17 @@ export function useTaskPoller(
     finalBeatTimer = setTimeout(beat, 1500);
   }
 
+  const pollGate = computed(() => {
+    const sid = rawState.activeSessionId;
+    if (!sid) return { sid: undefined as string | undefined, hasRunning: false };
+    // Gate on the VISIBLE rows (transcript flow), not rawState.tasksBySession:
+    // the legacy slice is only refreshed by this very poll, so a task spawned
+    // after the session was opened would never start polling otherwise.
+    return { sid, hasRunning: activeAppTasks.value.some((t) => t.status === 'running') };
+  });
+
   watch(
-    () => {
-      const sid = rawState.activeSessionId;
-      if (!sid) return { sid: undefined as string | undefined, hasRunning: false };
-      // Gate on the VISIBLE rows (transcript flow), not rawState.tasksBySession:
-      // the legacy slice is only refreshed by this very poll, so a task spawned
-      // after the session was opened would never start polling otherwise.
-      return { sid, hasRunning: activeAppTasks.value.some((t) => t.status === 'running') };
-    },
+    pollGate,
     ({ sid, hasRunning }) => {
       if (hasRunning && sid !== undefined) {
         // New work cycle: a pending closing beat from the finished round is moot.
@@ -413,7 +415,7 @@ export function useTaskPoller(
         stopTaskOutputPolling();
       }
     },
-    { deep: true, immediate: true },
+    { immediate: true },
   );
 
   return {

@@ -24,6 +24,7 @@ import { popupWindowsMenu, setMenuLocale, setMenuShortcuts, setMenuSuspended, se
 import { setGlobalShortcut, setGlobalShortcutSuspended, setGlobalShortcutTerminalFocus } from './shortcuts';
 import { isVibrancyEnabled, markOnboarded, setVibrancyEnabled } from './ui-state';
 import { isDockIconChoice, setDockIconChoice } from './dock-icon';
+import { isHttpUrl } from './external-links';
 import {
   cancelPreview,
   cleanupPreviews,
@@ -84,15 +85,20 @@ export function registerIpcHandlers(): void {
   ipcMain.on(IPC.dockIconChoice, (_event, choice: unknown) => {
     if (isDockIconChoice(choice)) setDockIconChoice(choice);
   });
-  ipcMain.handle(IPC.openExternal, (_event, url: string) =>
+  ipcMain.handle(IPC.openExternal, (_event, url: string) => {
+    // http(s) only — external-links.ts guards webContents; this is the IPC twin.
+    if (!isHttpUrl(url)) {
+      log.error(`[kimi-desktop] openExternal rejected non-http(s) url: ${redactUrlForLog(url)}`);
+      throw new Error('openExternal only allows http(s) URLs');
+    }
     // The rejection still propagates to the renderer's invoke promise; log it
     // main-side too so packaged builds keep a record (renderer console is
     // invisible there). The URL is redacted before hitting the log file.
-    shell.openExternal(url).catch((error: unknown) => {
+    return shell.openExternal(url).catch((error: unknown) => {
       log.error(`[kimi-desktop] openExternal failed: ${redactUrlForLog(url)}`, error);
       throw error;
-    }),
-  );
+    });
+  });
   // Renderer-collected server credentials (ServerAuthDialog on a credential-
   // protected external server): keep the region probe's bearer in sync.
   ipcMain.handle(IPC.serverCredential, (_event, token: unknown) => {

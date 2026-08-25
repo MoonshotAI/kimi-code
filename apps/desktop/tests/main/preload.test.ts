@@ -37,7 +37,6 @@ const WHITELIST = [
   'onDeepLinkAuth',
   'onFullscreenChanged',
   'onLaunchAction',
-  'onMenu',
   'onMenuAction',
   'onNativeTerminalExit',
   'onNativeTerminalOutput',
@@ -193,11 +192,6 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setJumpList([{ name: 'x', root: '' }]); // empty root ignored
     exposed.setJumpList('nope'); // junk ignored
     expect(send).toHaveBeenCalledTimes(10);
-
-    const offMenu = exposed.onMenu(() => {});
-    expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
-    offMenu();
-    expect(removeListener).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
 
     const offAction = exposed.onMenuAction(() => {});
     expect(on).toHaveBeenCalledWith('kimi:menu-action', expect.any(Function));

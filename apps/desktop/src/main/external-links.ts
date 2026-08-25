@@ -11,7 +11,7 @@ import type { WebContents } from 'electron';
 
 export type LinkAction = 'allow' | 'open-external' | 'deny';
 
-function isHttpUrl(url: string): boolean {
+export function isHttpUrl(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 

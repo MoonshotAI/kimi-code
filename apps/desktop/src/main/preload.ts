@@ -283,7 +283,6 @@ export type KimiDesktopApi = {
   /** Dock tile preference ('light'|'dark'); the main process swaps the
    *  Dock icon (src/main/dock-icon.ts). macOS-only effect. */
   setDockIconChoice: (choice: 'light' | 'dark') => void;
-  onMenu: (cb: (action: string) => void) => () => void;
   onMenuAction: (cb: (id: string) => void) => () => void;
   onShortcut: (cb: (accel: string) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
@@ -419,11 +418,6 @@ export const api: KimiDesktopApi = {
     if (choice === 'light' || choice === 'dark') {
       ipcRenderer.send('kimi:dock-icon-choice', choice);
     }
-  },
-  onMenu: (cb) => {
-    const listener = (_event: unknown, action: string) => cb(action);
-    ipcRenderer.on('kimi:menu', listener);
-    return () => ipcRenderer.removeListener('kimi:menu', listener);
   },
   onMenuAction: (cb) => {
     const listener = (_event: unknown, id: string) => cb(id);
