@@ -384,9 +384,48 @@ describe("Webview thinking effort parity with the TUI", () => {
     expect(boundary.saveConfig).not.toHaveBeenCalled();
   });
 
-  it("does not seed future sessions with the model's top declared tier", () => {
+  it("seeds the top tier when it is the model's delivered default", () => {
     boundary.saveConfig.mockResolvedValue({ ok: true });
     useSettingsStore.getState().initModels(MODELS, "reasoning", false);
+
+    useSettingsStore.getState().selectThinkingEffort("high");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "reasoning", thinking: true, effort: "high" });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBe("high");
+  });
+
+  it("does not seed a pick above the model's delivered default", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels([
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        provider: "managed:kimi-code",
+        capabilities: ["thinking"],
+        support_efforts: ["low", "high", "max"],
+        default_effort: "low",
+      },
+    ], "reasoning", false);
+
+    useSettingsStore.getState().selectThinkingEffort("high");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "reasoning", thinking: true, effort: "high" });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBeUndefined();
+  });
+
+  it("does not seed the top tier when the model declares no default", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels([
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        provider: "managed:kimi-code",
+        capabilities: ["thinking"],
+        support_efforts: ["low", "high"],
+      },
+    ], "reasoning", false);
 
     useSettingsStore.getState().selectThinkingEffort("high");
 
