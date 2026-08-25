@@ -37,11 +37,14 @@ import {
 } from './access-urls';
 import { type NetworkAddress } from './networks';
 import {
+  formatRemoteControlOutput,
+  formatRemoteControlStatus,
   isRemoteControlEnabled,
   REMOTE_CONTROL_FLAG_ENV,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
+  type RemoteControlStatus,
 } from './remote-control';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -218,23 +221,32 @@ export async function handleWebCommand(
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
         const dataDir = getDataDir();
+        let outputReady = false;
+        const pendingStatuses: string[] = [];
+        const onStatus = (status: RemoteControlStatus): void => {
+          const line = formatRemoteControlStatus(status);
+          if (outputReady) deps.stdout.write(line);
+          else pendingStatuses.push(line);
+        };
         remoteControl = await (deps.startRemoteControl ?? startRemoteControl)({
           homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
           stderr: deps.stderr,
+          onStatus,
         });
         const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
         deps.stdout.write(
-          parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-            ? formatReadyBanner(origin, parsed.host, {
-                networkAddresses: deps.networkAddresses,
-              })
-            : formatReadyLine(origin, undefined),
+          formatRemoteControlOutput({
+            url: remoteControl.url,
+            localOrigin: origin,
+            deviceName: remoteControl.deviceName,
+            qrCode: qrCode.terminal,
+            pngPath: qrCode.pngPath,
+          }),
         );
-        deps.stdout.write(`Kimi Remote Control (experimental): ${remoteControl.url}\n`);
-        deps.stdout.write(qrCode.terminal);
-        deps.stdout.write(`QR code PNG: ${qrCode.pngPath}\n`);
+        outputReady = true;
+        for (const line of pendingStatuses) deps.stdout.write(line);
         if (opts.open === true) deps.openUrl(remoteControl.url);
         return;
       }

@@ -10,8 +10,11 @@ import {
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { WebSocket, type RawData } from 'ws';
+import chalk from 'chalk';
 
 import { getVersion } from '../../version';
+import { darkColors } from '../../../tui/theme/colors';
+import { toTerminalHyperlink } from '../../../utils/terminal-hyperlink';
 import { acquireRemoteControlLock } from './remote-control-lock';
 
 export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://code-rc.kimi.com';
@@ -79,16 +82,24 @@ export interface ParsedRawHttpRequest {
   readonly body: Buffer;
 }
 
+export type RemoteControlStatus =
+  | 'relay_connected'
+  | 'relay_disconnected'
+  | 'device_connected'
+  | 'device_disconnected';
+
 export interface RemoteControlOptions {
   readonly homeDir: string;
   readonly localOrigin: string;
   readonly localServerToken: string;
   readonly relayOrigin?: string;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
+  readonly onStatus?: (status: RemoteControlStatus) => void;
 }
 
 export interface RemoteControlHandle {
   readonly deviceId: string;
+  readonly deviceName: string;
   readonly url: string;
   close(): Promise<void>;
 }
@@ -99,6 +110,73 @@ interface ActiveStream {
 }
 
 class RegistrationError extends Error {}
+
+export interface RemoteControlOutputOptions {
+  readonly url: string;
+  readonly localOrigin: string;
+  readonly deviceName: string;
+  readonly qrCode: string;
+  readonly pngPath: string;
+}
+
+export function formatRemoteControlOutput(options: RemoteControlOutputOptions): string {
+  const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
+  const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
+  const accent = (text: string): string => chalk.hex(darkColors.accent)(text);
+  const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
+  const status = (text: string): string => chalk.hex(darkColors.success)(text);
+  const link = (url: string): string =>
+    toTerminalHyperlink(accent(shortRemoteControlUrl(url)), url);
+  const docs = toTerminalHyperlink('docs', 'https://kimi.com/code/docs/remote-control');
+  const feedback = toTerminalHyperlink('feedback', 'https://kimi.com/code/feedback');
+  return [
+    '',
+    `  ${title('Kimi Remote Control ready')}  ${muted(`${getVersion()} (experimental)`)}`,
+    `  ${muted('Use Kimi Code on this machine from your phone or another computer.')}`,
+    '',
+    `  ${label('1.')} Scan the QR code, or open ${link(options.url)}`,
+    `  ${label('2.')} Log in with your Kimi account`,
+    `  ${label('3.')} Start chatting — sessions run on this machine`,
+    '',
+    `  ${status('✓')} ${muted(`Connected to ${new URL(options.url).host}, waiting for remote devices…`)}`,
+    `  ${label('This device: ')}${muted(options.deviceName)}  ${label('· Manage devices (max 5): ')}${link(new URL('/devices', new URL(options.url).origin).toString())}`,
+    `  ${status('⚠')} ${muted('This link grants control of this machine. Do not share it.')}`,
+    '',
+    options.qrCode.trimEnd(),
+    `  ${label('QR code PNG: ')}${options.pngPath} ${muted('(open this if the QR above does not scan)')}`,
+    `  ${label('Local UI: ')}${muted(options.localOrigin)} ${muted('(LAN: --host)')}`,
+    '',
+    `  ${muted('Experimental —')} ${docs} ${muted('·')} ${feedback}`,
+    `  ${label('Logs: ')}${muted('off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted('Ctrl+C')}`,
+    '',
+  ].join('\\n');
+}
+
+export function formatRemoteControlStatus(status: RemoteControlStatus): string {
+  const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
+  const value = (text: string): string => chalk.hex(darkColors.success)(text);
+  switch (status) {
+    case 'relay_connected':
+      return `  ${value('✓')} ${label('Connected to relay, waiting for remote devices…')}\\n`;
+    case 'relay_disconnected':
+      return `  ${value('!')} ${label('Relay disconnected; reconnecting…')}\\n`;
+    case 'device_connected':
+      return `  ${value('✓')} ${label('Remote device connected (1 active session)')}\\n`;
+    case 'device_disconnected':
+      return `  ${value('→')} ${label('Remote device disconnected')}\\n`;
+  }
+}
+
+function shortRemoteControlUrl(url: string): string {
+  const parsed = new URL(url);
+  const parts = parsed.pathname.split('/');
+  const deviceIndex = parts.indexOf('devices');
+  const deviceId = deviceIndex >= 0 ? parts[deviceIndex + 1] : undefined;
+  if (deviceId !== undefined && deviceId.length > 12) {
+    parts[deviceIndex + 1] = `${deviceId.slice(0, 6)}…${deviceId.slice(-4)}`;
+  }
+  return `${parsed.host}${parts.join('/')}`;
+}
 
 export function buildRemoteControlUrl(
   deviceId: string,
@@ -222,6 +300,7 @@ export async function startRemoteControl(
   }
   const relayOrigin = options.relayOrigin ?? REMOTE_CONTROL_RELAY_ORIGIN;
   const deviceId = createKimiDeviceId(options.homeDir);
+  const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin);
   const lock = await acquireRemoteControlLock(options.homeDir, {
     localOrigin: options.localOrigin.replace(/\/+$/, ''),
@@ -242,6 +321,7 @@ export async function startRemoteControl(
   }
   return {
     deviceId,
+    deviceName,
     url,
     close: async () => {
       await client.close();
@@ -257,6 +337,7 @@ class RemoteControlClient {
   private readonly deviceId: string;
   private readonly refreshToken: string;
   private readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
+  private readonly onStatus: (status: RemoteControlStatus) => void;
   private readonly streams = new Map<string, ActiveStream>();
   private readonly pendingHttpRequests = new Map<string, PendingHttpRequest>();
   private management: WebSocket | undefined;
@@ -267,6 +348,7 @@ class RemoteControlClient {
   private reconnectImmediately = false;
   private stopped = false;
   private connected = false;
+  private relayOnline = false;
   private runPromise: Promise<void> | undefined;
   private initialResolve: (() => void) | undefined;
   private initialReject: ((error: unknown) => void) | undefined;
@@ -284,6 +366,7 @@ class RemoteControlClient {
     this.deviceId = options.deviceId;
     this.refreshToken = options.refreshToken;
     this.stderr = options.stderr ?? process.stderr;
+    this.onStatus = options.onStatus ?? (() => {});
   }
 
   async start(): Promise<void> {
@@ -382,6 +465,8 @@ class RemoteControlClient {
     management.on('message', (data) => this.handleManagementMessage(data));
     http.on('message', (data) => this.handleHttpMessage(data));
     this.reconnectAttempt = 0;
+    this.relayOnline = true;
+    this.onStatus('relay_connected');
 
     if (!this.connected) {
       this.connected = true;
@@ -520,11 +605,15 @@ class RemoteControlClient {
         throw new Error('management connection closed');
       }
       this.streams.set(streamId, { local, tunnel });
+      this.onStatus('device_connected');
       bridgeSockets(
         local,
         tunnel,
         () => {
-          if (this.streams.get(streamId)?.local === local) this.streams.delete(streamId);
+          if (this.streams.get(streamId)?.local === local) {
+            this.streams.delete(streamId);
+            this.onStatus('device_disconnected');
+          }
         },
         earlyLocalFrames,
       );
@@ -565,6 +654,7 @@ class RemoteControlClient {
     const stream = this.streams.get(streamId);
     if (stream === undefined) return;
     this.streams.delete(streamId);
+    this.onStatus('device_disconnected');
     stream.local.close();
     stream.tunnel.close();
   }
@@ -582,6 +672,10 @@ class RemoteControlClient {
     this.pendingHttpBytes = 0;
     this.management?.close();
     this.http?.close();
+    if (this.relayOnline) {
+      this.relayOnline = false;
+      this.onStatus('relay_disconnected');
+    }
     this.management = undefined;
     this.http = undefined;
   }

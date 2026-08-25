@@ -197,7 +197,12 @@ describe('handleRemoteControlCommand', () => {
     mocks.getDataDir.mockReturnValue(dataDir);
     mocks.tryResolveServerToken.mockReturnValue('local-server-token');
     const close = vi.fn(async () => {});
-    mocks.startRemoteControl.mockResolvedValue({ deviceId: 'device-1', url: entryUrl, close });
+    mocks.startRemoteControl.mockResolvedValue({
+      deviceId: 'device-1',
+      deviceName: 'example-device',
+      url: entryUrl,
+      close,
+    });
     mocks.startServerForeground.mockImplementation(
       async (
         _options: unknown,
@@ -218,14 +223,16 @@ describe('handleRemoteControlCommand', () => {
       const task = host.setExitForegroundTask.mock.calls[0]![0] as () => Promise<void>;
       await task();
 
-      expect(mocks.startRemoteControl).toHaveBeenCalledWith({
-        homeDir: dataDir,
-        localOrigin: 'http://127.0.0.1:58627',
-        localServerToken: 'local-server-token',
-      });
+      expect(mocks.startRemoteControl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          homeDir: dataDir,
+          localOrigin: 'http://127.0.0.1:58627',
+          localServerToken: 'local-server-token',
+        }),
+      );
       expect(mocks.openUrl).toHaveBeenCalledWith(sessionUrl);
       const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
-      expect(written).toContain('Remote Control (experimental):');
+      expect(written).toContain('Kimi Remote Control ready');
       expect(written).toContain(renderTerminalQr(sessionUrl));
       expect(written).not.toContain(renderTerminalQr(entryUrl));
       expect(isAbsolute(pngPath)).toBe(true);
@@ -256,7 +263,12 @@ describe('handleRemoteControlCommand', () => {
     mocks.getDataDir.mockReturnValue(dataDir);
     mocks.tryResolveServerToken.mockReturnValue('local-server-token');
     const close = vi.fn(async () => {});
-    mocks.startRemoteControl.mockResolvedValue({ deviceId: 'device-1', url: entryUrl, close });
+    mocks.startRemoteControl.mockResolvedValue({
+      deviceId: 'device-1',
+      deviceName: 'example-device',
+      url: entryUrl,
+      close,
+    });
     mocks.startServerForeground.mockImplementation(
       async (
         _options: unknown,

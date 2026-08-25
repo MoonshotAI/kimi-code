@@ -445,6 +445,7 @@ describe('`kimi web` opens the browser', () => {
     const openUrl = vi.fn();
     const startRemoteControl = vi.fn(async () => ({
       deviceId: 'device-1',
+      deviceName: 'example-device',
       url: publicUrl,
       close: vi.fn(async () => {}),
     }));
@@ -471,7 +472,7 @@ describe('`kimi web` opens the browser', () => {
       );
       expect(openUrl).toHaveBeenCalledWith(publicUrl);
       const written = readStdout();
-      expect(written).toContain('Kimi Remote Control (experimental):');
+      expect(written).toContain('Kimi Remote Control ready');
       expect(written).toContain(renderTerminalQr(publicUrl));
       expect(written).not.toContain(renderTerminalQr('http://127.0.0.1:58627'));
       expect(isAbsolute(pngPath)).toBe(true);

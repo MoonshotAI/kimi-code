@@ -1,7 +1,13 @@
 import chalk from 'chalk';
 
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
-import { buildRemoteControlUrl, startRemoteControl } from '#/cli/sub/web/remote-control';
+import {
+  buildRemoteControlUrl,
+  formatRemoteControlOutput,
+  formatRemoteControlStatus,
+  startRemoteControl,
+  type RemoteControlStatus,
+} from '#/cli/sub/web/remote-control';
 import {
   formatRemoteControlAlreadyRunning,
   inspectRemoteControlLock,
@@ -55,17 +61,32 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
           const dataDir = getDataDir();
           const token = tryResolveServerToken(dataDir);
           if (token === undefined) throw new Error('Unable to read the local server token.');
+          let outputReady = false;
+          const pendingStatuses: string[] = [];
+          const onStatus = (status: RemoteControlStatus): void => {
+            const line = formatRemoteControlStatus(status);
+            if (outputReady) process.stdout.write(line);
+            else pendingStatuses.push(line);
+          };
           remoteControl = await startRemoteControl({
             homeDir: dataDir,
             localOrigin: origin,
             localServerToken: token,
+            onStatus,
           });
           const url = buildRemoteControlUrl(remoteControl.deviceId, session?.id);
           const qrCode = await generateRemoteControlQr(url, dataDir);
-          process.stdout.write(formatReadyBanner(origin, options.host));
-          process.stdout.write(`\n  ${sessionLine(url, 'Remote Control (experimental): ')}\n`);
-          process.stdout.write(qrCode.terminal);
-          process.stdout.write(`QR code PNG: ${qrCode.pngPath}\n`);
+          process.stdout.write(
+            formatRemoteControlOutput({
+              url,
+              localOrigin: origin,
+              deviceName: remoteControl.deviceName,
+              qrCode: qrCode.terminal,
+              pngPath: qrCode.pngPath,
+            }),
+          );
+          outputReady = true;
+          for (const line of pendingStatuses) process.stdout.write(line);
           openUrl(url);
         },
         onShutdown: async () => {

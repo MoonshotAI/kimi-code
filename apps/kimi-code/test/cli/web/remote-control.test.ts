@@ -17,6 +17,8 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import {
   buildRemoteControlUrl,
   filterForwardRequestHeaders,
+  formatRemoteControlOutput,
+  formatRemoteControlStatus,
   isRemoteControlEnabled,
   parseRawHttpRequest,
   rewriteRemoteControlResponse,
@@ -68,6 +70,41 @@ describe('Remote Control URLs', () => {
     expect(buildRemoteControlUrl('device-1', 'session/a b')).toBe(
       'https://code-rc.kimi.com/devices/device-1/sessions/session%2Fa%20b?rc=1&from=kimi_code_cli',
     );
+  });
+});
+
+describe('Remote Control output', () => {
+  it('keeps the full URL clickable while showing a short link and the setup contract', () => {
+    const url = 'https://example.test/devices/example-device/?rc=1&from=kimi_code_cli';
+    const output = formatRemoteControlOutput({
+      url,
+      localOrigin: 'http://127.0.0.1:1234',
+      deviceName: 'example-device',
+      qrCode: 'QR\n',
+      pngPath: '/tmp/example-qr.png',
+    });
+    expect(output).toContain('Use Kimi Code on this machine');
+    expect(output).toContain('1.');
+    expect(output).toContain('2.');
+    expect(output).toContain('3.');
+    expect(output).toContain('example.test/devices/exampl…vice/');
+    expect(output).toContain(`\u001B]8;;${url}`);
+    expect(output).toContain('Connected to example.test');
+    expect(output).toContain('This device:');
+    expect(output).toContain('max 5');
+    expect(output).toContain('PNG:');
+    expect(output).toContain('grants control of this machine');
+    expect(output).toContain('docs');
+    expect(output).toContain('feedback');
+    expect(output).toContain('Logs: off');
+    expect(output).not.toContain('stream-1');
+  });
+
+  it('formats relay and device lifecycle states', () => {
+    expect(formatRemoteControlStatus('relay_connected').toLowerCase()).toContain('connected');
+    expect(formatRemoteControlStatus('relay_disconnected')).toContain('disconnected');
+    expect(formatRemoteControlStatus('device_connected').toLowerCase()).toContain('connected');
+    expect(formatRemoteControlStatus('device_disconnected')).toContain('disconnected');
   });
 });
 
