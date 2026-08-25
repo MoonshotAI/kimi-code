@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setCapabilities } from '@moonshot-ai/pi-tui';
+
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import {
@@ -180,6 +182,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('starts the tunnel and saves a token-free session QR code', async () => {
     vi.clearAllMocks();
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
     const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { isAbsolute, join } = await import('node:path');
@@ -241,6 +244,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('opens the device entry URL without a session instead of creating one', async () => {
     vi.clearAllMocks();
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
     const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');

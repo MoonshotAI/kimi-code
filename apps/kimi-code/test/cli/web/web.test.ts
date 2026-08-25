@@ -15,6 +15,8 @@ import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
+
 import { registerWebCommand } from '#/cli/sub/web';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
@@ -343,6 +345,7 @@ describe('ready banner reflects the bind class', () => {
 describe('`kimi web` opens the browser', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    resetCapabilitiesCache();
   });
 
   it('opens the Web UI URL with the #token= fragment by default', async () => {
@@ -424,6 +427,7 @@ describe('`kimi web` opens the browser', () => {
 
   it('opens and saves only the public Remote Control URL without the local server token', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
     const tempRoot = mkdtempSync(join(tmpdir(), 'kimi-rc-qrcode-'));
     const dataDir = join(tempRoot, 'custom-home');
     vi.stubEnv('KIMI_CODE_HOME', dataDir);
