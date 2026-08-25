@@ -2,9 +2,10 @@
      assistant message pops this floating menu anchored to the selection —
      comment / add-to-chat / add-to-side-chat. "Comment" swaps the menu for an
      inline input in place. Positioning mirrors OpenInMenu's hand-rolled
-     dropdown: fixed + teleported, viewport-margined, flipped when the
-     selection sits too high; outside click / Esc (capture) / scroll / resize
-     all close it. -->
+     dropdown: fixed + teleported, viewport-margined, anchored BELOW the
+     selection when it fits (the hand is already there after a drag) and
+     flipped above when below doesn't fit but above does; outside click /
+     Esc (capture) / scroll / resize all close it. -->
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -159,8 +160,6 @@ async function updatePosition(): Promise<void> {
   if (!menu) return;
   const gap = tokenPx('--space-1-5', 6);
   const margin = tokenPx('--p-mention-tip-vmargin', 12);
-  const menuW = menu.offsetWidth;
-  const menuH = menu.offsetHeight;
   // The VISUAL viewport governs when present: on iOS the soft keyboard
   // shrinks AND displaces only it, and the bubble must clamp/cap into the
   // moved area (bounds shift by the offset instead of starting at 0).
@@ -168,25 +167,42 @@ async function updatePosition(): Promise<void> {
   const viewportH = window.visualViewport?.height ?? window.innerHeight;
   const offsetLeft = window.visualViewport?.offsetLeft ?? 0;
   const offsetTop = window.visualViewport?.offsetTop ?? 0;
-  // Above the selection by default; flip below when there isn't room —
-  // anchored to the range's bottom edge so the flip never covers the
-  // selected text. Both axes clamp to the viewport margin at BOTH ends (an
-  // oversized menu at high zoom would otherwise clamp to a negative offset).
+  // Apply the CURRENT viewport's size caps FIRST and re-measure: a stale
+  // inline maxHeight/maxWidth from a smaller viewport (soft keyboard, pinch
+  // zoom) would truncate the measured size and misjudge the fit below — the
+  // raised cap would then let the menu grow past the viewport with no
+  // reposition. Inline so they follow the live (visual) viewport — the CSS
+  // max-width / max-height stay the coarse fallbacks (iOS pinch zoom shrinks
+  // only the visual viewport, never the layout one the CSS 100vw reads). No
+  // lower bound: under extreme zoom + soft keyboard the actual usable size
+  // can be arbitrarily small, and the position clamp already keeps the
+  // top-left inside.
+  const maxWidth = `${Math.round(viewportW - 2 * margin)}px`;
+  const maxHeight = `${Math.round(viewportH - 2 * margin)}px`;
+  menuStyle.value = { ...menuStyle.value, maxWidth, maxHeight };
+  await nextTick();
+  const menuW = menu.offsetWidth;
+  const menuH = menu.offsetHeight;
+  // BELOW the selection by default — the hand is already at the range's
+  // bottom edge after a drag, so the action is closer there. Flip above only
+  // when below doesn't fit but above does; when NEITHER fits (high zoom /
+  // tiny viewport) stay below and let the clamp pin the bubble into the
+  // viewport (the maxHeight cap keeps every action reachable, and the
+  // selection's top edge stays visible). The anchor never covers the
+  // selection when a side fits. Both axes clamp to the viewport margin at
+  // BOTH ends (an oversized menu at high zoom would otherwise clamp to a
+  // negative offset).
   const left = clampOverlayAxis(props.x - menuW / 2, menuW, viewportW, margin, offsetLeft);
-  let top = props.y - menuH - gap;
-  if (top < offsetTop + margin) top = props.bottom + gap;
+  let top = props.bottom + gap;
+  const fitsBelow = top + menuH <= offsetTop + viewportH - margin;
+  const fitsAbove = props.y - menuH - gap >= offsetTop + margin;
+  if (!fitsBelow && fitsAbove) top = props.y - menuH - gap;
   top = clampOverlayAxis(top, menuH, viewportH, margin, offsetTop);
   menuStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
-    // Inline so they follow the live (visual) viewport — the CSS max-width /
-    // max-height stay the coarse fallbacks (iOS pinch zoom shrinks only the
-    // visual viewport, never the layout one the CSS 100vw reads). No lower
-    // bound: under extreme zoom + soft keyboard the actual usable size can be
-    // arbitrarily small, and the position clamp already keeps the top-left
-    // inside.
-    maxWidth: `${Math.round(viewportW - 2 * margin)}px`,
-    maxHeight: `${Math.round(viewportH - 2 * margin)}px`,
+    maxWidth,
+    maxHeight,
   };
 }
 
