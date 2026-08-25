@@ -1,3 +1,5 @@
+import { getMaxListeners } from 'node:events';
+
 import { type ToolCall } from '#/kosong/contract/message';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -501,6 +503,22 @@ describe('Agent loop', () => {
         origin: { kind: 'system_trigger', name: 'stop_hook' },
       }),
     );
+  });
+
+  it('raises the abort-listener ceiling on the step signal for parallel tool bursts', async () => {
+    profile.update({ activeToolNames: [] });
+    let observed = 0;
+    loop.hooks.onDidFinishStep.register('test-step-signal-listener-ceiling', async (hookCtx, next) => {
+      observed = getMaxListeners(hookCtx.signal);
+      await next();
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'answer' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(observed).toBe(64);
   });
 
   it('ends the turn when an afterStep hook sets stopTurn even though the model requested tool calls', async () => {
