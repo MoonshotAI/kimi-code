@@ -25,6 +25,7 @@ import { createVideoUploader } from './registerMediaTools';
 import {
   inlineVideoPart,
   inlineVideoSupportedForProtocol,
+  isVideoUploadAuthError,
   isVideoUploadUnsupportedError,
 } from './videoUpload';
 
@@ -36,6 +37,11 @@ const IMAGE_UNAVAILABLE_TEXT =
   '[image omitted: the uploaded file is no longer available]';
 const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_MEMO_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
+export const VIDEO_INPUT_UNSUPPORTED_NOTE =
+  'The current model cannot receive video input; only the file path is shown.';
+export const VIDEO_UPLOAD_FAILED_NOTE =
+  'The video could not be uploaded for the model; only the file path is shown.';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -176,7 +182,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const model = requester.model;
-    if (!model.capabilities.video_in) return videoTag(await this.displayPath(ref));
+    if (!model.capabilities.video_in) {
+      return videoTag(await this.displayPath(ref), VIDEO_INPUT_UNSUPPORTED_NOTE);
+    }
     const providerKey = model.providerType ?? model.protocol;
     const cacheKey = `${ref.fileId}\0${providerKey}`;
 
@@ -238,7 +246,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     });
     if (uploader === undefined) {
       return {
-        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+        part: inlineSupported
+          ? inlineVideoPart(bytes, mimeType)
+          : videoTag(tagPath, VIDEO_INPUT_UNSUPPORTED_NOTE),
         memoize: true,
       };
     }
@@ -252,17 +262,24 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       if (signal?.aborted) throw error;
       if (isVideoUploadUnsupportedError(error)) {
         return {
-          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+          part: inlineSupported
+            ? inlineVideoPart(bytes, mimeType)
+            : videoTag(tagPath, VIDEO_INPUT_UNSUPPORTED_NOTE),
           memoize: true,
         };
       }
+      const authFailure = isVideoUploadAuthError(error);
       this.log.warn('video upload failed; degrading the video to a path tag', {
         file_id: ref.fileId,
         provider_type: model.providerType ?? model.protocol,
         protocol: model.protocol,
+        auth_failure: authFailure,
         error_message: error instanceof Error ? error.message : String(error),
       });
-      return { part: videoTag(tagPath), memoize: false };
+      return {
+        part: videoTag(tagPath, VIDEO_UPLOAD_FAILED_NOTE),
+        memoize: authFailure,
+      };
     }
   }
 
@@ -311,11 +328,12 @@ function unavailableMediaText(kind: 'image' | 'video'): ContentPart {
   return { type: 'text', text: kind === 'video' ? VIDEO_UNAVAILABLE_TEXT : IMAGE_UNAVAILABLE_TEXT };
 }
 
-function videoTag(path: string | undefined): ContentPart {
+function videoTag(path: string | undefined, note?: string): ContentPart {
   if (path === undefined) {
     return { type: 'text', text: VIDEO_UNAVAILABLE_TEXT };
   }
-  return { type: 'text', text: buildMediaPathTag('video', path) };
+  const tag = buildMediaPathTag('video', path);
+  return { type: 'text', text: note === undefined ? tag : `${tag}\n${note}` };
 }
 
 function msFileIdFromUrl(url: string): string | undefined {

@@ -18,6 +18,7 @@ import type { Runtime } from '#/runtime/runtime';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import type { IFileService } from '#/app/file/fileService';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import type { ILogService } from '#/_base/log/log';
 import {
   ReadMediaFileInputSchema,
   type ReadMediaFileInput,
@@ -201,7 +202,10 @@ function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()
   };
 }
 
-function stubSessionMedia(options?: { failMaterialize?: boolean }): ReadMediaSessionMediaDeps {
+function stubSessionMedia(options?: {
+  failMaterialize?: boolean;
+  throwMaterialize?: boolean;
+}): ReadMediaSessionMediaDeps {
   const files: IFileService = {
     _serviceBrand: undefined,
     save: async (_source, filename) => ({
@@ -214,7 +218,7 @@ function stubSessionMedia(options?: { failMaterialize?: boolean }): ReadMediaSes
     get: async () => {
       throw new Error('not implemented');
     },
-    delete: async () => {},
+    delete: vi.fn(async () => {}),
   };
   const mediaStore: ISessionMediaStore = {
     _serviceBrand: undefined,
@@ -222,11 +226,13 @@ function stubSessionMedia(options?: { failMaterialize?: boolean }): ReadMediaSes
     resolveDisplayPath: async () => undefined,
     read: async () => undefined,
     open: async () => undefined,
-    materialize: vi.fn(async () =>
-      options?.failMaterialize === true ? undefined : '/session/media/f_test-video.mp4',
-    ),
+    materialize: vi.fn(async () => {
+      if (options?.throwMaterialize === true) throw new Error('disk full');
+      return options?.failMaterialize === true ? undefined : '/session/media/f_test-video.mp4';
+    }),
   };
-  return { files, mediaStore };
+  const log = { warn: vi.fn() } as unknown as ILogService;
+  return { files, mediaStore, log };
 }
 
 function makeTool(
@@ -779,6 +785,7 @@ describe('ReadMediaFileTool', () => {
       videoUrl: { url: 'https://example.com/uploaded.mp4' },
     };
     const videoUploader = vi.fn<VideoUploader>().mockResolvedValue(uploadResult);
+    const sessionMedia = stubSessionMedia({ failMaterialize: true });
     const result = await execute(
       makeTool(
         { '/workspace/clip.mp4': { data: mp4Buffer() } },
@@ -786,7 +793,7 @@ describe('ReadMediaFileTool', () => {
         videoUploader,
         undefined,
         undefined,
-        stubSessionMedia({ failMaterialize: true }),
+        sessionMedia,
       ),
       { path: '/workspace/clip.mp4' },
     );
@@ -794,6 +801,34 @@ describe('ReadMediaFileTool', () => {
     const parts = outputParts(result);
     expect(videoUploader).toHaveBeenCalledOnce();
     expect(parts[1]).toEqual(uploadResult);
+    expect(sessionMedia.files.delete).toHaveBeenCalledWith('f_test-video');
+    expect(sessionMedia.log?.warn).toHaveBeenCalledOnce();
+  });
+
+  it('deletes the orphaned staged file and logs when materialization throws', async () => {
+    const uploadResult = {
+      type: 'video_url' as const,
+      videoUrl: { url: 'https://example.com/uploaded.mp4' },
+    };
+    const videoUploader = vi.fn<VideoUploader>().mockResolvedValue(uploadResult);
+    const sessionMedia = stubSessionMedia({ throwMaterialize: true });
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual(uploadResult);
+    expect(sessionMedia.files.delete).toHaveBeenCalledWith('f_test-video');
+    expect(sessionMedia.log?.warn).toHaveBeenCalledOnce();
+    expect(videoUploader).toHaveBeenCalledOnce();
   });
 
   it('falls back to an inline base64 video part when the upload fails', async () => {
@@ -987,6 +1022,7 @@ describe('AgentMediaToolsRegistrar', () => {
       new AgentStateService(),
       stubSessionMedia().files,
       stubSessionMedia().mediaStore,
+      { warn: () => {} } as unknown as ILogService,
     );
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;

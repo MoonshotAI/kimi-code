@@ -12,6 +12,7 @@ import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeB
 import type { IFileService } from '#/app/file/fileService';
 import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import type { ILogService } from '#/_base/log/log';
 import {
   ToolAccesses,
   type AgentTool,
@@ -179,6 +180,7 @@ function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boo
 export interface ReadMediaSessionMediaDeps {
   readonly files: IFileService;
   readonly mediaStore: ISessionMediaStore;
+  readonly log?: ILogService;
 }
 
 export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
@@ -232,18 +234,29 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     const deps = this.sessionMedia;
     if (deps === undefined) return undefined;
     const name = safePath.split(/[\\/]/).at(-1) ?? 'video';
+    let savedId: string | undefined;
     try {
       const meta = await deps.files.save(Readable.from(data), name, { mimeType });
-      const fileId = await deps.mediaStore.materialize({
+      savedId = meta.id;
+      const materializedPath = await deps.mediaStore.materialize({
         fileId: meta.id,
         size: data.length,
         name,
         mimeType,
         stream: () => Readable.from(data),
       });
-      if (fileId === undefined) return undefined;
+      if (materializedPath === undefined) {
+        throw new Error('session media materialization returned no path');
+      }
       return { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(meta.id), id: meta.id } };
-    } catch {
+    } catch (error) {
+      if (savedId !== undefined) {
+        await deps.files.delete(savedId).catch(() => undefined);
+      }
+      deps.log?.warn('video staging into the session media store failed; falling back to eager upload', {
+        file_id: savedId,
+        error_message: error instanceof Error ? error.message : String(error),
+      });
       return undefined;
     }
   }
