@@ -203,7 +203,7 @@ function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()
 }
 
 function stubSessionMedia(options?: {
-  failMaterialize?: boolean;
+  pathless?: boolean;
   throwMaterialize?: boolean;
 }): ReadMediaSessionMediaDeps {
   const mediaStore: ISessionMediaStore = {
@@ -214,7 +214,7 @@ function stubSessionMedia(options?: {
     open: async () => undefined,
     materialize: vi.fn(async (input) => {
       if (options?.throwMaterialize === true) throw new Error('disk full');
-      return options?.failMaterialize === true ? undefined : `/session/media/${input.fileId}.mp4`;
+      return options?.pathless === true ? undefined : `/session/media/${input.fileId}.mp4`;
     }),
   };
   const log = { warn: vi.fn() } as unknown as ILogService;
@@ -768,13 +768,9 @@ describe('ReadMediaFileTool', () => {
     expect(videoUploader).not.toHaveBeenCalled();
   });
 
-  it('falls back to the video uploader when session media materialization fails', async () => {
-    const uploadResult = {
-      type: 'video_url' as const,
-      videoUrl: { url: 'https://example.com/uploaded.mp4' },
-    };
-    const videoUploader = vi.fn<VideoUploader>().mockResolvedValue(uploadResult);
-    const sessionMedia = stubSessionMedia({ failMaterialize: true });
+  it('returns a daemon file reference when the backend stores bytes without a local path', async () => {
+    const videoUploader = vi.fn<VideoUploader>();
+    const sessionMedia = stubSessionMedia({ pathless: true });
     const result = await execute(
       makeTool(
         { '/workspace/clip.mp4': { data: mp4Buffer() } },
@@ -788,9 +784,13 @@ describe('ReadMediaFileTool', () => {
     );
     expect(result.isError).not.toBe(true);
     const parts = outputParts(result);
-    expect(videoUploader).toHaveBeenCalledOnce();
-    expect(parts[1]).toEqual(uploadResult);
-    expect(sessionMedia.log?.warn).toHaveBeenCalledOnce();
+    const staged = vi.mocked(sessionMedia.mediaStore.materialize).mock.calls[0]?.[0];
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `kimi-file://${staged!.fileId}`, id: staged!.fileId },
+    });
+    expect(videoUploader).not.toHaveBeenCalled();
+    expect(sessionMedia.log?.warn).not.toHaveBeenCalled();
   });
 
   it('falls back to the video uploader and logs when materialization throws', async () => {

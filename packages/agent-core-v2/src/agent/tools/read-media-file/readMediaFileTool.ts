@@ -235,16 +235,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     const name = safePath.split(/[\\/]/).at(-1) ?? 'video';
     const fileId = newFileId();
     try {
-      const materializedPath = await deps.mediaStore.materialize({
+      await deps.mediaStore.materialize({
         fileId,
         size: data.length,
         name,
         mimeType,
         stream: () => Readable.from(data),
       });
-      if (materializedPath === undefined) {
-        throw new Error('session media materialization returned no path');
-      }
       return { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(fileId), id: fileId } };
     } catch (error) {
       deps.log?.warn('video staging into the session media store failed; falling back to eager upload', {
