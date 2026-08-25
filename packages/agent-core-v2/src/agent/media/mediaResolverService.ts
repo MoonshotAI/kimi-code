@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
@@ -24,7 +25,6 @@ import { createVideoUploader } from './registerMediaTools';
 import {
   inlineVideoPart,
   inlineVideoSupportedForProtocol,
-  isVideoUploadAuthError,
   isVideoUploadUnsupportedError,
 } from './videoUpload';
 
@@ -54,6 +54,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
+    @ILogService private readonly log: ILogService,
   ) {
     this.states.contributeState(mediaResolvedKey);
   }
@@ -249,13 +250,18 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       return { part: uploaded, memoize: true };
     } catch (error) {
       if (signal?.aborted) throw error;
-      if (isVideoUploadAuthError(error)) throw error;
       if (isVideoUploadUnsupportedError(error)) {
         return {
           part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
           memoize: true,
         };
       }
+      this.log.warn('video upload failed; degrading the video to a path tag', {
+        file_id: ref.fileId,
+        provider_type: model.providerType ?? model.protocol,
+        protocol: model.protocol,
+        error_message: error instanceof Error ? error.message : String(error),
+      });
       return { part: videoTag(tagPath), memoize: false };
     }
   }

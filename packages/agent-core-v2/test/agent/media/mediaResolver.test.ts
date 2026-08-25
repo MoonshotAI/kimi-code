@@ -13,6 +13,7 @@ import {
 } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
@@ -125,6 +126,7 @@ function blobStore(): IBlobStore {
 }
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
+const logStub = { warn: () => {} } as unknown as ILogService;
 
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
@@ -211,6 +213,7 @@ function resolver(
       reg.defineInstance(IFileService, fileService(files));
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
+      reg.defineInstance(ILogService, logStub);
       reg.defineInstance(ISessionMediaStore, mediaStore);
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
@@ -262,13 +265,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), logStub).resolve(
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), logStub).resolve(
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -326,15 +329,27 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it('rethrows an auth failure so it can drive credential refresh', async () => {
-    const upload = vi.fn(async () => {
-      throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+  it('degrades to the path tag on an auth failure and retries the upload on a later step', async () => {
+    let uploadCalls = 0;
+    const upload = vi.fn(async (): Promise<VideoURLPart> => {
+      uploadCalls += 1;
+      if (uploadCalls === 1) throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+      return msPart('prov-1');
     });
-    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const req = requester({ uploadVideo: upload });
 
-    await expect(
-      res.resolve([videoMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadVideo: upload })),
-    ).rejects.toThrow('unauthorized');
+    const failed = await res.resolve([message], req);
+    expect(firstPart(failed)).toEqual({
+      type: 'text',
+      text: `<video path="${canonical}"></video>`,
+    });
+
+    const retried = await res.resolve([message], req);
+    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
   });
 
   it('rethrows a cancelled upload without memoizing the fallback', async () => {
@@ -477,6 +492,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
 
     await expect(
@@ -559,6 +575,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
@@ -585,6 +602,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -607,6 +625,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
     const req = requester({});
 
@@ -649,6 +668,7 @@ describe('AgentMediaResolverService image strategy', () => {
         telemetry,
         new AgentStateService(),
         stubMediaStore(sessionDir),
+        logStub,
       );
       const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -776,6 +796,7 @@ describe('AgentMediaResolverService scoped registration', () => {
       stubPair(IFileService, fileService(files)),
       stubPair(IBlobStore, blobStore()),
       stubPair(ITelemetryService, telemetry),
+      stubPair(ILogService, logStub),
     ]);
     return host.child(LifecycleScope.Agent, 'main', [
       stubPair(IAgentStateService, new AgentStateService()),
