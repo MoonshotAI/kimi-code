@@ -68,6 +68,13 @@ const MCP_OUTPUT_TRUNCATED_TEXT = `\n\n[Output truncated: exceeded ${String(
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
 const MCP_MAX_BINARY_PART_CHARS = Math.ceil((MCP_MAX_BINARY_PART_BYTES * 4) / 3);
 
+// Size ratio (serialized structuredContent vs. content text) above which a
+// result is treated as a lossy summary and the structured payload is
+// forwarded alongside the content. Faithful renderings measure close to 1
+// (the spec's verbatim dual-emit ≈1, human reorganisations ≈1-2 in
+// practice); lossy summaries sit orders of magnitude higher.
+const MCP_STRUCTURED_LOSSY_RATIO = 2;
+
 function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: number): string {
   const approxMb = ((urlLength * 3) / 4 / (1024 * 1024)).toFixed(1);
   const capMb = String(MCP_MAX_BINARY_PART_BYTES / (1024 * 1024));
@@ -196,19 +203,28 @@ export async function mcpResultToExecutableOutput(
   // block. Protocol-reserved _meta keys are dropped first: those carry
   // host/protocol plumbing, not model-facing data.
   //
-  // structuredContent is skipped only when a content text block already
-  // carries its verbatim serialization — the spec's backwards-compatibility
-  // pattern (e.g. the Google Workspace servers) — where forwarding it would
-  // send the same data to the model twice. Servers are equally allowed to
-  // put a lossy human summary in content, so "has text" alone must NOT
-  // suppress the structured payload. _meta has no such overlap and always
-  // passes through.
+  // structuredContent is appended only when content does not already cover
+  // it. Well-behaved servers render the same data into content — as the
+  // spec's verbatim-serialization fallback, or as a faithful human-readable
+  // reorganisation — and either way the rendered text measures at roughly
+  // the same size as the payload. Forwarding the payload there would send
+  // the same information twice. A payload many times larger than the text
+  // is the signature of a lossy summary (or no text at all), where the
+  // structured data must reach the model. _meta has no such overlap and
+  // always passes through.
+  const textLength = converted.reduce(
+    (n, part) => (part.type === 'text' ? n + part.text.trim().length : n),
+    0,
+  );
   const structuredExtras: Record<string, unknown> = {};
-  if (
-    result.structuredContent !== undefined &&
-    !serializesStructuredContent(converted, result.structuredContent)
-  ) {
-    structuredExtras['structuredContent'] = result.structuredContent;
+  if (result.structuredContent !== undefined) {
+    const structuredJson = trySerialize(result.structuredContent);
+    if (
+      structuredJson !== undefined &&
+      (textLength === 0 || structuredJson.length > MCP_STRUCTURED_LOSSY_RATIO * textLength)
+    ) {
+      structuredExtras['structuredContent'] = result.structuredContent;
+    }
   }
   if (result._meta !== undefined) {
     const meta = stripReservedMetaKeys(result._meta);
@@ -311,49 +327,13 @@ function isReservedMetaKey(key: string): boolean {
   );
 }
 
-/**
- * True when some converted text part is exactly the JSON serialization of
- * `structured` — the pattern the MCP spec recommends for backwards
- * compatibility. The comparison is semantic (parse, then compare with
- * canonical key order), not textual, so formatting and key-order
- * differences still count as the same payload.
- *
- * Conservative by construction: any doubt — non-JSON text, prose wrapped
- * around the JSON, structural mismatch — returns false and the structured
- * block is appended. A duplicate costs tokens; a wrong drop loses data.
- */
-function serializesStructuredContent(
-  parts: readonly ContentPart[],
-  structured: unknown,
-): boolean {
-  return parts.some(
-    (part) => part.type === 'text' && textIsJsonSerializationOf(part.text, structured),
-  );
-}
-
-function textIsJsonSerializationOf(text: string, structured: unknown): boolean {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
-  let parsed: unknown;
+function trySerialize(value: unknown): string | undefined {
   try {
-    parsed = JSON.parse(trimmed);
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' ? serialized : undefined;
   } catch {
-    return false;
+    return undefined;
   }
-  return canonicalJson(parsed) === canonicalJson(structured);
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
-  }
-  if (typeof value === 'object' && value !== null) {
-    const entries = Object.entries(value)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([key, val]) => `${JSON.stringify(key)}:${canonicalJson(val)}`);
-    return `{${entries.join(',')}}`;
-  }
-  return String(JSON.stringify(value));
 }
 
 /**

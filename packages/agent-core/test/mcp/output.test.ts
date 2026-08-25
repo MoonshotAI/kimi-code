@@ -287,7 +287,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.isError).toBe(false);
   });
 
-  test('matches the serialization across formatting and key order', async () => {
+  test('omits structuredContent for dual-emit servers even when the serialized text is reformatted', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'text', text: '{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}' }],
@@ -300,21 +300,54 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.output).toBe('{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}');
   });
 
-  test('appends structuredContent when content text is a summary, not the serialization', async () => {
+  test('omits structuredContent when content is a faithful rendering of similar size', async () => {
+    // The common well-behaved pattern: content reorganises the same data
+    // into human-readable text, so the payload adds nothing but tokens.
+    const text =
+      'Project: Central Macaw [d594e625]\n' +
+      'Description: none\n' +
+      'Timeline: 1920x1080 @ 30fps | durationInFrames=0\n' +
+      'Assets: total=0';
     const out = await mcpResultToExecutableOutput(
       {
-        content: [{ type: 'text', text: 'list_projects returned 1 item(s).' }],
+        content: [{ type: 'text', text }],
         isError: false,
-        structuredContent: { projects: [{ id: 1 }] },
+        structuredContent: {
+          project: { id: 'd594e625', name: 'Central Macaw', description: null },
+          timeline: { width: 1920, height: 1080, fps: 30, durationInFrames: 0 },
+          assets: { total: 0 },
+        },
+      },
+      'mcp__s__t',
+    );
+    expect(out.output).toBe(text);
+  });
+
+  test('appends structuredContent when the payload dwarfs a lossy summary', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: 'list_projects returned 6 item(s).' }],
+        isError: false,
+        structuredContent: {
+          projects: [
+            { id: 'p1', name: 'Alpha' },
+            { id: 'p2', name: 'Beta' },
+            { id: 'p3', name: 'Gamma' },
+            { id: 'p4', name: 'Delta' },
+            { id: 'p5', name: 'Epsilon' },
+            { id: 'p6', name: 'Zeta' },
+          ],
+        },
       },
       'mcp__s__t',
     );
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
-    // Servers may put a lossy human summary in content; "has text" alone
-    // must not suppress the structured payload.
-    expect(joined).toContain('list_projects returned 1 item(s).');
-    expect(joined).toContain('"structuredContent":{"projects":[{"id":1}]}');
+    // A payload many times larger than the text is the signature of a lossy
+    // summary; the structured data must still reach the model.
+    expect(joined).toContain('list_projects returned 6 item(s).');
+    expect(joined).toContain('"structuredContent"');
+    expect(joined).toContain('"name":"Zeta"');
   });
 
   test('falls back to structuredContent when content carries no usable text', async () => {
@@ -883,6 +916,13 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
     const text = joinedText(out.output);
     expect(text).toContain('Found 1 row.');
     expect(text).toContain('"structuredContent":{"rows":[{"id":1}],"total":1}');
+  }, 15000);
+
+  test('a faithful rendering of similar size suppresses the structured copy', async () => {
+    const out = await callFixtureTool('faithful_rendering');
+    const text = joinedText(out.output);
+    expect(text).toContain('Project: Central Macaw');
+    expect(text).not.toContain('<mcp-structured-result>');
   }, 15000);
 
   test('vendor _meta keys pass through alongside content text', async () => {

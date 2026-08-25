@@ -56,4 +56,25 @@ server.registerTool(
   }),
 );
 
+server.registerTool(
+  'faithful_rendering',
+  {
+    description: 'content is a faithful human rendering of structuredContent at similar size',
+    inputSchema: {},
+  },
+  () => ({
+    content: [
+      {
+        type: 'text',
+        text: 'Project: Central Macaw [d594e625]\nDescription: none\nTimeline: 1920x1080 @ 30fps | durationInFrames=0\nAssets: total=0',
+      },
+    ],
+    structuredContent: {
+      project: { id: 'd594e625', name: 'Central Macaw', description: null },
+      timeline: { width: 1920, height: 1080, fps: 30, durationInFrames: 0 },
+      assets: { total: 0 },
+    },
+  }),
+);
+
 await server.connect(new StdioServerTransport());
