@@ -418,6 +418,12 @@ export function toWireQuestionResponse(input: QuestionResponse): WireQuestionRes
 // ---------------------------------------------------------------------------
 
 export function toAppTask(wire: WireTask, knownAgentId?: string): AppTask {
+  // Runtime contract check (the typed http.get is only an assertion): a
+  // producer omitting the required flag fails HERE as an ordinary protocol
+  // error instead of being silently reinterpreted as foreground.
+  if (typeof wire.run_in_background !== 'boolean') {
+    throw new Error(`task wire missing required run_in_background (id ${wire.id})`);
+  }
   return {
     id: wire.id,
     agentId: wire.agent_id ?? knownAgentId,
@@ -438,11 +444,7 @@ export function toAppTask(wire: WireTask, knownAgentId?: string): AppTask {
     parentToolCallId: wire.parent_tool_call_id,
     suspendedReason: wire.suspended_reason,
     swarmIndex: wire.swarm_index,
-    // The snapshot's subagent roster carries the explicit flag. REST `/tasks`
-    // does not, but its background-task store only holds detached tasks, so any
-    // subagent it returns is a background subagent (foreground ones never
-    // persist there) — hence the `?? true` fallback for that path.
-    runInBackground: wire.run_in_background ?? (wire.kind === 'subagent' ? true : undefined),
+    runInBackground: wire.run_in_background,
     // outputLines starts undefined; populated by eventReducer via task.progress events
   };
 }

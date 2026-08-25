@@ -411,7 +411,10 @@ export interface WireTask {
   parent_tool_call_id?: string;
   suspended_reason?: string;
   swarm_index?: number;
-  run_in_background?: boolean;
+  /** Always present per the task-wire contract (the server knows every
+   *  task's detached flag); a producer violating the contract fails as an
+   *  ordinary protocol error — clients must not default it silently. */
+  run_in_background: boolean;
 }
 
 // ---------------------------------------------------------------------------

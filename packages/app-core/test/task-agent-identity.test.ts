@@ -9,6 +9,7 @@ const backgroundTask: WireTask = {
   description: 'Explore repo',
   status: 'running',
   created_at: '2026-07-28T00:00:00.000Z',
+  run_in_background: true,
 };
 
 describe('subagent task identity', () => {
@@ -45,5 +46,17 @@ describe('subagent task identity', () => {
       toAppTask({ ...backgroundTask, model: 'provider/secondary', thinking_effort: 'low' }),
     ).toMatchObject({ model: 'provider/secondary', thinkingEffort: 'low' });
     expect(toAppTask(backgroundTask).thinkingEffort).toBeUndefined();
+  });
+
+  it('reads run_in_background straight from the wire (contract-required)', () => {
+    expect(toAppTask(backgroundTask).runInBackground).toBe(true);
+    expect(toAppTask({ ...backgroundTask, run_in_background: false }).runInBackground).toBe(false);
+  });
+
+  it('rejects a wire row missing run_in_background as a protocol error', () => {
+    const { run_in_background: _omitted, ...withoutFlag } = backgroundTask;
+    expect(() => toAppTask(withoutFlag as unknown as WireTask)).toThrow(
+      /missing required run_in_background/,
+    );
   });
 });
