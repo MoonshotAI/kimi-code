@@ -149,7 +149,7 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
     `  ${muted('Experimental —')} ${docs} ${muted('·')} ${feedback}`,
     `  ${label('Logs: ')}${muted('off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted('Ctrl+C')}`,
     '',
-  ].join('\\n');
+  ].join('\n');
 }
 
 export function formatRemoteControlStatus(status: RemoteControlStatus): string {
@@ -157,13 +157,13 @@ export function formatRemoteControlStatus(status: RemoteControlStatus): string {
   const value = (text: string): string => chalk.hex(darkColors.success)(text);
   switch (status) {
     case 'relay_connected':
-      return `  ${value('✓')} ${label('Connected to relay, waiting for remote devices…')}\\n`;
+      return `  ${value('✓')} ${label('Connected to relay, waiting for remote devices…')}\n`;
     case 'relay_disconnected':
-      return `  ${value('!')} ${label('Relay disconnected; reconnecting…')}\\n`;
+      return `  ${value('!')} ${label('Relay disconnected; reconnecting…')}\n`;
     case 'device_connected':
-      return `  ${value('✓')} ${label('Remote device connected (1 active session)')}\\n`;
+      return `  ${value('✓')} ${label('Remote device connected (1 active session)')}\n`;
     case 'device_disconnected':
-      return `  ${value('→')} ${label('Remote device disconnected')}\\n`;
+      return `  ${value('→')} ${label('Remote device disconnected')}\n`;
   }
 }
 
