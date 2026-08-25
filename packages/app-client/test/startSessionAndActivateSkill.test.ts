@@ -53,9 +53,12 @@ function createWorkspaceState() {
     pendingThinkingBySession: {} as Record<string, number>,
     planModeBySession: {} as Record<string, boolean>,
     planArmedBySession: {} as Record<string, boolean>,
+    pendingPlanBySession: {} as Record<string, number>,
     swarmModeBySession: {} as Record<string, boolean>,
+    pendingSwarmBySession: {} as Record<string, number>,
     goalModeBySession: {} as Record<string, boolean>,
     goalBySession: {} as Record<string, unknown>,
+    optimisticMessagesBySession: {} as Record<string, unknown[]>,
     permission: 'auto',
     defaultModel: 'kimi-k3',
   };
@@ -75,9 +78,8 @@ function createWorkspaceState() {
   getKimiWebApiMock.mockReturnValue(api);
 
   const refreshSessionStatus = vi.fn(async () => {});
-  const syncSessionFromSnapshot = vi.fn(async (sessionId: string) => {
+  const subscribeSessionEvents = vi.fn((sessionId: string) => {
     seedAtSelection.thinking = rawState.thinkingBySession[sessionId];
-    return 'ok' as const;
   });
   const persistSessionProfile = vi.fn(
     async (patch: { thinking?: string }, sessionId?: string) => {
@@ -126,11 +128,11 @@ function createWorkspaceState() {
     setActiveSessionId: (id: string | undefined) => {
       rawState.activeSessionId = id;
     },
-    updateSessionMessages: vi.fn(),
     nextOptimisticMsgId: vi.fn(() => 'optimistic'),
+    lastMainUserPromptText: vi.fn(() => null),
     getEventConn: vi.fn(() => null),
-    syncSessionFromSnapshot,
-    reopenSession: vi.fn(async () => 'ok' as const),
+    subscribeSessionEvents,
+    refreshMainTranscript: vi.fn(async () => {}),
     hasLoadedMessages: vi.fn(() => false),
     refreshSessionStatus,
     refreshSessionGoal: vi.fn(async () => {}),
@@ -160,7 +162,7 @@ function createWorkspaceState() {
     persistSessionProfile,
     persistControl,
     refreshSessionStatus,
-    syncSessionFromSnapshot,
+    subscribeSessionEvents,
     seedAtSelection,
     ws: useWorkspaceState(rawState as never, deps as never),
   };
@@ -233,15 +235,15 @@ describe('startSessionAndActivateSkill', () => {
   });
 
   it('seeds the draft pick before the session is selected, and skips the fresh /status fold', async () => {
-    const { seedAtSelection, refreshSessionStatus, syncSessionFromSnapshot, ws } = createWorkspaceState();
+    const { seedAtSelection, refreshSessionStatus, subscribeSessionEvents, ws } = createWorkspaceState();
 
     await ws.startSessionAndActivateSkill('workspace', 'agent-browser', undefined);
 
     expect(seedAtSelection.thinking).toBe(DRAFT_PICK_LEVEL);
     // A fresh-session /status fold would only report daemon defaults over the
-    // seeds — including the one fired inside the snapshot sync.
+    // seeds — the open path skips the sidecar status refresh.
     expect(refreshSessionStatus).not.toHaveBeenCalled();
-    expect(syncSessionFromSnapshot).toHaveBeenCalledWith('session-1', { skipStatusRefresh: true });
+    expect(subscribeSessionEvents).toHaveBeenCalledWith('session-1');
   });
 
   it('shields the pending pick from daemon reports that predate the persist', async () => {

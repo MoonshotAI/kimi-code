@@ -4,7 +4,7 @@ import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/app-core/api'
 import { createAuxiliaryTranscriptPool } from '../src/composables/useAuxiliaryTranscripts';
 
 describe('createAuxiliaryTranscriptPool', () => {
-  it('loads the cold baseline before subscribing and switches agents with one replacement', async () => {
+  it('loads the cold baseline before subscribing and detaches the previous agent on switch', async () => {
     const subscribeTranscript = vi.fn();
     const unsubscribeTranscript = vi.fn();
     const getSessionTranscript = vi.fn(
@@ -25,11 +25,12 @@ describe('createAuxiliaryTranscriptPool', () => {
 
     subscribeTranscript.mockClear();
     pool.activate('s1', 'agent-b');
+    // Subscriptions are additive — the switch detaches the previous agent.
+    expect(unsubscribeTranscript).toHaveBeenCalledWith('s1', ['agent-a']);
     await vi.waitFor(() => {
       expect(subscribeTranscript).toHaveBeenCalledWith('s1', 'agent-b', 3);
     });
     expect(subscribeTranscript).toHaveBeenCalledTimes(1);
-    expect(unsubscribeTranscript).not.toHaveBeenCalled();
 
     pool.deactivate('s1', 'agent-b');
     expect(unsubscribeTranscript).toHaveBeenCalledWith('s1', ['agent-b']);

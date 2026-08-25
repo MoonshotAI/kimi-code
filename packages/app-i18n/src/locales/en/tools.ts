@@ -57,6 +57,12 @@ export default {
   agent: {
     foreground: 'Foreground',
     background: 'Background',
+    status: {
+      running: 'Running',
+      ok: 'Completed',
+      error: 'Failed',
+      cancelled: 'Cancelled',
+    },
   },
   output: {
     waiting: 'Waiting for output…',

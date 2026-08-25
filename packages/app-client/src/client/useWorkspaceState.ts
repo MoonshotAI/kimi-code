@@ -15,7 +15,6 @@ import { isDaemonApiError } from '@moonshot-ai/app-core/api';
 import { SERVER_AUTH_UNAUTHORIZED_CODE, isPageTokenMismatchError, isPlaceholderSessionUsage, toAppSessionFromV2, SESSION_EXPORT_TOO_LARGE_CODE } from '@moonshot-ai/app-core/api';
 import type {
   AppConfig,
-  AppInFlightTurn,
   AppMessage,
   AppMessageContent,
   AppSession,
@@ -40,6 +39,8 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { logWarn } from '@moonshot-ai/app-core/lib';
+import { markSwarmPending } from '@moonshot-ai/app-core/lib';
+import { markPlanPending } from '@moonshot-ai/app-core/lib';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { pathRelativeTo } from '@moonshot-ai/app-core/lib';
 import { readSessionIdFromLocation, sessionUrl, withRcQuery } from '@moonshot-ai/app-core/lib';
@@ -64,7 +65,6 @@ import type { UseModelProviderState } from './useModelProviderState';
 import type { UseSideChat } from './useSideChat';
 import type { UseTaskPoller } from './useTaskPoller';
 
-const MESSAGES_PAGE_SIZE = 50;
 // Sessions fetched per workspace on first load — keeps the initial request
 // count at (number of workspaces) and each response small. Exported so the
 // sidebar can fall back to it when a workspace's first-page size is unknown.
@@ -161,6 +161,10 @@ const MAX_QUEUE_FLUSH_FAILURES = 3;
 // single chokepoint honoring this (finishPromptLocal drains, sendPrompt's
 // enqueue+flush, and the failure-budget chain all pass through it).
 const steerInFlightCounts = new Map<string, number>();
+// Content keys (wire warnings carry no id) of the daemon warnings already
+// shown per session — refreshSessionWarnings re-pulls at every sync and only
+// notifies the new ones.
+const shownSessionWarningKeys = new Map<string, Set<string>>();
 // Per-session serialization of steerQueued(): rapid consecutive clicks (or a
 // double-click) start overlapping steers whose submits could reach the daemon
 // out of order and invert FIFO. Each steer runs after the previous settles.
@@ -254,6 +258,7 @@ export function forgetLocalTurnState(sid: string): void {
   queueFlushFailures.delete(sid);
   steerInFlightCounts.delete(sid);
   steerChainBySession.delete(sid);
+  shownSessionWarningKeys.delete(sid);
 }
 
 /** Whether a snapshot request can still be applied without overwriting a
@@ -270,8 +275,6 @@ export function afterLocalTurnStartsSettle(sid: string, callback: () => void): v
   }
   afterLocalTurnsSettled.set(sid, callback);
 }
-
-type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
 export interface PersistSessionProfilePatch {
   model?: string;
@@ -306,20 +309,39 @@ export interface UseWorkspaceStateDeps {
   /** Drop pins in bulk — the pinned backfill's stale-id cleanup (404/archived). */
   unpinSessions: (ids: string[]) => void;
   setActiveSessionId: (id: string | undefined) => void;
-  /** Update one session's message list via a function of the current list. */
-  updateSessionMessages: (
-    sessionId: string,
-    update: (messages: AppMessage[]) => AppMessage[],
-  ) => void;
   nextOptimisticMsgId: () => string;
+  /** The text of the session's most recent user-origin main turn (undo's
+   *  "edit + resend" refill), read off the main transcript channel. */
+  lastMainUserPromptText: (sessionId: string) => string | null;
+  /** The main transcript's current tail turn id — stamped onto optimistic
+   *  bubbles at submit time so the overlay reconciles each bubble only against
+   *  turns created AFTER it (resending identical text must not hide the fresh
+   *  bubble behind the old turn). Optional for test harnesses. */
+  mainTranscriptTailTurnId?: (sessionId: string) => string | undefined;
+  /** The main transcript's newest prompt stamp — the fallback echo floor for
+   *  sessions with prompt history but no turn yet. Optional for test harnesses. */
+  mainTranscriptTailPromptCreatedAt?: (sessionId: string) => string | undefined;
+  /** Settle a just-answered submission when the transcript already carries its
+   *  terminal evidence (a fast turn's or pre-submit block's frame beat the POST
+   *  response, and no later edge re-fires for it). Called once the response
+   *  lands and the pending window has closed. Optional for test harnesses. */
+  settleIfFateProven?: (sessionId: string) => void;
   getEventConn: () => KimiEventConnection | null;
-  syncSessionFromSnapshot: (
-    sessionId: string,
-    opts?: { skipStatusRefresh?: boolean },
-  ) => Promise<SyncSessionResult>;
-  reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
+  /** Subscribe a session's session_event stream (plain, cursorless) and
+   *  retain it under the facade's LRU cap. */
+  subscribeSessionEvents: (sessionId: string) => void;
+  /** Re-anchor a session's main transcript channel over REST (undo's rewind). */
+  refreshMainTranscript: (sessionId: string) => Promise<void>;
   hasLoadedMessages: (sessionId: string) => boolean;
-  refreshSessionStatus: (sessionId: string) => Promise<void>;
+  /** Resolve a visible task row's id to the background-task id REST `/tasks`
+   *  knows — the cancel endpoint only accepts the latter. Transcript-sourced
+   *  rows carry the alias on the row itself; undefined when no row matches. */
+  resolveTaskRestId?: (sessionId: string, taskId: string) => string | undefined;
+  /** Resolves once the session's transcript baseline has loaded (or immediately
+   *  when it's already here) — selectSession holds the loading state on it.
+   *  Optional so test harnesses can omit it (falls back to clearing at once). */
+  whenMainTranscriptBaseline?: (sessionId: string) => Promise<void>;
+  refreshSessionStatus: (sessionId: string) => Promise<boolean>;
   refreshSessionGoal: (sessionId: string) => Promise<void>;
   /** load()'s post-reload goal refill: fetches with the goal-active pending
    *  mark held (facade-owned), so a turn boundary landing mid-refill still
@@ -372,12 +394,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     forgetSession,
     unpinSessions,
     setActiveSessionId,
-    updateSessionMessages,
     nextOptimisticMsgId,
+    lastMainUserPromptText,
+    mainTranscriptTailTurnId,
+    mainTranscriptTailPromptCreatedAt,
+    settleIfFateProven,
     getEventConn,
-    syncSessionFromSnapshot,
-    reopenSession,
+    subscribeSessionEvents,
+    refreshMainTranscript,
     hasLoadedMessages,
+    resolveTaskRestId,
     refreshSessionStatus,
     refreshSessionGoal,
     refillSessionGoalOnReload,
@@ -405,90 +431,57 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   let selectSerial = 0;
   let exportInFlight = false;
 
-  function confirmOptimisticUserMessage(
-    sessionId: string,
-    optimisticId: string,
-    promptId: string,
-    userMessageId: string,
-  ): void {
-    updateSessionMessages(sessionId, (messages) => {
-      const optimisticIndex = messages.findIndex((message) => message.id === optimisticId);
-      if (optimisticIndex === -1) return messages;
-      const echoIndex = messages.findIndex(
-        (message, index) =>
-          index !== optimisticIndex &&
-          message.role === 'user' &&
-          (message.id === userMessageId ||
-            message.userMessageId === userMessageId ||
-            message.promptId === promptId),
-      );
-      const optimistic = messages[optimisticIndex]!;
-      const confirmed = echoIndex === -1 ? optimistic : messages[echoIndex]!;
-      return messages.flatMap((message, index) => {
-        if (index === echoIndex) return [];
-        if (index !== optimisticIndex) return [message];
-        return [{
-          ...confirmed,
-          id: optimistic.id,
-          promptId,
-          userMessageId,
-          metadata: { ...confirmed.metadata, ...optimistic.metadata },
-        }];
-      });
-    });
-  }
-
-  async function loadOlderMessages(sessionId: string): Promise<void> {
-    if (rawState.messagesLoadingMoreBySession[sessionId]) return;
-    const current = rawState.messagesBySession[sessionId];
-    if (!current || current.length === 0) return;
-
-    const beforeId = current[0]!.id;
-    rawState.messagesLoadingMoreBySession = {
-      ...rawState.messagesLoadingMoreBySession,
-      [sessionId]: true,
-    };
-    rawState.messagesLoadMoreErrorBySession = {
-      ...rawState.messagesLoadMoreErrorBySession,
-      [sessionId]: false,
-    };
-    try {
-      const page = await getKimiWebApi().listMessages(sessionId, {
-        beforeId,
-        pageSize: MESSAGES_PAGE_SIZE,
-      });
-      // Server returns newest-first; the UI keeps messages in chronological order.
-      const older = [...page.items].reverse();
-      // Live events may have appended messages while the request was in flight;
-      // the updater receives the latest array so those messages are not overwritten.
-      updateSessionMessages(sessionId, (latest) => [...older, ...latest]);
-      rawState.messagesHasMoreBySession = {
-        ...rawState.messagesHasMoreBySession,
-        [sessionId]: page.hasMore,
-      };
-    } catch (err) {
-      rawState.messagesLoadMoreErrorBySession = {
-        ...rawState.messagesLoadMoreErrorBySession,
-        [sessionId]: true,
-      };
-      pushOperationFailure('loadOlderMessages', err, { sessionId });
-    } finally {
-      rawState.messagesLoadingMoreBySession = {
-        ...rawState.messagesLoadingMoreBySession,
-        [sessionId]: false,
-      };
-    }
-  }
-
   function refreshSessionSidecars(sessionId: string, opts?: { skipStatus?: boolean }): void {
     void taskPoller.loadTasksForSession(sessionId);
     void filesStore().loadGitStatus(sessionId);
     if (opts?.skipStatus !== true) void refreshSessionStatus(sessionId);
     void refreshSessionGoal(sessionId);
     void refreshSessionPlans(sessionId);
+    refreshSessionWarnings(sessionId);
     if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsBySession.value, sessionId)) {
       void modelProvider.loadSkillsForSession(sessionId);
     }
+  }
+
+  /** Best-effort pull of persisted daemon warnings: the live `warning` event
+   *  is grade-suppressed in render mode, so this REST read is the only warning
+   *  channel left. Re-pulled at every session sync — warnings raised after the
+   *  first open must not be lost — with already-shown ones deduped by content
+   *  key (the wire shape carries no id). A failed pull marks nothing and
+   *  retries on the next sync. */
+  function refreshSessionWarnings(sessionId: string): void {
+    void getKimiWebApi()
+      .getSessionWarnings(sessionId)
+      .then((warnings) => {
+        // The session may be gone (archived/deleted) while this read was in
+        // flight — a late success would re-create the cache entry the
+        // teardown just removed and toast a warning for a session that no
+        // longer exists.
+        if (!rawState.sessions.some((s) => s.id === sessionId)) return;
+        const shown = shownSessionWarningKeys.get(sessionId) ?? new Set<string>();
+        shownSessionWarningKeys.set(sessionId, shown);
+        const label = t('warnings.noteLabel');
+        for (const warning of warnings) {
+          const key = `${warning.code} ${warning.message}`;
+          if (shown.has(key)) continue;
+          shown.add(key);
+          // The wire carries the severity — a persisted error must not render
+          // as a soft warning, nor an info get upgraded to one.
+          notify({ severity: warning.severity, title: `${label}: ${warning.message}` });
+        }
+      })
+      .catch(() => {
+        // best-effort: never block session sync on warning retrieval.
+      });
+  }
+
+  /** Register a warning as shown WITHOUT a re-pull: the live transcript
+   *  notice scan toasts mid-turn, and the turn-end REST re-pull must not
+   *  toast the same warning again (keys match refreshSessionWarnings'). */
+  function markSessionWarningShown(sessionId: string, key: string): void {
+    const shown = shownSessionWarningKeys.get(sessionId) ?? new Set<string>();
+    shown.add(key);
+    shownSessionWarningKeys.set(sessionId, shown);
   }
 
   /** Fetch auth readiness from GET /api/v1/auth. Defensive — never throws.
@@ -2178,6 +2171,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     sessionsKnownEmpty.delete(sessionId);
     // Re-selecting the already-active session is a no-op navigation, not a resume.
     const isResumedNavigation = rawState.activeSessionId !== sessionId;
+    const loadingForBaseline = !messagesLoaded && !knownEmpty;
     try {
       // A session open is a chat-view navigation: leave the session admin
       // page. Only 'push' (user navigation) flips — programmatic re-selects
@@ -2188,7 +2182,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Write the URL synchronously (before any await) so rapid clicks lay down
       // history entries in click order.
       writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
-      rawState.sessionLoading = !messagesLoaded && !knownEmpty;
+      rawState.sessionLoading = loadingForBaseline;
       setActiveSessionId(sessionId);
       // createDraftSession selects its own fresh session internally and already
       // reported the 'new' event — skip the duplicate resume there.
@@ -2213,27 +2207,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         if (rawState.activeWorkspaceId !== wid) selectWorkspace(wid);
       }
 
-      if (!messagesLoaded) {
-        // First open: full snapshot → seed → subscribe(asOfSeq).
-        const result = await syncSessionFromSnapshot(sessionId, {
-          skipStatusRefresh: opts?.skipStatusRefresh === true,
-        });
-        if (result === 'not-found') return;
-      } else {
-        // Re-open: rebuild from a fresh snapshot rather than resuming from the
-        // tracked cursor — the daemon only replays durable events, so volatile
-        // streamed deltas lost to a WS hiccup would otherwise stay missing.
-        const result = await reopenSession(sessionId);
-        if (result === 'not-found') return;
-      }
-
-      // Refresh sidecars AFTER the snapshot settles so status/usage updates
-      // aren't overwritten by syncSessionFromSnapshot.
+      // The main transcript baseline loads automatically (the facade's pool
+      // watcher activates on the session switch); the session_event stream
+      // needs a plain subscription. Sidecars (status / tasks / goal / plans)
+      // reconcile through their own REST reads.
+      subscribeSessionEvents(sessionId);
       refreshSessionSidecars(sessionId, { skipStatus: opts?.skipStatusRefresh === true });
+      if (loadingForBaseline) {
+        void (deps.whenMainTranscriptBaseline?.(sessionId) ?? Promise.resolve()).finally(() => {
+          if (rawState.activeSessionId === sessionId) rawState.sessionLoading = false;
+        });
+      }
     } catch (err) {
       pushOperationFailure('selectSession', err, { sessionId });
     } finally {
-      if (rawState.activeSessionId === sessionId) {
+      if (!loadingForBaseline && rawState.activeSessionId === sessionId) {
         rawState.sessionLoading = false;
       }
     }
@@ -2253,14 +2241,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Mark this session as having a prompt in flight BEFORE any await, so a racing
     // sendPrompt sees it and enqueues. Cleared when the main turn ends (or the
     // prompt dies without one). beginLocalTurn also bumps the snapshot generation
-    // and marks the submit pending, so a racing terminal snapshot can't clear
-    // this prompt (see handleSessionSnapshot).
+    // and marks the submit pending, so a racing terminal baseline can't clear
+    // this prompt (see finishPromptLocal).
     const localTurnToken = beginLocalTurn(sid);
     rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: true };
     const tempId = nextOptimisticMsgId();
     // Captured up front so the goal-preflight failure path can release it too;
     // re-captured right before the submit POST to pair with the level sent.
     let thinkingToken = rawState.pendingThinkingBySession[sid];
+    // Set only at the submit POST itself: a failure thrown earlier provably
+    // never reached the daemon, so the catch must roll the bubble back instead
+    // of marking it uncertain (no prompt/turn entity will ever reconcile it).
+    let submitAttempted = false;
+    // Set on the clean accept only (NOT the catch's ambiguous-fate true): the
+    // response's landing is where a terminal frame that beat it gets settled.
+    let submitOk = false;
     try {
       const api = getKimiWebApi();
       const content: AppMessageContent[] = [];
@@ -2272,17 +2267,27 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
 
       // OPTIMISTICALLY add the user message to local state BEFORE awaiting the
-      // submit so the user's text appears immediately. The later
-      // prompt.submitted confirmation reconciles into this same entry.
+      // submit so the user's text appears immediately. The overlay drops the
+      // bubble once the transcript's turn header covers the same prompt. The
+      // anchor pins the reconciliation to turns created AFTER this submit —
+      // stamped NOW, not at first render, or a lazily-evaluated overlay would
+      // capture this prompt's own turn as the anchor.
       const optimisticMsg: AppMessage = {
         id: tempId,
         sessionId: sid,
         role: 'user',
         content,
         createdAt: new Date().toISOString(),
-        metadata: { 'kimiWeb.optimisticUserMessage': true },
+        metadata: {
+          'kimiWeb.optimisticUserMessage': true,
+          'kimiWeb.anchorTurnId': mainTranscriptTailTurnId?.(sid),
+          'kimiWeb.anchorPromptCreatedAt': mainTranscriptTailPromptCreatedAt?.(sid),
+        },
       };
-      updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
+      rawState.optimisticMessagesBySession = {
+        ...rawState.optimisticMessagesBySession,
+        [sid]: [...(rawState.optimisticMessagesBySession[sid] ?? []), optimisticMsg],
+      };
 
       // The daemon now requires `model` + `thinking` on every prompt. Resolve the
       // model from the session (falls back to the daemon's default_model) and the
@@ -2337,6 +2342,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const thinking = (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
       // The token of the pending pick this prompt carries (undefined when clean).
       thinkingToken = rawState.pendingThinkingBySession[sid];
+      submitAttempted = true;
       const result = await api.submitPrompt(sid, {
         content,
         model,
@@ -2358,22 +2364,45 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         saveGoalModeToStorage();
       }
 
-      // Authoritative prompt_id for :abort — race-free (the projector binding can
-      // lose to a fast turn.started and synthesize a `pr_…` id the daemon rejects).
-      rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
+      // The terminal path can beat this response (a fast turn, or a pre-submit
+      // hook block): finishPromptLocal already cleared this prompt's identity,
+      // and writing it back now would resurrect a FINISHED prompt — a later
+      // Stop would abort the stale id, get not-found, and strand the NEXT
+      // prompt's running state (UI stopped, server still running). Write back
+      // only while this local turn is still the session's in-flight one.
+      const thisTurnStillLive =
+        rawState.inFlightBySession[sid] === true &&
+        (promptGenerationBySession.get(sid) ?? 0) === localTurnToken;
+      if (thisTurnStillLive) {
+        // Authoritative prompt_id for :abort — race-free (the projector binding can
+        // lose to a fast turn.started and synthesize a `pr_…` id the daemon rejects).
+        rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
+        rawState.abortPromptIdBySession = { ...rawState.abortPromptIdBySession, [sid]: result.promptId };
 
-      // Reconcile without changing the id: ChatPane keys user turns by message id,
-      // so replacing msg_opt_* with userMessageId remounts the bubble and flickers.
-      // If a daemon/stub later echoes the user message, the reducer merges it into
-      // this optimistic entry instead of appending a duplicate.
-      confirmOptimisticUserMessage(sid, tempId, result.promptId, result.userMessageId);
+        // Stamp the daemon's prompt id onto the optimistic bubble: the overlay
+        // reconciles stamped bubbles by PROMPT IDENTITY (a queued prompt keeps
+        // its bubble until its own turn starts) instead of text equality, so
+        // another client's identical-text or attachment-only turn can't cover
+        // OUR still-queued bubble.
+        const currentOptimistic = rawState.optimisticMessagesBySession[sid];
+        if (currentOptimistic !== undefined) {
+          rawState.optimisticMessagesBySession = {
+            ...rawState.optimisticMessagesBySession,
+            [sid]: currentOptimistic.map((m) =>
+              m.id === tempId
+                ? { ...m, metadata: { ...m.metadata, 'kimiWeb.promptId': result.promptId } }
+                : m,
+            ),
+          };
+        }
 
-      // Bind the real daemon prompt_id into the event projector so the upcoming
-      // turn.started stamps this turn's messages with it (instead of a synthetic
-      // pr_ id the daemon rejects on :abort). Stop's authoritative prompt_id
-      // comes from the submit response above and the daemon's
-      // event.session.status_changed — this binding is for transcript grouping.
-      getEventConn()?.bindNextPromptId(sid, result.promptId);
+        // Bind the real daemon prompt_id into the event projector so the upcoming
+        // turn.started stamps this turn's messages with it (instead of a synthetic
+        // pr_ id the daemon rejects on :abort). Stop's authoritative prompt_id
+        // comes from the submit response above and the daemon's
+        // event.session.status_changed — this binding is for transcript grouping.
+        getEventConn()?.bindNextPromptId(sid, result.promptId);
+      }
 
       // NOTE: we no longer set a local auto-title here. The daemon generates a
       // smarter title from the first prompt and announces it via
@@ -2384,34 +2413,54 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // AI title generation is NOT kicked off here on purpose: the first_turn
       // excerpt needs the opening reply, so the earliest useful call is the
       // first main-turn end (see onMainTurnEnd → maybeGenerateSessionTitle).
+      submitOk = true;
       return 'ok';
     } catch (err) {
       // Submit failed — clear the in-flight flag so the next prompt isn't stuck
-      // queued forever (turn.ended will never arrive), and roll back the
-      // optimistic user message so the transcript doesn't show a delivered-
-      // looking message the daemon never received. A structured API error is a
-      // definitive refusal; anything else (network, truncated response) is
-      // ambiguous — the prompt may already sit in the server's queue.
+      // queued forever (turn.ended will never arrive). Roll back the optimistic
+      // user message when the daemon provably has nothing: a definitive refusal
+      // (a structured API error) or a failure thrown BEFORE the POST began
+      // (plan/goal preflight, thinking resolve). On an ambiguous fate the prompt
+      // may already sit in the server's queue — the bubble is its only
+      // rendering until the transcript prompt/turn arrives.
       rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
-      updateSessionMessages(sid, (msgs) =>
-        msgs.some((m) => m.id === tempId)
-          ? msgs.filter(
-              (m) =>
-                m.id !== tempId ||
-                m.promptId !== undefined ||
-                m.userMessageId !== undefined,
-            )
-          : msgs,
-      );
+      const provablyUnsent = !submitAttempted || isDaemonApiError(err);
+      if (provablyUnsent) {
+        const remainingOptimistic = (rawState.optimisticMessagesBySession[sid] ?? []).filter(
+          (m) => m.id !== tempId,
+        );
+        const nextOptimistic = { ...rawState.optimisticMessagesBySession };
+        if (remainingOptimistic.length > 0) nextOptimistic[sid] = remainingOptimistic;
+        else delete nextOptimistic[sid];
+        rawState.optimisticMessagesBySession = nextOptimistic;
+      } else {
+        // Uncertain fate: mark the bubble so the overlay only retires it via
+        // the transcript's prompt entities (its own possibly-queued prompt).
+        const current = rawState.optimisticMessagesBySession[sid];
+        if (current !== undefined) {
+          rawState.optimisticMessagesBySession = {
+            ...rawState.optimisticMessagesBySession,
+            [sid]: current.map((m) =>
+              m.id === tempId
+                ? { ...m, metadata: { ...m.metadata, 'kimiWeb.uncertain': true } }
+                : m,
+            ),
+          };
+        }
+      }
       // A failed submit may never have reached the daemon: stop shielding the
       // pick this prompt carried and re-fold the daemon's actual level.
       if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
-      return isDaemonApiError(err) ? 'rejected' : 'uncertain';
+      return provablyUnsent ? 'rejected' : 'uncertain';
     } finally {
       // The daemon answered the submit (accepted or rejected) — the pending
       // window in which a snapshot can't reflect this turn is over.
       settleLocalTurn(sid, localTurnToken);
+      // A terminal frame that beat this response was left unsettled (the
+      // pending window bars content attribution) — with the prompt id now
+      // stamped, settle it by identity right here.
+      if (submitOk) settleIfFateProven?.(sid);
     }
   }
 
@@ -2457,9 +2506,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * /prompts:steer, injecting the text into the RUNNING turn instead of
    * waiting for it to finish. Falls back to a normal send when the session is
    * idle. Returns the same outcome vocabulary as submitPromptInternal:
-   * 'rejected' is a definitive daemon refusal (callers may safely restore
-   * their queue entries); 'uncertain' means the prompt may already be queued
-   * server-side, so callers must NOT restore (that would duplicate it).
+   * 'rejected' means the daemon provably has nothing — a definitive refusal or
+   * a pre-POST failure (callers may safely restore their queue entries);
+   * 'uncertain' means the prompt may already be queued server-side, so callers
+   * must NOT restore (that would duplicate it).
    */
   async function runSteerIntoTurn(
     sid: string,
@@ -2487,9 +2537,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         role: 'user',
         content,
         createdAt: new Date().toISOString(),
-        metadata: { 'kimiWeb.optimisticUserMessage': true },
+        metadata: {
+          'kimiWeb.optimisticUserMessage': true,
+          'kimiWeb.anchorTurnId': mainTranscriptTailTurnId?.(sid),
+          'kimiWeb.anchorPromptCreatedAt': mainTranscriptTailPromptCreatedAt?.(sid),
+        },
       };
-      updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
+      rawState.optimisticMessagesBySession = {
+        ...rawState.optimisticMessagesBySession,
+        [sid]: [...(rawState.optimisticMessagesBySession[sid] ?? []), optimisticMsg],
+      };
 
       const localTurnToken = beginLocalTurn(sid);
       let submitSent = false;
@@ -2516,16 +2573,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // Same ack as a normal send: the daemon consumed this prompt's thinking.
         if (thinking !== undefined) ackThinkingPending(rawState, sid, thinkingToken);
 
-        // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
-        // a steered prompt IS echoed back by the daemon as a messageCreated user
-        // event; matching that echo by prompt_id (instead of content) is what keeps
-        // an image steer from rendering two user bubbles.
-        confirmOptimisticUserMessage(sid, tempId, result.promptId, result.userMessageId);
+        // Same prompt-id stamping as a normal send — the overlay reconciles
+        // this bubble by identity, not text.
+        const steerOptimistic = rawState.optimisticMessagesBySession[sid];
+        if (steerOptimistic !== undefined) {
+          rawState.optimisticMessagesBySession = {
+            ...rawState.optimisticMessagesBySession,
+            [sid]: steerOptimistic.map((m) =>
+              m.id === tempId
+                ? { ...m, metadata: { ...m.metadata, 'kimiWeb.promptId': result.promptId } }
+                : m,
+            ),
+          };
+        }
 
         if (result.status !== 'queued') {
           // The turn ended while the user was typing — the prompt started a turn
           // of its own. Wire it up like a regular send so :abort keeps working.
           rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
+          rawState.abortPromptIdBySession = { ...rawState.abortPromptIdBySession, [sid]: result.promptId };
           getEventConn()?.bindNextPromptId(sid, result.promptId);
           return 'ok';
         }
@@ -2538,16 +2604,37 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         }
         return 'ok';
       } catch (err) {
-        // Submit failed: drop the optimistic echo so the transcript doesn't show
-        // a delivered-looking message the daemon never received.
-        updateSessionMessages(sid, (msgs) =>
-          msgs.filter(
-            (m) =>
-              m.id !== tempId ||
-              m.promptId !== undefined ||
-              m.userMessageId !== undefined,
-          ),
-        );
+        // Drop the optimistic echo ONLY on a definitive refusal (a structured
+        // API error, or a failure before the POST left): then the daemon
+        // provably has nothing. On an uncertain fate (response lost in
+        // flight) the prompt may already be queued server-side — the bubble
+        // is the ONLY rendering of it until the transcript prompt/turn
+        // arrives, and the overlay's identity reconciliation covers it.
+        if (isDaemonApiError(err) || !submitSent) {
+          const remainingOptimistic = (rawState.optimisticMessagesBySession[sid] ?? []).filter(
+            (m) => m.id !== tempId,
+          );
+          const nextOptimistic = { ...rawState.optimisticMessagesBySession };
+          if (remainingOptimistic.length > 0) nextOptimistic[sid] = remainingOptimistic;
+          else delete nextOptimistic[sid];
+          rawState.optimisticMessagesBySession = nextOptimistic;
+        } else {
+          // Uncertain fate: the response was lost AFTER the daemon may have
+          // accepted the prompt. Mark the bubble so the overlay reconciles it
+          // ONLY against the transcript's prompt entities (its own queued
+          // prompt), never another client's identical-text or attachment turn.
+          const current = rawState.optimisticMessagesBySession[sid];
+          if (current !== undefined) {
+            rawState.optimisticMessagesBySession = {
+              ...rawState.optimisticMessagesBySession,
+              [sid]: current.map((m) =>
+                m.id === tempId
+                  ? { ...m, metadata: { ...m.metadata, 'kimiWeb.uncertain': true } }
+                  : m,
+              ),
+            };
+          }
+        }
         pushOperationFailure('steer', err, { sessionId: sid });
         // A failure BEFORE the submit POST left the client (e.g. resolving the
         // thinking level) means nothing reached the daemon — restoring is as
@@ -2798,8 +2885,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /**
    * Shared prompt-finish cleanup, used by BOTH the main-turn-ended path
-   * (facade `onMainTurnEnd`) and the authoritative-snapshot path
-   * (handleSessionSnapshot below). Returns whether this call actually flipped
+   * (facade `onMainTurnEnd`) and the transcript first-baseline path (the
+   * facade's edge watcher). Returns whether this call actually flipped
    * an in-flight prompt to finished.
    *
    * Clears the local in-flight/prompt-id state and drains exactly ONE
@@ -2807,7 +2894,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * its own finish drains the following one. Repeat calls (e.g. a late
    * duplicate idle event) therefore cannot drain more than one message per
    * real turn end. Callers layer their own side effects (notify, sound,
-   * unread) on top; the snapshot path deliberately adds none.
+   * unread) on top; the baseline path deliberately adds none.
    *
    * The drain is GATED on this client having actually witnessed a live
    * prompt/turn: a finish with no local in-flight prompt, no locally
@@ -2816,9 +2903,43 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * old file attachments) spontaneously when a session was merely
    * re-opened after an earlier drain had failed.
    */
-  function finishPromptLocal(sid: string, opts?: { turnWasActive?: boolean }): boolean {
+  function finishPromptLocal(
+    sid: string,
+    opts?: { turnWasActive?: boolean; retireOptimistic?: 'one' | 'all'; skipDrain?: boolean },
+  ): boolean {
     const wasInFlight = rawState.inFlightBySession[sid] === true;
     rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+    // A turn end retires EVERY optimistic bubble the turn absorbed: a steered
+    // prompt produces no turn of its own, so retiring only the oldest strands
+    // a second steer as a transcript-less user message forever. Non-turn
+    // finishes (blocked/aborted, quiet baselines) retire one at a time — and
+    // never an UNCERTAIN one: its lost response may still have reached (or
+    // been queued by) the daemon, so only its own prompt entity's terminal
+    // frame (the echo reconciliation) may retire it. A quiet baseline built
+    // BEFORE the submit can't prove that fate.
+    const optimistic = rawState.optimisticMessagesBySession[sid];
+    if (optimistic !== undefined && optimistic.length > 0) {
+      const next = { ...rawState.optimisticMessagesBySession };
+      if (opts?.retireOptimistic === 'all') {
+        // Uncertain bubbles survive the batch clear: their prompt may still
+        // be queued server-side, and only ITS turn (via the prompt-entity
+        // reconciliation) may retire them — another turn's end must not.
+        const survivors = optimistic.filter((m) => m.metadata?.['kimiWeb.uncertain'] === true);
+        if (survivors.length > 0) next[sid] = survivors;
+        else delete next[sid];
+        rawState.optimisticMessagesBySession = next;
+      } else {
+        // Retire the earliest NON-uncertain bubble; an all-uncertain list
+        // stays untouched (its fate is the prompt entities' to prove).
+        const retiree = optimistic.findIndex((m) => m.metadata?.['kimiWeb.uncertain'] !== true);
+        if (retiree !== -1) {
+          const remaining = [...optimistic.slice(0, retiree), ...optimistic.slice(retiree + 1)];
+          if (remaining.length > 0) next[sid] = remaining;
+          else delete next[sid];
+          rawState.optimisticMessagesBySession = next;
+        }
+      }
+    }
     // Drop any cached prompt_id so a later skill activation (which has no
     // prompt_id) doesn't accidentally reuse this stale id for :abort.
     if (rawState.promptIdBySession[sid] !== undefined) {
@@ -2826,39 +2947,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       delete nextPromptIds[sid];
       rawState.promptIdBySession = nextPromptIds;
     }
+    if (rawState.abortPromptIdBySession?.[sid] !== undefined) {
+      const nextAbortIds = { ...rawState.abortPromptIdBySession };
+      delete nextAbortIds[sid];
+      rawState.abortPromptIdBySession = nextAbortIds;
+    }
 
     const mayDrain =
       wasInFlight || opts?.turnWasActive === true || (rawState.turnActiveBySession[sid] ?? false);
-    if (mayDrain) {
+    if (mayDrain && opts?.skipDrain !== true) {
       flushQueueHead(sid);
     }
 
     return wasInFlight;
-  }
-
-  /**
-   * Snapshot-driven finish. An authoritative snapshot replaces the event
-   * stream on resync (buffer overflow / epoch change / delta gap): no
-   * sessionStatusChanged event arrives in that case, so without this the
-   * local in-flight flag would stick forever — the indicator keeps showing and
-   * the next prompt queues behind a turn that already ended.
-   *
-   * Unlike the WS path this adds NO completion side effects (no notification,
-   * sound, or unread): opening a historical session must not cry wolf. The
-   * queue drain inside finishPromptLocal is additionally gated on a locally
-   * witnessed prompt/turn, so merely re-opening a session can never
-   * spontaneously submit queued prompts (with their stale attachments).
-   */
-  function handleSessionSnapshot(
-    sid: string,
-    snapshot: { inFlightTurn: AppInFlightTurn | null; busy: boolean },
-  ): void {
-    // inFlightTurn tracks only the main agent, while busy aggregates all
-    // agents and background work. Keep the local prompt alive only when both
-    // facts still support a running main turn. Either terminal fact may also
-    // reconcile the other tracker when a snapshot catches it stale.
-    if (snapshot.inFlightTurn !== null && snapshot.busy) return;
-    finishPromptLocal(sid);
   }
 
   /**
@@ -2872,8 +2973,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return false;
     const session = rawState.sessions.find((s) => s.id === sid);
 
-    // 1. Authoritative id captured at submit time.
-    let promptId = rawState.promptIdBySession[sid];
+    // 1. Authoritative id for the abort target (the RUNNING prompt), captured
+    //    from the transcript backfill or our own submit.
+    let promptId = rawState.abortPromptIdBySession?.[sid];
 
     // 2. Fallback to projector-derived id only when it is a real daemon prompt_id.
     //    The v1 daemon uses `prompt_...`, server-v2 legacy uses `msg_...`;
@@ -2905,6 +3007,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         const nextPromptIds = { ...rawState.promptIdBySession };
         delete nextPromptIds[sid];
         rawState.promptIdBySession = nextPromptIds;
+        const nextAbortIds = { ...rawState.abortPromptIdBySession };
+        delete nextAbortIds[sid];
+        rawState.abortPromptIdBySession = nextAbortIds;
         clearStaleMainTurn();
       } catch (err) {
         if (isDaemonApiError(err) && err.code === PROMPT_NOT_FOUND_CODE) {
@@ -2913,6 +3018,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           const nextPromptIds = { ...rawState.promptIdBySession };
           delete nextPromptIds[sid];
           rawState.promptIdBySession = nextPromptIds;
+          const nextAbortIds = { ...rawState.abortPromptIdBySession };
+          delete nextAbortIds[sid];
+          rawState.abortPromptIdBySession = nextAbortIds;
           clearStaleMainTurn();
         } else {
           pushOperationFailure('abortCurrentPrompt', err, { sessionId: sid });
@@ -3049,9 +3157,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       // A background subagent row is keyed by agent id, but REST `/tasks` only
-      // knows its background-task id.
-      const restTaskId = (rawState.tasksBySession[sid] ?? []).find((t) => t.id === taskId)
-        ?.backgroundTaskId;
+      // knows its background-task id. The transcript-sourced row carries the
+      // alias even when the legacy task slice hasn't seen the task yet.
+      const restTaskId =
+        (rawState.tasksBySession[sid] ?? []).find((t) => t.id === taskId)?.backgroundTaskId ??
+        resolveTaskRestId?.(sid, taskId);
       await api.cancelTask(sid, restTaskId ?? taskId);
       // Update task status locally — and stamp the completion time here:
       // an old daemon may never send one, and a hidden tab or session switch
@@ -3065,7 +3175,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         ...rawState.tasksBySession,
         [sid]: list.map((t) => {
           const matches = restTaskId !== undefined
-            ? t.backgroundTaskId === restTaskId
+            ? t.backgroundTaskId === restTaskId || t.id === restTaskId
             : t.id === taskId || t.backgroundTaskId === taskId;
           return matches
             ? {
@@ -3109,6 +3219,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       savePlanModeToStorage();
       if (!on && (rawState.planModeBySession[sid] ?? false)) {
         rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: false };
+        // Shield the optimistic off-write until the daemon acks it — a stale
+        // meta fold or /status answer must not flip plan back on mid-write
+        // (the next prompt would resubmit with the mode still enabled).
+        // Same shield shape as swarm/thinking.
+        markPlanPending(rawState, sid);
         void persistSessionProfile({ planMode: false }, sid);
       }
     } else {
@@ -3132,6 +3247,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sid) {
       rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: on };
       saveSwarmModeToStorage();
+      // Shield the optimistic pick until the daemon acks the profile write:
+      // a transcript meta fold (or a /status answer) built BEFORE the write
+      // landed must not flip the toggle back mid-write — the next prompt
+      // would then submit with the OLD mode. Same shield shape as thinking.
+      markSwarmPending(rawState, sid);
       void persistSessionProfile({ swarmMode: on });
     } else {
       draftModes.swarmMode = on;
@@ -3781,8 +3901,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
-   * Undo the last `count` turns of the active session (daemon :undo), then re-sync
-   * the snapshot so the local transcript matches the daemon's post-undo history.
+   * Undo the last `count` turns of the active session (daemon :undo), then
+   * re-anchor the transcript channel so the local transcript matches the
+   * daemon's post-undo history.
    * Returns the undone message text on success (null text = message had no text),
    * or null on failure — callers must not offer "edit + resend" for a rewind
    * that didn't happen.
@@ -3790,57 +3911,38 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function undo(count = 1): Promise<{ text: string | null } | null> {
     const sid = rawState.activeSessionId;
     if (!sid) return null;
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    // The last real user prompt — the rewind point.
-    let lastUserIndex = -1;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i]!;
-      if (m.role !== 'user') continue;
-      if (m.metadata?.['origin'] && (m.metadata['origin'] as { kind?: string }).kind !== 'user') continue;
-      lastUserIndex = i;
-      break;
-    }
-    // Capture the last user message text BEFORE the undo removes it.
-    const lastUserText =
-      lastUserIndex >= 0
-        ? msgs[lastUserIndex]!.content
-            .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-            .map((c) => c.text)
-            .join('\n')
-        : null;
-    // Optimistic truncation (single-turn undo): rewind in the same tick; on
-    // failure restore the local copy, then best-effort re-sync.
-    const optimistic =
-      count === 1 &&
-      lastUserIndex >= 0 &&
-      // Only when no user message of any origin follows the scanned prompt —
-      // a command-origin turn after it would cut deeper than the daemon (its
-      // cut counts command turns as prompts).
-      msgs.slice(lastUserIndex + 1).every((m) => m.role !== 'user');
-    // The rewound turn owned the session's lastTurnReason — clear it with the
-    // truncation so nothing marks the newly-last turn mid-flight.
-    const frontBackup = optimistic ? rawState.sessions.find((s) => s.id === sid) : undefined;
-    if (optimistic) {
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sid]: msgs.slice(0, lastUserIndex),
-      };
-      if (frontBackup !== undefined) {
-        const cleared = { ...frontBackup };
-        delete cleared.lastTurnReason;
-        upsertSessionSorted(cleared);
-      }
-    }
+    // The last real user prompt — the rewind point. Captured BEFORE the undo
+    // removes it (from the main transcript channel).
+    const lastUserText = lastMainUserPromptText(sid);
     try {
       await getKimiWebApi().undoSession(sid, count);
-      await syncSessionFromSnapshot(sid);
+      // A rewound turn takes its terminal cards with it — the failed/cancelled
+      // turn these slices narrate no longer exists.
+      delete rawState.turnErrorBySession[sid];
+      delete rawState.turnRetryBySession[sid];
+      // The sidebar's lastTurnReason narrates the same rewound turn, and the
+      // status events that would correct it are suppressed in render mode. The
+      // v1 session read carries the field — re-read the fact itself, keeping
+      // an undefined answer too (it clears the stale reason). Seq-gated: a NEW
+      // turn outcome landing mid-read (even an ABA back to the same value)
+      // discards this possibly-older answer.
+      const reasonSeqBefore = rawState.sessionLastTurnReasonSeqBySession[sid];
+      void getKimiWebApi()
+        .getSession(sid)
+        .then((fresh) => {
+          if (rawState.sessionLastTurnReasonSeqBySession[sid] !== reasonSeqBefore) return;
+          updateSession(sid, (s) => ({ ...s, lastTurnReason: fresh.lastTurnReason }));
+        })
+        .catch(() => {
+          // best-effort: the next session-list refresh reconciles.
+        });
+      await refreshMainTranscript(sid).catch(() => {
+        // The undo ALREADY landed server-side — a transient refresh failure
+        // must not report the rewind as failed (the user would retry and
+        // undo one turn too many). The channel re-anchors on its next gap.
+      });
       return { text: lastUserText };
     } catch (err) {
-      if (optimistic) {
-        rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: msgs };
-        if (frontBackup !== undefined) upsertSessionSorted(frontBackup);
-        await syncSessionFromSnapshot(sid).catch(() => undefined);
-      }
       pushOperationFailure('undo', err, { sessionId: sid });
       return null;
     }
@@ -4142,7 +4244,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     localTurnStartState,
     isLocalTurnSnapshotCurrent,
     afterLocalTurnStartsSettle,
-    handleSessionSnapshot,
     sendPrompt,
     steerPrompt,
     steerQueued,
@@ -4157,6 +4258,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     pendingQuestionActions,
     pendingApprovalActions,
     cancelTask,
+    refreshSessionWarnings,
+    markSessionWarningShown,
     setPlanMode,
     togglePlanMode,
     setSwarmMode,
@@ -4190,7 +4293,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     revealWorkspaceFile,
     resolveImageUrl,
     searchFiles,
-    loadOlderMessages,
     refreshSessionSidecars,
     /** True while any empty-composer first prompt is being created + submitted
      *  (the window covered by startingFirstPromptWorkspaces). Drives the

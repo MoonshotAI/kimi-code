@@ -7,7 +7,7 @@ import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask, KimiWebApi, ManagedUserInfo, ManagedUserInfoResult } from '@moonshot-ai/app-core/api';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
-import { createInitialState, reduceAppEvent } from '@moonshot-ai/app-core/api';
+import { createInitialState } from '@moonshot-ai/app-core/api';
 import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '@moonshot-ai/app-core/lib';
@@ -155,7 +155,6 @@ function createState(): ExtendedState {
     doneSessionsSeeded: false,
     draftEntry: 'newChat',
     mainView: 'chat',
-    sideChatUserMessageIdsBySession: {},
     sessions: [createSession()],
     activeSessionId: 'sess_1',
     connected: true,
@@ -170,7 +169,9 @@ function createState(): ExtendedState {
     pendingThinkingBySession: {},
     planModeBySession: {},
     planArmedBySession: {},
+    pendingPlanBySession: {},
     swarmModeBySession: {},
+    pendingSwarmBySession: {},
     goalModeBySession: {},
     loading: false,
     sessionLoading: false,
@@ -198,10 +199,9 @@ function createState(): ExtendedState {
     config: null,
     sideChatMessagesByAgent: {},
     sideChatSendingByAgent: {},
-    sideChatUserMessageIdsBySession: {},
-    messagesLoadingMoreBySession: {},
-    messagesHasMoreBySession: {},
-    messagesLoadMoreErrorBySession: {},
+    optimisticMessagesBySession: {},
+    sessionLastTurnReasonSeqBySession: {},
+    abortPromptIdBySession: {},
   };
   return state;
 }
@@ -220,11 +220,11 @@ function createDeps(): UseWorkspaceStateDeps {
     appendSession: vi.fn(),
     forgetSession: vi.fn(),
     setActiveSessionId: vi.fn(),
-    updateSessionMessages: vi.fn(),
     nextOptimisticMsgId: () => 'msg_opt_1',
+    lastMainUserPromptText: () => null,
     getEventConn: () => null,
-    syncSessionFromSnapshot: vi.fn(),
-    subscribeToSessionEvents: vi.fn(),
+    subscribeSessionEvents: vi.fn(),
+    refreshMainTranscript: vi.fn(),
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
     refreshSessionGoal: vi.fn(),
@@ -339,7 +339,7 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     await workspace.abortCurrentPrompt();
 
-    expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_stale');
+    expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_live');
     expect(apiMock.abortSession).not.toHaveBeenCalled();
     expect(state.promptIdBySession).toEqual({});
     // A definitive "not abortable" also clears the stale main-turn flags.
@@ -367,7 +367,7 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     await workspace.abortCurrentPrompt();
 
-    expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_stale');
+    expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_live');
     expect(apiMock.abortSession).not.toHaveBeenCalled();
   });
 
@@ -1082,9 +1082,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       state.sessions = [s, ...state.sessions.filter((x) => x.id !== s.id)];
     });
     let seededWhenSelected: string | undefined;
-    deps.syncSessionFromSnapshot = vi.fn(async (sessionId: string) => {
+    deps.subscribeSessionEvents = vi.fn((sessionId: string) => {
       seededWhenSelected = state.thinkingBySession[sessionId];
-      return 'ok' as const;
     });
     const ws = useWorkspaceState(state, deps);
 
@@ -1092,9 +1091,9 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     expect(seededWhenSelected).toBe('max');
     // A fresh-session /status fold would only report daemon defaults over the
-    // seeds — including the one fired inside the snapshot sync.
+    // seeds — the open path skips the sidecar status refresh.
     expect(deps.refreshSessionStatus).not.toHaveBeenCalled();
-    expect(deps.syncSessionFromSnapshot).toHaveBeenCalledWith('sess_new', { skipStatusRefresh: true });
+    expect(deps.subscribeSessionEvents).toHaveBeenCalledWith('sess_new');
   });
 
   it('shields the pending pick from daemon reports that predate the persist', async () => {
@@ -2270,7 +2269,61 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     forgetLocalTurnState('sess_1');
   });
 
-  it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
+  it('rolls the bubble back when a pre-POST step fails (plan cash write offline)', async () => {
+    // The plan-cash updateSession rides ahead of the prompt POST; a network
+    // failure there provably never reached the daemon, so the bubble must be
+    // rolled back with a definitive 'rejected' — never marked uncertain
+    // (no prompt/turn entity will ever reconcile it).
+    apiMock.submitPrompt.mockReset();
+    apiMock.updateSession.mockReset();
+    apiMock.updateSession.mockRejectedValue(new Error('network down'));
+    const state = createState();
+    const deps = promptDeps({ activity: computed(() => 'idle') });
+    const ws = useWorkspaceState(state, deps);
+
+    ws.setPlanMode(true);
+    await ws.sendPrompt('make a plan');
+
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    const bubbles = state.optimisticMessagesBySession['sess_1'] ?? [];
+    expect(bubbles).toHaveLength(0);
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'sendPrompt',
+      expect.any(Error),
+      expect.objectContaining({ sessionId: 'sess_1' }),
+    );
+    // The session is not pinned by a phantom in-flight submission.
+    expect(state.inFlightBySession.sess_1).toBe(false);
+  });
+
+  it('ignores a late submit response when the terminal already settled the prompt', async () => {
+    // The turn's terminal can beat the POST response (a fast turn or a
+    // pre-submit hook block): the local finish path clears the in-flight flag
+    // and the prompt identity, and a response that lands afterwards must not
+    // write the finished prompt's id back — a later Stop would abort that
+    // stale id, get not-found, and strand the NEXT prompt's running state.
+    apiMock.submitPrompt.mockReset();
+    let resolveSubmit!: (value: unknown) => void;
+    apiMock.submitPrompt.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSubmit = resolve; }),
+    );
+    const state = createState();
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    const send = ws.sendPrompt('quick turn');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
+
+    ws.finishPromptLocal('sess_1');
+    expect(state.inFlightBySession.sess_1).toBe(false);
+
+    resolveSubmit({ promptId: 'pr_late', userMessageId: 'msg_late' });
+    await send;
+
+    expect(state.promptIdBySession.sess_1).toBeUndefined();
+    expect(state.abortPromptIdBySession?.sess_1).toBeUndefined();
+  });
+
+  it('clears a finished prompt from a terminal baseline so the next send is immediate', async () => {
     const state = createState();
     state.inFlightBySession = { sess_1: true };
     const ws = useWorkspaceState(
@@ -2278,7 +2331,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       promptDeps({ activity: computed(() => 'idle') }),
     );
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
 
     expect(state.inFlightBySession.sess_1).toBe(false);
     expect(state.promptIdBySession.sess_1).toBeUndefined();
@@ -2288,22 +2341,34 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1).toBeUndefined();
   });
 
-  it('keeps a genuinely running prompt in flight and queues the next send', async () => {
+  it('keeps uncertain optimistic bubbles through a quiet-baseline finish', () => {
+    // A lost-response (uncertain) bubble's POST may still have reached — or
+    // been queued by — the daemon: a quiet baseline built BEFORE the submit
+    // can't prove that fate, so only the prompt entity's terminal frame may
+    // retire it. Non-turn finishes retire the earliest NON-uncertain bubble.
     const state = createState();
     state.inFlightBySession = { sess_1: true };
+    const bubble = (id: string, uncertain: boolean) =>
+      ({
+        id,
+        sessionId: 'sess_1',
+        role: 'user',
+        content: [{ type: 'text', text: 'hello' }],
+        createdAt: '2026-08-24T10:00:00.000Z',
+        metadata: uncertain
+          ? { 'kimiWeb.uncertain': true }
+          : { 'kimiWeb.optimisticUserMessage': true },
+      }) as unknown as ExtendedState['optimisticMessagesBySession'][string][number];
+    state.optimisticMessagesBySession = { sess_1: [bubble('m1', true), bubble('m2', false)] };
     const ws = useWorkspaceState(state, promptDeps());
 
-    ws.handleSessionSnapshot('sess_1', {
-      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
-      busy: true,
-    });
-    await ws.sendPrompt('next');
+    ws.finishPromptLocal('sess_1');
 
-    expect(state.inFlightBySession.sess_1).toBe(true);
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(state.queuedBySession.sess_1).toEqual([
-      expect.objectContaining({ text: 'next', attachments: undefined }),
-    ]);
+    expect((state.optimisticMessagesBySession['sess_1'] ?? []).map((m) => m.id)).toEqual(['m1']);
+
+    // An all-uncertain list is left completely untouched.
+    ws.finishPromptLocal('sess_1');
+    expect((state.optimisticMessagesBySession['sess_1'] ?? []).map((m) => m.id)).toEqual(['m1']);
   });
 
   it('drains one queued prompt when only background work remains', async () => {
@@ -2318,7 +2383,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     };
     const ws = useWorkspaceState(state, promptDeps());
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
+    ws.finishPromptLocal('sess_1');
 
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
     expect(state.queuedBySession.sess_1).toEqual([
@@ -2342,7 +2407,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     };
     const ws = useWorkspaceState(state, promptDeps());
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
+    ws.finishPromptLocal('sess_1');
 
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
@@ -2366,7 +2431,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     };
     const ws = useWorkspaceState(state, promptDeps());
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
 
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(state.queuedBySession.sess_1).toEqual([
@@ -2550,7 +2615,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     // entry goes back at the head and waits for the next flush driver.
     for (let i = 0; i < 2; i += 1) {
       state.inFlightBySession = { sess_1: true };
-      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      ws.finishPromptLocal('sess_1');
       await settle();
       expect(state.queuedBySession.sess_1).toEqual([{ text: 'first queued', attachments: undefined }]);
     }
@@ -2558,7 +2623,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     // Failure 3: a permanently rejected head is dropped rather than blocking
     // every later prompt behind it forever.
     state.inFlightBySession = { sess_1: true };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await settle();
     expect(state.queuedBySession.sess_1).toEqual([]);
     expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
@@ -2845,7 +2910,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     // The running turn ends mid-steer: the drain must NOT fire — it would
     // submit "second queued" ahead of the steered "first queued", breaking
     // FIFO (and the steer could then land in the drained entry's turn).
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
     expect(state.queuedBySession.sess_1).toEqual([
@@ -2858,7 +2923,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(apiMock.steerPrompts).toHaveBeenCalledWith('sess_1', ['prompt_steered']);
 
     state.inFlightBySession = { sess_1: true };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
     expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
       'sess_1',
@@ -2935,7 +3000,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     resolveSteer({ promptId: 'prompt_steered', userMessageId: 'message_steered', status: 'queued' });
     await steer;
     state.inFlightBySession = { sess_1: true };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
     expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
       'sess_1',
@@ -2992,7 +3057,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
     activity.value = 'idle';
     state.inFlightBySession = { sess_1: false };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
 
     // Rejected with the session now idle: the entry is restored AND the queue
     // is re-driven immediately — no turn end is coming to do it.
@@ -3107,7 +3172,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     resolveSteer({ promptId: 'prompt_steered', userMessageId: 'message_steered', status: 'queued' });
     await steer;
     state.inFlightBySession = { sess_1: true };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
     expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
       'sess_1',
@@ -3133,7 +3198,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     // Forgetting the session drops every hold, so a later turn end drains again.
     forgetLocalTurnState('sess_1');
     state.inFlightBySession = { sess_1: true };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
     expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
       'sess_1',
@@ -3164,7 +3229,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       }),
     );
 
-    ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
+    ws.finishPromptLocal('sess_a');
 
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
     expect(resolveThinkingForPrompt).toHaveBeenCalledWith('sess_a', 'provider/model-a');
@@ -3190,28 +3255,13 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       }),
     );
 
-    ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
+    ws.finishPromptLocal('sess_a');
 
     await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_a',
       expect.objectContaining({ model: 'provider/gone-model', thinking: 'max' }),
     );
-  });
-
-  it('clears local prompt state when busy disproves a stale snapshot turn', () => {
-    const state = createState();
-    state.inFlightBySession = { sess_1: true };
-    state.promptIdBySession = { sess_1: 'prompt_old' };
-    const ws = useWorkspaceState(state, promptDeps());
-
-    ws.handleSessionSnapshot('sess_1', {
-      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
-      busy: false,
-    });
-
-    expect(state.inFlightBySession.sess_1).toBe(false);
-    expect(state.promptIdBySession.sess_1).toBeUndefined();
   });
 
   it('rejects a snapshot when a new local prompt started during the request', async () => {
@@ -3248,212 +3298,6 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
-  });
-
-  function createPromptMessageRig() {
-    const state = createState();
-    let optimisticId = 0;
-    const deps = promptDeps({
-      activity: computed(() => 'idle'),
-      nextOptimisticMsgId: () => `msg_opt_${++optimisticId}`,
-      updateSessionMessages: (sessionId, update) => {
-        state.messagesBySession = {
-          ...state.messagesBySession,
-          [sessionId]: update(state.messagesBySession[sessionId] ?? []),
-        };
-      },
-    });
-    return { state, workspaceState: useWorkspaceState(state, deps) };
-  }
-
-  function applyUserEcho(
-    state: ExtendedState,
-    input: { promptId: string; userMessageId: string; text: string; seq: number },
-  ): void {
-    const next = reduceAppEvent(
-      state,
-      {
-        type: 'messageCreated',
-        message: {
-          id: input.userMessageId,
-          sessionId: 'sess_1',
-          role: 'user',
-          content: [{ type: 'text', text: input.text }],
-          createdAt: `2026-01-01T00:00:0${input.seq}.000Z`,
-          promptId: input.promptId,
-        },
-      },
-      { sessionId: 'sess_1', seq: input.seq },
-    );
-    state.messagesBySession = next.messagesBySession;
-  }
-
-  it('reconciles the POST-first user echo by prompt and user-message ids', async () => {
-    const { state, workspaceState } = createPromptMessageRig();
-    apiMock.submitPrompt.mockResolvedValue({
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-    });
-
-    await workspaceState.submitPromptInternal('sess_1', 'hello');
-    applyUserEcho(state, {
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-      text: 'hello',
-      seq: 1,
-    });
-
-    expect(state.messagesBySession.sess_1).toHaveLength(1);
-    expect(state.messagesBySession.sess_1?.[0]).toMatchObject({
-      id: 'msg_opt_1',
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-    });
-  });
-
-  it('reconciles a WS-first user echo after the POST response supplies stable ids', async () => {
-    let resolveSubmit!: (value: { promptId: string; userMessageId: string }) => void;
-    apiMock.submitPrompt.mockImplementation(
-      () =>
-        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
-          resolveSubmit = resolve;
-        }),
-    );
-    const { state, workspaceState } = createPromptMessageRig();
-    const pending = workspaceState.submitPromptInternal('sess_1', 'hello');
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-
-    applyUserEcho(state, {
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-      text: 'server-resolved hello',
-      seq: 1,
-    });
-    expect(state.messagesBySession.sess_1?.map((message) => message.id)).toEqual([
-      'msg_opt_1',
-      'message_1',
-    ]);
-
-    resolveSubmit({ promptId: 'prompt_1', userMessageId: 'message_1' });
-    await pending;
-    expect(state.messagesBySession.sess_1).toHaveLength(1);
-    expect(state.messagesBySession.sess_1?.[0]).toMatchObject({
-      id: 'msg_opt_1',
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-      content: [{ type: 'text', text: 'server-resolved hello' }],
-    });
-  });
-
-  it('does not merge another client prompt into the local pending submission', async () => {
-    let resolveSubmit!: (value: { promptId: string; userMessageId: string }) => void;
-    apiMock.submitPrompt.mockImplementation(
-      () =>
-        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
-          resolveSubmit = resolve;
-        }),
-    );
-    const { state, workspaceState } = createPromptMessageRig();
-    const pending = workspaceState.submitPromptInternal('sess_1', 'local');
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-
-    applyUserEcho(state, {
-      promptId: 'prompt_remote',
-      userMessageId: 'message_remote',
-      text: 'remote',
-      seq: 1,
-    });
-    resolveSubmit({ promptId: 'prompt_local', userMessageId: 'message_local' });
-    await pending;
-
-    expect(state.messagesBySession.sess_1).toEqual([
-      expect.objectContaining({
-        id: 'msg_opt_1',
-        promptId: 'prompt_local',
-        userMessageId: 'message_local',
-        content: [{ type: 'text', text: 'local' }],
-      }),
-      expect.objectContaining({
-        id: 'message_remote',
-        promptId: 'prompt_remote',
-        content: [{ type: 'text', text: 'remote' }],
-      }),
-    ]);
-
-    applyUserEcho(state, {
-      promptId: 'prompt_local',
-      userMessageId: 'message_local',
-      text: 'server-resolved local',
-      seq: 2,
-    });
-    expect(state.messagesBySession.sess_1).toEqual([
-      expect.objectContaining({
-        id: 'msg_opt_1',
-        promptId: 'prompt_local',
-        userMessageId: 'message_local',
-        content: [{ type: 'text', text: 'server-resolved local' }],
-      }),
-      expect.objectContaining({
-        id: 'message_remote',
-        promptId: 'prompt_remote',
-      }),
-    ]);
-  });
-
-  it('keeps a WS-confirmed user message when the POST response is lost', async () => {
-    let rejectSubmit!: (error: unknown) => void;
-    apiMock.submitPrompt.mockImplementation(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectSubmit = reject;
-        }),
-    );
-    const { state, workspaceState } = createPromptMessageRig();
-    const pending = workspaceState.submitPromptInternal('sess_1', 'hello');
-    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
-
-    applyUserEcho(state, {
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-      text: 'hello',
-      seq: 1,
-    });
-    rejectSubmit(new TypeError('response lost'));
-
-    await expect(pending).resolves.toBe('uncertain');
-    expect(state.messagesBySession.sess_1).toEqual([
-      expect.objectContaining({
-        id: 'message_1',
-        promptId: 'prompt_1',
-      }),
-    ]);
-  });
-
-  it('keeps consecutive equal-text submissions as two user messages', async () => {
-    const { state, workspaceState } = createPromptMessageRig();
-    apiMock.submitPrompt
-      .mockResolvedValueOnce({ promptId: 'prompt_1', userMessageId: 'message_1' })
-      .mockResolvedValueOnce({ promptId: 'prompt_2', userMessageId: 'message_2' });
-
-    await workspaceState.submitPromptInternal('sess_1', 'repeat');
-    applyUserEcho(state, {
-      promptId: 'prompt_1',
-      userMessageId: 'message_1',
-      text: 'repeat',
-      seq: 1,
-    });
-    await workspaceState.submitPromptInternal('sess_1', 'repeat');
-    applyUserEcho(state, {
-      promptId: 'prompt_2',
-      userMessageId: 'message_2',
-      text: 'repeat',
-      seq: 2,
-    });
-
-    expect(state.messagesBySession.sess_1?.map((message) => message.userMessageId)).toEqual([
-      'message_1',
-      'message_2',
-    ]);
   });
 
   it('maps attachments to the matching content parts on submit (file parts included)', async () => {
@@ -3518,7 +3362,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
     for (let i = 0; i < 3; i += 1) {
       state.inFlightBySession = { sess_1: true };
-      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      ws.finishPromptLocal('sess_1');
       await settle();
     }
 
@@ -3539,7 +3383,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     const ws = useWorkspaceState(state, promptDeps());
 
     state.inFlightBySession = { sess_1: true };
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    ws.finishPromptLocal('sess_1');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     // The response was lost mid-flight — the daemon may already hold the
@@ -3563,7 +3407,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
     const flushOnce = async () => {
       state.inFlightBySession = { sess_1: true };
-      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      ws.finishPromptLocal('sess_1');
       await settle();
     };
 

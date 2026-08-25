@@ -62,6 +62,17 @@ export type ManagedMembership = 'member' | 'free' | null;
 export interface ExtendedState extends KimiClientState {
   connected: boolean;
   serverVersion: string;
+  /** Seq of the latest lastTurnReason-changing event per session
+   *  (sessionWorkChanged / turnActiveChanged): undo/resync session reads
+   *  compare against it so an older REST answer can't resurrect a newer
+   *  outcome — including ABA flips a value comparison can't see. */
+  sessionLastTurnReasonSeqBySession: Record<string, number>;
+  /** The prompt id an :abort should target (the RUNNING prompt, queue as
+   *  fallback) — separate from promptIdBySession, which stays the identity of
+   *  OUR last submission for terminal/optimistic reconciliation. The
+   *  transcript backfill only ever writes THIS field, so another client's
+   *  live prompt can't overwrite our identity. */
+  abortPromptIdBySession: Record<string, string>;
   /**
    * True when the connected server reports `dangerous_bypass_auth` in `/meta`,
    * meaning its bearer-token gate is disabled. The UI skips the server-token
@@ -113,8 +124,17 @@ export interface ExtendedState extends KimiClientState {
    *  cashes this into the profile write that activates plan on the daemon".
    *  Persisted to storage (an unsent intent survives a reload). */
   planArmedBySession: Record<string, boolean>;
+  /** Write token of the latest plan-mode profile write the daemon has not
+   *  acknowledged yet — while present, daemon reports are dropped
+   *  (markPlanPending / foldDaemonPlanMode), same shield shape as
+   *  pendingSwarmBySession. */
+  pendingPlanBySession: Record<string, number>;
   /** Swarm-mode toggle per session. */
   swarmModeBySession: Record<string, boolean>;
+  /** Write token of the latest swarm-mode pick the daemon has not acknowledged
+   *  yet — while present, daemon reports are dropped (markSwarmPending /
+   *  foldDaemonSwarmMode), same shield shape as pendingThinkingBySession. */
+  pendingSwarmBySession: Record<string, number>;
   /** Goal-mode (one-shot "next send creates a goal") toggle per session. */
   goalModeBySession: Record<string, boolean>;
   loading: boolean;
@@ -132,6 +152,10 @@ export interface ExtendedState extends KimiClientState {
   // entry points' own error paths, the authoritative-quiet fallback, or session
   // forget. `turnActiveBySession` owns everything from turn.started on.
   inFlightBySession: Record<string, boolean>;
+  // The composer's optimistic user bubbles, kept OUT of any transcript or
+  // message pipeline (S8): pure UI state rendered until the transcript's turn
+  // header covers the same prompt text, then dropped by the overlay.
+  optimisticMessagesBySession: Record<string, AppMessage[]>;
   // True when a BACKGROUND session finished a turn the user hasn't opened since
   // (drives the unread blue dot in the sidebar). Set on idle for a non-active
   // session, cleared when the session is selected.
@@ -159,16 +183,9 @@ export interface ExtendedState extends KimiClientState {
   config: AppConfig | null;
   /** Transient BTW side-panel transcript, keyed by forked agent id. */
   sideChatMessagesByAgent: Record<string, AppMessage[]>;
+  sideChatUserMessageIdsBySession: Record<string, string[]>;
   /** Local sending flag for BTW agents; agent ids are not session ids. */
   sideChatSendingByAgent: Record<string, boolean>;
-  /** User message ids sent through BTW so they can be hidden from the main transcript. */
-  sideChatUserMessageIdsBySession: Record<string, string[]>;
-  /** True when older messages are being fetched for a session (scroll-up lazy load). */
-  messagesLoadingMoreBySession: Record<string, boolean>;
-  /** Whether the server has more older messages than currently loaded per session. */
-  messagesHasMoreBySession: Record<string, boolean>;
-  /** True when the last older-message fetch failed for a session. */
-  messagesLoadMoreErrorBySession: Record<string, boolean>;
   /** Whether the server has more sessions than currently loaded, per workspace. */
   sessionsHasMoreByWorkspace: Record<string, boolean>;
   /** True while the next page of sessions is being fetched for a workspace. */

@@ -325,10 +325,12 @@ describe('useModelProviderState thinking on model selection', () => {
       pendingThinkingBySession: {},
       planModeBySession: {},
       planArmedBySession: {},
+      pendingPlanBySession: {},
       goalModeBySession: {},
       goalBySession: {},
       defaultModel: options.defaultModel,
       inFlightBySession: {},
+      optimisticMessagesBySession: {},
       // The real ExtendedState always carries a permission mode; the skill
       // activation pre-write reads it for the retry payload.
       permission: 'auto',
@@ -350,7 +352,6 @@ describe('useModelProviderState thinking on model selection', () => {
           session.id === id ? update(session) : session,
         );
       },
-      updateSessionMessages: vi.fn(),
       loadConfig: vi.fn().mockResolvedValue(undefined),
       checkAuth: vi.fn().mockResolvedValue(undefined),
       ...depOverrides,

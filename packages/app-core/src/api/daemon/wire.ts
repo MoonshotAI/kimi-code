@@ -790,40 +790,6 @@ export interface WireSessionCursor {
   epoch?: string;
 }
 
-export interface WireInFlightToolCall {
-  tool_call_id: string;
-  name: string;
-  args?: unknown;
-  description?: string;
-  display?: unknown;
-  last_progress?: {
-    kind: 'stdout' | 'stderr' | 'progress' | 'status' | 'custom';
-    text?: string;
-    percent?: number;
-  };
-}
-
-export interface WireInFlightTurn {
-  turn_id: number;
-  assistant_text: string;
-  thinking_text: string;
-  running_tools: WireInFlightToolCall[];
-  current_prompt_id?: string;
-}
-
-/** `GET /sessions/{sid}/snapshot` — atomic rebuild state at a watermark. */
-export interface WireSessionSnapshot {
-  as_of_seq: number;
-  epoch: string;
-  session: WireSession;
-  messages: { items: WireMessage[]; has_more: boolean };
-  in_flight_turn: WireInFlightTurn | null;
-  /** Live subagent roster at the watermark (absent on older servers). */
-  subagents?: WireTask[];
-  pending_approvals: WireApprovalRequest[];
-  pending_questions: WireQuestionRequest[];
-}
-
 export interface WireSessionAbortResult {
   aborted: boolean;
 }

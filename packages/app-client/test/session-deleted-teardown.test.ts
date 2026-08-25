@@ -104,8 +104,9 @@ describe('useKimiWebClient — remote sessionDeleted teardown', () => {
     const connection: KimiEventConnection = {
       subscribe: vi.fn(),
       unsubscribe: unsubscribeMock,
+      subscribeTranscript: vi.fn(),
+      unsubscribeTranscript: vi.fn(),
       bindNextPromptId: vi.fn(),
-      seedSnapshot: vi.fn(),
       abort: vi.fn(),
       terminalAttach: vi.fn(),
       terminalInput: vi.fn(),

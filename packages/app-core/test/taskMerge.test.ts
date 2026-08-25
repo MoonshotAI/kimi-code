@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepLiveSubagents, mergeSnapshotSubagents } from '../src/lib/taskMerge';
+import { keepLiveSubagents } from '../src/lib/taskMerge';
 import type { AppTask } from '../src/api/types';
 
 function task(overrides: Partial<AppTask>): AppTask {
@@ -102,35 +102,5 @@ describe('keepLiveSubagents model/effort fold', () => {
     const merged = keepLiveSubagents([rest], [live]);
 
     expect(merged[0]).toMatchObject({ model: 'provider/live', thinkingEffort: 'high' });
-  });
-});
-
-describe('mergeSnapshotSubagents metadata', () => {
-  it('keeps the live status-fallback values when the roster omits them', () => {
-    const live = task({
-      id: 'agent-1',
-      agentId: 'agent-1',
-      model: 'provider/live',
-      thinkingEffort: 'low',
-      outputLines: ['working…'],
-    });
-    const rosterRow = task({ id: 'agent-1', agentId: 'agent-1' });
-
-    const merged = mergeSnapshotSubagents([rosterRow], [live]);
-
-    expect(merged[0]).toMatchObject({
-      model: 'provider/live',
-      thinkingEffort: 'low',
-      outputLines: ['working…'],
-    });
-  });
-
-  it('lets the roster value win when it carries one', () => {
-    const live = task({ id: 'agent-1', agentId: 'agent-1', model: 'provider/live' });
-    const rosterRow = task({ id: 'agent-1', agentId: 'agent-1', model: 'provider/roster' });
-
-    const merged = mergeSnapshotSubagents([rosterRow], [live]);
-
-    expect(merged[0]!.model).toBe('provider/roster');
   });
 });

@@ -108,10 +108,13 @@ export class DaemonEventSocket {
 
   /** subscriptions we manage: sessionId → last known cursor {seq, epoch} */
   private readonly subscriptions = new Map<string, SessionCursor>();
-  /** One full Transcript grade spec per session. */
+  /** Transcript subscriptions per session, keyed by agent: one connection
+   *  carries several agents' streams for the same session (the main flow and
+   *  the detail panel coexist), and the server replaces the session's grade
+   *  spec on every subscribe_v2 — so each send carries the FULL agent set. */
   private readonly transcriptSubscriptions = new Map<
     string,
-    { agentId: string; sinceSeq?: number }
+    Map<string, { sinceSeq?: number }>
   >();
   /** Legacy raw agents needed by side channels while main-only mode is enabled. */
   private readonly sideChannelAgents = new Map<string, Set<string>>();
@@ -253,25 +256,34 @@ export class DaemonEventSocket {
   }
 
   /**
-   * Replace a session's Transcript stream with one agent. A switch from A to B
-   * is one control frame, so the server never observes an intermediate state.
+   * Add an agent's Transcript stream to a session. Several agents can stream
+   * concurrently for one session (the main flow and the detail panel
+   * coexist); the server replaces the session's grade spec per subscribe_v2,
+   * so every send carries the full agent set.
    */
   subscribeTranscript(sessionId: string, agentId: string, sinceSeq?: number): void {
-    this.transcriptSubscriptions.set(sessionId, {
-      agentId,
-      ...(sinceSeq !== undefined ? { sinceSeq } : {}),
-    });
-    if (this.connected) this.sendTranscriptSubscribe(sessionId, agentId, sinceSeq);
+    let agents = this.transcriptSubscriptions.get(sessionId);
+    if (agents === undefined) {
+      agents = new Map();
+      this.transcriptSubscriptions.set(sessionId, agents);
+    }
+    // A cursorless (re)subscribe means "send me a full baseline" — the gap
+    // recovery path uses it after a failed REST refresh. Clear any saved
+    // watermark instead of keeping it: carrying the old sinceSeq would make
+    // the server replay the same gapped window again.
+    agents.set(agentId, sinceSeq !== undefined ? { sinceSeq } : {});
+    if (this.connected) this.sendTranscriptSubscribe(sessionId, agentId);
   }
 
   unsubscribeTranscript(sessionId: string, agentIds?: string[]): void {
-    const current = this.transcriptSubscriptions.get(sessionId);
-    if (
-      agentIds === undefined ||
-      current === undefined ||
-      agentIds.includes(current.agentId)
-    ) {
-      this.transcriptSubscriptions.delete(sessionId);
+    const agents = this.transcriptSubscriptions.get(sessionId);
+    if (agents !== undefined) {
+      if (agentIds === undefined) {
+        this.transcriptSubscriptions.delete(sessionId);
+      } else {
+        for (const id of agentIds) agents.delete(id);
+        if (agents.size === 0) this.transcriptSubscriptions.delete(sessionId);
+      }
     }
     if (!this.connected || !this.ws) return;
     this.send({
@@ -456,9 +468,9 @@ export class DaemonEventSocket {
         { ...event.snapshot, hasMoreOlder: event.has_more_older },
         event.seq,
       );
-      const subscription = this.transcriptSubscriptions.get(sessionId);
-      if (subscription?.agentId === event.agent_id && event.seq !== undefined) {
-        subscription.sinceSeq = event.seq;
+      const resetSub = this.transcriptSubscriptions.get(sessionId)?.get(event.agent_id);
+      if (resetSub !== undefined && event.seq !== undefined) {
+        resetSub.sinceSeq = event.seq;
       }
       return;
     }
@@ -479,13 +491,9 @@ export class DaemonEventSocket {
         event.ops,
         event.seq,
       );
-      const subscription = this.transcriptSubscriptions.get(sessionId);
-      if (
-        accepted !== false &&
-        subscription?.agentId === event.agent_id &&
-        event.seq !== undefined
-      ) {
-        subscription.sinceSeq = event.seq;
+      const opsSub = this.transcriptSubscriptions.get(sessionId)?.get(event.agent_id);
+      if (accepted !== false && opsSub !== undefined && event.seq !== undefined) {
+        opsSub.sinceSeq = event.seq;
       }
       return;
     }
@@ -655,12 +663,10 @@ export class DaemonEventSocket {
       },
     });
 
-    for (const [sessionId, subscription] of this.transcriptSubscriptions) {
-      this.sendTranscriptSubscribe(
-        sessionId,
-        subscription.agentId,
-        subscription.sinceSeq,
-      );
+    for (const sessionId of this.transcriptSubscriptions.keys()) {
+      // No agent argument: every agent's watermark rides transcript_since so
+      // the server replays each stream's missed batches instead of resetting.
+      this.sendTranscriptSubscribe(sessionId);
     }
 
     for (const attachment of this.terminalAttachments.values()) {
@@ -693,20 +699,27 @@ export class DaemonEventSocket {
     );
   }
 
-  private sendTranscriptSubscribe(
-    sessionId: string,
-    agentId: string,
-    sinceSeq?: number,
-  ): void {
+  private sendTranscriptSubscribe(sessionId: string, sinceAgentId?: string): void {
+    const agents = this.transcriptSubscriptions.get(sessionId);
+    if (agents === undefined || agents.size === 0) return;
+    const grades: Record<string, string> = {};
+    const since: Record<string, number> = {};
+    for (const [agentId, sub] of agents) {
+      grades[agentId] = 'delta';
+      // The watermark rides only for the agent being (re)subscribed — or for
+      // every agent on a reconnect (sinceAgentId undefined), where each one
+      // needs its missed batches replayed.
+      if (sub.sinceSeq !== undefined && (sinceAgentId === undefined || sinceAgentId === agentId)) {
+        since[agentId] = sub.sinceSeq;
+      }
+    }
     this.send({
       type: 'subscribe_v2',
       id: this.nextId(),
       payload: {
         session_id: sessionId,
-        transcript: { [agentId]: 'delta' },
-        ...(sinceSeq !== undefined
-          ? { transcript_since: { [agentId]: sinceSeq } }
-          : {}),
+        transcript: grades,
+        ...(Object.keys(since).length > 0 ? { transcript_since: since } : {}),
       },
     });
   }

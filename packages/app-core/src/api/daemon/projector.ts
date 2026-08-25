@@ -5,13 +5,14 @@
 // which receives its translator by injection). Holding only the interface here
 // keeps the api client free of that coupling.
 
-import type { AppEvent, AppInFlightTurn } from '../types';
+import type { AppEvent } from '../types';
 
 export interface ProjectMeta {
   /**
    * Wire-level pre-append stream offset on volatile text-delta frames (v2
-   * sync protocol). Used to skip duplicate deltas and detect gaps after a
-   * snapshot seed.
+   * sync protocol). Retained on the contract for forward compatibility; the
+   * current projector does not align deltas (the message stream lives on the
+   * transcript channel).
    */
   offset?: number;
 }
@@ -24,12 +25,6 @@ export interface AgentProjector {
    * Call this right after submitPrompt() returns, before the first turn.started arrives.
    */
   bindNextPromptId(sessionId: string, promptId: string): void;
-  /**
-   * Seed mid-turn state from a session snapshot's `in_flight_turn` (v2 sync):
-   * resets per-session state, builds the partially-streamed assistant message,
-   * and returns the AppEvents to apply to the reducer.
-   */
-  seedInFlight(sessionId: string, turn: AppInFlightTurn): AppEvent[];
   /** Reset all per-session state (call on re-subscribe / resync). */
   reset(sessionId: string): void;
   /**

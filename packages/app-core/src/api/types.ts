@@ -803,49 +803,6 @@ export type AppEvent =
 // WebSocket connection helpers
 // ---------------------------------------------------------------------------
 
-/** Per-session sync cursor (v2): durable seq + journal epoch. */
-export interface AppSessionCursor {
-  seq: number;
-  epoch?: string;
-}
-
-/** In-flight (mid-turn) state recovered from the session snapshot. */
-export interface AppInFlightToolCall {
-  toolCallId: string;
-  name: string;
-  args?: unknown;
-  description?: string;
-  lastProgress?: { kind: string; text?: string; percent?: number };
-}
-
-export interface AppInFlightTurn {
-  turnId: number;
-  assistantText: string;
-  thinkingText: string;
-  runningTools: AppInFlightToolCall[];
-  /** Authoritative daemon prompt_id for the active prompt, if known. */
-  promptId?: string;
-}
-
-/**
- * IM-style initial sync result: everything needed to rebuild a session's UI
- * state, consistent at `asOfSeq`. The standard flow is
- * `getSessionSnapshot()` → `subscribe(sessionId, {seq: asOfSeq, epoch})`.
- */
-export interface AppSessionSnapshot {
-  asOfSeq: number;
-  epoch: string;
-  session: AppSession;
-  /** Most recent messages, chronological ascending. */
-  messages: AppMessage[];
-  hasMoreMessages: boolean;
-  inFlightTurn: AppInFlightTurn | null;
-  /** Live subagent roster at the watermark — rebuilds swarm cards on refresh. */
-  subagents: AppTask[];
-  pendingApprovals: AppApprovalRequest[];
-  pendingQuestions: AppQuestionRequest[];
-}
-
 export interface SessionTranscriptPage extends AgentTranscriptSnapshot {
   agentId: string;
   agents: AgentDescriptor[];
@@ -896,9 +853,12 @@ export interface KimiEventMeta {
 }
 
 export interface KimiEventConnection {
-  subscribe(sessionId: string, cursor?: AppSessionCursor): void;
+  subscribe(sessionId: string, cursor?: { seq: number; epoch?: string }): void;
   unsubscribe(sessionId: string): void;
-  /** Replace this session's Transcript subscription with one agent. */
+  /** Add one agent's Transcript stream to this session. Subscriptions are
+   *  additive: switching away from an agent requires an explicit
+   *  `unsubscribeTranscript` for it, or it keeps streaming (and re-subscribing
+   *  on reconnect). */
   subscribeTranscript(sessionId: string, agentId: string, sinceSeq?: number): void;
   /** Remove selected agents, or the whole Transcript stream when omitted. */
   unsubscribeTranscript(sessionId: string, agentIds?: string[]): void;
@@ -908,13 +868,6 @@ export interface KimiEventConnection {
    * Call right after submitPrompt() returns.
    */
   bindNextPromptId(sessionId: string, promptId: string): void;
-  /**
-   * Seed the client-side projector with a snapshot's in-flight turn so a
-   * reconnecting client renders mid-turn state immediately; emits the
-   * corresponding AppEvents through `onEvent`. Resets per-session projector
-   * state first — call BEFORE subscribe(), with the snapshot's cursor.
-   */
-  seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void;
   abort(sessionId: string, promptId: string): void;
   terminalAttach(sessionId: string, terminalId: string, sinceSeq?: number): void;
   terminalInput(sessionId: string, terminalId: string, data: string): void;
@@ -1302,8 +1255,6 @@ export interface KimiWebApi {
   /** POST /api/v2/sessions:restore — 批量取消归档。 */
   restoreSessions(ids: string[]): Promise<V2BatchSessionResponse>;
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
-  /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
-  getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
   getSessionTranscript(
     sessionId: string,
     input: SessionTranscriptQuery,
@@ -1379,6 +1330,26 @@ export interface KimiWebApi {
   /** Open the session working directory (or a session-relative path) in an external application. */
   openInApp(sessionId: string, appId: string, path: string, line?: number): Promise<void>;
   connectEvents(handlers: KimiEventHandlers): KimiEventConnection;
+  /** A transcript-only companion connection (distinct `-transcript` client
+   *  id): its per-agent transcript grades never suppress session_event frames
+   *  on the legacy connection. Used by the main-flow migration's shadow
+   *  channel. */
+  connectTranscriptChannel(handlers: {
+    onTranscriptReset?: (
+      sessionId: string,
+      agentId: string,
+      snapshot: import('../transcript').AgentTranscriptSnapshot,
+      seq?: number,
+    ) => void;
+    onTranscriptOps?: (
+      sessionId: string,
+      agentId: string,
+      ops: readonly import('../transcript').TranscriptOperation[],
+      seq?: number,
+    ) => boolean;
+    onConnectionState?: (connected: boolean) => void;
+    onError?: (code: number, msg: string, fatal: boolean) => void;
+  }): KimiEventConnection;
 
   // Workspaces + daemon folder browser. /workspaces now ships and includes
   // derived workspaces (cwds with sessions that were never explicitly registered).

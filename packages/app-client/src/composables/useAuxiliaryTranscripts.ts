@@ -19,7 +19,10 @@ export function createAuxiliaryTranscriptPool(deps: {
   getEventConnection: () => KimiEventConnection | null;
 }) {
   const entries = shallowReactive(new Map<string, AuxiliaryTranscriptEntry>());
-  const desiredAgentBySession = new Map<string, string>();
+  // Reactive: the interaction-merge watcher in useKimiWebClient reads the
+  // current detail agent per session from this map — the entry it points at
+  // can change with every panel open/close, and the merge must re-run then.
+  const desiredAgentBySession = shallowReactive(new Map<string, string>());
   const subscribedAgentBySession = new Map<string, string>();
 
   // Streaming ops can notify many times per second; the version ref only feeds
@@ -130,6 +133,14 @@ export function createAuxiliaryTranscriptPool(deps: {
 
   function activate(sessionId: string, agentId: string): AuxiliaryTranscriptEntry {
     deps.connectEventsIfNeeded();
+    // Transcript subscriptions are additive now — switching the detail panel
+    // to another agent must detach the previous one explicitly, or every
+    // visited agent keeps streaming (and re-subscribing on reconnect).
+    const previous = subscribedAgentBySession.get(sessionId);
+    if (previous !== undefined && previous !== agentId) {
+      deps.getEventConnection()?.unsubscribeTranscript(sessionId, [previous]);
+      subscribedAgentBySession.delete(sessionId);
+    }
     desiredAgentBySession.set(sessionId, agentId);
     const entry = getOrCreate(sessionId, agentId);
     if (entry.baselineLoaded) {
@@ -197,6 +208,9 @@ export function createAuxiliaryTranscriptPool(deps: {
 
   return {
     getEntry: (sessionId: string, agentId: string) => entries.get(keyOf(sessionId, agentId)),
+    /** The agent whose transcript the detail system currently wants per
+     *  session (BTW or the open detail panel's) — read-only, reactive. */
+    desiredAgentBySession: desiredAgentBySession as ReadonlyMap<string, string>,
     activate,
     deactivate,
     receiveReset,

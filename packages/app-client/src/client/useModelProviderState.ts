@@ -45,7 +45,7 @@ export interface UseModelProviderStateDeps {
     err: unknown,
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
-  refreshSessionStatus: (sessionId: string) => Promise<void>;
+  refreshSessionStatus: (sessionId: string) => Promise<boolean>;
   /** Persist profile fields to the daemon. Resolves false (after surfacing the
    *  failure itself) when the daemon rejected the patch — awaited callers that
    *  order strictly after the profile must NOT proceed on false. */
@@ -56,11 +56,6 @@ export interface UseModelProviderStateDeps {
   /** Replace one session in place (matched by id). Owned by the facade so the
    *  model module never assigns rawState.sessions directly. */
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
-  /** Update one session's message list via a function of the current list. */
-  updateSessionMessages: (
-    sessionId: string,
-    update: (messages: AppMessage[]) => AppMessage[],
-  ) => void;
   /** Reload the global config. Provider/model writes (and discovery refreshes)
    *  rewrite config sections; the edit form reads model records from config,
    *  so every mutation must end with a fresh snapshot. */
@@ -74,6 +69,18 @@ export interface UseModelProviderStateDeps {
    *  clear it; settle releases the token when the daemon answered. */
   beginLocalTurn: (sid: string) => number;
   settleLocalTurn: (sid: string, token: number) => void;
+  /** The main transcript's current tail turn id — stamped onto the skill
+   *  activation's optimistic bubble at submit time (same reconciliation anchor
+   *  as prompt bubbles). Optional for test harnesses. */
+  mainTranscriptTailTurnId?: (sessionId: string) => string | undefined;
+  /** The main transcript's newest prompt stamp — the fallback echo floor for
+   *  sessions with prompt history but no turn yet. Optional for test harnesses. */
+  mainTranscriptTailPromptCreatedAt?: (sessionId: string) => string | undefined;
+  /** Settle a just-answered activation when the transcript already carries its
+   *  terminal evidence (a pre-submit block's frame beat the response — the
+   *  activation never receives a prompt id, and no later edge re-fires).
+   *  Optional for test harnesses. */
+  settleIfFateProven?: (sessionId: string) => void;
 }
 
 export function useModelProviderState(
@@ -88,11 +95,13 @@ export function useModelProviderState(
     savePlanModeToStorage,
     activity,
     updateSession,
-    updateSessionMessages,
     loadConfig,
     checkAuth,
     beginLocalTurn,
     settleLocalTurn,
+    mainTranscriptTailTurnId,
+    mainTranscriptTailPromptCreatedAt,
+    settleIfFateProven,
   } = deps;
 
   // The models/providers/skills/draft-model state lives in the models Pinia
@@ -361,6 +370,9 @@ export function useModelProviderState(
     // Set only at the activation POST itself: a failure thrown earlier (the
     // profile pre-write) provably started nothing.
     let activationAttempted = false;
+    // Set on the clean accept only (NOT the catch's ambiguous-fate true): the
+    // response's landing is where a terminal frame that beat it gets settled.
+    let activationOk = false;
     if (guarded) {
       // Share the local-turn-start lifecycle with prompt submits: a racing
       // terminal snapshot must not clear this skill's turn either.
@@ -376,6 +388,8 @@ export function useModelProviderState(
         createdAt: new Date().toISOString(),
         metadata: {
           'kimiWeb.optimisticUserMessage': true,
+          'kimiWeb.anchorTurnId': mainTranscriptTailTurnId?.(sid),
+          'kimiWeb.anchorPromptCreatedAt': mainTranscriptTailPromptCreatedAt?.(sid),
           origin: {
             kind: 'skill_activation',
             trigger: 'user-slash',
@@ -384,7 +398,10 @@ export function useModelProviderState(
           },
         },
       };
-      updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
+      rawState.optimisticMessagesBySession = {
+        ...rawState.optimisticMessagesBySession,
+        [sid]: [...(rawState.optimisticMessagesBySession[sid] ?? []), optimisticMsg],
+      };
     }
 
     try {
@@ -426,11 +443,40 @@ export function useModelProviderState(
       }
       activationAttempted = true;
       await api.activateSkill(sid, skillName, args, attachmentsToContent(attachments));
+      activationOk = true;
       return true;
     } catch (err) {
       if (guarded) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
-        updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
+        // Drop the bubble ONLY when the failure provably started nothing
+        // (pre-submit, or a definitive daemon refusal). A lost POST response
+        // leaves the activation's fate unknown — the bubble is the only
+        // rendering of the command until its skill_activation turn arrives.
+        const provablyRejected = !activationAttempted || err instanceof DaemonApiError;
+        if (provablyRejected) {
+          const remainingOptimistic = (rawState.optimisticMessagesBySession[sid] ?? []).filter(
+            (m) => m.id !== tempId,
+          );
+          const nextOptimistic = { ...rawState.optimisticMessagesBySession };
+          if (remainingOptimistic.length > 0) nextOptimistic[sid] = remainingOptimistic;
+          else delete nextOptimistic[sid];
+          rawState.optimisticMessagesBySession = nextOptimistic;
+        } else {
+          // Uncertain fate: mark the bubble (same contract as prompt submits)
+          // so an unrelated turn end's batch clear keeps it — its own
+          // skill_activation turn retires it via origin reconciliation.
+          const current = rawState.optimisticMessagesBySession[sid];
+          if (current !== undefined) {
+            rawState.optimisticMessagesBySession = {
+              ...rawState.optimisticMessagesBySession,
+              [sid]: current.map((m) =>
+                m.id === tempId
+                  ? { ...m, metadata: { ...m.metadata, 'kimiWeb.uncertain': true } }
+                  : m,
+              ),
+            };
+          }
+        }
       }
       // The persist failure was already surfaced by persistSessionProfile.
       if (err !== PROFILE_PERSIST_FAILED) pushOperationFailure('activateSkill', err, { sessionId: sid });
@@ -443,6 +489,11 @@ export function useModelProviderState(
       // The daemon answered the activation (accepted or rejected) — the
       // pending window in which a snapshot can't reflect this turn is over.
       if (localTurnToken !== undefined) settleLocalTurn(sid, localTurnToken);
+      // A blocked activation's terminal frame may have beaten this response
+      // (and the activation never receives a prompt id) — settle by the
+      // bubble's skill marker now that the answer is in. Guarded calls only:
+      // an unguarded activation owns no local turn to settle.
+      if (activationOk && localTurnToken !== undefined) settleIfFateProven?.(sid);
     }
   }
 

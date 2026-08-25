@@ -577,9 +577,10 @@ interface Group {
  * injection reaches the transcript as a user message whose text is wrapped in
  * `<cron-fire …>\n<prompt>\n…\n</prompt>\n</cron-fire>` (see renderCronFireXml
  * in agent-core). We surface only the inner prompt, mirroring the TUI's
- * extractCronPrompt / stripCronEnvelope.
+ * extractCronPrompt / stripCronEnvelope. Exported for the cron.fired pairing
+ * in mainTranscriptToTurns (identity must be exact, not substring).
  */
-function extractCronPrompt(text: string): string {
+export function extractCronPrompt(text: string): string {
   const open = '<prompt>\n';
   const close = '\n</prompt>';
   const start = text.indexOf(open);

@@ -135,6 +135,17 @@ describe('facade bridge (rawState accessors → store)', () => {
 
   beforeEach(() => {
     setKimiClientDeps({ api: () => clientApiMock as unknown as KimiWebApi, t: (key) => key });
+    // The facade unconditionally hosts the main transcript pool; stub the
+    // connection + baseline fetch it activates on session selection.
+    clientApiMock.connectEvents = vi.fn(() => ({
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      subscribeTranscript: vi.fn(),
+      unsubscribeTranscript: vi.fn(),
+      health: () => ({ connected: false, open: false, stale: false }),
+      close: vi.fn(),
+    }));
+    clientApiMock.getSessionTranscript = vi.fn().mockRejectedValue(new Error('no transcript'));
   });
 
   afterEach(() => {

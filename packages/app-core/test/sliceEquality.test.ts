@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AppMessage, AppSession } from '../src/api';
+import type { AppSession } from '../src/api';
 import {
   createInitialState,
   reduceAppEvent,
@@ -41,21 +41,10 @@ function session(id: string): AppSession {
   };
 }
 
-function assistantMessage(id: string): AppMessage {
-  return {
-    id,
-    sessionId: SID,
-    role: 'assistant',
-    content: [{ type: 'text', text: 'seed' }],
-    createdAt: '2026-01-01T00:00:00.000Z',
-  };
-}
-
-/** State with one session and one assistant message, plus a turn in flight. */
+/** State with one session and a turn in flight. */
 function seededState(): KimiClientState {
   let state = createInitialState();
   state = reduceAppEvent(state, { type: 'sessionCreated', session: session(SID) }, meta());
-  state = reduceAppEvent(state, { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
   state = reduceAppEvent(
     state,
     { type: 'turnActiveChanged', sessionId: SID, active: true },
@@ -82,7 +71,9 @@ describe('shallowEqualRecord / shallowEqualArray', () => {
 // reducer-side invariant that makes that skip correct: a pure streaming delta
 // leaves every sidebar-relevant slice's CONTENTS identical.
 describe('reduceAppEvent slice-content stability', () => {
-  it('a pure assistantDelta changes only messagesBySession and lastSeqBySession', () => {
+  it('a no-op message-stream event changes only lastSeqBySession', () => {
+    // The message stream now arrives over the transcript channel; legacy
+    // assistantDelta frames only advance the seq watermark.
     const state = seededState();
     const next = reduceAppEvent(
       state,
@@ -90,10 +81,8 @@ describe('reduceAppEvent slice-content stability', () => {
       meta(),
     );
 
-    // Changed: the streamed message itself, and the seq watermark.
-    expect(shallowEqualRecord(next.messagesBySession, state.messagesBySession)).toBe(false);
+    // Changed: the seq watermark.
     expect(shallowEqualRecord(next.lastSeqBySession, state.lastSeqBySession)).toBe(false);
-    expect(next.messagesBySession[SID]?.[0]?.content).toEqual([{ type: 'text', text: 'seed more' }]);
 
     // Unchanged: everything the sidebar / tasks / goal computeds read.
     expect(next.sessions).toBe(state.sessions);

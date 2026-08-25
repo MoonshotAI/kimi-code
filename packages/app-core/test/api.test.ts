@@ -166,7 +166,7 @@ describe('DaemonEventSocket injection', () => {
     expect((webSocket.sent[0] as { payload: object }).payload).not.toHaveProperty('agent_filter');
   });
 
-  it('replaces one auxiliary Transcript subscription atomically and detaches it', () => {
+  it('adds agents to a session’s Transcript subscription and detaches one', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const socket = new DaemonEventSocket({
       wsUrl: 'ws://test.local/api/v1/ws?client_id=c1',
@@ -194,11 +194,14 @@ describe('DaemonEventSocket injection', () => {
           transcript_since: { 'agent-a': 4 },
         },
       }),
+      // The second subscribe carries the FULL agent set (the server replaces
+      // the session's grade spec per subscribe_v2), with the watermark only
+      // for the newly added agent.
       expect.objectContaining({
         type: 'subscribe_v2',
         payload: {
           session_id: 's1',
-          transcript: { 'agent-b': 'delta' },
+          transcript: { 'agent-a': 'delta', 'agent-b': 'delta' },
           transcript_since: { 'agent-b': 8 },
         },
       }),
@@ -207,6 +210,85 @@ describe('DaemonEventSocket injection', () => {
         payload: { session_id: 's1', agent_ids: ['agent-b'] },
       }),
     ]);
+  });
+
+  it('resends every agent’s Transcript subscription with its watermark on reconnect', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const socket = new DaemonEventSocket({
+      wsUrl: 'ws://test.local/api/v1/ws?client_id=c1',
+      clientId: 'c1',
+      handlers: noopHandlers,
+    });
+    socket.connect();
+    let ws = FakeWebSocket.last!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onmessage?.({
+      data: JSON.stringify({ type: 'server_hello', payload: { heartbeat_ms: 30_000 } }),
+    });
+
+    socket.subscribeTranscript('s1', 'agent-a', 4);
+    socket.subscribeTranscript('s1', 'agent-b', 8);
+
+    socket.reconnect();
+    ws = FakeWebSocket.last!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onmessage?.({
+      data: JSON.stringify({ type: 'server_hello', payload: { heartbeat_ms: 30_000 } }),
+    });
+
+    expect(ws.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'subscribe_v2',
+        payload: {
+          session_id: 's1',
+          transcript: { 'agent-a': 'delta', 'agent-b': 'delta' },
+          transcript_since: { 'agent-a': 4, 'agent-b': 8 },
+        },
+      }),
+    );
+  });
+
+  it('clears the saved watermark on a cursorless resubscribe', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const socket = new DaemonEventSocket({
+      wsUrl: 'ws://test.local/api/v1/ws?client_id=c1',
+      clientId: 'c1',
+      handlers: noopHandlers,
+    });
+    socket.connect();
+    const ws = FakeWebSocket.last!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onmessage?.({
+      data: JSON.stringify({ type: 'server_hello', payload: { heartbeat_ms: 30_000 } }),
+    });
+    ws.sent = [];
+
+    socket.subscribeTranscript('s1', 'agent-a', 4);
+    // Gap recovery after a failed REST refresh resubscribes without a cursor:
+    // the server must answer with a full baseline, not a replay from the old
+    // watermark.
+    socket.subscribeTranscript('s1', 'agent-a');
+
+    expect(ws.sent).toEqual([
+      expect.objectContaining({
+        type: 'subscribe_v2',
+        payload: {
+          session_id: 's1',
+          transcript: { 'agent-a': 'delta' },
+          transcript_since: { 'agent-a': 4 },
+        },
+      }),
+      expect.objectContaining({
+        type: 'subscribe_v2',
+        payload: {
+          session_id: 's1',
+          transcript: { 'agent-a': 'delta' },
+        },
+      }),
+    ]);
+    expect((ws.sent[1] as { payload: Record<string, unknown> }).payload).not.toHaveProperty(
+      'transcript_since',
+    );
   });
 
   it('routes Transcript reset and ops outside the legacy event classifier', () => {

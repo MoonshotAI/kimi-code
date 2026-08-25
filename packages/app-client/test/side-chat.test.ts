@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createInitialState } from '@moonshot-ai/app-core/api';
+import { createInitialState, DaemonApiError } from '@moonshot-ai/app-core/api';
 import type { KimiWebApi } from '@moonshot-ai/app-core/api';
 import { useSideChat } from '../src/client/useSideChat';
 import { joinDraftSegments } from '../src/lib/quoteSelection';
@@ -10,6 +10,7 @@ const apiMock = {
   startBtw: vi.fn(),
   submitPrompt: vi.fn(),
   updateSession: vi.fn(),
+  getSessionTranscript: vi.fn(),
 };
 const api = apiMock as unknown as KimiWebApi;
 
@@ -47,7 +48,9 @@ function createState(): ExtendedState {
     pendingThinkingBySession: {},
     planModeBySession: { sess_1: true },
     planArmedBySession: {},
+    pendingPlanBySession: {},
     swarmModeBySession: {},
+    pendingSwarmBySession: {},
     sideChatMessagesByAgent: {},
     sideChatSendingByAgent: {},
     sideChatUserMessageIdsBySession: {},
@@ -185,7 +188,6 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     expect(
       state.sideChatMessagesByAgent.agent_btw_1?.map((message) => message.id),
     ).toEqual(['msg_opt_btw', 'message_btw_1']);
-    expect(state.sideChatUserMessageIdsBySession.sess_1).toEqual(['message_btw_1']);
 
     resolveSubmit({
       promptId: 'prompt_btw_1',
@@ -322,6 +324,191 @@ describe('useSideChat — clearSideChatForSession eviction (memory)', () => {
     expect(sideChat.sideChatTurns.value).toEqual([]);
   });
 
+  it('keeps the previous round\'s terminal routing identity when a resend fails provably-unsent', async () => {
+    // The previous BTW round already ended (agentTurnEnded) but its final
+    // taskCompleted is still in flight: a next send failing provably-unsent
+    // must restore only the dock filter state, not delete the known identity
+    // the late terminal output routes through.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' })
+      .mockRejectedValueOnce(new DaemonApiError({ code: 40900, msg: 'refused', requestId: 'r' }));
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'first question');
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'partial');
+    expect(sideChat.wasSideChatAgent('agent_btw_1')).toBe(true);
+
+    const sent = await sideChat.sendSideChatPrompt('second question');
+    expect(sent).toBe(false);
+
+    // The dock filter is restored (terminated), but the routing identity
+    // survives for the previous round's late final output.
+    expect(sideChat.sideChatRunning.value).toBe(false);
+    expect(sideChat.wasSideChatAgent('agent_btw_1')).toBe(true);
+  });
+
+  it('evicts agent-keyed buckets even when the panel was closed before the session died', async () => {
+    // closeSideChat drops only the target; the session→agent attribution must
+    // still let teardown find and clear every agent-keyed bucket, or they leak
+    // for the app's lifetime.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+    sideChat.appendSideChatAssistantText('agent_btw_1', 'sess_1', 'answer chunk');
+    expect(state.sideChatMessagesByAgent.agent_btw_1?.length).toBeGreaterThan(0);
+
+    sideChat.closeSideChat();
+    expect(sideChat.sideChatTargetBySession.value.sess_1).toBeUndefined();
+
+    sideChat.clearSideChatForSession('sess_1');
+
+    expect(state.sideChatMessagesByAgent.agent_btw_1).toBeUndefined();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBeUndefined();
+    expect(state.sideChatUserMessageIdsBySession.sess_1).toBeUndefined();
+    expect(sideChat.sideChatRunning.value).toBe(false);
+  });
+
+  it('cleans EVERY agent the session ever started after a panel reopen', async () => {
+    // Reopening the panel starts a NEW agent over the old mapping: teardown
+    // must clear both — the superseded agent's buckets and its routing
+    // identity are just as dead as the current one's.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw
+      .mockResolvedValueOnce({ agentId: 'agent_btw_1' })
+      .mockResolvedValueOnce({ agentId: 'agent_btw_2' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'first round');
+    sideChat.appendSideChatAssistantText('agent_btw_1', 'sess_1', 'old answer');
+    sideChat.closeSideChat();
+    await sideChat.openSideChatOn('sess_1', 'second round');
+    sideChat.appendSideChatAssistantText('agent_btw_2', 'sess_1', 'new answer');
+    expect(sideChat.wasSideChatAgent('agent_btw_1')).toBe(true);
+    expect(sideChat.wasSideChatAgent('agent_btw_2')).toBe(true);
+
+    sideChat.clearSideChatForSession('sess_1');
+
+    expect(state.sideChatMessagesByAgent.agent_btw_1).toBeUndefined();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBeUndefined();
+    expect(state.sideChatMessagesByAgent.agent_btw_2).toBeUndefined();
+    expect(state.sideChatSendingByAgent.agent_btw_2).toBeUndefined();
+    // The superseded agent's late terminal event must no longer route as a
+    // side chat — it would recreate buckets no mapping can clean anymore.
+    expect(sideChat.wasSideChatAgent('agent_btw_1')).toBe(false);
+    expect(sideChat.wasSideChatAgent('agent_btw_2')).toBe(false);
+  });
+
+  it('drops a resync response that lands after the session was torn down', async () => {
+    // The transcript GET is still in flight when clearSideChatForSession runs:
+    // its late success must not rebuild the buckets as orphans no later
+    // teardown can reach.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+    let resolveRead!: (value: unknown) => void;
+    apiMock.getSessionTranscript.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRead = resolve; }),
+    );
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+
+    const resync = sideChat.resyncSideChat('sess_1');
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalledOnce());
+    sideChat.clearSideChatForSession('sess_1');
+
+    resolveRead({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'idle' },
+      hasMoreOlder: false,
+    });
+    await resync;
+
+    expect(state.sideChatMessagesByAgent.agent_btw_1).toBeUndefined();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBeUndefined();
+  });
+
+  it('dedupes a resync-covered message by its TOP-LEVEL promptId', async () => {
+    // The confirmed bubble's identity lives at message.promptId (top level) —
+    // reading the metadata key would keep the bubble AND append the rebuilt
+    // server copy, duplicating the message.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+    const stamped = (state.sideChatMessagesByAgent.agent_btw_1 ?? []).find(
+      (msg) => msg.promptId === 'pr_btw',
+    );
+    expect(stamped).toBeDefined();
+
+    await sideChat.resyncSideChat('sess_1', {
+      agentId: 'agent_btw_1',
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't-btw-1',
+          ordinal: 1,
+          state: 'running',
+          origin: { kind: 'user' },
+          prompt: 'what changed?',
+          steps: [],
+          startedAt: '2026-08-24T10:00:00.000Z',
+        },
+      ],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        {
+          promptId: 'pr_btw',
+          status: 'running',
+          content: [{ type: 'text', text: 'what changed?' }],
+          createdAt: '2026-08-24T10:00:00.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    } as never);
+
+    const copies = (state.sideChatMessagesByAgent.agent_btw_1 ?? []).filter(
+      (msg) =>
+        msg.role === 'user' &&
+        msg.content.some((part) => part.type === 'text' && part.text.includes('what changed?')),
+    );
+    expect(copies).toHaveLength(1);
+  });
+
   it('keeps other sessions’ side-chat state intact', async () => {
     apiMock.startBtw.mockReset();
     apiMock.startBtw.mockImplementation(async (parent: string) => ({
@@ -444,6 +631,290 @@ describe('useSideChat — session dies mid-submit', () => {
 
     expect(state.sideChatMessagesByAgent.agent_btw_1).toBeUndefined();
     expect(state.sideChatSendingByAgent.agent_btw_1).toBeUndefined();
+  });
+
+  it('ignores a PREVIOUS round’s straggler taskCompleted after a resend', async () => {
+    // Round 1's turn ended (agent marked terminated), round 2 is in flight:
+    // round 1's delayed taskCompleted must not clear round 2's sending state
+    // or append its stale output after the new bubble.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    // Round 1's agentTurnEnded: agent terminated, sending cleared.
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(false);
+
+    // Round 2 starts: sending re-arms, new user bubble lands.
+    await sideChat.sendSideChatPrompt('round two');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // The straggler: round 1's taskCompleted arriving now is a no-op.
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('settles a taskCompleted that lands while its own round is terminated', async () => {
+    // The legit order per round: agentTurnEnded (terminated) THEN
+    // taskCompleted — the terminal output still routes and settles.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1');
+
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'the final answer', true);
+
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('the final answer')),
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts the current round’s taskCompleted when its turn-end was swallowed', async () => {
+    // The client never saw this round's agentTurnEnded (a resync gap ate it):
+    // the taskCompleted is the round's OWN terminal evidence. A one-shot
+    // transcript read proves the current prompt is terminal — settle sending
+    // and keep the output instead of dropping it as a straggler.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        {
+          promptId: 'pr_btw',
+          status: 'completed',
+          createdAt: '2026-08-24T10:00:00.000Z',
+          finishedAt: '2026-08-24T10:00:01.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'idle' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // No agentTurnEnded observed — the agent is NOT terminated.
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'the final answer', true);
+
+    await vi.waitFor(() => expect(state.sideChatSendingByAgent.agent_btw_1).toBe(false));
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('the final answer')),
+      ),
+    ).toBe(true);
+  });
+
+  it('still drops a straggler taskCompleted once the current round’s prompt reads live', async () => {
+    // Same arbitration, opposite verdict: round 2's prompt is RUNNING in the
+    // transcript — round 1's late taskCompleted must not clear round 2.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [{ promptId: 'pr_btw', status: 'running', createdAt: '2026-08-24T10:00:00.000Z' }],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1');
+    await sideChat.sendSideChatPrompt('round two');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+
+    // Let the arbitration read complete, then assert the drop.
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('appends a resync-window text chunk without wiping rebuilt thinking/tool parts', () => {
+    // The rebuilt baseline's last assistant message can carry thinking (or
+    // tool) parts: a late text delta must continue the trailing text part or
+    // start a new one — never replace the whole content.
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    state.sideChatMessagesByAgent = {
+      agent_btw_1: [
+        {
+          id: 'm_thinking',
+          sessionId: 'sess_1',
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'hmm' },
+            { type: 'text', text: 'partial ans' },
+          ],
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    };
+
+    // Tail is a text part: continue it, keeping the thinking part.
+    sideChat.appendSideChatAssistantText('agent_btw_1', 'sess_1', 'wer');
+    let last = state.sideChatMessagesByAgent.agent_btw_1!.at(-1)!;
+    expect(last.content).toEqual([
+      { type: 'thinking', thinking: 'hmm' },
+      { type: 'text', text: 'partial answer' },
+    ]);
+
+    // Tail is NOT a text part: start a new text part after it.
+    state.sideChatMessagesByAgent = {
+      agent_btw_1: [
+        {
+          id: 'm_tool',
+          sessionId: 'sess_1',
+          role: 'assistant',
+          content: [
+            { type: 'toolUse', toolCallId: 'c1', toolName: 'Bash', input: {} },
+          ],
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    };
+    sideChat.appendSideChatAssistantText('agent_btw_1', 'sess_1', 'fresh text');
+    last = state.sideChatMessagesByAgent.agent_btw_1!.at(-1)!;
+    expect(last.content).toEqual([
+      { type: 'toolUse', toolCallId: 'c1', toolName: 'Bash', input: {} },
+      { type: 'text', text: 'fresh text' },
+    ]);
+  });
+
+
+  it('settles the sending state from a resync whose snapshot has the terminal prompt', async () => {
+    // turn.ended was lost in the resync gap — the rebuilt snapshot's terminal
+    // prompt entity is the only end signal this round will get.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+    apiMock.getSessionTranscript.mockImplementation(async () => ({
+      agentId: 'agent_btw_1',
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't-btw-1',
+          ordinal: 1,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'what changed?',
+          steps: [],
+          startedAt: '2026-08-24T10:00:00.000Z',
+          endedAt: '2026-08-24T10:00:01.000Z',
+        },
+      ],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        {
+          promptId: 'pr_btw',
+          status: 'completed',
+          content: [{ type: 'text', text: 'what changed?' }],
+          createdAt: '2026-08-24T10:00:00.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'idle' },
+      hasMoreOlder: false,
+    }));
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    await sideChat.resyncSideChat('sess_1');
+
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(false);
+  });
+
+  it('keeps the sending state when the resync snapshot still runs the prompt', async () => {
+    // A snapshot that merely PREDATES the entity's terminal state is not an
+    // end — the live round must keep its sending state.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_srv_btw' });
+    apiMock.getSessionTranscript.mockImplementation(async () => ({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        {
+          promptId: 'pr_btw',
+          status: 'running',
+          content: [{ type: 'text', text: 'what changed?' }],
+          createdAt: '2026-08-24T10:00:00.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    }));
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    await sideChat.resyncSideChat('sess_1');
+
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
   });
 });
 

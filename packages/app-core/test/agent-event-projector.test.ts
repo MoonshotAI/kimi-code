@@ -52,40 +52,7 @@ describe('subagentProgressText', () => {
   });
 });
 
-describe('main-agent tool.progress projection', () => {
-  it('passes a replace update through to toolOutput', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.project(
-      'tool.progress',
-      { turnId: 1, toolCallId: 'tc_1', update: { kind: 'status', text: 'Waiting 1s / 15s', replace: true } },
-      's1',
-    );
-    expect(events).toContainEqual({
-      type: 'toolOutput',
-      sessionId: 's1',
-      toolCallId: 'tc_1',
-      outputChunk: 'Waiting 1s / 15s',
-      stream: 'stdout',
-      replace: true,
-    });
-  });
-
-  it('marks a plain update as non-replacing', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.project(
-      'tool.progress',
-      { turnId: 1, toolCallId: 'tc_1', update: { kind: 'status', text: 'working…' } },
-      's1',
-    );
-    expect(events).toContainEqual({
-      type: 'toolOutput',
-      sessionId: 's1',
-      toolCallId: 'tc_1',
-      outputChunk: 'working…',
-      stream: 'stdout',
-      replace: false,
-    });
-  });
+describe('subagent progress replace passthrough', () => {
 
   it('passes replace through on the subagent progress path', () => {
     const projector = createAgentProjector({ t });
@@ -188,72 +155,6 @@ describe('agent error projection', () => {
   });
 });
 
-describe('cron.fired', () => {
-  it('synthesizes a user message so the cron notice renders live', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.project(
-      'cron.fired',
-      {
-        origin: {
-          kind: 'cron_job',
-          jobId: 'a3f9c2',
-          cron: '*/5 * * * *',
-          recurring: true,
-          coalescedCount: 2,
-          stale: false,
-        },
-        prompt: 'Check the deploy status',
-      },
-      's1',
-    );
-    const created = events.find((e) => e.type === 'messageCreated');
-    expect(created).toBeDefined();
-    expect(created).toMatchObject({
-      type: 'messageCreated',
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: 'Check the deploy status' }],
-        metadata: { origin: { kind: 'cron_job', jobId: 'a3f9c2' } },
-      },
-    });
-  });
-
-  it('ignores cron.fired events missing a prompt or a cron_job origin', () => {
-    const projector = createAgentProjector({ t });
-    expect(projector.project('cron.fired', { origin: { kind: 'cron_job' } }, 's1')).toEqual([]);
-    expect(projector.project('cron.fired', { prompt: 'hi' }, 's1')).toEqual([]);
-  });
-});
-
-describe('cron.fired prompt id isolation', () => {
-  it('omits promptId so the synthesized notice does not clobber the abort cache', () => {
-    const projector = createAgentProjector({ t });
-    projector.project(
-      'prompt.submitted',
-      { promptId: 'pr_user', userMessageId: 'u1', content: [{ type: 'text', text: 'hi' }] },
-      's1',
-    );
-    const events = projector.project(
-      'cron.fired',
-      {
-        origin: {
-          kind: 'cron_job',
-          jobId: 'j',
-          cron: '* * * * *',
-          recurring: true,
-          coalescedCount: 1,
-          stale: false,
-        },
-        prompt: 'Check the deploy status',
-      },
-      's1',
-    );
-    const created = events.find((e) => e.type === 'messageCreated');
-    expect(created).toBeDefined();
-    expect((created as { message: { promptId?: string } }).message.promptId).toBeUndefined();
-  });
-});
-
 describe('BTW prompt submission routing', () => {
   it('emits an agent-scoped user confirmation without changing main prompt state', () => {
     const projector = createAgentProjector({ t });
@@ -283,25 +184,20 @@ describe('BTW prompt submission routing', () => {
       },
     ]);
 
+    // The side-channel prompt must not bind itself as the main turn's prompt.
     projector.project(
       'turn.started',
       { agentId: 'main', turnId: 1 },
       's1',
     );
-    const mainEvents = projector.project(
-      'turn.step.started',
-      { agentId: 'main', turnId: 1 },
+    const endEvents = projector.project(
+      'turn.ended',
+      { agentId: 'main', turnId: 1, reason: 'completed' },
       's1',
     );
-    const mainMessage = mainEvents.find((event) => event.type === 'messageCreated');
-    expect(mainMessage).toMatchObject({
-      type: 'messageCreated',
-      message: {
-        role: 'assistant',
-      },
-    });
-    if (mainMessage?.type === 'messageCreated') {
-      expect(mainMessage.message.promptId).not.toBe('prompt_btw_1');
+    const turnEnd = endEvents.find((event) => event.type === 'turnActiveChanged');
+    if (turnEnd?.type === 'turnActiveChanged') {
+      expect(turnEnd.promptId).not.toBe('prompt_btw_1');
     }
   });
 });
@@ -325,7 +221,7 @@ describe('session status single-sourcing', () => {
     expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
   });
 
-  it('turn.ended finalizes the message but projects no sessionWorkChanged or usage snapshot', () => {
+  it('turn.ended projects no sessionWorkChanged or usage snapshot', () => {
     const projector = createAgentProjector({ t });
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
@@ -335,9 +231,6 @@ describe('session status single-sourcing', () => {
       's1',
     );
     expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
-    expect(events).toContainEqual(
-      expect.objectContaining({ type: 'messageUpdated', status: 'completed', durationMs: 123 }),
-    );
     // Usage snapshots only ever derive from agent.status.updated frames (the
     // real source). turn.ended is a pure lifecycle boundary: a replayed one
     // after a reset would otherwise fabricate {0/0} and clobber the
@@ -355,23 +248,6 @@ describe('session status single-sourcing', () => {
       's1',
     );
     expect(events.some((e) => e.type === 'sessionUsageUpdated')).toBe(false);
-  });
-
-  it('seedInFlight returns only the seeded message — status comes from the snapshot', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.seedInFlight('s1', {
-      turnId: 1,
-      assistantText: 'partial',
-      thinkingText: '',
-      runningTools: [],
-    });
-    expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'messageCreated',
-        message: expect.objectContaining({ role: 'assistant' }),
-      }),
-    );
   });
 });
 
@@ -441,147 +317,6 @@ describe('prompt-level lifecycle projection', () => {
       route: 'agent',
       agentType: 'prompt.aborted',
     });
-  });
-});
-
-describe('step-boundary delta alignment', () => {
-  it('resets stream offsets at step boundaries — a post-step delta ahead of local state signals a gap', () => {
-    const projector = createAgentProjector({ t });
-    projector.project('turn.started', { turnId: 1 }, 's1');
-    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
-    projector.project('assistant.delta', { turnId: 1, delta: 'step-one text' }, 's1', { offset: 0 });
-    projector.project('turn.step.completed', { turnId: 1, step: 1 }, 's1');
-    projector.project('turn.step.started', { turnId: 1, step: 2 }, 's1');
-
-    const events = projector.project('assistant.delta', { turnId: 1, delta: 'tail' }, 's1', { offset: 12 });
-    expect(events).toContainEqual(
-      expect.objectContaining({ type: 'historyCompacted', reason: 'delta_gap' }),
-    );
-  });
-
-  it('appends step-2 deltas to the fresh step message at step-relative offsets', () => {
-    const projector = createAgentProjector({ t });
-    projector.project('turn.started', { turnId: 1 }, 's1');
-    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
-    projector.project('assistant.delta', { turnId: 1, delta: 'step one' }, 's1', { offset: 0 });
-    projector.project('turn.step.completed', { turnId: 1, step: 1 }, 's1');
-
-    const step2 = projector.project('turn.step.started', { turnId: 1, step: 2 }, 's1');
-    const created = step2.find((e) => e.type === 'messageCreated');
-    const msgId = (created as { message: { id: string } } | undefined)?.message.id;
-    expect(msgId).toBeDefined();
-
-    // Offset restarts at 0 for the new step and appends to ITS message.
-    const events = projector.project('assistant.delta', { turnId: 1, delta: 'step two' }, 's1', { offset: 0 });
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'assistantDelta',
-        messageId: msgId,
-        delta: { text: 'step two' },
-      }),
-    );
-  });
-
-  it('seeds only the current step and aligns live deltas against the seeded length', () => {
-    const projector = createAgentProjector({ t });
-    const seeded = projector.seedInFlight('s1', {
-      turnId: 7,
-      promptId: 'pr_1',
-      thinkingText: 'step two thinking',
-      assistantText: 'step two partial',
-      runningTools: [{ toolCallId: 'tc_1', name: 'bash', args: { command: 'ls' } }],
-    });
-    const created = seeded.find((e) => e.type === 'messageCreated');
-    const message = (created as { message: { id: string; content: unknown[] } } | undefined)?.message;
-    expect(message).toBeDefined();
-
-    expect(message!.content).toEqual([
-      { type: 'thinking', thinking: 'step two thinking' },
-      { type: 'text', text: 'step two partial' },
-      { type: 'toolUse', toolCallId: 'tc_1', toolName: 'bash', input: { command: 'ls' } },
-    ]);
-
-    const dup = projector.project('assistant.delta', { turnId: 7, delta: 'two part' }, 's1', { offset: 5 });
-    expect(dup).toEqual([]);
-
-    const cont = projector.project(
-      'assistant.delta',
-      { turnId: 7, delta: ' continues' },
-      's1',
-      { offset: 'step two partial'.length },
-    );
-    expect(cont).toContainEqual(
-      expect.objectContaining({
-        type: 'assistantDelta',
-        messageId: message!.id,
-        contentIndex: 3,
-        delta: { text: ' continues' },
-      }),
-    );
-  });
-});
-
-describe('turn.step.retrying bubble reuse', () => {
-  it('refills the abandoned bubble instead of stacking a duplicate one', () => {
-    const projector = createAgentProjector({ t });
-    const sid = 's1';
-    projector.project('turn.started', { type: 'turn.started', turnId: 1, origin: { kind: 'user' }, agentId: 'main', sessionId: sid }, sid);
-    projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
-    projector.project('assistant.delta', { type: 'assistant.delta', turnId: 1, delta: 'AB', agentId: 'main', sessionId: sid }, sid, { offset: 0 });
-    projector.project('tool.call.started', { type: 'tool.call.started', turnId: 1, toolCallId: 'tc1', name: 'Bash', agentId: 'main', sessionId: sid }, sid);
-
-    const retryEvents = projector.project('turn.step.retrying', { type: 'turn.step.retrying', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2, maxAttempts: 10, delayMs: 100, agentId: 'main', sessionId: sid }, sid);
-    expect(retryEvents).toContainEqual(expect.objectContaining({ type: 'messageUpdated' }));
-
-    const restarted = projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
-    // No new messageCreated for the retried step — the cleared bubble is reused.
-    expect(restarted.filter((e) => e.type === 'messageCreated')).toEqual([]);
-
-    const deltas = projector.project('assistant.delta', { type: 'assistant.delta', turnId: 1, delta: 'ABC', agentId: 'main', sessionId: sid }, sid, { offset: 0 });
-    const toolEvents = projector.project('tool.call.started', { type: 'tool.call.started', turnId: 1, toolCallId: 'tc1', name: 'Bash', agentId: 'main', sessionId: sid }, sid);
-
-    // The same bubble receives the retried stream: exactly one assistant
-    // message id across the whole attempt→retry sequence.
-    const messageIds = new Set(
-      [...deltas, ...toolEvents]
-        .map((e) => (e as { messageId?: string }).messageId)
-        .filter((id): id is string => typeof id === 'string'),
-    );
-    expect(messageIds.size).toBe(1);
-  });
-
-  it('drops the reuse target when the turn ends before the retried step starts', () => {
-    const projector = createAgentProjector({ t });
-    const sid = 's1';
-    projector.project('turn.started', { type: 'turn.started', turnId: 1, origin: { kind: 'user' }, agentId: 'main', sessionId: sid }, sid);
-    projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
-    projector.project('assistant.delta', { type: 'assistant.delta', turnId: 1, delta: 'AB', agentId: 'main', sessionId: sid }, sid, { offset: 0 });
-    projector.project('turn.step.retrying', { type: 'turn.step.retrying', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2, maxAttempts: 10, delayMs: 100, agentId: 'main', sessionId: sid }, sid);
-
-    // The user aborts before the retried step.started ever arrives.
-    projector.project('turn.ended', { type: 'turn.ended', turnId: 1, reason: 'interrupted', agentId: 'main', sessionId: sid }, sid);
-
-    // The next prompt must open a fresh bubble — not refill the emptied one,
-    // which would render the new response under the previous prompt.
-    projector.project('turn.started', { type: 'turn.started', turnId: 2, origin: { kind: 'user' }, agentId: 'main', sessionId: sid }, sid);
-    const started = projector.project('turn.step.started', { type: 'turn.step.started', turnId: 2, step: 1, agentId: 'main', sessionId: sid }, sid);
-    expect(started.filter((e) => e.type === 'messageCreated')).toHaveLength(1);
-  });
-
-  it('drops the reuse target when the step is interrupted before the retry restarts', () => {
-    const projector = createAgentProjector({ t });
-    const sid = 's1';
-    projector.project('turn.started', { type: 'turn.started', turnId: 1, origin: { kind: 'user' }, agentId: 'main', sessionId: sid }, sid);
-    projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
-    projector.project('assistant.delta', { type: 'assistant.delta', turnId: 1, delta: 'AB', agentId: 'main', sessionId: sid }, sid, { offset: 0 });
-    projector.project('turn.step.retrying', { type: 'turn.step.retrying', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2, maxAttempts: 10, delayMs: 100, agentId: 'main', sessionId: sid }, sid);
-
-    projector.project('turn.step.interrupted', { type: 'turn.step.interrupted', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
-
-    // The next step.started creates a new bubble instead of reusing the
-    // emptied one left by the interrupted retry attempt.
-    const started = projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 2, agentId: 'main', sessionId: sid }, sid);
-    expect(started.filter((e) => e.type === 'messageCreated')).toHaveLength(1);
   });
 });
 
@@ -2121,112 +1856,6 @@ describe('task termination status mapping', () => {
 // Live provenance for goal-continuation turns: the trigger user message is
 // persisted server-side but never broadcast, so the projector synthesizes a
 // hidden copy from the turn.started frame's origin (mirroring cron.fired).
-describe('agentEventProjector goal continuation synthesis', () => {
-  it('synthesizes a hidden user message from a goal_continuation turn.started', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.project(
-      'turn.started',
-      {
-        turnId: 2,
-        origin: { kind: 'system_trigger', name: 'goal_continuation' },
-        prompt: 'Continue working toward the active goal. …',
-      },
-      'session-1',
-    );
-    const created = events.filter((e) => e.type === 'messageCreated');
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({
-      type: 'messageCreated',
-      message: {
-        role: 'user',
-        metadata: { origin: { kind: 'system_trigger', name: 'goal_continuation' } },
-      },
-    });
-    // …and the turn activation still projects as usual.
-    expect(events.some((e) => e.type === 'turnActiveChanged')).toBe(true);
-  });
-
-  it('derives the synthetic id from the turn so replays dedupe downstream', () => {
-    const projector = createAgentProjector({ t });
-    const frame = {
-      turnId: 7,
-      origin: { kind: 'system_trigger', name: 'goal_continuation' },
-    };
-    const idOf = (events: { type: string }[]): string | undefined => {
-      const e = events.find((ev) => ev.type === 'messageCreated') as
-        | { type: 'messageCreated'; message: { id: string } }
-        | undefined;
-      return e?.message.id;
-    };
-    const first = projector.project('turn.started', frame, 'session-1');
-    const second = projector.project('turn.started', frame, 'session-1');
-    expect(idOf(first)).toBe('goal_cont_7');
-    expect(idOf(second)).toBe('goal_cont_7');
-  });
-
-  it('does not synthesize for user-driven or other-trigger turns', () => {
-    const projector = createAgentProjector({ t });
-    for (const origin of [
-      { kind: 'user' },
-      { kind: 'system_trigger', name: 'other_trigger' },
-      { kind: 'cron_job', jobId: 'job-1' },
-    ]) {
-      const events = projector.project('turn.started', { turnId: 1, origin }, 'session-1');
-      expect(events.filter((e) => e.type === 'messageCreated')).toHaveLength(0);
-    }
-  });
-});
-
-describe('agentEventProjector task notification synthesis', () => {
-  it('synthesizes the notification message from a task.notified frame', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.project(
-      'task.notified',
-      {
-        notificationType: 'task.completed',
-        title: 'Background process completed',
-        body: '后台等待 2 秒 completed.',
-        severity: 'info',
-        sourceKind: 'background_task',
-        sourceId: 'bash-9',
-      },
-      'session-1',
-    );
-    const created = events.filter((e) => e.type === 'messageCreated');
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({
-      type: 'messageCreated',
-      message: {
-        id: 'task_ntf_task:bash-9:completed',
-        role: 'user',
-        metadata: {
-          origin: { kind: 'task', taskId: 'bash-9', status: 'completed', notificationId: 'task:bash-9:completed' },
-        },
-      },
-    });
-    // The reconstructed XML carries every field (entities escaped).
-    const text =
-      created[0]?.type === 'messageCreated' && created[0].message.content[0]?.type === 'text'
-        ? created[0].message.content[0].text
-        : '';
-    expect(text).toContain('type="task.completed"');
-    expect(text).toContain('Title: Background process completed');
-    expect(text).toContain('后台等待 2 秒 completed.');
-  });
-
-  it('does not synthesize for user-driven or other-trigger turns', () => {
-    const projector = createAgentProjector({ t });
-    for (const origin of [
-      { kind: 'user' },
-      { kind: 'system_trigger', name: 'other_trigger' },
-      { kind: 'cron_job', jobId: 'job-1' },
-    ]) {
-      const events = projector.project('turn.started', { turnId: 1, origin }, 'session-1');
-      expect(events.filter((e) => e.type === 'messageCreated')).toHaveLength(0);
-    }
-  });
-});
-
 describe('agentEventProjector turn retry phase', () => {
   const retryPhase = {
     kind: 'retrying',
@@ -2287,25 +1916,6 @@ describe('agentEventProjector turn retry phase', () => {
   });
 });
 
-describe('agentEventProjector retry clear on step start', () => {
-  it('clears the retry state when the next attempt starts streaming', () => {
-    const projector = createAgentProjector({ t });
-    projector.project(
-      'agent.status.updated',
-      { agentId: 'main', phase: { kind: 'retrying', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500 } },
-      'session-1',
-    );
-    const events = projector.project(
-      'turn.step.started',
-      { agentId: 'main', turnId: 1, step: 2 },
-      'session-1',
-    );
-    expect(events.filter((e) => e.type === 'turnRetry')).toEqual([
-      { type: 'turnRetry', sessionId: 'session-1', retry: undefined },
-    ]);
-  });
-});
-
 describe('agentEventProjector retry clear robustness', () => {
   const retryPhase = {
     kind: 'retrying',
@@ -2339,24 +1949,6 @@ describe('agentEventProjector retry clear robustness', () => {
     expect(events.filter((e) => e.type === 'turnRetry')).toEqual([
       { type: 'turnRetry', sessionId: 'session-1', retry: undefined },
     ]);
-  });
-});
-
-describe('agentEventProjector same-frame ordering', () => {
-  it('emits turnActiveChanged before the synthetic goal-continuation message', () => {
-    const projector = createAgentProjector({ t });
-    const events = projector.project(
-      'turn.started',
-      {
-        turnId: 5,
-        origin: { kind: 'system_trigger', name: 'goal_continuation' },
-        prompt: 'Continue working toward the active goal. …',
-      },
-      'session-1',
-    );
-    const types = events.map((e) => e.type);
-    expect(types.indexOf('turnActiveChanged')).toBeGreaterThanOrEqual(0);
-    expect(types.indexOf('turnActiveChanged')).toBeLessThan(types.indexOf('messageCreated'));
   });
 });
 
@@ -2426,105 +2018,6 @@ describe('agentEventProjector subagent model', () => {
   });
 });
 
-describe('session transcript retention (memory)', () => {
-  const mainUserPrompt = {
-    agentId: 'main',
-    promptId: 'pr_1',
-    userMessageId: 'msg_u1',
-    content: [{ type: 'text', text: 'hello' }],
-    createdAt: '2026-01-01T00:00:00Z',
-  };
-
-  function driveStepWithTool(projector: ReturnType<typeof createAgentProjector>, turnId: number, step: number): void {
-    projector.project('turn.step.started', { agentId: 'main', turnId, step }, 's1');
-    projector.project('assistant.delta', { agentId: 'main', turnId, delta: 'x'.repeat(500) }, 's1');
-    projector.project('tool.use', { agentId: 'main', turnId, toolCallId: `tc_${step}`, name: 'bash', args: { command: 'ls' } }, 's1');
-    projector.project('tool.result', { agentId: 'main', turnId, toolCallId: `tc_${step}`, output: 'y'.repeat(500), isError: false }, 's1');
-  }
-
-  it('pins only the live bubble mid-turn and releases everything at turn end', () => {
-    const projector = createAgentProjector({ t });
-    projector.project('prompt.submitted', mainUserPrompt, 's1');
-    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
-
-    // Step 1: only the in-flight assistant bubble is referenced.
-    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
-    projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'z'.repeat(2000) }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(1);
-
-    // The tool result ends the step: its clone went to the reducer, so the
-    // projector's own copies (user prompt, finished bubble, result) release.
-    projector.project('tool.use', { agentId: 'main', turnId: 1, toolCallId: 'tc_1', name: 'bash', args: {} }, 's1');
-    projector.project('tool.result', { agentId: 'main', turnId: 1, toolCallId: 'tc_1', output: 'q'.repeat(2000), isError: false }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(0);
-
-    // Final step, then the turn ends — nothing stays behind.
-    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 2 }, 's1');
-    projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'done' }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(1);
-    projector.project('turn.step.completed', { agentId: 'main', turnId: 1, step: 2, usage: {} }, 's1');
-    projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'completed' }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(0);
-  });
-
-  it('stays bounded across turns instead of growing with the transcript', () => {
-    const projector = createAgentProjector({ t });
-    for (let turnId = 1; turnId <= 5; turnId += 1) {
-      projector.project('prompt.submitted', { ...mainUserPrompt, promptId: `pr_${turnId}`, userMessageId: `msg_u${turnId}` }, 's1');
-      projector.project('turn.started', { agentId: 'main', turnId }, 's1');
-      driveStepWithTool(projector, turnId, 1);
-      driveStepWithTool(projector, turnId, 2);
-      projector.project('turn.step.started', { agentId: 'main', turnId, step: 3 }, 's1');
-      projector.project('assistant.delta', { agentId: 'main', turnId, delta: 'final' }, 's1');
-      projector.project('turn.ended', { agentId: 'main', turnId, reason: 'completed' }, 's1');
-      expect(projector.retainedMessageCount('s1')).toBe(0);
-    }
-    // 5 full turns (5 user prompts + 15 bubbles/results) would otherwise pin
-    // dozens of full message bodies for the renderer's lifetime.
-  });
-
-  it('keeps the retry-reuse bubble across trimming so a retried step refills it', () => {
-    const projector = createAgentProjector({ t });
-    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
-    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
-    projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'partial' }, 's1');
-
-    projector.project('turn.step.retrying', { agentId: 'main', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2 }, 's1');
-    // The cleared bubble survives for reuse — the retry must not stack a second one.
-    expect(projector.retainedMessageCount('s1')).toBe(1);
-
-    const events = projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
-    // Reuse emits no fresh messageCreated…
-    expect(events.some((e) => e.type === 'messageCreated')).toBe(false);
-    // …and the retried stream refills the same bubble from content index 0.
-    const deltaEvents = projector.project('assistant.delta', { agentId: 'main', turnId: 1, delta: 'retry text' }, 's1');
-    expect(deltaEvents).toContainEqual(
-      expect.objectContaining({ type: 'assistantDelta', contentIndex: 0 }),
-    );
-    projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'completed' }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(0);
-  });
-
-  it('forgetSession removes the sessions-map entry (not just its contents)', () => {
-    const projector = createAgentProjector({ t });
-    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
-    projector.project('turn.step.started', { agentId: 'main', turnId: 1, step: 1 }, 's1');
-    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's2');
-    expect(projector.retainedMessageCount('s1')).toBe(1);
-    expect(projector.retainedMessageCount('s2')).toBe(0);
-
-    projector.forgetSession('s1');
-    // Entry gone — reported as undefined, not as an empty state.
-    expect(projector.retainedMessageCount('s1')).toBeUndefined();
-    // Other sessions are untouched.
-    expect(projector.retainedMessageCount('s2')).toBe(0);
-
-    // A later event for the forgotten session starts from a fresh state.
-    projector.project('turn.started', { agentId: 'main', turnId: 2 }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(0);
-  });
-});
-
 describe('stateless global frames (sessions-map hygiene)', () => {
   it('projects session.meta.updated without materializing session state', () => {
     const projector = createAgentProjector({ t });
@@ -2540,13 +2033,33 @@ describe('stateless global frames (sessions-map hygiene)', () => {
       title: 'New title',
     });
     // …but no SessionState was materialized for the unseen session.
-    expect(projector.retainedMessageCount('never-seen')).toBeUndefined();
+    expect(projector.hasSessionState('never-seen')).toBe(false);
+  });
+
+  it('forgetSession removes the sessions-map entry (not just its contents)', () => {
+    const projector = createAgentProjector({ t });
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's2');
+    expect(projector.hasSessionState('s1')).toBe(true);
+    expect(projector.hasSessionState('s2')).toBe(true);
+
+    projector.forgetSession('s1');
+    expect(projector.hasSessionState('s1')).toBe(false);
+    // Other sessions are untouched.
+    expect(projector.hasSessionState('s2')).toBe(true);
+
+    // A later stateful event for the forgotten session starts from a fresh state.
+    const events = projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'completed' }, 's1');
+    const turnEnd = events.find((event) => event.type === 'turnActiveChanged');
+    if (turnEnd?.type === 'turnActiveChanged') {
+      expect(turnEnd.promptId).toBeUndefined();
+    }
   });
 
   it('forgetSession sticks: later global broadcasts do not recreate the entry', () => {
     const projector = createAgentProjector({ t });
     projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(0);
+    expect(projector.hasSessionState('s1')).toBe(true);
     projector.forgetSession('s1');
 
     // The daemon broadcasts these to every connection regardless of
@@ -2557,14 +2070,14 @@ describe('stateless global frames (sessions-map hygiene)', () => {
     projector.project('compaction.completed', { result: {} }, 's1');
     projector.project('hook.result', {}, 's1');
 
-    expect(projector.retainedMessageCount('s1')).toBeUndefined();
+    expect(projector.hasSessionState('s1')).toBe(false);
   });
 
   it('still creates state on demand for stateful frames of a new session', () => {
     const projector = createAgentProjector({ t });
     projector.project('session.meta.updated', { patch: { title: 'T' } }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBeUndefined();
+    expect(projector.hasSessionState('s1')).toBe(false);
     projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
-    expect(projector.retainedMessageCount('s1')).toBe(0);
+    expect(projector.hasSessionState('s1')).toBe(true);
   });
 });

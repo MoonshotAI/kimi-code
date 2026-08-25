@@ -57,6 +57,12 @@ export default {
   agent: {
     foreground: '前台',
     background: '后台',
+    status: {
+      running: '运行中',
+      ok: '已完成',
+      error: '失败',
+      cancelled: '已取消',
+    },
   },
   output: {
     waiting: '等待输出…',

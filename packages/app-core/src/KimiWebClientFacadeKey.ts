@@ -1,5 +1,4 @@
 import type { InjectionKey } from 'vue';
-import type { KimiClientState } from './api/daemon/eventReducer';
 
 /**
  * Facade that `apps/web` provides under {@link KimiWebClientFacadeKey} and that

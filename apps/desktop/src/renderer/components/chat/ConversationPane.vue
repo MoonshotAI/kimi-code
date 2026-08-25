@@ -437,6 +437,28 @@ function resolveAgentModel(
   return { display, effort };
 }
 provide('resolveAgentModel', resolveAgentModel);
+// A BACKGROUND Agent call returns at spawn: its own status would show a
+// premature ✓ while the task still runs, so the card binds its status icon to
+// the task's live state via this resolver. Undefined when the task row is
+// gone (restored history without lifecycle rows) — the card falls back to the
+// tool call's own status there.
+function resolveAgentTaskState(
+  toolCallId: string,
+  agentId: string | undefined,
+): TaskItem['state'] | undefined {
+  // Bind by the SPAWNING call first: a resumed subagent reuses its agentId,
+  // and the old historical card must not pick up the new generation's state.
+  const byCall = props.tasks.find((tk) => tk.parentToolCallId === toolCallId);
+  if (byCall !== undefined) return byCall.state;
+  // Only a task with NO parent identity of its own may fall back to agent-id:
+  // a task bound to ANOTHER call is the new generation of a resumed subagent,
+  // and this old card must not pick up its state.
+  if (agentId === undefined) return undefined;
+  return props.tasks.find(
+    (tk) => (tk.agentId === agentId || tk.id === agentId) && tk.parentToolCallId === undefined,
+  )?.state;
+}
+provide('resolveAgentTaskState', resolveAgentTaskState);
 // Only manual toggles on SETTLED rows call this: the row is pinned while its
 // body transition runs, breaking the bottom follow on purpose; the follow
 // state is re-decided from real geometry once the pin settles (see

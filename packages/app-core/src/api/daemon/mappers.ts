@@ -89,50 +89,6 @@ export function isPlaceholderSessionUsage(usage: AppSessionUsage): boolean {
   );
 }
 
-/**
- * Merge a snapshot's session into the pooled one (session open / reopen /
- * resync all funnel through this). The snapshot's wire session is the v1
- * projection, and the pooled entry carries facts that projection must not
- * overwrite:
- * - usage arrives as the all-zero placeholder (both engines) — keep the live
- *   usage folded in from /status and the WS stream instead of zeroing the
- *   context ring on every snapshot sync;
- * - model may be empty (the daemon couldn't resolve it) — keep the pooled one;
- * - pullRequest rides only the v2 list's git domain (include=git); the v1
- *   snapshot never carries it — preserve the pooled value (`undefined` =
- *   never checked, `null` = checked, no PR);
- * - updatedAt is prompt-submit-grained server-side while the client bumps at
- *   turn end and on approval/question requests. Blindly taking the server
- *   value re-sorted the sidebar on every click (and could even downgrade a
- *   newer local bump), so keep whichever timestamp is newer — except while
- *   the main turn is still running: the server also bumps mid-turn (prompt
- *   submit, auto title), and importing that on click floats the session
- *   before the turn finishes. The turn's start and end both bump recency via
- *   durable WS events (replayed after a reconnect), so nothing is lost by
- *   holding the local value until then.
- *
- * `mainTurnActive` is the snapshot's EFFECTIVE main-turn liveness, computed by
- * the caller (`snap.session.mainTurnActive ?? (inFlightTurn !== null && busy)`)
- * — older daemons omit the field, and treating the absence as "not running"
- * would import a mid-turn server timestamp on click.
- */
-export function mergeSnapshotSession(
-  pooled: AppSession,
-  snap: AppSession,
-  mainTurnActive: boolean,
-): AppSession {
-  return {
-    ...snap,
-    model: snap.model.length > 0 ? snap.model : pooled.model,
-    usage: isPlaceholderSessionUsage(snap.usage) ? pooled.usage : snap.usage,
-    updatedAt:
-      !mainTurnActive && snap.updatedAt > pooled.updatedAt
-        ? snap.updatedAt
-        : pooled.updatedAt,
-    pullRequest: snap.pullRequest ?? pooled.pullRequest,
-  };
-}
-
 export function toAppSession(wire: WireSession): AppSession {  return {
     id: wire.id,
     title: wire.title,

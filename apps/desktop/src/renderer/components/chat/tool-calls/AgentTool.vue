@@ -10,7 +10,12 @@
 
      Historical calls use their persisted child agent id to cold-resume the
      transcript. Saved output remains available as a fallback when the
-     transcript cannot be restored. -->
+     transcript cannot be restored.
+
+     BACKGROUND calls return at spawn time, so their own call status would
+     flash a premature ✓ while the task still runs: the status icon binds the
+     task's live state (blue dot → ✓/✗ at the task's real terminal), falling
+     back to the call status only when the task row is gone. -->
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -64,6 +69,28 @@ const agentTarget = computed(
   () => props.tool.agentId ?? resolveAgentTaskId?.(props.tool.id),
 );
 const canOpenAgent = computed(() => agentTarget.value !== undefined);
+const resolveAgentTaskState = inject<
+  (
+    toolCallId: string,
+    agentId: string | undefined,
+  ) => 'run' | 'done' | 'fail' | 'cancelled' | undefined
+>('resolveAgentTaskState');
+// Background only: the icon tells the TASK's truth, not the spawn call's.
+const taskState = computed(() =>
+  input.value.runInBackground
+    ? resolveAgentTaskState?.(props.tool.id, agentTarget.value)
+    : undefined,
+);
+const displayStatus = computed<'running' | 'ok' | 'error' | 'cancelled'>(() => {
+  const ts = taskState.value;
+  if (ts === 'run') return 'running';
+  if (ts === 'done') return 'ok';
+  if (ts === 'fail') return 'error';
+  // Cancelled stays NEUTRAL (the user stopped it on purpose) — not an error.
+  if (ts === 'cancelled') return 'cancelled';
+  return status.value;
+});
+const statusLabel = computed(() => t(`tools.agent.status.${displayStatus.value}`));
 
 // Meta line: 前台/后台 · agent type · bound model (friendly name) · effort
 // (concrete levels only; boolean on/off hidden). The run_in_background arg
@@ -97,7 +124,7 @@ function onClick(): void {
 </script>
 
 <template>
-  <div class="agent-card" :class="{ err: status === 'error' }">
+  <div class="agent-card" :class="{ err: displayStatus === 'error' }">
     <button
       class="head"
       type="button"
@@ -112,9 +139,10 @@ function onClick(): void {
         <span v-if="meta" class="type">{{ meta }}</span>
       </span>
       <span class="tail">
-        <span class="st" :class="status" role="status" :aria-label="status">
-          <Icon v-if="status === 'ok'" name="check" size="sm" />
-          <Icon v-else-if="status === 'error'" name="close" size="sm" />
+        <span class="st" :class="displayStatus" role="status" :aria-label="statusLabel">
+          <Icon v-if="displayStatus === 'ok'" name="check" size="sm" />
+          <Icon v-else-if="displayStatus === 'error'" name="close" size="sm" />
+          <Icon v-else-if="displayStatus === 'cancelled'" name="close" size="sm" />
           <StatusDot v-else status="running" />
         </span>
         <Icon v-if="canOpenAgent" class="go" name="arrow-right" size="sm" aria-hidden="true" />
@@ -245,6 +273,9 @@ function onClick(): void {
 }
 .st.error {
   color: var(--color-danger);
+}
+.st.cancelled {
+  color: var(--color-text-faint);
 }
 .go {
   color: var(--color-text-faint);

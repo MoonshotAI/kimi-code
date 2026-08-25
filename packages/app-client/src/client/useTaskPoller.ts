@@ -151,18 +151,22 @@ export function useTaskPoller(
   /**
    * Poll background task output for a session. Mirrors the TUI's 1-second refresh:
    * refresh the task list, then fetch tail output for running tasks and a final
-   * snapshot for terminal tasks that haven't received output yet.
+   * snapshot for terminal tasks that haven't received output yet. Resolves
+   * whether REST itself shows no running tasks left — a lagging /tasks returning
+   * `running` right after the transcript settled must not retire the polling
+   * (the terminal fetch would be lost for good).
    */
-  async function pollTaskOutputForSession(sessionId: string): Promise<void> {
-    if (rawState.activeSessionId !== sessionId) return;
+  async function pollTaskOutputForSession(sessionId: string): Promise<boolean> {
+    if (rawState.activeSessionId !== sessionId) return true;
 
     const api = deps.api;
     let taskList: AppTask[];
     try {
       taskList = await api.listTasks(sessionId);
     } catch {
-      return;
+      return false;
     }
+    const restIdle = !taskList.some((task) => task.status === 'running');
 
     const outputByTaskId = new Map<string, { preview: string; bytes?: number }>();
 
@@ -257,6 +261,7 @@ export function useTaskPoller(
       // Keep WS-delivered swarm subagents that REST /tasks omits (see keepLiveSubagents).
       [sessionId]: keepLiveSubagents(refreshed, existing),
     };
+    return restIdle;
   }
 
   function startTaskOutputPolling(sessionId: string): void {
@@ -271,7 +276,21 @@ export function useTaskPoller(
         return;
       }
       if (rawState.activeSessionId === sessionId) {
-        void pollTaskOutputForSession(sessionId);
+        void pollTaskOutputForSession(sessionId).then((restIdle) => {
+          // The transcript row can settle a beat or two ahead of /tasks: only
+          // a REST-confirmed no-running answer may retire the interval, or the
+          // lagging answer loses the terminal fetch for good. The user may
+          // have switched away while this read was in flight — the stop is
+          // global, so it belongs to the session still being polled.
+          if (
+            restIdle &&
+            !activeAppTasks.value.some((t) => t.status === 'running') &&
+            rawState.activeSessionId === sessionId &&
+            lastPolledSessionId === sessionId
+          ) {
+            stopTaskOutputPolling();
+          }
+        });
       } else {
         stopTaskOutputPolling();
       }
@@ -282,6 +301,11 @@ export function useTaskPoller(
     if (taskOutputPollTimer !== null) {
       clearInterval(taskOutputPollTimer);
       taskOutputPollTimer = null;
+    }
+    if (finalBeatTimer !== null) {
+      clearTimeout(finalBeatTimer);
+      finalBeatTimer = null;
+      finalBeatSessionId = undefined;
     }
     lastPolledSessionId = undefined;
     fetchedTerminalTaskOutputIds.clear();
@@ -310,31 +334,84 @@ export function useTaskPoller(
 
   // Start/stop task output polling based on whether the active session has
   // running background tasks. This mirrors the TUI's 1-second refresh.
+  // The closing beat for the no-running case: one forced read (it must run
+  // even while hidden — the interval skips those ticks), then it reschedules
+  // ITSELF until REST confirms no running tasks either. The transcript row
+  // can settle a beat or two ahead of /tasks, and stopping on a lagging
+  // "running" answer loses the terminal fetch for good (nothing restarts the
+  // poller with no running rows left). Module-scope tracking keeps the
+  // watcher's re-fires (on every poll's state write) from multiplying it.
+  let finalBeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let finalBeatSessionId: string | undefined;
+
+  function scheduleFinalBeat(sessionId: string): void {
+    if (finalBeatTimer !== null && finalBeatSessionId === sessionId) return;
+    // A still-running interval belongs to the PREVIOUS session: its next
+    // cross-session tick takes the global-stop branch and would wipe the
+    // beat scheduled here. Retire it first — the interval's own
+    // cross-session stop is only for the no-beat-follows path.
+    if (taskOutputPollTimer !== null && lastPolledSessionId !== sessionId) {
+      stopTaskOutputPolling();
+    }
+    if (finalBeatTimer !== null) clearTimeout(finalBeatTimer);
+    finalBeatSessionId = sessionId;
+    let beats = 0;
+    const beat = (): void => {
+      void pollTaskOutputForSession(sessionId).then((restIdle) => {
+        if (finalBeatSessionId !== sessionId) return;
+        if (activeAppTasks.value.some((t) => t.status === 'running')) {
+          // New work appeared meanwhile — the running branch owns polling now.
+          if (finalBeatTimer !== null) clearTimeout(finalBeatTimer);
+          finalBeatTimer = null;
+          finalBeatSessionId = undefined;
+          return;
+        }
+        if (restIdle) {
+          if (finalBeatTimer !== null) clearTimeout(finalBeatTimer);
+          finalBeatTimer = null;
+          finalBeatSessionId = undefined;
+          if (lastPolledSessionId === sessionId) stopTaskOutputPolling();
+          return;
+        }
+        beats += 1;
+        if (beats >= 10) {
+          // REST never confirmed: the transcript row already settled the UI —
+          // stop rather than poll forever.
+          if (finalBeatTimer !== null) clearTimeout(finalBeatTimer);
+          finalBeatTimer = null;
+          finalBeatSessionId = undefined;
+          if (lastPolledSessionId === sessionId) stopTaskOutputPolling();
+          return;
+        }
+        finalBeatTimer = setTimeout(beat, 1500);
+      });
+    };
+    finalBeatTimer = setTimeout(beat, 1500);
+  }
+
   watch(
     () => {
       const sid = rawState.activeSessionId;
       if (!sid) return { sid: undefined as string | undefined, hasRunning: false };
-      const tasks = rawState.tasksBySession[sid] ?? [];
-      return { sid, hasRunning: tasks.some((t) => t.status === 'running') };
+      // Gate on the VISIBLE rows (transcript flow), not rawState.tasksBySession:
+      // the legacy slice is only refreshed by this very poll, so a task spawned
+      // after the session was opened would never start polling otherwise.
+      return { sid, hasRunning: activeAppTasks.value.some((t) => t.status === 'running') };
     },
-    ({ sid, hasRunning }, _prev, onCleanup) => {
-      let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    ({ sid, hasRunning }) => {
       if (hasRunning && sid !== undefined) {
+        // New work cycle: a pending closing beat from the finished round is moot.
+        if (finalBeatTimer !== null) {
+          clearTimeout(finalBeatTimer);
+          finalBeatTimer = null;
+          finalBeatSessionId = undefined;
+        }
         startTaskOutputPolling(sid);
       } else if (sid !== undefined) {
-        // All tasks finished — wait a beat to catch final output, then stop.
-        cleanupTimer = setTimeout(() => {
-          const tasks = rawState.tasksBySession[sid] ?? [];
-          if (!tasks.some((t) => t.status === 'running')) {
-            stopTaskOutputPolling();
-          }
-        }, 1500);
+        scheduleFinalBeat(sid);
       } else {
         stopTaskOutputPolling();
       }
-      onCleanup(() => {
-        if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
-      });
     },
     { deep: true, immediate: true },
   );

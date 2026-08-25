@@ -70,6 +70,36 @@ describe('TranscriptChannel', () => {
     expect(channel.seq).toBe(5);
   });
 
+  it('settleOlder joins the in-flight older-page read', async () => {
+    let resolveOlder!: (value: SessionTranscriptPage) => void;
+    const fetchPage = vi.fn((query: { beforeTurn?: string }): Promise<SessionTranscriptPage> => {
+      if (query.beforeTurn) {
+        return new Promise<SessionTranscriptPage>((resolve) => {
+          resolveOlder = resolve;
+        });
+      }
+      return Promise.resolve(page([turn('t2', 2)], true, 3));
+    });
+    const channel = new TranscriptChannel({
+      sessionId: 's1',
+      agentId: 'agent-a',
+      fetchPage,
+    });
+
+    await channel.refresh();
+    void channel.loadOlder();
+    let settled = false;
+    void channel.settleOlder().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveOlder(page([turn('t1', 1)], false, 4, 'turn'));
+    await channel.settleOlder();
+    expect(settled).toBe(true);
+  });
+
   it('replays live ops buffered while loading an older page', async () => {
     let resolveOlder!: (value: SessionTranscriptPage) => void;
     const olderPage = new Promise<SessionTranscriptPage>((resolve) => {

@@ -89,7 +89,7 @@ describe('DaemonKimiWebApi plugins', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://test.local/api/v1/plugins');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(String(init.body))).toEqual({ source: 'https://cdn.example.test/p.zip' });
+    expect(JSON.parse(init.body as string)).toEqual({ source: 'https://cdn.example.test/p.zip' });
     expect(result.id).toBe('kimi-cu');
   });
 

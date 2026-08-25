@@ -69,6 +69,13 @@ function createApi(): KimiWebApi {
 /** The shared DaemonKimiWebApi instance (composed with this app's bridges). */
 export const api: KimiWebApi = createApi();
 
+// Dev-only probe handle for the transcript-migration shadow phase (CDP
+// reconciliation drives sessions/prompts through it). Removed when the
+// shadow phase ends.
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  (window as unknown as { __kimiApi: unknown }).__kimiApi = api;
+}
+
 /**
  * Back-compat accessor kept so the existing `getKimiWebApi()` call sites need no
  * changes; returns the same singleton as `api`.

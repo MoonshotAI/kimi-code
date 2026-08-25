@@ -25,9 +25,7 @@ import type {
   AppSession,
   AppSkill,
   AppSkillAttachment,
-  AppSessionCursor,
   AppSessionRuntimeStatus,
-  AppSessionSnapshot,
   AppTask,
   AppTaskStatus,
   AppTerminal,
@@ -81,7 +79,6 @@ const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 // error-codes.ts); used to detect servers that predate a request field.
 const VALIDATION_FAILED_CODE = 40001;
 import {
-  toAppApprovalRequest,
   toAppCatalogProvider,
   toAppConfig,
   toAppEvent,
@@ -90,7 +87,6 @@ import {
   toAppMessage,
   toAppModel,
   toAppProvider,
-  toAppQuestionRequest,
   toAppSession,
   toAppTask,
   toWireApprovalResponse,
@@ -136,7 +132,6 @@ import type {
   WireSessionWarning,
   WireSessionWarningsResponse,
   WireSessionRuntimeStatus,
-  WireSessionSnapshot,
   WireUpdateProviderRequest,
   WireUpdateProviderResult,
   WireV2SessionIdsPage,
@@ -148,7 +143,7 @@ import type {
   WireUsageResult,
   WireUsageRow,
 } from './wire';
-import { DaemonEventSocket } from './ws';
+import { DaemonEventSocket, type DaemonEventSocketHandlers } from './ws';
 import { getSessionTranscript } from './transcript';
 
 function safeExportFileName(contentDisposition: string | undefined, fallback: string): string {
@@ -742,64 +737,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
       items: data.items.map(toAppMessage),
       hasMore: data.has_more,
     };
-  }
-
-  /**
-   * v2 initial sync: atomic session state at an `as_of_seq` watermark.
-   * Rebuild flow: getSessionSnapshot() → seedSnapshot() → subscribe(cursor).
-   */
-  async getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot> {
-    const startedAt = Date.now();
-    this.tracer.traceKeyEvent?.('session:snapshot:start', { sessionId });
-    try {
-      const data = await this.http.get<WireSessionSnapshot>(
-        `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
-      );
-      const snapshot: AppSessionSnapshot = {
-        asOfSeq: data.as_of_seq,
-        epoch: data.epoch,
-        session: toAppSession(data.session),
-        // Snapshot messages are already chronological ascending.
-        messages: data.messages.items.map(toAppMessage),
-        hasMoreMessages: data.messages.has_more,
-        inFlightTurn:
-          data.in_flight_turn === null
-            ? null
-            : {
-                turnId: data.in_flight_turn.turn_id,
-                assistantText: data.in_flight_turn.assistant_text,
-                thinkingText: data.in_flight_turn.thinking_text,
-                runningTools: data.in_flight_turn.running_tools.map((t) => ({
-                  toolCallId: t.tool_call_id,
-                  name: t.name,
-                  args: t.args,
-                  description: t.description,
-                  lastProgress: t.last_progress,
-                })),
-                promptId: data.in_flight_turn.current_prompt_id,
-              },
-        pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
-        pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
-        // Older servers omit the roster entirely; treat as an empty roster.
-        subagents: (data.subagents ?? []).map((task) => toAppTask(task, task.id)),
-      };
-      this.tracer.traceKeyEvent?.('session:snapshot:accepted', {
-        sessionId,
-        busy: snapshot.session.busy,
-        seq: snapshot.asOfSeq,
-        messageCount: snapshot.messages.length,
-        durationMs: Date.now() - startedAt,
-      });
-      return snapshot;
-    } catch (error) {
-      this.tracer.traceKeyEvent?.('session:snapshot:failed', {
-        sessionId,
-        status: 'failed',
-        durationMs: Date.now() - startedAt,
-        ...errorTraceMetadata(error),
-      });
-      throw error;
-    }
   }
 
   async getSessionTranscript(
@@ -2104,12 +2041,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
     socket.connect();
 
     return {
-      subscribe(sessionId: string, cursor?: AppSessionCursor): void {
+      subscribe(sessionId: string, cursor?: { seq: number; epoch?: string }): void {
         // Do NOT reset projector state here: every sidebar click re-subscribes
         // the (possibly running) session, and a reset wipes the turn/prompt
         // bindings — the remainder of an in-flight turn would be dropped on
         // the floor. The projector starts sessions fresh on first sight, and
         // onResync (below) resets explicitly before messages are reloaded.
+        // The cursor is the caller's last consumed seq: an LRU-evicted session
+        // resuming must not replay (and duplicate) the events it already saw —
+        // side-channel (BTW) streams depend on this.
         socket.subscribe(sessionId, cursor ?? { seq: 0 });
       },
       unsubscribe(sessionId: string): void {
@@ -2125,23 +2065,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       unsubscribeTranscript(sessionId: string, agentIds?: string[]): void {
         socket.unsubscribeTranscript(sessionId, agentIds);
-      },
-      seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
-        // Rebuild the projector's mid-turn state from the snapshot. The
-        // resulting AppEvent (the partially-streamed assistant message) flows
-        // through the SAME onEvent path as live events, so the rendering layer
-        // needs no special handling; session status comes from the snapshot's
-        // authoritative session record. When there is no in-flight turn we
-        // only reset, so stale turn state can't leak into the freshly-loaded
-        // message list.
-        if (snapshot.inFlightTurn === null) {
-          projector.reset(sessionId);
-          return;
-        }
-        const appEvents = projector.seedInFlight(sessionId, snapshot.inFlightTurn);
-        for (const appEvent of appEvents) {
-          handlers.onEvent(appEvent, { sessionId, seq: snapshot.asOfSeq });
-        }
       },
       bindNextPromptId(sessionId: string, promptId: string): void {
         // Wire the real daemon prompt_id into the projector so turn.started
@@ -2183,6 +2106,55 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
     };
   }
+
+  /**
+   * A transcript-only companion connection (the main-flow migration's shadow
+   * channel): same daemon, a `-transcript` client-id suffix so the server
+   * treats it as a distinct connection — its per-agent transcript grades
+   * never suppress session_event frames on the legacy connection.
+   */
+  connectTranscriptChannel(handlers: {
+    onTranscriptReset?: DaemonEventSocketHandlers['onTranscriptReset'];
+    onTranscriptOps?: DaemonEventSocketHandlers['onTranscriptOps'];
+    onConnectionState?: (connected: boolean) => void;
+    onError?: (code: number, msg: string, fatal: boolean) => void;
+  }): KimiEventConnection {
+    const clientId = `${this.opts.identity.clientId}-transcript`;
+    const socket = new DaemonEventSocket({
+      wsUrl: buildWsUrl(this.opts.origin, clientId),
+      clientId,
+      tracer: this.tracer,
+      credentialStore: this.opts.credentialStore,
+      handlers: {
+        onWireEvent: () => {},
+        onResync: () => {},
+        onConnectionState: (connected) => handlers.onConnectionState?.(connected),
+        onError: (code, msg, fatal) => handlers.onError?.(code, msg, fatal),
+        onTranscriptReset: handlers.onTranscriptReset,
+        onTranscriptOps: handlers.onTranscriptOps,
+      },
+    });
+    socket.connect();
+    return {
+      subscribe: () => {},
+      unsubscribe: () => {},
+      subscribeTranscript: (sessionId, agentId, sinceSeq) =>
+        socket.subscribeTranscript(sessionId, agentId, sinceSeq),
+      unsubscribeTranscript: (sessionId, agentIds) =>
+        socket.unsubscribeTranscript(sessionId, agentIds),
+      bindNextPromptId: () => {},
+      abort: () => {},
+      terminalAttach: () => {},
+      terminalInput: () => {},
+      terminalResize: () => {},
+      terminalDetach: () => {},
+      terminalClose: () => {},
+      markSideChannelAgent: () => {},
+      health: () => socket.health(),
+      reconnect: () => socket.reconnect(),
+      close: () => socket.close(),
+    };
+  }
 }
 
 function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefreshResult {
@@ -2212,7 +2184,7 @@ function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const url = String(reader.result);
+      const url = typeof reader.result === 'string' ? reader.result : '';
       resolve(url.slice(url.indexOf(',') + 1));
     };
     reader.onerror = () => reject(reader.error);

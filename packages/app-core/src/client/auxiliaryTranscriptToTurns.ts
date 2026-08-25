@@ -42,13 +42,25 @@ export function auxiliaryTranscriptToTurns(
   return messagesToTurns(messages, [], getFileUrl, running, {}, {}, { getSessionMediaUrl: options?.getSessionMediaUrl }).map(clearMissingTimestamps);
 }
 
-function turnToMessages(
+export function turnToMessages(
   turn: TranscriptTurn,
   attachments: readonly TranscriptAttachment[],
   taskById: ReadonlyMap<string, TranscriptTask>,
   fallbackStartedAt?: string,
   fallbackEndedAt?: string,
   sessionId = '',
+  options?: {
+    /** The main flow drives origin-keyed rendering (goal continuations, cron
+     *  turns, skill cards, hidden injections) off the user message's
+     *  metadata.origin — set it from the turn's origin payload. The detail
+     *  panel leaves this off (its rendering doesn't use those paths). */
+    includeOrigin?: boolean;
+    /** Observed times the turn's pending interactions appeared, keyed by the
+     *  suspended step id — an approval/question pauses that step WITHOUT
+     *  ending it, and each suspended step's open thinking span settles at its
+     *  own stamp instead of billing the human's wait as thinking time. */
+    pendingInteractionAtByStepId?: ReadonlyMap<string, string>;
+  },
 ): AppMessage[] {
   const messages: AppMessage[] = [];
   const attachmentById = new Map(attachments.map((item) => [item.attachmentId, item]));
@@ -59,9 +71,16 @@ function turnToMessages(
   ]) ?? '';
   const endedAt = validTimestamp(turn.endedAt) ?? validTimestamp(fallbackEndedAt);
   const promptId = turn.turnId;
+  const originPayload = (turn.origin as { payload?: unknown }).payload ?? turn.origin;
 
-  if (turn.prompt !== undefined && turn.prompt.length > 0) {
-    const content: AppMessageContent[] = [{ type: 'text', text: turn.prompt }];
+  // A media-only prompt (attachments, no text) still produces the user
+  // message — dropping it would lose the attachments too.
+  const hasAttachments = (turn.attachmentIds ?? []).length > 0;
+  if ((turn.prompt !== undefined && turn.prompt.length > 0) || hasAttachments) {
+    const content: AppMessageContent[] =
+      turn.prompt !== undefined && turn.prompt.length > 0
+        ? [{ type: 'text', text: turn.prompt }]
+        : [];
     for (const attachmentId of turn.attachmentIds ?? []) {
       const attachment = attachmentToContent(attachmentById.get(attachmentId));
       if (attachment !== undefined) content.push(attachment);
@@ -74,8 +93,9 @@ function turnToMessages(
       createdAt,
       promptId,
       metadata:
-        turn.origin.kind === 'task' && turn.prompt.includes('<notification')
-          ? { origin: turn.origin.payload ?? turn.origin }
+        options?.includeOrigin === true ||
+        (turn.origin.kind === 'task' && (turn.prompt ?? '').includes('<notification'))
+          ? { origin: originPayload }
           : undefined,
     });
   }
@@ -123,7 +143,20 @@ function turnToMessages(
             type: 'thinking',
             thinking: frame.text,
             startedAt: step.startedAt,
-            durationMs: durationMs(step.startedAt, step.endedAt),
+            // A step the interaction paused settles its open span at the
+            // observed pending time — and KEEPS that ceiling when the step
+            // later ends, or the human's wait gets billed back into the
+            // thinking duration. Each suspended step carries its OWN stamp,
+            // so sequential interactions never re-bill an earlier step. (A
+            // span the suspension precedes shows as open/negative and is
+            // filtered below.)
+            durationMs: durationMs(
+              step.startedAt,
+              earliestTimestamp([
+                step.endedAt,
+                options?.pendingInteractionAtByStepId?.get(step.stepId),
+              ]),
+            ),
           }],
           createdAt: step.startedAt ?? createdAt,
           promptId,
@@ -165,11 +198,16 @@ function turnToMessages(
   }
 
   const duration = turn.durationMs ?? durationMs(createdAt || undefined, endedAt);
-  if (duration !== undefined) {
-    const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
-    if (lastAssistant >= 0) {
-      messages[lastAssistant] = { ...messages[lastAssistant]!, durationMs: duration };
-    }
+  const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
+  if (lastAssistant >= 0 && (duration !== undefined || endedAt !== undefined)) {
+    // The turn's real end rides the last assistant message: messagesToTurns
+    // otherwise derives ChatTurn.endedAt from a later message's createdAt —
+    // which, for a thinking → tool → final text turn, is the step's START.
+    messages[lastAssistant] = {
+      ...messages[lastAssistant]!,
+      durationMs: duration,
+      endedAt: endedAt ?? messages[lastAssistant]!.endedAt,
+    };
   }
   return messages;
 }
@@ -203,7 +241,7 @@ function clearMissingTimestamps(turn: ChatTurn): ChatTurn {
   return next;
 }
 
-function earliestTimestamp(values: readonly (string | undefined)[]): string | undefined {
+export function earliestTimestamp(values: readonly (string | undefined)[]): string | undefined {
   let earliest: { value: string; time: number } | undefined;
   for (const value of values) {
     if (value === undefined) continue;

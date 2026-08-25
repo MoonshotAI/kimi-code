@@ -3,7 +3,7 @@
 // Platform differences arrive via ./deps injection (api / t / tracer / native
 // terminal / telemetry), registered by each app's composition root.
 
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, shallowReactive, watch } from 'vue';
 import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
 import {
   getKimiWebApi,
@@ -31,11 +31,10 @@ import { mergeWorkspaces } from '@moonshot-ai/app-core/lib';
 import { basename } from '@moonshot-ai/app-core/lib';
 import { insertSessionByRecency, sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { workspaceRootKey } from '@moonshot-ai/app-core/lib';
-import { mergeSnapshotMessages } from '@moonshot-ai/app-core/lib';
-import { mergeSnapshotSubagents } from '@moonshot-ai/app-core/lib';
-import { createCoalescedAsyncRunner } from '@moonshot-ai/app-core/lib';
 import { buildApprovalBlock } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
+import { ackSwarmPending, foldDaemonSwarmMode } from '@moonshot-ai/app-core/lib';
+import { ackPlanPending, foldDaemonPlanMode } from '@moonshot-ai/app-core/lib';
 import {
   loadUnread,
   loadWorkspaceOrder,
@@ -55,11 +54,14 @@ import {
   coalesceAppRenderEvents,
   createEventBatcher,
   isRenderEvent,
-  normalizeToolOutput,
   splitOversizedAppRenderEvent,
   type PendingAppEvent,
 } from '@moonshot-ai/app-core/client';
 import { applyRecordDiff } from '@moonshot-ai/app-core/client';
+import { createMainTurnsProjector, interactionToApproval, interactionToQuestion } from '@moonshot-ai/app-core/client';
+import { transcriptTasksToAppTasks, spawnedParentByAgentId, type SpawnedIndex } from '@moonshot-ai/app-core/client';
+import { messagesToTurns } from '@moonshot-ai/app-core/client';
+import { normalizeToolOutput } from '@moonshot-ai/app-core/client';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { shouldNotifyCompletion } from '../composables/useNotification';
 import { notificationsStore } from '../stores/notifications';
@@ -69,10 +71,15 @@ import { useSideChat } from './useSideChat';
 import { useTaskPoller } from './useTaskPoller';
 import type { ExtendedState, ManagedMembership } from './types';
 import { createAuxiliaryTranscriptPool } from '../composables/useAuxiliaryTranscripts';
+import { createMainTranscriptHost } from '../composables/useMainTranscriptHost';
+import type { MainTranscriptEntry } from '../composables/useMainTranscripts';
+import type { TranscriptTurn } from '@moonshot-ai/app-core/transcript';
+import { itemId as transcriptItemId, type AgentTranscriptSnapshot, type TranscriptItem, type TranscriptPrompt } from '@moonshot-ai/app-core/transcript';
 import {
   beginLocalTurn,
   FLAT_SESSIONS_PAGE_SIZE,
   forgetLocalTurnState,
+  localTurnStartState,
   SESSIONS_INITIAL_PAGE_SIZE,
   settleLocalTurn,
   useWorkspaceState,
@@ -91,7 +98,6 @@ import type {
   AppGoal,
   AppNotice,
   AppNoticeDetail,
-  AppMessage,
   AppModel,
   AppProvider,
   AppQuestionRequest,
@@ -113,16 +119,13 @@ import type {
 import {
   createInitialState,
   reduceAppEvent,
+  buildAgentErrorNotice,
   toAppEvent,
-  isPlaceholderSessionUsage,
-  mergeSnapshotSession,
   shallowEqualArray,
   type CompactionStatus,
   type KimiClientState,
 } from '@moonshot-ai/app-core/api';
 
-import { createTurnsProjector } from '@moonshot-ai/app-core/client';
-import { latestTodos } from '@moonshot-ai/app-core/client';
 import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from '@moonshot-ai/app-core/client';
 import type { SwarmGroup, SwarmMember } from '@moonshot-ai/app-core/client';
 import type {
@@ -154,7 +157,6 @@ const ACTIVE_WORKSPACE_KEY = STORAGE_KEYS.activeWorkspace;
 const PLAN_ARMED_STORAGE_KEY = STORAGE_KEYS.planArmed;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
-const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
 // Appearance types + logic live in @moonshot-ai/app-core; re-exported here so
@@ -376,13 +378,18 @@ const rawState: ExtendedState = reactive({
   // successful /status fold replaces it.
   planModeBySession: loadModeMapFromStorage(STORAGE_KEYS.planMode),
   planArmedBySession: loadModeMapFromStorage(PLAN_ARMED_STORAGE_KEY),
+  pendingPlanBySession: {},
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
+  pendingSwarmBySession: {},
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
   loading: false,
   sessionLoading: false,
   queuedBySession: {},
   promptIdBySession: {},
+  abortPromptIdBySession: {},
   inFlightBySession: {},
+  optimisticMessagesBySession: {},
+  sessionLastTurnReasonSeqBySession: {},
   unreadBySession: loadUnread(),
   authReady: false,
   defaultModel: null,
@@ -397,11 +404,8 @@ const rawState: ExtendedState = reactive({
   availableOpenInApps: [],
   config: null,
   sideChatMessagesByAgent: {},
-  sideChatSendingByAgent: {},
   sideChatUserMessageIdsBySession: {},
-  messagesLoadingMoreBySession: {},
-  messagesHasMoreBySession: {},
-  messagesLoadMoreErrorBySession: {},
+  sideChatSendingByAgent: {},
   sessionsHasMoreByWorkspace: {},
   sessionsLoadingMoreByWorkspace: {},
   sessionsCursorByWorkspace: {},
@@ -597,23 +601,21 @@ if (typeof window !== 'undefined') {
  * no recovery short of a full page reload.
  *
  * If the socket looks stale, force a clean reconnect — the handshake
- * re-subscribes at the last durable cursor — then refresh the active session
- * from its authoritative snapshot to re-seed the volatile streaming tokens lost
- * during the gap.
+ * re-subscribes at the last durable cursor. The transcript channels recover
+ * themselves (their own stale check + gap-driven baseline refresh).
  */
 function recoverStaleConnection(): void {
-  if (eventConn === null) return;
-  if (!eventConn.health().stale) return;
-  traceKeyEvent('ws:stale-reconnect', {
-    sessionId: rawState.activeSessionId,
-    status: 'stale',
-  });
-  traceClientEvent('ws: stale socket on focus, reconnecting', {
-    activeSessionId: rawState.activeSessionId,
-  });
-  eventConn.reconnect();
-  const active = rawState.activeSessionId;
-  if (active) snapshotSyncRunner.request(active);
+  if (eventConn !== null && eventConn.health().stale) {
+    traceKeyEvent('ws:stale-reconnect', {
+      sessionId: rawState.activeSessionId,
+      status: 'stale',
+    });
+    traceClientEvent('ws: stale socket on focus, reconnecting', {
+      activeSessionId: rawState.activeSessionId,
+    });
+    eventConn.reconnect();
+  }
+  mainTranscriptHost.recoverIfStale();
 }
 
 if (typeof document !== 'undefined') {
@@ -637,34 +639,19 @@ function setActiveSessionId(id: string | undefined): void {
   rawState.activeSessionId = id;
 }
 
-// ---------------------------------------------------------------------------
-// rawState.messagesBySession — single mutation funnel.
-//
-// All writers assign PER KEY, never replace the record itself: a wholesale
-// `{...map}` replacement dirties every computed that reads the record —
-// including other sessions' turns projector, which re-ran on every background
-// session's streaming delta (cross-session invalidation). Per-key writes only
-// trigger the deps of the key written (and iteration deps on add/delete).
-// ---------------------------------------------------------------------------
-/** Apply the reducer's next messages map key-by-key (e.g. from a snapshot). */
-function setMessagesBySession(next: Record<string, AppMessage[]>): void {
-  applyRecordDiff(rawState.messagesBySession, next);
-}
-/** Set one session's message list. */
-function setSessionMessages(sessionId: string, messages: AppMessage[]): void {
-  rawState.messagesBySession[sessionId] = messages;
-}
-/** Update one session's message list via a function of the current list. */
-function updateSessionMessages(
-  sessionId: string,
-  update: (messages: AppMessage[]) => AppMessage[],
-): void {
-  rawState.messagesBySession[sessionId] = update(rawState.messagesBySession[sessionId] ?? []);
-}
-/** Remove one session's message list. */
-function removeSessionMessages(sessionId: string): void {
-  delete rawState.messagesBySession[sessionId];
-}
+// The seq of the latest ARCHIVED-state-changing event per session (archive OR
+// restore): the resync session-fact read compares against this — an archived
+// answer from inside the gap must not apply when a restore landed mid-read,
+// and a same-value ABA flip can't be told by field comparison alone.
+const sessionArchivedSeqBySid = new Map<string, number>();
+// Same gate for the title: sessionMetaUpdated patches can ABA the field
+// mid-read (A→B→A), and no later baseline restores a title overwritten stale.
+const sessionTitleSeqBySid = new Map<string, number>();
+// Bumped synchronously on every resync per session: a getSession read
+// superseded by a LATER resync must drop its result — the newer resync's own
+// read converges everything, and the older one's stale fields (REST commits
+// don't advance the event seq) would otherwise win on landing order alone.
+const resyncGenerationBySid = new Map<string, number>();
 
 // ---------------------------------------------------------------------------
 // Session teardown — single place that wipes a session and all its per-session
@@ -677,6 +664,7 @@ function forgetSession(sessionId: string): void {
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
   auxiliaryTranscripts.forgetSession(sessionId);
+  mainTranscriptHost.forgetSession(sessionId);
   // Side-chat buckets keyed by this session (and its BTW agent): target,
   // messages, sending flags, and the user-message id set.
   sideChat.clearSideChatForSession(sessionId);
@@ -688,7 +676,6 @@ function forgetSession(sessionId: string): void {
   // backlog and scheduled continuation.
   enqueueEvent.discard(({ meta }) => meta.sessionId === sessionId);
   removeSession(sessionId);
-  removeSessionMessages(sessionId);
   forgetSessionPlans(sessionId);
   approvalsStore().clearSessionApprovals(sessionId);
   approvalsStore().clearSessionQuestions(sessionId);
@@ -697,12 +684,25 @@ function forgetSession(sessionId: string): void {
   filesStore().clearSessionGitStatus(sessionId);
   delete rawState.lastSeqBySession[sessionId];
   delete rawState.compactionBySession[sessionId];
-  delete rawState.messagesLoadingMoreBySession[sessionId];
-  delete rawState.messagesHasMoreBySession[sessionId];
-  delete rawState.messagesLoadMoreErrorBySession[sessionId];
-  delete epochBySession[sessionId];
-  sessionsRequiringSnapshot.delete(sessionId);
-  sessionsRetryingStaleSnapshot.delete(sessionId);
+  delete rawState.optimisticMessagesBySession[sessionId];
+  settledTurnEndBySession.delete(sessionId);
+  spawnedIndexCacheBySid.delete(sessionId);
+  loadOlderFailedAtBySid.delete(sessionId);
+  sessionArchivedSeqBySid.delete(sessionId);
+  sessionTitleSeqBySid.delete(sessionId);
+  resyncGenerationBySid.delete(sessionId);
+  sessionStatusVersionBySid.delete(sessionId);
+  {
+    const retry = statusConfirmRetryBySid.get(sessionId);
+    if (retry?.timer != null) clearTimeout(retry.timer);
+    statusConfirmRetryBySid.delete(sessionId);
+  }
+  consumedEchoPromptIdsBySid.delete(sessionId);
+  consumedSkillEchoIdsBySid.delete(sessionId);
+  for (const key of [...auxNotifiedInteractionIdsByKey.keys()]) {
+    if (key.startsWith(`${sessionId}:`)) auxNotifiedInteractionIdsByKey.delete(key);
+  }
+  delete rawState.sessionLastTurnReasonSeqBySession[sessionId];
   sessionsKnownEmpty.delete(sessionId);
   // In-flight / queued prompt state: drop these too so a queued follow-up
   // can't be submitted to a session that was just archived when its turn later
@@ -711,6 +711,7 @@ function forgetSession(sessionId: string): void {
   forgetLocalTurnState(sessionId);
   delete rawState.queuedBySession[sessionId];
   delete rawState.promptIdBySession[sessionId];
+  delete rawState.abortPromptIdBySession[sessionId];
   delete rawState.inFlightBySession[sessionId];
   delete rawState.turnActiveBySession[sessionId];
   delete rawState.turnEndedPromptIdBySession[sessionId];
@@ -720,7 +721,9 @@ function forgetSession(sessionId: string): void {
   // doesn't linger in localStorage.
   delete rawState.planModeBySession[sessionId];
   delete rawState.planArmedBySession[sessionId];
+  delete rawState.pendingPlanBySession[sessionId];
   delete rawState.swarmModeBySession[sessionId];
+  delete rawState.pendingSwarmBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
   delete rawState.thinkingBySession[sessionId];
   delete rawState.pendingThinkingBySession[sessionId];
@@ -730,6 +733,21 @@ function forgetSession(sessionId: string): void {
   // A deleted/archived session also leaves the pinned section (and its
   // persisted id list) — both removal entry points funnel through here.
   sessionsStore().unpinSession(sessionId);
+}
+
+/** Full teardown for a session discovered gone server-side (a not-found read
+ *  or a deletion inside the resync gap): the forgetSession wipe PLUS the
+ *  live-deletion path's native teardown, and — when the session was on
+ *  screen — navigation/loading cleanup so the UI doesn't wait on a baseline
+ *  that can never arrive. */
+function handleSessionGone(sessionId: string): void {
+  const wasActive = rawState.activeSessionId === sessionId;
+  forgetSession(sessionId);
+  notifySessionDestroyed(sessionId);
+  if (wasActive) {
+    workspaceState.clearActiveSession();
+    rawState.sessionLoading = false;
+  }
 }
 
 // Models + Providers reactive state and helpers live in
@@ -754,13 +772,26 @@ const connectIssue = ref<string | null>(null);
  * path share ONE source of truth (the session). Never throws — an old daemon
  * without /status just keeps the previously-known values.
  */
-async function refreshSessionStatus(sessionId: string): Promise<void> {
+async function refreshSessionStatus(
+  sessionId: string,
+  opts?: {
+    throughShield?: { swarm?: boolean; plan?: boolean };
+    /** The write tokens the confirmation carries: a field may fold through
+     *  the shield only while its token is still the field's CURRENT pending
+     *  token — a newer write since makes this answer stale for the field. */
+    throughTokens?: { swarm?: number; plan?: number };
+  },
+): Promise<boolean> {
+  const statusVersionBefore = sessionStatusVersionBySid.get(sessionId) ?? 0;
   let st: AppSessionRuntimeStatus;
   try {
     st = await getKimiWebApi().getSessionStatus(sessionId);
   } catch {
-    return; // status endpoint missing/unreachable — keep what we have.
+    return false; // status endpoint missing/unreachable — keep what we have.
   }
+  // A transcript meta fold landed mid-read — the live fact is newer; this
+  // stale answer must not revert model/thinking/modes back to it.
+  if ((sessionStatusVersionBySid.get(sessionId) ?? 0) !== statusVersionBefore) return false;
   updateSession(sessionId, (s) => ({
     ...s,
     model: st.model || s.model,
@@ -770,8 +801,44 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
       contextLimit: st.maxContextTokens,
     },
   }));
-  rawState.swarmModeBySession[sessionId] = st.swarmMode;
-  rawState.planModeBySession[sessionId] = st.planMode;
+  // persistSessionProfile's confirmation read folds THROUGH the mode shields:
+  // it is the write's own authoritative echo (the shield only exists to hold
+  // back information OLDER than the write — this answer is newer). Only the
+  // fields THIS confirmation covers get folded: interleaved writes mean an
+  // older confirmation answering last must not overwrite a newer field's
+  // already-confirmed pick. And a covered field folds only while the
+  // request's token still IS the field's current pending token: a newer
+  // write since makes this answer stale for the field — the newer shield
+  // survives the ack mismatch but cannot undo an overwrite of the base.
+  if (opts?.throughShield !== undefined) {
+    const swarmOwned =
+      opts.throughShield.swarm === true &&
+      (opts.throughTokens?.swarm === undefined ||
+        rawState.pendingSwarmBySession[sessionId] === opts.throughTokens.swarm);
+    const planOwned =
+      opts.throughShield.plan === true &&
+      (opts.throughTokens?.plan === undefined ||
+        rawState.pendingPlanBySession[sessionId] === opts.throughTokens.plan);
+    if (swarmOwned) {
+      rawState.swarmModeBySession = {
+        ...rawState.swarmModeBySession,
+        [sessionId]: st.swarmMode,
+      };
+    } else if (opts.throughShield.swarm !== true) {
+      foldDaemonSwarmMode(rawState, sessionId, st.swarmMode);
+    }
+    if (planOwned) {
+      rawState.planModeBySession = {
+        ...rawState.planModeBySession,
+        [sessionId]: st.planMode,
+      };
+    } else if (opts.throughShield.plan !== true) {
+      foldDaemonPlanMode(rawState, sessionId, st.planMode);
+    }
+  } else {
+    foldDaemonSwarmMode(rawState, sessionId, st.swarmMode);
+    foldDaemonPlanMode(rawState, sessionId, st.planMode);
+  }
   // The authoritative fold supersedes the deprecated-map seed — drop it.
   safeRemove(STORAGE_KEYS.planMode);
   // Fold the session's own thinking level too — per-session state wins over the
@@ -779,6 +846,7 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   if (st.thinkingEffort.length > 0) {
     foldDaemonThinkingLevel(rawState, sessionId, st.thinkingEffort as ThinkingLevel);
   }
+  return true;
 }
 
 // A reload-time goal-state refill in flight (see useWorkspaceState load()).
@@ -789,12 +857,55 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
 // refreshSessionGoal callers (e.g. selectSession's sidecar refresh) — a
 // non-goal session's completion must never be suppressed.
 const goalFetchPendingBySession = new Set<string>();
+// The /goal request mutex for EVERY backfill path. Distinct from
+// goalFetchPendingBySession on purpose: that mark feeds onMainTurnEnd's
+// goalActive predicate (only an ACTIVE goal may arm it), while this one
+// serializes the HTTP reads themselves — a non-active goal's backfill must
+// not arm the predicate, but must still not storm or reorder requests.
+const goalBackfillInFlight = new Set<string>();
+// The meta status each in-flight first-sight backfill was STARTED with: the
+// transcript fold compares every later meta against it — a mismatch means
+// the pending REST response was built for a state the daemon already left,
+// and must be invalidated by a version bump (a plain mutex alone would let
+// the stale read land and pin the card at the old status).
+const goalBackfillStatusBySid = new Map<string, string>();
+
+/** First-sight goal backfill over REST. The meta status the read STARTS with
+ *  is recorded per session; if the meta moved while it was in flight (the
+ *  fold's invalidation branch rewrites the record and version-bumps the
+ *  answer away), the settlement refills with the CURRENT status instead of
+ *  leaving the card empty until an unrelated refresh. */
+function startGoalBackfill(sessionId: string, status: string): void {
+  goalBackfillInFlight.add(sessionId);
+  goalBackfillStatusBySid.set(sessionId, status);
+  if (status === 'active') goalFetchPendingBySession.add(sessionId);
+  void refreshSessionGoal(sessionId).finally(() => {
+    goalBackfillInFlight.delete(sessionId);
+    goalFetchPendingBySession.delete(sessionId);
+    const wanted = goalBackfillStatusBySid.get(sessionId);
+    goalBackfillStatusBySid.delete(sessionId);
+    if (
+      wanted !== undefined &&
+      wanted !== status &&
+      rawState.goalBySession[sessionId] === undefined
+    ) {
+      startGoalBackfill(sessionId, wanted);
+    }
+  });
+}
 
 /** load()'s post-reload goal refill: fetch with the pending mark held, so a
- *  turn boundary landing mid-refetch still reads goal-active (see above). */
+ *  turn boundary landing mid-refetch still reads goal-active (see above). The
+ *  mark doubles as the in-flight mutex — the transcript fold re-triggers this
+ *  on every streaming version bump, and without it a slow /goal read would
+ *  fan out one request per frame (each finally also clearing the mark early
+ *  for the others still in flight). */
 function refillSessionGoalOnReload(sessionId: string): void {
+  if (goalBackfillInFlight.has(sessionId)) return;
+  goalBackfillInFlight.add(sessionId);
   goalFetchPendingBySession.add(sessionId);
   void refreshSessionGoal(sessionId).finally(() => {
+    goalBackfillInFlight.delete(sessionId);
     goalFetchPendingBySession.delete(sessionId);
   });
 }
@@ -828,6 +939,67 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
   if (goal === null || goal.status === 'complete') delete rawState.goalBySession[sessionId];
   else rawState.goalBySession[sessionId] = goal;
 }
+
+/** One bounded confirmation-retry chain per session: a profile write whose
+ *  authoritative /status confirmation didn't land keeps its mode shields
+ *  until a re-read succeeds (attempt×2s, capped at 15s). Tokens and the
+ *  through-folded fields merge PER FIELD across chains: a second write's
+ *  chain must not strand the first write's still-pending field. The acks'
+ *  own token checks make a newer pick supersede any stale chain. */
+const statusConfirmRetryBySid = new Map<
+  string,
+  {
+    attempt: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    tokens: { thinking?: number; swarm?: number; plan?: number };
+    fields: { swarm: boolean; plan: boolean };
+  }
+>();
+
+function scheduleStatusConfirmRetry(
+  sid: string,
+  tokens: { thinking?: number; swarm?: number; plan?: number },
+  attempt: number,
+): void {
+  const existing = statusConfirmRetryBySid.get(sid);
+  // Merge per field: the new call's token wins for the fields it carries;
+  // fields it doesn't carry keep their still-unconfirmed predecessor.
+  const mergedTokens = {
+    thinking: tokens.thinking ?? existing?.tokens.thinking,
+    swarm: tokens.swarm ?? existing?.tokens.swarm,
+    plan: tokens.plan ?? existing?.tokens.plan,
+  };
+  const fields = {
+    swarm: tokens.swarm !== undefined || existing?.fields.swarm === true,
+    plan: tokens.plan !== undefined || existing?.fields.plan === true,
+  };
+  if (existing?.timer != null) clearTimeout(existing.timer);
+  const state = { attempt, timer: null as ReturnType<typeof setTimeout> | null, tokens: mergedTokens, fields };
+  statusConfirmRetryBySid.set(sid, state);
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    void refreshSessionStatus(sid, { throughShield: state.fields, throughTokens: state.tokens }).then((confirmed) => {
+      if (confirmed) {
+        if (statusConfirmRetryBySid.get(sid) === state) statusConfirmRetryBySid.delete(sid);
+        ackThinkingPending(rawState, sid, state.tokens.thinking);
+        ackSwarmPending(rawState, sid, state.tokens.swarm);
+        ackPlanPending(rawState, sid, state.tokens.plan);
+        return;
+      }
+      // The chain may be dead meanwhile: the session was torn down (its
+      // timer/map entry cleared by forgetSession) or a newer write replaced
+      // the state — rescheduling then would poll a gone session every 15s
+      // forever.
+      if (statusConfirmRetryBySid.get(sid) !== state) return;
+      if (!rawState.sessions.some((s) => s.id === sid)) {
+        statusConfirmRetryBySid.delete(sid);
+        return;
+      }
+      scheduleStatusConfirmRetry(sid, tokens, attempt + 1);
+    });
+  }, Math.min(attempt * 2000, 15_000));
+}
+
 /** Persist runtime controls to a session via POST /profile, then re-read
  *  /status. `sessionId` overrides the active session — used when creating a
  *  session and immediately persisting its draft modes, so a concurrent session
@@ -854,18 +1026,49 @@ function persistSessionProfile(patch: {
   // The token of the pending pick this patch carries, captured synchronously —
   // only a completion still holding it may clear the mark.
   const thinkingToken = patch.thinking !== undefined ? rawState.pendingThinkingBySession[sid] : undefined;
+  const swarmToken = patch.swarmMode !== undefined ? rawState.pendingSwarmBySession[sid] : undefined;
+  const planToken = patch.planMode !== undefined ? rawState.pendingPlanBySession[sid] : undefined;
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
-    .then(() => {
+    .then(() =>
+      refreshSessionStatus(sid, {
+        throughShield: {
+          swarm: patch.swarmMode !== undefined,
+          plan: patch.planMode !== undefined,
+        },
+        throughTokens: { swarm: swarmToken, plan: planToken },
+      }),
+    )
+    .then((confirmed) => {
+      if (!confirmed) {
+        // The confirmation read never landed (fetch failed or a newer meta
+        // fold won the version race): the shields must NOT drop here — an
+        // unprotected stale meta fold would revert the optimistic value for
+        // good. Hold them on a bounded retry; the acks' token checks make a
+        // newer pick supersede the chain.
+        scheduleStatusConfirmRetry(sid, {
+          thinking: thinkingToken,
+          swarm: swarmToken,
+          plan: planToken,
+        }, 1);
+        return true;
+      }
+      // Ack AFTER the authoritative /status re-read lands: clearing the
+      // shield at POST success leaves a window where a stale transcript meta
+      // fold reverts the optimistic value AND bumps the status version —
+      // which then discards the very re-read meant to confirm the write.
       ackThinkingPending(rawState, sid, thinkingToken);
-      return refreshSessionStatus(sid);
+      ackSwarmPending(rawState, sid, swarmToken);
+      ackPlanPending(rawState, sid, planToken);
+      return true;
     })
-    .then(() => true)
     .catch((err) => {
       // A failed write never reached the daemon: stop shielding it and re-fold
       // the daemon's actual level (an earlier acked report may have been
       // dropped while it was pending). A newer pick keeps its own shield.
       if (ackThinkingPending(rawState, sid, thinkingToken)) void refreshSessionStatus(sid);
+      if (ackSwarmPending(rawState, sid, swarmToken)) void refreshSessionStatus(sid);
+      if (ackPlanPending(rawState, sid, planToken)) void refreshSessionStatus(sid);
       // Local state already reflects the change; tell the user (and the log)
       // that the daemon did not persist it.
       pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
@@ -928,6 +1131,62 @@ const auxiliaryTranscripts = createAuxiliaryTranscriptPool({
   getEventConnection: () => eventConn,
 });
 
+// The main-flow transcript migration (docs/plans/2026-08-19-main-transcript-protocol.md)
+// is complete: the per-session transcript channel pool is THE message pipeline
+// in every build. The daemon suppresses the legacy session_event frames for
+// the main agent on the shared connection, so every slice reads from the
+// transcript snapshot/entities.
+const mainTranscriptHost = createMainTranscriptHost({
+  api: getKimiWebApi(),
+  getSharedConnection: () => eventConn,
+  ensureSharedConnection: connectEventsIfNeeded,
+  onSessionGone: (sessionId) => handleSessionGone(sessionId),
+  getLocalTurnState: (sessionId) => workspaceState.localTurnStartState(sessionId),
+  hasPendingLocalWork: (sessionId) =>
+    rawState.inFlightBySession[sessionId] === true ||
+    (rawState.queuedBySession[sessionId] ?? []).length > 0 ||
+    (rawState.optimisticMessagesBySession[sessionId] ?? []).length > 0,
+  onBaselineError: (sessionId, err) =>
+    pushOperationFailure('loadSessionTranscript', err, { sessionId }),
+});
+
+/** The active session's transcript entry once its baseline is loaded — the
+ *  slices read from it. Reading it here also subscribes the caller's computed
+ *  to the entry's per-frame version bump. */
+function activeMainTranscriptEntry(): MainTranscriptEntry | null {
+  const sid = rawState.activeSessionId;
+  if (!sid) return null;
+  const entry = mainTranscriptHost.pool.getEntry(sid);
+  void entry?.version.value;
+  return entry !== undefined && entry.baselineLoaded ? entry : null;
+}
+
+/** A session's main-transcript tail turn id — the anchor stamped onto
+ *  optimistic bubbles at submit time (shared by the prompt and skill paths). */
+function mainTranscriptTailTurnId(sessionId: string): string | undefined {
+  const tail = mainTranscriptHost.pool
+    .getEntry(sessionId)
+    ?.channel.snapshot.items.findLast((item) => item.kind === 'turn');
+  return tail?.kind === 'turn' ? tail.turnId : undefined;
+}
+
+/** A session's newest transcript prompt's createdAt — the FALLBACK echo floor
+ *  stamped onto optimistic bubbles at submit time. A session can have prompt
+ *  history (hook-blocked/aborted sends) without any turn, so "no anchor turn"
+ *  must not mean "no floor": an unanchored same-text match would otherwise
+ *  eat that history as this send's echo. */
+function mainTranscriptTailPromptCreatedAt(sessionId: string): string | undefined {
+  const prompts = mainTranscriptHost.pool.getEntry(sessionId)?.channel.snapshot.prompts;
+  if (prompts === undefined || prompts.length === 0) return undefined;
+  // Max by stamp, not array order: a status re-upsert may rewrite an earlier
+  // entry, and the floor must bound EVERY piece of history at submit time.
+  let newest: string | undefined;
+  for (const prompt of prompts) {
+    if (newest === undefined || prompt.createdAt > newest) newest = prompt.createdAt;
+  }
+  return newest;
+}
+
 // Monotonic counter for optimistic user-message ids. Date.now() alone collides
 // when two prompts are submitted in the same millisecond (e.g. a queued send
 // then a steer), which gave both messages the SAME id — breaking Vue keying and
@@ -945,7 +1204,6 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   const snapshot: KimiClientState = {
     sessions: rawState.sessions,
     activeSessionId: rawState.activeSessionId,
-    messagesBySession: rawState.messagesBySession,
     approvalsBySession: rawState.approvalsBySession,
     planReviewByToolCallId: rawState.planReviewByToolCallId,
     questionsBySession: rawState.questionsBySession,
@@ -983,7 +1241,6 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   if (next.activeSessionId !== snapshot.activeSessionId) {
     setActiveSessionId(next.activeSessionId);
   }
-  setMessagesBySession(next.messagesBySession);
   approvalsStore().applyApprovalsDiff(next.approvalsBySession);
   applyRecordDiff(rawState.planReviewByToolCallId, next.planReviewByToolCallId);
   approvalsStore().applyQuestionsDiff(next.questionsBySession);
@@ -1022,16 +1279,34 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // session — so a background session keeps its own independent toggle state.
   if (event.type === 'sessionUsageUpdated') {
     if (event.swarmMode !== undefined) {
-      rawState.swarmModeBySession[event.sessionId] = event.swarmMode;
+      foldDaemonSwarmMode(rawState, event.sessionId, event.swarmMode);
     }
     if (event.planMode !== undefined) {
-      rawState.planModeBySession[event.sessionId] = event.planMode;
+      foldDaemonPlanMode(rawState, event.sessionId, event.planMode);
     }
     if (event.thinking !== undefined) {
       foldDaemonThinkingLevel(rawState, event.sessionId, event.thinking as ThinkingLevel);
     }
   }
 
+  // A session deleted anywhere (e.g. from another client) also loses its pin:
+  // the WS-driven deletion path bypasses forgetSession, so the pinned-id
+  // cleanup lives here too.
+  if (event.type === 'sessionUpdated' && 'archived' in event.session) {
+    sessionArchivedSeqBySid.set(event.session.id, seq);
+  }
+  if (event.type === 'sessionArchived') {
+    sessionArchivedSeqBySid.set(event.sessionId, seq);
+  }
+  if (event.type === 'sessionMetaUpdated' && 'title' in event) {
+    sessionTitleSeqBySid.set(event.sessionId, seq);
+  }
+  if (
+    (event.type === 'sessionWorkChanged' || event.type === 'turnActiveChanged') &&
+    'lastTurnReason' in event
+  ) {
+    rawState.sessionLastTurnReasonSeqBySession[event.sessionId] = seq;
+  }
   // A session deleted anywhere (e.g. from another client) gets the same full
   // teardown as a local removal: the reducer above already dropped the session
   // row and its messages, but the sidecar state (projector session state, aux
@@ -1039,6 +1314,12 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // deleted session's data for the app's lifetime. forgetSession re-issues the
   // unpin and the WS unsubscribe — both idempotent for an already-gone session.
   if (event.type === 'sessionDeleted') {
+    // A remote deletion runs the SAME teardown as a local one: the reducer
+    // path only drops the list row, which would leak the transcript entry,
+    // its subscription and every per-session slice (prompt/queue lifecycle
+    // included) for a session that no longer exists. forgetSession re-issues
+    // the unpin and the WS unsubscribe — both idempotent for an already-gone
+    // session.
     forgetSession(event.sessionId);
     // Same teardown for its terminal bucket (bypasses the App.vue callbacks).
     // Injected by desktop; a no-op on web.
@@ -1065,27 +1346,19 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
 // backlog into one unbounded rAF drain. Lifecycle / control-flow events remain
 // strict ordering barriers and are never dropped or merged.
 
-function latestTurnExitPlanToolCallId(messages: AppMessage[]): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]!;
-    if (message.role === 'user') return undefined;
-    if (message.role !== 'assistant') continue;
-    for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
-      const content = message.content[contentIndex]!;
-      if (content.type === 'toolUse' && content.toolName === 'ExitPlanMode') {
-        return content.toolCallId;
-      }
-    }
-  }
-  return undefined;
-}
-
 function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // Capture BEFORE applyEvent advances lastSeqBySession: turn-end side
   // effects below only run when this event actually moves the durable cursor
   // forward. A late duplicate idle (e.g. replayed after a snapshot already
   // advanced past it) must not drain a second queued message.
   const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
+  // A frame past the at-resume watermark proves the resumed session's replay
+  // flushed (single FIFO: replay frames precede any seq-newer one) — the
+  // aggregate cursor is honest about consumption again from here on.
+  const resumeFloor = resumeFloorBySession.get(meta.sessionId);
+  if (resumeFloor !== undefined && meta.seq > resumeFloor.throughSeq) {
+    resumeFloorBySession.delete(meta.sessionId);
+  }
   const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
   const settledPlanToolCallId =
     appEvent.type === 'approvalResolved' || appEvent.type === 'approvalExpired'
@@ -1114,9 +1387,7 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     return;
   }
   // meta carries wire-level seq/sessionId so the reducer can advance
-  // lastSeqBySession[sessionId] = seq. Compaction completion appends a
-  // persistent divider marker in the reducer (TUI parity: the scrollback
-  // is kept, only a marker line records the compaction).
+  // lastSeqBySession[sessionId] = seq.
   applyEvent(appEvent, meta.sessionId, meta.seq);
 
   if (sideTarget) {
@@ -1126,60 +1397,17 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
       if (appEvent.delta.text) {
         sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
       }
-    } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
-      sideChat.finishSideChatAgent(agentId, parentId);
     } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
       sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
-    } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
-      sideChat.finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
     }
   }
-
-  // The daemon's prompt.submitted event is projected as a user messageCreated
-  // carrying the real prompt_id. When the HTTP submit response is lost
-  // (timeout / network error) this is the fallback that lets Stop work.
-  if (
-    appEvent.type === 'messageCreated' &&
-    appEvent.message.role === 'user' &&
-    appEvent.message.promptId !== undefined
-  ) {
-    const sid = appEvent.message.sessionId;
-    if (rawState.promptIdBySession[sid] !== appEvent.message.promptId) {
-      rawState.promptIdBySession[sid] = appEvent.message.promptId;
-    }
-  }
-
-  // Prompt-end cleanup. The MAIN agent's turn boundary is the authoritative
-  // "the prompt is done" signal: it drives the in-flight/indicator cleanup, the
-  // queued-message drain, and the completion side effects. The session may
-  // stay busy afterwards (background subagents / BTW) — that must NOT hold
-  // any of these. The session's idle/aborted status is only a fallback quiet
-  // signal (a turn.ended can be lost on abrupt agent disposal): it clears the
-  // boolean liveness flags, but drain/notify stay single-owned by the
-  // turn-boundary path. Both are gated on the durable cursor advancing so a
-  // late duplicate cannot fire twice.
-  if (
-    appEvent.type === 'turnActiveChanged' &&
-    !appEvent.active &&
-    meta.seq > prevSeq
-  ) {
-    const reason = appEvent.reason;
-    // wasMainTurnActive was captured BEFORE the reducer consumed this event
-    // (the reducer clears turnActiveBySession on turn end), so it is the only
-    // remaining signal that this client witnessed a live turn — pass it down
-    // so finishPromptLocal may drain queued prompts behind a turn the user
-    // actually watched (including one started by another client).
-    onMainTurnEnd(
-      appEvent.sessionId,
-      reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle',
-      wasMainTurnActive,
-    );
-    const exitPlanToolCallId = latestTurnExitPlanToolCallId(
-      rawState.messagesBySession[appEvent.sessionId] ?? [],
-    );
-    if (exitPlanToolCallId !== undefined) {
-      void refreshSessionPlans(appEvent.sessionId, exitPlanToolCallId);
-    }
+  // Terminal routing goes by the KNOWN agent id (terminated included), not
+  // the open panel: closing the BTW panel mid-turn drops the target, and a
+  // taskCompleted landing after turn.ended must still route its output here.
+  if (appEvent.type === 'agentTurnEnded' && sideChat.wasSideChatAgent(appEvent.agentId)) {
+    sideChat.finishSideChatAgent(appEvent.agentId, meta.sessionId);
+  } else if (appEvent.type === 'taskCompleted' && sideChat.wasSideChatAgent(appEvent.taskId)) {
+    sideChat.finishSideChatAgent(appEvent.taskId, meta.sessionId, appEvent.outputPreview, true);
   }
 
   if (
@@ -1191,36 +1419,6 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     clearWorkingFlags(appEvent.sessionId);
   }
 
-  // A prompt that never produced a turn gets no turn.ended and no session
-  // status flip: a QUEUED prompt aborted before launch (prompt.aborted), or a
-  // prompt blocked by a pre-submit hook (prompt.completed with reason
-  // 'blocked'). Without this the local in-flight flag — and the working indicator —
-  // would stick forever. Keyed on the promptId captured at submit: a normal
-  // turn's prompt.completed/aborted arrives AFTER its status_changed (which
-  // already cleared the id), so it no-ops; another client's prompt never
-  // matches. Only fires when the event moves the durable cursor forward, same
-  // as the status path above.
-  if (
-    (appEvent.type === 'promptAborted' ||
-      (appEvent.type === 'promptCompleted' && appEvent.reason === 'blocked')) &&
-    meta.seq > prevSeq &&
-    rawState.promptIdBySession[appEvent.sessionId] === appEvent.promptId
-  ) {
-    workspaceState.finishPromptLocal(appEvent.sessionId);
-  }
-
-  // The agent asked a question and is waiting for an answer — surface it so
-  // the user comes back. Hooked on the request event (fires once per new
-  // question, and not for questions restored from a snapshot) rather than the
-  // awaitingQuestion status flip, which can arrive in any order relative to it.
-  if (appEvent.type === 'questionRequested') {
-    onQuestionRequested(appEvent.sessionId, appEvent.question);
-  }
-
-  // The agent needs approval for a tool call — surface it so the user comes back.
-  if (appEvent.type === 'approvalRequested') {
-    onApprovalRequested(appEvent.sessionId, appEvent.approval);
-  }
   if (settledPlanToolCallId !== undefined) {
     // Record the terminal outcome regardless of whether a persisted receipt
     // exists — old daemons without /transcript/plan (or a transient bulk
@@ -1264,7 +1462,27 @@ const SESSION_WORK_BASELINE_RETRY_MAX_MS = 30_000;
 let connectionGeneration = 0;
 let sessionWorkBaselineRun: SessionWorkBaselineRun | null = null;
 // REST list rows only authorize skipping older activity frames, not transcript data.
+const sessionStatusVersionBySid = new Map<string, number>();
+function bumpSessionStatusVersion(sid: string): void {
+  sessionStatusVersionBySid.set(sid, (sessionStatusVersionBySid.get(sid) ?? 0) + 1);
+}
 const sessionActivityWatermarkBySession = new Map<string, number>();
+/** Uncertain-bubble echo prompts already consumed by a retired bubble, per
+ *  session — a prompt's one-to-one binding must survive the frame that
+ *  retired its bubble (see uncertainEchoMatchedIds). Pruned to the prompt
+ *  ids the current snapshot still carries (a slid-out prompt's bubble is
+ *  long retired). */
+const consumedEchoPromptIdsBySid = new Map<string, Set<string>>();
+/** Skill turn/marker entities already consumed by a retired uncertain skill
+ *  bubble, per session (the skill twin of consumedEchoPromptIdsBySid — see
+ *  skillEchoMatchedIds). Pruned to entity ids the snapshot still carries. */
+const consumedSkillEchoIdsBySid = new Map<string, Set<string>>();
+/** Interaction ids an auxiliary (detail-panel/BTW) transcript has already
+ *  NOTIFIED for, keyed `${sessionId}:${agentId}` — seeded from its first
+ *  loaded baseline (history stays silent), since the server suppresses these
+ *  agents' projected session events on this connection and a new approval
+ *  would otherwise surface as a silent card only. */
+const auxNotifiedInteractionIdsByKey = new Map<string, Set<string>>();
 let sessionWorkBaselineRetryAttempt = 0;
 let sessionWorkBaselineRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1395,7 +1613,37 @@ function applySessionWorkBaseline(
     }
   }
   for (const sessionId of finishedSessionIds) {
-    workspaceState.finishPromptLocal(sessionId, { turnWasActive: true });
+    // Settle the offline turn end through the transcript replay itself: the
+    // channel's tail can be a turn BEFORE the one that finished offline, and
+    // marking THAT one settled would let the replay's real ended turn run the
+    // lifecycle a second time (reaping the freshly-drained prompt). Re-anchor
+    // and let the edge watcher enumerate the actual ended turns — correct
+    // watermarks, full side effects, one drain. The local path remains as the
+    // fallback when the replay is unreachable.
+    const entry = mainTranscriptHost.pool.getEntry(sessionId);
+    if (entry !== undefined) {
+      // The reads go through the POOL's serialized path (like undo's rewind):
+      // a direct channel.refresh() bypasses resumePromise, so a reset
+      // landing mid-read would apply immediately and then be overwritten by
+      // the older REST page — leaving the UI stuck on a pre-reset running
+      // snapshot when the reset carried the final turn-end. A failed read
+      // must NOT settle locally without a turn identity — the replay would
+      // settle the real turn a second time and reap the prompt this
+      // drained. Retry the authoritative channel once; the next
+      // baseline/replay converges the rest.
+      void mainTranscriptHost.pool.refreshSession(sessionId).catch(() => {
+        setTimeout(() => {
+          if (mainTranscriptHost.pool.getEntry(sessionId) === entry) {
+            void mainTranscriptHost.pool.refreshSession(sessionId).catch(() => undefined);
+          }
+        }, 2000);
+      });
+    } else {
+      // No transcript channel for this session at all — the local settle is
+      // the only convergence available.
+      const reason = rawState.sessions.find((s) => s.id === sessionId)?.lastTurnReason;
+      onMainTurnEnd(sessionId, reason === 'cancelled' || reason === 'failed' ? 'aborted' : 'idle', true);
+    }
   }
 }
 
@@ -1576,25 +1824,108 @@ export function connectEventsIfNeeded(): void {
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {
+      const resyncGeneration = (resyncGenerationBySid.get(sessionId) ?? 0) + 1;
+      resyncGenerationBySid.set(sessionId, resyncGeneration);
       traceKeyEvent('ws:resync', {
         sessionId,
         status: 'required',
         seq: currentSeq,
       });
-      // Flush streaming deltas already queued so they render on the
-      // pre-snapshot state (the snapshot is authoritative and will overwrite
-      // them). Stragglers that arrive during the snapshot fetch are drained
-      // again right before the snapshot write inside syncSessionFromSnapshot,
-      // so they are applied to the pre-snapshot array too rather than on top
-      // of the fresh snapshot (which would duplicate text / tool output).
+      // The client wrapper already reset the event projector. The main
+      // transcript channel re-anchors itself on its own gap signal; an active
+      // side chat has no such channel (its deltas are unrecoverable past the
+      // gap), so rebuild it from its agent transcript.
       enqueueEvent.flush();
-      // The server-announced cursor is only a hint; keep the previous epoch
-      // until the snapshot arrives so seq values from two epochs are never
-      // compared with each other.
+      // The server-announced cursor is the NEW authoritative watermark: a
+      // journal epoch switch (daemon restart) restarts seq numbering, and
+      // keeping the OLD high watermark would make isFreshEvent ignore every
+      // new-epoch event (work changes, turn outcomes, recency) until seq
+      // accidentally overtakes the pre-restart value. (After the flush so
+      // already-buffered events are judged by the old watermark, not re-applied.)
+      rawState.lastSeqBySession[sessionId] = currentSeq;
+      // The activity watermark is an independent pre-filter for
+      // work/turn/interaction events (onEvent) — a resync that arrives WITHOUT
+      // a preceding disconnect (live-connection gap) never clears it, and an
+      // old-epoch high watermark would keep dropping new-epoch events until
+      // seq overtakes it. Re-anchor it with the rest of the cursors.
+      sessionActivityWatermarkBySession.delete(sessionId);
+      void sideChat.resyncSideChat(sessionId);
+      // Everything OFF the message stream must be re-converged here too: the
+      // gap also swallowed this session's work changes, title, archive — or
+      // its deletion. Re-read the session fact, tear down on not-found, then
+      // run the work baseline so an offline turn end still settles.
+      void (async () => {
+        // Capture the row BEFORE the read: fields the WS changed mid-flight
+        // keep their live value, fields it didn't take the REST answer. An
+        // unrelated side-channel delta must not veto the title update. The
+        // archived flag additionally gates on its event SEQ: a restore can
+        // flip the field back to the pre-read value (ABA), which the field
+        // comparison alone can't see.
+        const before = rawState.sessions.find((s) => s.id === sessionId);
+        const archivedSeqBefore = sessionArchivedSeqBySid.get(sessionId);
+        const titleSeqBefore = sessionTitleSeqBySid.get(sessionId);
+        const lastTurnReasonSeqBefore = rawState.sessionLastTurnReasonSeqBySession[sessionId];
+        try {
+          const fresh = await getKimiWebApi().getSession(sessionId);
+          // A later resync started while this read was in flight — its own
+          // read is the fresher one; drop everything here.
+          if (resyncGenerationBySid.get(sessionId) !== resyncGeneration) return;
+          const current = rawState.sessions.find((s) => s.id === sessionId);
+          if (
+            fresh.archived === true &&
+            current?.archived !== true &&
+            before?.archived !== true &&
+            sessionArchivedSeqBySid.get(sessionId) === archivedSeqBefore
+          ) {
+            // The archive landed inside the resync gap (and no restore raced
+            // it) — converge EXACTLY like the live event (done list,
+            // tombstone, pin, native teardown), not just a field write.
+            await workspaceState.applyRemoteSessionArchived(sessionId, fresh.workspaceId);
+            notifySessionDestroyed(sessionId);
+            return;
+          }
+          updateSession(sessionId, (s) => ({
+            ...s,
+            // Seq-gated like archived: an ABA title flip mid-read (A→B→A)
+            // must not be overwritten by the possibly-stale REST read.
+            title:
+              sessionTitleSeqBySid.get(sessionId) === titleSeqBefore ? fresh.title : s.title,
+            archived:
+              sessionArchivedSeqBySid.get(sessionId) === archivedSeqBefore
+                ? s.archived || fresh.archived
+                : s.archived,
+            busy: s.busy !== before?.busy ? s.busy : fresh.busy,
+            mainTurnActive:
+              s.mainTurnActive !== before?.mainTurnActive
+                ? s.mainTurnActive
+                : fresh.mainTurnActive ?? s.mainTurnActive,
+            pendingInteraction:
+              s.pendingInteraction !== before?.pendingInteraction
+                ? s.pendingInteraction
+                : fresh.pendingInteraction ?? s.pendingInteraction,
+            // Seq-gated like the rest: a turn outcome landing mid-read (even
+            // an ABA back to the same value) discards the older REST answer;
+            // otherwise it applies VERBATIM (the server omits the field when
+            // the reason was cleared — no ?? fallback revival).
+            lastTurnReason:
+              rawState.sessionLastTurnReasonSeqBySession[sessionId] === lastTurnReasonSeqBefore
+                ? fresh.lastTurnReason
+                : s.lastTurnReason,
+          }));
+        } catch (err) {
+          if (isDaemonApiError(err) && err.code === 40401) {
+            // The deletion landed inside the gap — full teardown like the
+            // transcript pool's not-found path.
+            handleSessionGone(sessionId);
+            return;
+          }
+          // A transient read failure: the work baseline below still reconciles.
+        }
+        void workspaceState.loadWorkspaces();
+        void reconcileSessionWorkAfterReconnect();
+      })();
+      if (epoch !== undefined) lastKnownJournalEpoch = epoch;
       void currentSeq;
-      void epoch;
-      sessionsRequiringSnapshot.add(sessionId);
-      snapshotSyncRunner.request(sessionId);
     },
 
     onError(code: number, msg: string, fatal: boolean) {
@@ -1663,46 +1994,24 @@ export function connectEventsIfNeeded(): void {
 
     onTranscriptReset(sessionId, agentId, snapshot, seq) {
       auxiliaryTranscripts.receiveReset(sessionId, agentId, snapshot, seq);
+      if (agentId === 'main') mainTranscriptHost.pool.receiveReset(sessionId, snapshot, seq);
     },
 
     onTranscriptOps(sessionId, agentId, ops, seq) {
-      return auxiliaryTranscripts.applyOps(sessionId, agentId, ops, seq);
+      const accepted = auxiliaryTranscripts.applyOps(sessionId, agentId, ops, seq);
+      if (agentId === 'main') {
+        return mainTranscriptHost.pool.applyOps(sessionId, ops, seq);
+      }
+      return accepted;
     },
   });
 }
-
-// Journal epoch per session, learned from snapshots / resync frames. Not
-// reactive — only consulted when building the subscribe cursor.
-const epochBySession: Record<string, string> = {};
-// onResync resets the event projector, so that path must apply a snapshot even
-// if a newer global event advances the local cursor while the GET is in flight.
-const sessionsRequiringSnapshot = new Set<string>();
-// A normal foreground refresh may race one newer event. Retry once with a
-// fresh snapshot so volatile text missed during sleep is still restored.
-const sessionsRetryingStaleSnapshot = new Set<string>();
 
 // Sessions created locally in this client instance are known to be empty until
 // they receive their first message. This is more reliable than the daemon's
 // messageCount field, which can be stale for old sessions and would otherwise
 // flash the empty-composer before the real snapshot arrives.
 const sessionsKnownEmpty = new Set<string>();
-
-/**
- * v2 initial sync (IM-style rebuild): fetch the atomic session snapshot,
- * install its state, seed the projector's in-flight turn, then subscribe the
- * WS at the snapshot's `{seq: asOfSeq, epoch}` cursor. The watermark ties
- * the REST snapshot to the event stream — no gap, no duplication.
- */
-type SyncSessionResult = 'ok' | 'not-found' | 'failed';
-
-function isSessionNotFoundError(err: unknown): boolean {
-  if (isDaemonApiError(err) && err.code === SESSION_NOT_FOUND_CODE) return true;
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as { code?: unknown }).code === SESSION_NOT_FOUND_CODE
-  );
-}
 
 function warningDetail(labelKey: string, value: unknown): AppNoticeDetail | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -1899,200 +2208,39 @@ function goalErrorMessage(err: unknown): string | undefined {
   return key ? t(key) : undefined;
 }
 
-async function handleSessionNotFound(sessionId: string): Promise<void> {
-  forgetSession(sessionId);
-
-  if (rawState.activeSessionId !== sessionId) return;
-
-  const next = rawState.sessions[0];
-  if (next) {
-    await workspaceState.selectSession(next.id, { urlMode: 'replace', skipTrack: true });
-  } else {
-    setActiveSessionId(undefined);
-    rawState.sessionLoading = false;
-    workspaceState.writeSessionUrl(undefined, 'replace');
-  }
-}
-
-const sessionWarningsPulled = new Set<string>();
-
-async function pullSessionWarnings(sessionId: string): Promise<void> {
-  if (sessionWarningsPulled.has(sessionId)) return;
-  sessionWarningsPulled.add(sessionId);
-  try {
-    const warnings = await getKimiWebApi().getSessionWarnings(sessionId);
-    const label = t('warnings.noteLabel');
-    for (const warning of warnings) {
-      pushWarning(`${label}: ${warning.message}`);
-    }
-  } catch {
-    // best-effort: never block session sync on warning retrieval.
-  }
-}
-
-async function syncSessionFromSnapshot(
-  sessionId: string,
-  opts?: { skipStatusRefresh?: boolean },
-): Promise<SyncSessionResult> {
-  // A snapshot that races a local turn start must not overwrite that turn.
-  const turnStartAtRequest = workspaceState.localTurnStartState(sessionId);
-  try {
-    const api = getKimiWebApi();
-    const snap = await api.getSessionSnapshot(sessionId);
-    if (!rawState.sessions.some((session) => session.id === sessionId)) return 'ok';
-
-    // Drain any queued streaming deltas before the snapshot replaces
-    // messagesBySession[sessionId]. The snapshot is authoritative (it already
-    // contains everything up to asOfSeq); applying stale queued deltas on top
-    // of it would duplicate text / tool output. Flushing here applies them to
-    // the pre-snapshot array, which the snapshot then overwrites.
-    enqueueEvent.flush();
-
-    // Do not let an old snapshot overwrite state that moved forward while the
-    // request was in flight. Retry once to recover volatile text at a fresh
-    // cursor; resync/LRU rebuilds must always apply because their projector or
-    // subscription was deliberately reset.
-    const currentSeq = rawState.lastSeqBySession[sessionId] ?? 0;
-    const knownEpoch = epochBySession[sessionId];
-    const mustApplySnapshot =
-      sessionsRequiringSnapshot.has(sessionId) || sessionsWithStaleCursor.has(sessionId);
-    if (
-      !mustApplySnapshot &&
-      knownEpoch !== undefined &&
-      knownEpoch === snap.epoch &&
-      currentSeq > snap.asOfSeq
-    ) {
-      if (sessionsRetryingStaleSnapshot.delete(sessionId)) return 'ok';
-      sessionsRetryingStaleSnapshot.add(sessionId);
-      snapshotSyncRunner.request(sessionId);
-      return 'ok';
-    }
-    if (!workspaceState.isLocalTurnSnapshotCurrent(sessionId, turnStartAtRequest)) {
-      workspaceState.afterLocalTurnStartsSettle(sessionId, () => {
-        snapshotSyncRunner.request(sessionId);
-      });
-      return 'ok';
-    }
-
-    // Every snapshot apply re-seeds liveness from the server: keep the cached
-    // retry only while the snapshot's in-flight turn still owns it — an older
-    // turn's backoff must never narrate a newer one, and a live retry keeps
-    // showing through a re-open (its edge frames won't replay past the
-    // snapshot cursor).
-    const cachedRetry = rawState.turnRetryBySession[sessionId];
-    if (cachedRetry !== undefined && cachedRetry.turnId !== snap.inFlightTurn?.turnId) {
-      delete rawState.turnRetryBySession[sessionId];
-    }
-    if (mustApplySnapshot) {
-      // A forced rebuild means the client lost ground (resync / stale cursor):
-      // cached failure details may belong to a turn we never saw — drop them,
-      // the card falls back to the generic copy rather than narrating the
-      // wrong turn.
-      delete rawState.turnErrorBySession[sessionId];
-    } else if (snap.session.lastTurnReason !== 'failed') {
-      // A fresh snapshot proving the latest turn is not the recorded failure
-      // (a newer turn started, or ended differently) retires the cached
-      // provider details; a 'failed' snapshot keeps them — a same-client
-      // re-open holds prefix continuity and any newer failure's live error
-      // frame replays in and overwrites on its own.
-      delete rawState.turnErrorBySession[sessionId];
-    }
-
-    const snapUsagePlaceholder = isPlaceholderSessionUsage(snap.session.usage);
-    // The effective main-turn liveness: older daemons omit mainTurnActive —
-    // fall back to the snapshot's in-flight turn gated on busy. Shared by the
-    // session merge (recency guard) and the indicator seeding below.
-    const snapMainTurnActive =
-      snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
-    // Snapshot merge: keep the pool's live usage/model, newer local recency,
-    // and the v2-only pullRequest — see mergeSnapshotSession.
-    updateSession(sessionId, (s) => mergeSnapshotSession(s, snap.session, snapMainTurnActive));
-    // The snapshot only carries the most recent page; keep any older pages the
-    // user already loaded so reopening does not reset scrollback.
-    setSessionMessages(
-      sessionId,
-      mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
-    );
-    // Seed the live subagent roster so swarm cards survive a page refresh
-    // (their member rows otherwise only exist from non-replayed WS events).
-    // loadTasksForSession's keepLiveSubagents preserves these across REST
-    // reloads; the roster stays authoritative until then.
-    rawState.tasksBySession[sessionId] = mergeSnapshotSubagents(
-      snap.subagents,
-      rawState.tasksBySession[sessionId] ?? [],
-    );
-    rawState.messagesHasMoreBySession[sessionId] = snap.hasMoreMessages;
-    approvalsStore().setSessionApprovals(sessionId, snap.pendingApprovals);
-    // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
-    // card can link to the plan file even after a reload.
-    for (const a of snap.pendingApprovals) {
-      const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
-      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
-        rawState.planReviewByToolCallId[a.toolCallId] = {
-          plan: display.plan,
-          path: typeof display.path === 'string' ? display.path : undefined,
-        };
-      }
-    }
-    approvalsStore().setSessionQuestions(sessionId, snap.pendingQuestions);
-    rawState.lastSeqBySession[sessionId] = snap.asOfSeq;
-    epochBySession[sessionId] = snap.epoch;
-    sessionsRequiringSnapshot.delete(sessionId);
-    sessionsRetryingStaleSnapshot.delete(sessionId);
-
-    // Resync replaces the missed event stream, so a terminal snapshot must
-    // also clear the local in-flight flag that normally ends with the turn.
-    workspaceState.handleSessionSnapshot(
-      sessionId,
-      { inFlightTurn: snap.inFlightTurn, busy: snap.session.busy },
-    );
-
-    // The snapshot's inFlightTurn is main-agent-only — seed the indicator's
-    // liveness flag from it (the projector was reset by the resync, so no
-    // turn.ended may ever arrive for a turn that was live before it). Gated
-    // on the snapshot's busy fact: the live tracker can hold a stale turn
-    // whose turn.ended was lost (abrupt agent disposal) — the server-side
-    // busy read is the reconciler, so a dead turn never relights the indicator.
-    {
-      if (snapMainTurnActive) rawState.turnActiveBySession[sessionId] = true;
-      else delete rawState.turnActiveBySession[sessionId];
-    }
-
-    connectEventsIfNeeded();
-    if (eventConn) {
-      // Seed BEFORE subscribing: the in-flight assistant message must exist
-      // before live deltas (aligned by wire offset) start appending to it.
-      eventConn.seedSnapshot(sessionId, snap);
-      eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
-      retainWsSubscription(sessionId);
-    }
-    sessionsWithStaleCursor.delete(sessionId);
-    // The snapshot carries placeholder usage, so a preserved cached value may
-    // itself be stale — resync / stale-socket recovery reach here without
-    // selectSession's sidecar refresh, and the volatile status frames that
-    // would update it were exactly what the resync replaced. Re-read /status
-    // so the ring converges on the live value.
-    if (snapUsagePlaceholder && opts?.skipStatusRefresh !== true) void refreshSessionStatus(sessionId);
-    void pullSessionWarnings(sessionId);
-    return 'ok';
-  } catch (err) {
-    if (isSessionNotFoundError(err)) {
-      await handleSessionNotFound(sessionId);
-      return 'not-found';
-    }
-    pushOperationFailure('getSessionSnapshot', err, {
-      title: t('warnings.sessionSnapshotTitle'),
-      message: t('warnings.sessionSnapshotMessage'),
-      sessionId,
-    });
-    return 'failed';
-  }
-}
-
-const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
-
 function hasLoadedMessages(sessionId: string): boolean {
-  return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
+  // The transcript pool retains an entry for every session this client opened;
+  // a loaded baseline is the "this session's history is already here" fact the
+  // legacy messagesBySession key used to provide.
+  return mainTranscriptHost.pool.getEntry(sessionId)?.baselineLoaded === true;
+}
+
+/** Resolves once the session's transcript baseline is loaded — selectSession
+ *  holds its loading state on this instead of clearing it synchronously. */
+function whenMainTranscriptBaseline(sessionId: string): Promise<void> {
+  if (hasLoadedMessages(sessionId)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const stop = watch(
+      () => {
+        const entry = mainTranscriptHost.pool.getEntry(sessionId);
+        // Gone (forgetSession removed the entry — e.g. a 404 on first read):
+        // resolve too, or the loading state would hang on a session that no
+        // longer exists.
+        if (entry === undefined) return true;
+        // baselineLoaded is a plain field on an unproxied entry (the pool Map
+        // is shallowReactive), so reading it alone tracks nothing — the flip
+        // must be observed through the entry's version ref, which bumps when
+        // the baseline (or its empty-reset retry) lands.
+        void entry.version.value;
+        return entry.baselineLoaded === true;
+      },
+      (loaded) => {
+        if (!loaded) return;
+        stop();
+        resolve();
+      },
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2108,30 +2256,35 @@ function hasLoadedMessages(sessionId: string): boolean {
 //
 // Keep only the most-recently-opened sessions subscribed (MRU order, index 0 =
 // newest). The active session is always retained.
-//
-// Eviction drops the live WS subscription but keeps the session's cursor so a
-// quick re-open can resume cheaply. However, a cursor kept across an eviction
-// can go stale: some session events (`event.session.status_changed`,
-// `session.meta.updated`, ...) are broadcast to EVERY connection (see
-// `isGlobalSessionEvent` on the server) and still advance `lastSeqBySession`
-// for an unsubscribed session. If a session emits per-session durable events
-// while evicted and then a global event, the cursor jumps past the missed
-// events. Evicted sessions are therefore tracked in `sessionsWithStaleCursor`;
-// when one is re-opened we rebuild from a snapshot (see `reopenSession`) rather
-// than resume from a cursor that may have skipped events.
 const MAX_WS_SUBSCRIPTIONS = 4;
 const wsSubscriptionOrder: string[] = [];
-const sessionsWithStaleCursor = new Set<string>();
+// The seq a session's subscription had actually consumed up to when the LRU
+// evicted it. lastSeqBySession keeps advancing on broadcast frames (e.g.
+// session.meta.updated) even while unsubscribed, so re-subscribing from the
+// aggregate cursor would skip the side-channel (BTW) agent frames missed in
+// between — freeze the consumed cursor at eviction instead.
+const frozenSeqBySession = new Map<string, { seq: number; epoch?: string }>();
+/** A session just RESUMED from a frozen watermark: its replay flushes before
+ *  any seq-newer frame (the socket is one FIFO), so until a frame past
+ *  `throughSeq` (the broadcast-inflated aggregate at resume) lands, the
+ *  aggregate cursor does NOT prove subscription consumption — broadcasts
+ *  kept advancing it while the replay was still in flight. A re-eviction in
+ *  this window must re-freeze the original `seq`, or the next resume starts
+ *  from the inflated value and permanently skips the side-channel (BTW) and
+ *  terminal frames the replay never delivered. */
+const resumeFloorBySession = new Map<string, { seq: number; throughSeq: number }>();
+// The journal epoch the latest resync announced — a watermark only means
+// anything inside the journal generation it was recorded in.
+let lastKnownJournalEpoch: string | undefined;
 
 function retainWsSubscription(sessionId: string): void {
   const idx = wsSubscriptionOrder.indexOf(sessionId);
   if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
   wsSubscriptionOrder.unshift(sessionId);
   // Evict the oldest entries past the cap, skipping the active session. The
-  // active session is NOT guaranteed to sit at the front: first-time opens only
-  // retain after an awaited snapshot, so rapid clicks can complete out of order
-  // and leave the active session at the tail. Skipping it (rather than breaking
-  // when the tail is active) keeps the cap effective.
+  // active session is NOT guaranteed to sit at the front: rapid clicks can
+  // complete out of order and leave the active session at the tail. Skipping
+  // it (rather than breaking when the tail is active) keeps the cap effective.
   while (wsSubscriptionOrder.length > MAX_WS_SUBSCRIPTIONS) {
     let victimIdx = -1;
     for (let i = wsSubscriptionOrder.length - 1; i >= 0; i--) {
@@ -2143,30 +2296,65 @@ function retainWsSubscription(sessionId: string): void {
     if (victimIdx === -1) break;
     const [victim] = wsSubscriptionOrder.splice(victimIdx, 1);
     if (victim === undefined) break;
+    // A still-open resume window re-freezes its original watermark: the
+    // aggregate is broadcast-inflated until the replay provably flushed.
+    const consumedSeq =
+      resumeFloorBySession.get(victim)?.seq ?? rawState.lastSeqBySession[victim];
+    if (consumedSeq !== undefined) {
+      frozenSeqBySession.set(victim, {
+        seq: consumedSeq,
+        ...(lastKnownJournalEpoch !== undefined ? { epoch: lastKnownJournalEpoch } : {}),
+      });
+    }
     eventConn?.unsubscribe(victim);
-    sessionsWithStaleCursor.add(victim);
   }
 }
 
 function dropWsSubscription(sessionId: string): void {
   const idx = wsSubscriptionOrder.indexOf(sessionId);
   if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
-  sessionsWithStaleCursor.delete(sessionId);
+  frozenSeqBySession.delete(sessionId);
+  resumeFloorBySession.delete(sessionId);
 }
 
-/** Re-open an already-loaded session: always rebuild from a fresh snapshot.
- *
- *  Volatile `assistant.delta` frames are never journaled or replayed: if a
- *  transport hiccup covered the tail of a turn while the user was away, the
- *  local transcript silently lost the model's final text, and a cursor
- *  resubscribe has nothing to recover it with. Always fetching the authoritative
- *  snapshot keeps the logic trivially correct (no freshness heuristics, no
- *  races to reason about); the snapshot is cheap server-side (LRU on the wire
- *  file). Trade-off: a snapshot GET in flight during a steep local send can
- *  momentarily overwrite that optimistic message — the user notices immediately
- *  and the next re-open (or a refresh) reconciles. */
-async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
-  return syncSessionFromSnapshot(sessionId);
+// The last turn whose end each session already settled (transcript edge or
+// REST work baseline): the same turn's end must never run the prompt lifecycle
+// twice — a second pass reaps the freshly-drained prompt's in-flight state and
+// drains ANOTHER queued entry, producing concurrent prompts.
+const settledTurnEndBySession = new Map<string, string>();
+
+/** Subscribe a session's session_event stream (plain, cursorless) and retain
+ *  it under the LRU cap. The surviving events on that channel — session
+ *  management, tasks, side-channel (BTW) — reconcile through their own REST
+ *  reads; the main message stream lives on the transcript channel. */
+function subscribeSessionEvents(sessionId: string): void {
+  connectEventsIfNeeded();
+  if (eventConn) {
+    // Resume from the frozen eviction cursor when there is one — the aggregate
+    // lastSeq may have run ahead on broadcast frames the subscription never
+    // saw its own events for. The floor record keeps the honest watermark
+    // alive until the replay provably flushed (see resumeFloorBySession).
+    const frozen = frozenSeqBySession.get(sessionId);
+    if (frozen !== undefined) {
+      frozenSeqBySession.delete(sessionId);
+      resumeFloorBySession.set(sessionId, {
+        seq: frozen.seq,
+        throughSeq: Math.max(rawState.lastSeqBySession[sessionId] ?? 0, frozen.seq),
+      });
+    }
+    const lastSeq = frozen?.seq ?? rawState.lastSeqBySession[sessionId];
+    // Carry the epoch the watermark was recorded in whenever we know it: an
+    // epoch mismatch makes the daemon answer resync_required (a full rebuild),
+    // while a bare old seq could be misread as a new-epoch-legal cursor after
+    // a restart and silently skip the gap (unrecoverable deltas).
+    const epoch = frozen?.epoch ?? lastKnownJournalEpoch;
+    if (lastSeq !== undefined) {
+      eventConn.subscribe(sessionId, epoch === undefined ? { seq: lastSeq } : { seq: lastSeq, epoch });
+    } else {
+      eventConn.subscribe(sessionId);
+    }
+    retainWsSubscription(sessionId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2270,44 +2458,37 @@ function toUiQuestion(q: AppQuestionRequest): UIQuestion {
 // One-shot bash-command index for the active session (task_id → command).
 // The old findBashCommandForTask scanned the whole transcript twice PER task,
 // and the tasks computed re-ran it every taskClock second while anything was
-// running. This recomputes only when the session's messages change.
+// running. This recomputes only when the session's transcript changes.
 const bashCommandIndex = computed<Map<string, string>>(() => {
-  const sid = rawState.activeSessionId;
-  const messages = sid ? (rawState.messagesBySession[sid] ?? []) : [];
-  const commandsByToolCallId = new Map<string, string>();
-  for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
-    for (const part of msg.content) {
-      if (part.type !== 'toolUse') continue;
-      if (part.toolName !== 'Bash' && part.toolName !== 'bash') continue;
-      const input = part.input as { command?: unknown } | undefined;
-      const command = input && typeof input.command === 'string' ? input.command : undefined;
-      if (command) commandsByToolCallId.set(part.toolCallId, command);
-    }
-  }
+  const transcriptEntry = activeMainTranscriptEntry();
   const index = new Map<string, string>();
-  if (commandsByToolCallId.size === 0) return index;
-  for (const msg of messages) {
-    if (msg.role !== 'tool') continue;
-    for (const part of msg.content) {
-      if (part.type !== 'toolResult') continue;
-      // Flatten before matching (the transcript's normalizeToolOutput):
-      // JSON.stringify on a ContentPart[] encodes newlines as literal "\n",
-      // and \S+ would swallow them into the captured task id.
-      const outputLines = normalizeToolOutput(part.output);
-      if (!outputLines) continue;
-      let taskId: string | undefined;
-      for (const line of outputLines) {
-        const match = /task_id:\s*(\S+)/.exec(line);
-        if (match?.[1]) {
-          taskId = match[1];
-          break;
+  if (transcriptEntry === null) return index;
+  const commandsByToolCallId = new Map<string, string>();
+  const outputs: { toolCallId: string; output: string }[] = [];
+  for (const item of transcriptEntry.channel.snapshot.items) {
+    if (item.kind !== 'turn') continue;
+    for (const step of item.steps) {
+      for (const frame of step.frames) {
+        if (frame.kind !== 'tool') continue;
+        if (frame.name === 'Bash' || frame.name === 'bash') {
+          const input = frame.input as { command?: unknown } | undefined;
+          if (typeof input?.command === 'string') commandsByToolCallId.set(frame.toolCallId, input.command);
+        }
+        // Agent-core tool results may arrive as ContentPart[] rather than a
+        // plain string — flatten before the task_id scan.
+        const outputLines = normalizeToolOutput(frame.output);
+        if (outputLines !== undefined && outputLines.length > 0) {
+          outputs.push({ toolCallId: frame.toolCallId, output: outputLines.join('\n') });
         }
       }
-      if (!taskId) continue;
-      const command = commandsByToolCallId.get(part.toolCallId);
-      if (command) index.set(taskId, command);
     }
+  }
+  if (commandsByToolCallId.size === 0) return index;
+  for (const { toolCallId, output } of outputs) {
+    const match = /task_id:\s*(\S+)/.exec(output);
+    if (!match?.[1]) continue;
+    const command = commandsByToolCallId.get(toolCallId);
+    if (command) index.set(match[1], command);
   }
   return index;
 });
@@ -2320,22 +2501,22 @@ function findBashCommandForTask(task: AppTask): string | undefined {
 // prompt), same deal as the bash index: the old per-task traversal rescanning
 // the transcript every taskClock second.
 const agentPromptIndex = computed<Map<string, string | string[]>>(() => {
-  const sid = rawState.activeSessionId;
-  const messages = sid ? (rawState.messagesBySession[sid] ?? []) : [];
+  const transcriptEntry = activeMainTranscriptEntry();
   const index = new Map<string, string | string[]>();
-  for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
-    for (const part of msg.content) {
-      if (part.type !== 'toolUse') continue;
-      const input = part.input as { prompt?: unknown; items?: unknown } | undefined;
-      const prompt = input && typeof input.prompt === 'string' ? input.prompt : undefined;
-      if (prompt && !index.has(part.toolCallId)) index.set(part.toolCallId, prompt);
-      // AgentSwarm: one tool call spawns every member; each member's own task
-      // text lives in input.items, addressed by the zero-based swarmIndex.
-      const items = input?.items;
-      if (!prompt && Array.isArray(items) && !index.has(part.toolCallId)) {
-        const texts = items.filter((item): item is string => typeof item === 'string');
-        if (texts.length > 0) index.set(part.toolCallId, texts);
+  if (transcriptEntry === null) return index;
+  for (const item of transcriptEntry.channel.snapshot.items) {
+    if (item.kind !== 'turn') continue;
+    for (const step of item.steps) {
+      for (const frame of step.frames) {
+        if (frame.kind !== 'tool') continue;
+        const input = frame.input as { prompt?: unknown; items?: unknown } | undefined;
+        const prompt = typeof input?.prompt === 'string' ? input.prompt : undefined;
+        if (prompt && !index.has(frame.toolCallId)) index.set(frame.toolCallId, prompt);
+        const items = input?.items;
+        if (!prompt && Array.isArray(items) && !index.has(frame.toolCallId)) {
+          const texts = items.filter((entry): entry is string => typeof entry === 'string');
+          if (texts.length > 0) index.set(frame.toolCallId, texts);
+        }
       }
     }
   }
@@ -2510,11 +2691,101 @@ const sideChat = useSideChat(rawState, {
   refreshSessionStatus,
 });
 
+// Per-session persistent spawn index (agent → parent tool call / swarm
+// index): the transcript's paged window only shows recent turns, but a docked
+// subagent can outlive the turn that spawned it — the cache carries the link
+// across pages. Cleared with the rest of the session's state.
+const spawnedIndexCacheBySid = new Map<string, SpawnedIndex>();
+// Last failed loadOlder time per session (ms) — the spawn-backfill retries
+// with a 30s backoff instead of storming once per watcher frame.
+const loadOlderFailedAtBySid = new Map<string, number>();
+
+function spawnedIndexCacheFor(sid: string): SpawnedIndex {
+  let cache = spawnedIndexCacheBySid.get(sid);
+  if (cache === undefined) {
+    cache = { parents: new Map(), swarmIndexes: new Map() };
+    spawnedIndexCacheBySid.set(sid, cache);
+  }
+  return cache;
+}
+
 const activeAppTasks = computed<AppTask[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sid]?.agentId;
-  return (rawState.tasksBySession[sid] ?? []).filter((task) => task.id !== hiddenBtwAgentId);
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry !== null) {
+    const rows = transcriptTasksToAppTasks(
+      transcriptEntry.channel.snapshot,
+      sid,
+      spawnedIndexCacheFor(sid),
+    );
+    // The transcript's cold rebuild can't backfill the spawned event's model
+    // fields (not persisted); the task poller's REST rows carry them for
+    // background tasks, keyed by the task-store id the fold keeps as
+    // backgroundTaskId.
+    const restById = new Map((rawState.tasksBySession[sid] ?? []).map((task) => [task.id, task]));
+    return rows
+      // A BTW agent stays out of the dock until it terminates — closing the
+      // panel must not resurface its still-running task as a regular subagent
+      // (with a wrong cancel entry).
+      .filter((task) => !sideChat.isSideChatAgent(task.agentId ?? task.id))
+      .map((row) => {
+        const rest =
+          restById.get(row.id) ??
+          (row.backgroundTaskId !== undefined ? restById.get(row.backgroundTaskId) : undefined);
+        if (rest === undefined) return row;
+        // The REST task-store row settles a transcript row whose agent-side
+        // terminal event was missed (a disconnect window): without this the
+        // dock shows the task running forever — the same fold
+        // keepLiveSubagents does for the legacy merge, mirrored here. Same
+        // generation guard as the transcript fold: a RESUMED agent keeps the
+        // old backgroundTaskId, and a terminal REST row from that previous
+        // run must not settle the new generation. An ESTIMATED (client-clock)
+        // completedAt can't judge generations across hosts — a browser
+        // behind the daemon would compare false forever and strand a
+        // finished task as running; the run's own SERVER start stamps decide.
+        const restCompletesRow =
+          row.status === 'running' &&
+          rest.status !== 'running' &&
+          row.startedAt !== undefined &&
+          (rest.completedAtEstimated === true
+            ? rest.startedAt !== undefined && rest.startedAt >= row.startedAt
+            : rest.completedAt !== undefined && rest.completedAt >= row.startedAt);
+        // An exact id match (NOT the backgroundTaskId alias a resumed row
+        // inherits) provably names the same task: the poller's larger
+        // outputPreview/outputBytes backfill safely even when the transcript
+        // already settled the status itself.
+        const takeTerminalContent = restCompletesRow || row.id === rest.id;
+        return {
+          ...row,
+          status: restCompletesRow ? rest.status : row.status,
+          subagentPhase: restCompletesRow
+            ? rest.status === 'completed'
+              ? 'completed'
+              : rest.status === 'cancelled'
+                ? 'cancelled'
+                : 'failed'
+            : row.subagentPhase,
+          // Terminal CONTENT fields ride the same generation guard: a previous
+          // run's stamp/output must not leak onto the resumed row.
+          completedAt: takeTerminalContent ? rest.completedAt ?? row.completedAt : row.completedAt,
+          completedAtEstimated:
+            rest.completedAt !== undefined && takeTerminalContent
+              ? undefined
+              : row.completedAtEstimated,
+          outputPreview: takeTerminalContent ? rest.outputPreview ?? row.outputPreview : row.outputPreview,
+          outputBytes: takeTerminalContent ? rest.outputBytes ?? row.outputBytes : row.outputBytes,
+          model: row.model ?? rest.model,
+          thinkingEffort: row.thinkingEffort ?? rest.thinkingEffort,
+          // A running bash task created outside the loaded transcript window
+          // has no frame to recover its command from — the REST row carries it.
+          command: row.command ?? rest.command,
+        };
+      });
+  }
+  return (rawState.tasksBySession[sid] ?? []).filter((task) =>
+    !sideChat.isSideChatAgent(task.agentId ?? task.id),
+  );
 });
 
 const taskPoller = useTaskPoller(rawState, activeAppTasks, { api: getKimiWebApi() });
@@ -2526,6 +2797,10 @@ const taskPoller = useTaskPoller(rawState, activeAppTasks, { api: getKimiWebApi(
 const turnActive = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return false;
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry !== null) {
+    return transcriptEntry.channel.snapshot.meta.activity === 'turn';
+  }
   return (
     (rawState.turnActiveBySession[sid] ?? false) ||
     (rawState.sessions.find((session) => session.id === sid)?.mainTurnActive ?? false)
@@ -2538,6 +2813,40 @@ const turnActive = computed<boolean>(() => {
 const activeTurnError = computed<AppTurnError | undefined>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return undefined;
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry !== null) {
+    const snapshot = transcriptEntry.channel.snapshot;
+    if (snapshot.meta.activity === 'turn') return undefined;
+    // Only the LATEST turn's terminal error counts: a newer successful turn
+    // already retired any older failure's story.
+    const last = snapshot.items.findLast((item) => item.kind === 'turn');
+    if (last?.kind !== 'turn' || last.state !== 'failed' || last.error === undefined) {
+      return undefined;
+    }
+    // The structured error payload rides the end-appended 'error' notice
+    // marker — nested at payload.event (coreEventMap noticeOp('error', …,
+    // event) wraps the envelope as { level, message, event }) — recover the
+    // same fields the legacy reducer's turnError fold produced (code drives
+    // ChatPane's title pick, statusCode/requestId feed its diagnostics).
+    const notice = snapshot.items.findLast(
+      (item) =>
+        item.kind === 'marker' &&
+        item.marker === 'notice' &&
+        (item.payload as { level?: unknown } | undefined)?.level === 'error',
+    );
+    const envelope =
+      notice?.kind === 'marker' ? (notice.payload as Record<string, unknown> | undefined) : undefined;
+    const p = (envelope?.['event'] ?? envelope) as Record<string, unknown> | undefined;
+    const details = (p?.['details'] ?? {}) as Record<string, unknown>;
+    return {
+      code: typeof p?.['code'] === 'string' ? p['code'] : undefined,
+      message: last.error,
+      name: typeof p?.['name'] === 'string' ? p['name'] : undefined,
+      retryable: typeof p?.['retryable'] === 'boolean' ? p['retryable'] : undefined,
+      statusCode: typeof details['statusCode'] === 'number' ? details['statusCode'] : undefined,
+      requestId: typeof details['requestId'] === 'string' ? details['requestId'] : undefined,
+    };
+  }
   return rawState.turnErrorBySession[sid];
 });
 
@@ -2550,40 +2859,1462 @@ const activeTurnRetry = computed<AppTurnRetry | undefined>(() => {
   // A retry backoff only exists inside a live main turn — never surface one
   // for a turn the snapshot/baseline paths already retired.
   if (!turnActive.value) return undefined;
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry !== null) {
+    const turns = transcriptEntry.channel.snapshot.items;
+    const current = turns.findLast((item): item is Extract<typeof item, { kind: 'turn' }> => item.kind === 'turn');
+    const retry = current?.state === 'running' ? current.steps.at(-1)?.retry : undefined;
+    if (retry === undefined) return undefined;
+    return {
+      failedAttempt: retry.failedAttempt,
+      nextAttempt: retry.nextAttempt,
+      maxAttempts: retry.maxAttempts,
+      delayMs: retry.delayMs,
+      errorName: retry.errorName,
+      statusCode: retry.statusCode,
+    };
+  }
   return rawState.turnRetryBySession[sid];
 });
 
 // Turns run through an incremental projector: unchanged turns keep their object
-// identity across streaming frames (see turnsProjector.ts), so the keyed v-for
-// downstream only patches the live tail. The projector is stateful (it caches
-// its own previous output), so a plain computed preserves the old synchronous
-// pull semantics while reuse happens inside each re-evaluation.
+// identity across streaming frames (see mainTurnsProjector.ts), so the keyed
+// v-for downstream only patches the live tail. The projector is stateful (it
+// caches its own previous output), so a plain computed preserves the old
+// synchronous pull semantics while reuse happens inside each re-evaluation.
 const getFileUrlById = (fileId: string): string => getKimiWebApi().getFileUrl(fileId);
 const getSessionMediaUrl = (sessionId: string, fileId: string): string =>
   getKimiWebApi().getSessionMediaUrl(sessionId, fileId);
-// Hoisted empty fallback: a fresh `[]` literal per projection would break the
-// projector's approvals-identity reuse gate (see turnsProjector.ts).
-const NO_PENDING_APPROVALS: AppApprovalRequest[] = [];
-const turnsProjector = createTurnsProjector();
+const mainTurnsProjector = createMainTurnsProjector();
+/** Extract joined text from a transcript prompt's open content envelope (the
+ *  same ContentPart[] shape AppMessage.content carries). */
+function transcriptPromptText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (part): part is { type: 'text'; text: string } =>
+        typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text',
+    )
+    .map((part) => part.text)
+    .join('');
+}
+
+/** A skill bubble's echo turn: a skill_activation turn AFTER the bubble's
+ *  submit-time anchor carrying the same name AND args. Anchored scoping keeps
+ *  a historical same-skill turn from covering (or retiring) a fresh
+ *  submission; a rewound anchor (undo/reset) means nothing covers it here. */
+/** The newest server-side timestamp in a snapshot (turns' startedAt/endedAt,
+ *  markers' at) — the closest daemon-domain "now" for stamping live edges. */
+export function newestServerStamp(snapshot: AgentTranscriptSnapshot): string | undefined {
+  for (let i = snapshot.items.length - 1; i >= 0; i--) {
+    const item = snapshot.items[i]!;
+    if (item.kind === 'marker') {
+      const at = (item as { at?: unknown }).at;
+      if (typeof at === 'string') return at;
+      continue;
+    }
+    if (item.kind === 'turn') {
+      // Steps inside the turn may carry NEWER stamps than the turn header —
+      // a running turn has no endedAt, and its second+ step started later.
+      let newest: string | undefined;
+      const consider = (ts: string | undefined): void => {
+        if (typeof ts === 'string' && (newest === undefined || ts > newest)) newest = ts;
+      };
+      consider(item.endedAt);
+      consider(item.startedAt);
+      for (const step of item.steps) {
+        consider(step.endedAt);
+        consider(step.startedAt);
+      }
+      if (newest !== undefined) return newest;
+    }
+  }
+  return undefined;
+}
+
+/** The server-time floor for a bubble's echo reconciliation, derived from its
+ *  submit-time anchor turn: the anchor is the session's tail at submit time,
+ *  so anything this submission echoes was created at/after it. Both stamps
+ *  are daemon-side — no cross-host clock comparison (a Web/Remote-Control
+ *  client's clock may be ahead of the daemon's). */
+export function anchorServerFloor(
+  items: readonly TranscriptItem[],
+  anchorTurnId: string | undefined,
+): string | undefined {
+  if (anchorTurnId === undefined) return undefined;
+  const anchor = items.find((item) => item.kind === 'turn' && item.turnId === anchorTurnId);
+  return anchor?.kind === 'turn' ? anchor.startedAt : undefined;
+}
+
+/** The echo floor for an optimistic bubble: the NEWER of the two submit-time
+ *  anchors. The prompt anchor (exclusive — that prompt itself is history this
+ *  send must not match) wins whenever its stamp is at/after the turn anchor's:
+ *  a prompt created inside the tail turn (e.g. a steer) is newer than the
+ *  turn's startedAt, and an inclusive turn floor would pass that same-turn
+ *  same-text prompt as this send's echo. The turn anchor (inclusive — the
+ *  echo is created inside/after that turn) only bounds sessions whose newest
+ *  prompt predates it. A session with only blocked/aborted prompts has no
+ *  turn at all; without the prompt fallback its whole history would pass. */
+export function promptEchoFloor(
+  items: readonly TranscriptItem[],
+  metadata: { readonly [key: string]: unknown } | undefined,
+): { at: string; exclusive: boolean } | undefined {
+  const turnFloor = anchorServerFloor(items, metadata?.['kimiWeb.anchorTurnId'] as string | undefined);
+  const promptFloor = metadata?.['kimiWeb.anchorPromptCreatedAt'];
+  if (typeof promptFloor === 'string' && (turnFloor === undefined || promptFloor >= turnFloor)) {
+    return { at: promptFloor, exclusive: true };
+  }
+  return turnFloor !== undefined ? { at: turnFloor, exclusive: false } : undefined;
+}
+
+/** An uncertain bubble's echo prompt: a non-queued prompt entity with the
+ *  same text created at/after the server-time floor (strictly after it when
+ *  floorExclusive — see promptEchoFloor). The floor keeps an earlier
+ *  identical send from covering (or retiring) this one while its own request
+ *  may still be in flight; without an anchor there is no time filter at all
+ *  (a session's very first prompt has no history to exclude). */
+export function promptEchoExists(
+  prompts: readonly TranscriptPrompt[],
+  text: string,
+  floorCreatedAt: string | undefined,
+  floorExclusive = false,
+): boolean {
+  return prompts.some(
+    (prompt) =>
+      prompt.status !== 'queued' &&
+      (floorCreatedAt === undefined ||
+        (floorExclusive ? prompt.createdAt > floorCreatedAt : prompt.createdAt >= floorCreatedAt)) &&
+      transcriptPromptText(prompt.content) === text,
+  );
+}
+
+/** Pair uncertain bubbles with their echo prompts ONE-TO-ONE in submission
+ *  order: a lost response can be re-sent immediately (the failure cleared
+ *  inFlight), so two uncertain bubbles may share text AND anchor — an
+ *  existence check would let a single prompt entity cover BOTH, retiring the
+ *  second while its own request may still be queued or never observed. Each
+ *  prompt entity consumes at most one bubble. Attachment-only sends (empty
+ *  text) get the same pairing for free. The pairing is computed fresh per
+ *  watcher frame, so the caller passes the consumption it already recorded
+ *  (alreadyConsumed): a prompt's binding to a retired bubble must survive
+ *  the frame that retired it, or the NEXT frame pairs the same prompt with
+ *  the next identical bubble. Returns bubbleId → promptId of the new pairs. */
+export function uncertainEchoMatchedIds(
+  bubbles: readonly {
+    id: string;
+    text: string;
+    floor: { at: string; exclusive: boolean } | undefined;
+  }[],
+  prompts: readonly TranscriptPrompt[],
+  alreadyConsumed?: ReadonlySet<string>,
+): Map<string, string> {
+  const matched = new Map<string, string>();
+  const consumed = new Set<string>(alreadyConsumed ?? []);
+  for (const bubble of bubbles) {
+    const mate = prompts.find(
+      (prompt) =>
+        !consumed.has(prompt.promptId) &&
+        prompt.status !== 'queued' &&
+        (bubble.floor === undefined ||
+          (bubble.floor.exclusive
+            ? prompt.createdAt > bubble.floor.at
+            : prompt.createdAt >= bubble.floor.at)) &&
+        transcriptPromptText(prompt.content) === bubble.text,
+    );
+    if (mate !== undefined) {
+      consumed.add(mate.promptId);
+      matched.set(bubble.id, mate.promptId);
+    }
+  }
+  return matched;
+}
+
+/** A hook-blocked skill activation leaves no turn — only its persisted skill
+ *  marker. Attribute it to a bubble the same anchored way as the turn echo,
+ *  PLUS the submit-time prompt watermark: an identical re-activation shares
+ *  the anchor turn, so without the watermark the OLD activation's marker
+ *  would retire the NEW uncertain bubble before its request was ever seen. */
+export function skillMarkerExists(
+  items: readonly TranscriptItem[],
+  anchorTurnId: string | undefined,
+  skillName: unknown,
+  skillArgs: unknown,
+  promptFloor?: string,
+): boolean {
+  const anchorIdx =
+    anchorTurnId === undefined
+      ? -1
+      : items.findIndex((item) => item.kind === 'turn' && item.turnId === anchorTurnId);
+  if (anchorTurnId !== undefined && anchorIdx === -1) return false;
+  return items.slice(anchorIdx + 1).some((item) => {
+    if (item.kind !== 'marker' || item.marker !== 'skill') return false;
+    // The marker must postdate the submit-time prompt watermark (exclusive —
+    // the prompt anchored at the watermark is this submit's own history).
+    if (promptFloor !== undefined) {
+      const at = (item as { at?: unknown }).at;
+      if (typeof at !== 'string' || at <= promptFloor) return false;
+    }
+    const origin = (
+      item.payload as { origin?: { kind?: unknown; skillName?: unknown; skillArgs?: unknown } } | undefined
+    )?.origin;
+    return (
+      origin?.kind === 'skill_activation' &&
+      origin.skillName === skillName &&
+      origin.skillArgs === skillArgs
+    );
+  });
+}
+
+export function skillEchoTurnExists(
+  items: readonly TranscriptItem[],
+  anchorTurnId: string | undefined,
+  skillName: unknown,
+  skillArgs: unknown,
+): boolean {
+  const anchorIdx =
+    anchorTurnId === undefined
+      ? -1
+      : items.findIndex((item) => item.kind === 'turn' && item.turnId === anchorTurnId);
+  if (anchorTurnId !== undefined && anchorIdx === -1) return false;
+  return items.slice(anchorIdx + 1).some((item) => {
+    if (item.kind !== 'turn') return false;
+    const payload = ((item.origin as { payload?: unknown }).payload ?? item.origin) as {
+      kind?: unknown;
+      skillName?: unknown;
+      skillArgs?: unknown;
+    };
+    return (
+      payload.kind === 'skill_activation' &&
+      payload.skillName === skillName &&
+      payload.skillArgs === skillArgs
+    );
+  });
+}
+
+/** Pair uncertain SKILL bubbles with their echo entities ONE-TO-ONE, turn
+ *  ids and marker ids sharing one consumption namespace: two identical
+ *  activations lost to a missing response share anchors, and an existence
+ *  check lets ONE skill turn (or marker) retire both bubbles — the second
+ *  request may never have been observed. The caller persists the consumption
+ *  across frames (like uncertainEchoMatchedIds' prompt twin). Returns
+ *  bubbleId → entityId (turnId or markerId) of the new pairs. */
+export function skillEchoMatchedIds(
+  bubbles: readonly {
+    id: string;
+    anchorTurnId: string | undefined;
+    promptFloor: string | undefined;
+    skillName: unknown;
+    skillArgs: unknown;
+  }[],
+  items: readonly TranscriptItem[],
+  alreadyConsumed?: ReadonlySet<string>,
+): Map<string, string> {
+  const matched = new Map<string, string>();
+  const consumed = new Set<string>(alreadyConsumed ?? []);
+  for (const bubble of bubbles) {
+    const anchorIdx =
+      bubble.anchorTurnId === undefined
+        ? -1
+        : items.findIndex((item) => item.kind === 'turn' && item.turnId === bubble.anchorTurnId);
+    // A rewound anchor (undo/reset) means nothing here is this bubble's echo.
+    if (bubble.anchorTurnId !== undefined && anchorIdx === -1) continue;
+    const mate = items.slice(anchorIdx + 1).find((item) => {
+      if (item.kind === 'turn') {
+        if (consumed.has(item.turnId)) return false;
+        const payload = ((item.origin as { payload?: unknown }).payload ?? item.origin) as {
+          kind?: unknown;
+          skillName?: unknown;
+          skillArgs?: unknown;
+        };
+        return (
+          payload.kind === 'skill_activation' &&
+          payload.skillName === bubble.skillName &&
+          payload.skillArgs === bubble.skillArgs
+        );
+      }
+      if (item.kind === 'marker' && item.marker === 'skill') {
+        if (consumed.has(item.markerId)) return false;
+        if (bubble.promptFloor !== undefined) {
+          const at = (item as { at?: unknown }).at;
+          if (typeof at !== 'string' || at <= bubble.promptFloor) return false;
+        }
+        const origin = (
+          item.payload as
+            | { origin?: { kind?: unknown; skillName?: unknown; skillArgs?: unknown } }
+            | undefined
+        )?.origin;
+        return (
+          origin?.kind === 'skill_activation' &&
+          origin.skillName === bubble.skillName &&
+          origin.skillArgs === bubble.skillArgs
+        );
+      }
+      return false;
+    });
+    if (mate !== undefined) {
+      // The find predicate only admits turns and skill markers.
+      const mateId = mate.kind === 'turn' ? mate.turnId : (mate as { markerId: string }).markerId;
+      consumed.add(mateId);
+      matched.set(bubble.id, mateId);
+    }
+  }
+  return matched;
+}
+
 const turns = computed<ChatTurn[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  const hiddenIds = new Set(rawState.sideChatUserMessageIdsBySession[sid] ?? []);
-  return turnsProjector({
-    messages: (rawState.messagesBySession[sid] ?? []).filter((m) => !hiddenIds.has(m.id)),
-    approvals: rawState.approvalsBySession[sid] ?? NO_PENDING_APPROVALS,
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry === null) return [];
+  const base = mainTurnsProjector(transcriptEntry.channel.snapshot, {
+    sessionId: sid,
     getFileUrl: getFileUrlById,
     getSessionMediaUrl,
-    sessionActive: turnActive.value,
-    planReviewByToolCallId: rawState.planReviewByToolCallId,
     plansByToolCallId: plansBySession[sid],
+    planReviewByToolCallId: rawState.planReviewByToolCallId,
+    agentCreatedAt: rawState.sessions.find((s) => s.id === sid)?.createdAt,
+    pendingInteractionAtByStepId: pendingInteractionAtBySid.get(sid),
   });
+  // Optimistic user bubbles (S8): pure UI state, overlaid until the
+  // transcript's turn header covers the same prompt — then dropped.
+  const optimistic = rawState.optimisticMessagesBySession[sid] ?? [];
+  if (optimistic.length === 0) return base;
+  const transcriptTurns = transcriptEntry.channel.snapshot.items.filter(
+    (item) => item.kind === 'turn',
+  );
+  // One-to-one echo pairing for the uncertain text path: two identical
+  // uncertain sends (a lost response re-sent) share text AND anchor, so an
+  // existence check would let ONE prompt entity cover both bubbles — each
+  // prompt entity consumes at most one, in submission order.
+  const uncertainMatched = uncertainEchoMatchedIds(
+    optimistic
+      .filter(
+        (msg) =>
+          msg.metadata?.['kimiWeb.uncertain'] === true &&
+          msg.metadata?.['kimiWeb.promptId'] === undefined &&
+          (msg.metadata?.['origin'] as { kind?: unknown } | undefined)?.kind !==
+            'skill_activation',
+      )
+      .map((msg) => ({
+        id: msg.id,
+        text: msg.content
+          .filter((part) => part.type === 'text')
+          .map((part) => ('text' in part ? part.text : ''))
+          .join(''),
+        floor: promptEchoFloor(transcriptEntry.channel.snapshot.items, msg.metadata),
+      })),
+    transcriptEntry.channel.snapshot.prompts,
+    // A prompt bound to an already-retired bubble stays consumed across
+    // frames (see consumedEchoPromptIdsBySid) — the next identical bubble
+    // must not be covered by it.
+    consumedEchoPromptIdsBySid.get(sid),
+  );
+  // The same one-to-one pairing for uncertain SKILL bubbles: one skill turn
+  // (or marker) must not cover two identical activations.
+  const skillMatched = skillEchoMatchedIds(
+    optimistic
+      .filter(
+        (msg) =>
+          msg.metadata?.['kimiWeb.uncertain'] === true &&
+          (msg.metadata?.['origin'] as { kind?: unknown } | undefined)?.kind ===
+            'skill_activation',
+      )
+      .map((msg) => {
+        const origin = msg.metadata?.['origin'] as
+          | { skillName?: unknown; skillArgs?: unknown }
+          | undefined;
+        return {
+          id: msg.id,
+          anchorTurnId: msg.metadata?.['kimiWeb.anchorTurnId'] as string | undefined,
+          promptFloor: msg.metadata?.['kimiWeb.anchorPromptCreatedAt'] as string | undefined,
+          skillName: origin?.skillName,
+          skillArgs: origin?.skillArgs,
+        };
+      }),
+    transcriptEntry.channel.snapshot.items,
+    consumedSkillEchoIdsBySid.get(sid),
+  );
+  const uncovered = optimistic.filter((msg) => {
+    // Identity reconciliations come FIRST — they don't depend on the anchor
+    // (a forward window slide can evict the anchor turn without any undo).
+    // A bubble stamped with the daemon's prompt id reconciles by IDENTITY: a
+    // queued prompt keeps its bubble until its own turn starts — another
+    // client's identical-text or attachment-only turn must not cover it.
+    const stampedPromptId = msg.metadata?.['kimiWeb.promptId'] as string | undefined;
+    if (stampedPromptId !== undefined) {
+      return !transcriptEntry.channel.snapshot.prompts.some(
+        (prompt) => prompt.promptId === stampedPromptId && prompt.status !== 'queued',
+      );
+    }
+    // A skill activation's display identity is its structured origin, not the
+    // text: the transcript turn's prompt is the EXPANDED skill prompt, so a
+    // text comparison never covers a slash-command bubble — and the generic
+    // uncertain branch below would strand it forever (a skill's `/name args`
+    // text never equals the expanded prompt entity's content).
+    const msgOrigin = msg.metadata?.['origin'] as
+      | { kind?: unknown; skillName?: unknown; skillArgs?: unknown }
+      | undefined;
+    if (msgOrigin?.kind === 'skill_activation') {
+      // Name AND args, anchored at submit time: another client's turn — or a
+      // historical same-skill turn before the anchor — is not OUR activation's
+      // echo and must not cover the local bubble. An UNCERTAIN one pairs
+      // one-to-one (two identical lost activations share these anchors).
+      if (msg.metadata?.['kimiWeb.uncertain'] === true) {
+        return !skillMatched.has(msg.id);
+      }
+      const anchorIdForSkill = msg.metadata?.['kimiWeb.anchorTurnId'] as string | undefined;
+      return !skillEchoTurnExists(
+        transcriptEntry.channel.snapshot.items,
+        anchorIdForSkill,
+        msgOrigin.skillName,
+        msgOrigin.skillArgs,
+      );
+    }
+    // An uncertain bubble (submit response lost; may already be queued
+    // server-side) has NO identity — never let text-matching turns cover it:
+    // only the transcript's prompt entities (its own queued prompt leaving
+    // the queue) may retire it, paired one-to-one (see above).
+    if (msg.metadata?.['kimiWeb.uncertain'] === true) {
+      return !uncertainMatched.has(msg.id);
+    }
+    // The anchor is stamped at SUBMIT time (kimiWeb.anchorTurnId): resolving
+    // it here, on first render, could capture the turn the daemon already
+    // created for this very prompt (background sessions evaluate lazily) and
+    // the bubble would double-render until the turn ends.
+    const anchorId = msg.metadata?.['kimiWeb.anchorTurnId'] as string | undefined;
+    const anchorIdx =
+      anchorId === undefined
+        ? -1
+        : transcriptTurns.findIndex((turn) => turn.kind === 'turn' && turn.turnId === anchorId);
+    // The anchor turn was rewound (undo/reset): keep the bubble — the finish
+    // path retires it, and a whole-history match could hide a fresh resend.
+    if (anchorId !== undefined && anchorIdx === -1) return true;
+    const candidates = transcriptTurns.slice(anchorIdx + 1);
+    const text = msg.content
+      .filter((part) => part.type === 'text')
+      .map((part) => ('text' in part ? part.text : ''))
+      .join('');
+    return !candidates.some(
+      (turn) =>
+        turn.kind === 'turn' &&
+        ((turn.prompt ?? '') === text ||
+          (text === '' && (turn.attachmentIds?.length ?? 0) > 0)),
+    );
+  });
+  if (uncovered.length === 0) return base;
+  const startNo = base.filter((turn) => turn.role !== 'compaction').length + 1;
+  return [
+    ...base,
+    ...uncovered.flatMap((msg, index) =>
+      messagesToTurns([msg], [], getFileUrlById, false, {}, {}, {
+        startNo: startNo + index,
+        getSessionMediaUrl,
+      }),
+    ),
+  ];
 });
 
 /** The working indicator: the main conversation has an unfinished prompt — either
  *  submitted-but-not-terminated (`inFlight`) or a main turn in flight
  *  (`turnActive`). */
 const working = computed<boolean>(() => inFlight.value || turnActive.value);
+
+// Observed times of each session's pending interactions, keyed by the RUNNING
+// step they suspend. An approval/question pauses that step WITHOUT a
+// step.endedAt, and an open thinking span would otherwise keep billing the
+// human's wait as thinking time — the turns projector settles each suspended
+// step's open span at its own stamp (two sequential interactions keep
+// INDEPENDENT ceilings; a session-wide stamp would re-bill the first step).
+// Written by the transcript edge watcher below; read by the turns computed
+// (reactive so the settle re-renders the moment the interaction lands).
+const pendingInteractionAtBySid = shallowReactive(new Map<string, ReadonlyMap<string, string>>());
+
+// The transcript pool follows the active session; the approvals/questions
+// store and the plan-review record are sourced from the transcript
+// interactions of every resident session (the pool keeps them subscribed in
+// the background, so badges stay live too).
+{
+  const host = mainTranscriptHost;
+  watch(
+    () => rawState.activeSessionId,
+    (sid, prevSid) => {
+      if (prevSid !== undefined && prevSid !== sid) host.deactivate(prevSid);
+      // First-read failures retry INSIDE the pool on a capped backoff — the
+      // pool owns the attempt counter so it survives the entry's eviction,
+      // and this watcher only ever expresses user intent. Keeping entry
+      // existence out of the watched sources also keeps the reactive graph
+      // acyclic: activate() mutates pool state that nothing here observes
+      // (a sync first-read failure would otherwise retrigger this watcher
+      // within its own flush and loop on "Maximum recursive updates").
+      if (sid) host.activate(sid);
+    },
+    { immediate: true },
+  );
+  watch(
+      () =>
+        [
+          rawState.activeSessionId,
+          ...[...host.pool.subscribedSessions].flatMap((sid) => [
+            host.pool.getEntry(sid)?.version.value ?? -1,
+            // A side-chat's own transcript drives the interaction merge too —
+            // a side-only frame (new or resolved approval) must re-run it
+            // even when no main frame ever comes.
+            auxiliaryTranscripts.getEntry(
+              sid,
+              sideChat.sideChatTargetBySession.value[sid]?.agentId ?? '',
+            )?.version.value ?? -1,
+            // The agent whose DETAIL panel is open is transcript-grade too:
+            // while it streams, the server suppresses its projected session
+            // events on this connection, so its new/resolved interactions
+            // only land on its auxiliary entry. The desired agent itself is
+            // reactive (panel open/close/switch must re-run the merge).
+            auxiliaryTranscripts.desiredAgentBySession.get(sid),
+            auxiliaryTranscripts.getEntry(
+              sid,
+              auxiliaryTranscripts.desiredAgentBySession.get(sid) ?? '',
+            )?.version.value ?? -1,
+          ]),
+        ] as const,
+      () => {
+        for (const sid of host.pool.subscribedSessions) {
+          const entry = host.pool.getEntry(sid);
+          if (entry === undefined || !entry.baselineLoaded) continue;
+          // agent.status.updated is suppressed in render mode: the mode,
+          // model and thinking slices ride the transcript's meta instead.
+          // Fold them into the legacy per-session slices here so every
+          // reader — status bar, composer, mode toggles and the prompt
+          // submission path — sees one consistent fact.
+          const meta = entry.channel.snapshot.meta;
+          let statusMetaChanged = false;
+          const planOn = meta.modes?.plan !== undefined;
+          // Same shield as swarm below: while the user's plan-off profile
+          // write is in flight, a stale meta must not flip the mode back on —
+          // the next prompt would resubmit with plan mode still enabled.
+          if (
+            rawState.pendingPlanBySession[sid] === undefined &&
+            (rawState.planModeBySession[sid] ?? false) !== planOn
+          ) {
+            rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: planOn };
+            statusMetaChanged = true;
+          }
+          const swarmOn = meta.modes?.swarm !== undefined;
+          // Shielded like the thinking fold below: while the user's own
+          // profile write is in flight, a stale meta (built before the write
+          // landed) must not flip the optimistic toggle back — the next
+          // prompt would otherwise submit with the OLD mode.
+          if (
+            rawState.pendingSwarmBySession[sid] === undefined &&
+            (rawState.swarmModeBySession[sid] ?? false) !== swarmOn
+          ) {
+            rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: swarmOn };
+            statusMetaChanged = true;
+          }
+          const metaModel = meta.agent?.model;
+          if (metaModel !== undefined) {
+            const row = rawState.sessions.find((s) => s.id === sid);
+            if (row !== undefined && row.model !== metaModel) {
+              rawState.sessions = rawState.sessions.map((s) =>
+                s.id === sid ? { ...s, model: metaModel } : s,
+              );
+              statusMetaChanged = true;
+            }
+          }
+          const metaThinking = meta.agent?.thinkingEffort;
+          if (metaThinking !== undefined) {
+            // Advance the version only when the fold can actually MOVE the
+            // value: an unchanged level — or one a pending pick is shielding
+            // (the fold no-ops then) — must not drop an in-flight /status
+            // answer that carries fresh context numbers for nothing.
+            if (
+              rawState.pendingThinkingBySession[sid] === undefined &&
+              rawState.thinkingBySession[sid] !== metaThinking
+            ) {
+              statusMetaChanged = true;
+            }
+            foldDaemonThinkingLevel(rawState, sid, metaThinking as ThinkingLevel);
+          }
+          // Advance the status version AFTER the fold: a /status response
+          // older than this frame must lose its race (see refreshSessionStatus).
+          if (statusMetaChanged) bumpSessionStatusVersion(sid);
+          // A docked subagent can outlive the turn that spawned it: when a LIVE
+          // subagent row has no parent link anywhere (persistent cache AND
+          // current window) and older pages exist, pull one — the spawning
+          // frame rides in on the next bump and fills the cache. A failed pull
+          // backs off: an unchecked retry would storm once per watcher frame.
+          const snapshot = entry.channel.snapshot;
+          if (snapshot.hasMoreOlder === true && !entry.channel.loadingOlder) {
+            const windowParents = spawnedParentByAgentId(snapshot);
+            const cache = spawnedIndexCacheFor(sid);
+            const missingParent = snapshot.tasks.some(
+              (task) =>
+                task.kind === 'subagent' &&
+                task.agentId !== undefined &&
+                task.state === 'running' &&
+                !cache.parents.has(task.agentId) &&
+                !windowParents.has(task.agentId),
+            );
+            if (missingParent) {
+              const failedAt = loadOlderFailedAtBySid.get(sid) ?? 0;
+              if (Date.now() - failedAt > 30_000) {
+                void entry.channel.loadOlder().catch(() => {
+                  loadOlderFailedAtBySid.set(sid, Date.now());
+                  // Schedule the retry's own wake-up: a suspended subagent
+                  // (parked on an approval) emits no further ops, so no
+                  // future watcher frame would ever pass the backoff gate.
+                  setTimeout(() => {
+                    const e = host.pool.getEntry(sid);
+                    if (e !== undefined) e.version.value += 1;
+                  }, 30_000);
+                });
+              }
+            }
+          }
+          // goal.updated is suppressed too: the transcript's meta.goal is the
+          // only live goal channel. Sync just the status lifecycle (the card's
+          // detail fields stay REST-fed via refreshSessionGoal) so
+          // onMainTurnEnd's goalActive predicate — which gates the unread dot
+          // and the completion notification — decides on the CURRENT status,
+          // not a stale 'active' from before the suppression.
+          const metaGoal = meta.goal;
+          const localGoal = rawState.goalBySession[sid];
+          if (metaGoal === undefined || metaGoal.status === 'complete') {
+            const hadGoal = localGoal !== undefined;
+            if (hadGoal) delete rawState.goalBySession[sid];
+            // A terminal meta invalidates ANY in-flight backfill — the shared
+            // request mutex covers the non-active goal's read too (the
+            // notification pending mark only exists for active goals). Bump
+            // once per terminal fold: clearing the pending mark here makes a
+            // re-run a no-op, and an idle goal-less session never spins the
+            // version counter.
+            const backfillInFlight = goalBackfillInFlight.has(sid);
+            if (hadGoal || backfillInFlight) {
+              rawState.goalVersionBySession[sid] =
+                (rawState.goalVersionBySession[sid] ?? 0) + 1;
+              goalFetchPendingBySession.delete(sid);
+              goalBackfillStatusBySid.delete(sid);
+            }
+          } else if (localGoal !== undefined && localGoal.status !== metaGoal.status) {
+            rawState.goalBySession[sid] = { ...localGoal, status: metaGoal.status };
+            rawState.goalVersionBySession[sid] =
+              (rawState.goalVersionBySession[sid] ?? 0) + 1;
+          } else if (localGoal === undefined) {
+            // First sight of a goal created elsewhere (another client) in a
+            // resident session: backfill the full entry over REST. Only an
+            // ACTIVE goal's backfill holds the pending mark (which
+            // onMainTurnEnd reads as goal-active) — a goal that is already
+            // blocked/paused at first sight must NOT suppress this turn end's
+            // unread dot and completion notification. Both paths share the
+            // request mutex: streaming version bumps re-enter here per frame.
+            if (!goalBackfillInFlight.has(sid)) {
+              startGoalBackfill(sid, metaGoal.status);
+            } else if (goalBackfillStatusBySid.get(sid) !== metaGoal.status) {
+              // The meta moved while the first-sight read is still in flight:
+              // its response was built for the OLD status — invalidate it or
+              // the card would pin the goal at a state the daemon already
+              // left (a plain mutex only stops new requests, it doesn't age
+              // the answer already on its way back). Recording the new status
+              // also retriggers the backfill once the stale read settles.
+              goalBackfillStatusBySid.set(sid, metaGoal.status);
+              rawState.goalVersionBySession[sid] =
+                (rawState.goalVersionBySession[sid] ?? 0) + 1;
+              if (metaGoal.status === 'active') goalFetchPendingBySession.add(sid);
+              else goalFetchPendingBySession.delete(sid);
+            }
+          }
+          const approvals: AppApprovalRequest[] = [];
+          const questions: AppQuestionRequest[] = [];
+          const planReviews: Record<string, { plan: string; path?: string }> = {};
+          for (const interaction of entry.channel.snapshot.interactions) {
+            const approval = interactionToApproval(interaction, sid);
+            if (approval !== undefined) approvals.push(approval);
+            const question = interactionToQuestion(interaction, sid);
+            if (question !== undefined) questions.push(question);
+            const request = interaction.request as
+              | { toolCallId?: unknown; display?: { kind?: unknown; plan?: unknown; path?: unknown } }
+              | undefined;
+            const display = request?.display;
+            const toolCallId =
+              typeof interaction.toolCallId === 'string'
+                ? interaction.toolCallId
+                : typeof request?.toolCallId === 'string'
+                  ? request.toolCallId
+                  : undefined;
+            if (
+              toolCallId !== undefined &&
+              display?.kind === 'plan_review' &&
+              typeof display.plan === 'string' &&
+              display.plan.length > 0
+            ) {
+              planReviews[toolCallId] = {
+                plan: display.plan,
+                path: typeof display.path === 'string' ? display.path : undefined,
+              };
+            }
+          }
+          // A BTW side-chat agent shares this session: its interactions live
+          // on its OWN transcript, and the session-level store is where the
+          // badge/cards read them — a wholesale main-only replace would wipe
+          // them on the next main frame while the side-chat still waits.
+          // The agent whose DETAIL panel is open is in the same boat: while
+          // it streams at transcript grade, the server suppresses its
+          // projected session events on this connection, so its new/resolved
+          // approvals and questions only ever land on its auxiliary entry.
+          const auxMergeAgentIds = new Set<string>();
+          const sideAgentId = sideChat.sideChatTargetBySession.value[sid]?.agentId;
+          if (sideAgentId !== undefined) auxMergeAgentIds.add(sideAgentId);
+          const detailAgentId = auxiliaryTranscripts.desiredAgentBySession.get(sid);
+          if (detailAgentId !== undefined) auxMergeAgentIds.add(detailAgentId);
+          const auxMergeEntries = [...auxMergeAgentIds]
+            .map((agentId) => auxiliaryTranscripts.getEntry(sid, agentId))
+            .filter(
+              (auxEntry): auxEntry is NonNullable<typeof auxEntry> =>
+                auxEntry?.baselineLoaded === true,
+            );
+          for (const auxEntry of auxMergeEntries) {
+            // Notifications ride the same frame: the server suppresses these
+            // agents' projected session events on this connection, so a NEW
+            // pending interaction would otherwise surface as a silent card
+            // only. The seen set seeds from the entry's FIRST loaded baseline
+            // (its history stays silent); stale ids prune to the snapshot.
+            const auxKey = `${sid}:${auxEntry.channel.agentId}`;
+            let notified = auxNotifiedInteractionIdsByKey.get(auxKey);
+            if (notified === undefined) {
+              notified = new Set(
+                auxEntry.channel.snapshot.interactions.map((interaction) => interaction.interactionId),
+              );
+              auxNotifiedInteractionIdsByKey.set(auxKey, notified);
+            } else {
+              for (const interaction of auxEntry.channel.snapshot.interactions) {
+                if (interaction.state !== 'pending' || notified.has(interaction.interactionId)) {
+                  continue;
+                }
+                notified.add(interaction.interactionId);
+                const approval = interactionToApproval(interaction, sid);
+                if (approval !== undefined) onApprovalRequested(sid, approval);
+                const question = interactionToQuestion(interaction, sid);
+                if (question !== undefined) onQuestionRequested(sid, question);
+              }
+              for (const id of [...notified]) {
+                if (
+                  !auxEntry.channel.snapshot.interactions.some(
+                    (interaction) => interaction.interactionId === id,
+                  )
+                ) {
+                  notified.delete(id);
+                }
+              }
+            }
+            const seenApprovalIds = new Set(approvals.map((a) => a.approvalId));
+            const seenQuestionIds = new Set(questions.map((q) => q.questionId));
+            for (const interaction of auxEntry.channel.snapshot.interactions) {
+              const approval = interactionToApproval(interaction, sid);
+              if (approval !== undefined && !seenApprovalIds.has(approval.approvalId)) {
+                // The reducer's session-event entry (when present) carries
+                // the real expiry/stamps — prefer it over the bare mapping.
+                const existing = (rawState.approvalsBySession[sid] ?? []).find(
+                  (a) => a.approvalId === approval.approvalId,
+                );
+                approvals.push(existing ?? approval);
+              }
+              const question = interactionToQuestion(interaction, sid);
+              if (question !== undefined && !seenQuestionIds.has(question.questionId)) {
+                const existing = (rawState.questionsBySession[sid] ?? []).find(
+                  (q) => q.questionId === question.questionId,
+                );
+                questions.push(existing ?? question);
+              }
+            }
+          }
+          // Entries the MAIN snapshot knows nothing about are not its
+          // business (another agent's) — keep them only while NO transcript
+          // proves them resolved: the merged auxiliary transcripts are
+          // authoritative for their own interactions once loaded.
+          const mainInteractionIds = new Set(
+            entry.channel.snapshot.interactions.map((interaction) => interaction.interactionId),
+          );
+          const auxResolvedIds = new Set(
+            auxMergeEntries.flatMap((auxEntry) =>
+              auxEntry.channel.snapshot.interactions
+                .filter((interaction) => interaction.state !== 'pending')
+                .map((interaction) => interaction.interactionId),
+            ),
+          );
+          for (const existing of rawState.approvalsBySession[sid] ?? []) {
+            if (mainInteractionIds.has(existing.approvalId)) continue;
+            if (auxResolvedIds.has(existing.approvalId)) continue;
+            if (!approvals.some((a) => a.approvalId === existing.approvalId)) {
+              approvals.push(existing);
+            }
+          }
+          for (const existing of rawState.questionsBySession[sid] ?? []) {
+            if (mainInteractionIds.has(existing.questionId)) continue;
+            if (auxResolvedIds.has(existing.questionId)) continue;
+            if (!questions.some((q) => q.questionId === existing.questionId)) {
+              questions.push(existing);
+            }
+          }
+          approvalsStore().setSessionApprovals(sid, approvals);
+          approvalsStore().setSessionQuestions(sid, questions);
+          if (sid === rawState.activeSessionId) {
+            applyRecordDiff(rawState.planReviewByToolCallId, planReviews);
+          }
+        }
+      },
+      { immediate: true },
+    );
+    // Turn-boundary and interaction edges, rebuilt from the transcript
+    // entities of every resident session: the legacy session_event edges are
+    // gone in render mode, so unread dots, completion/approval/question
+    // notifications, queue drains, prompt-id backfill and recency bumps all
+    // fire from here. A session's first baseline initializes the tracker
+    // without firing — a historical load must not cry wolf.
+    type EdgePrev = {
+      activity: string | undefined;
+      lastTurnId: string | undefined;
+      lastTurnState: string | undefined;
+      /** Highest turn ordinal seen so far — history prepends carry LOWER
+       *  ordinals and must never count as new work. */
+      maxTurnOrdinal: number;
+      /** The previous frame's window-head item id — items BEFORE it on the
+       *  next frame are loadOlder history, not live edges. */
+      firstItemId: string | undefined;
+      seenPendingInteractionIds: Set<string>;
+      /** ExitPlanMode interactions already settled locally — dedupes both the
+       *  seen-pending resolved edge and the same-window scan below. */
+      settledPlanInteractionIds: Set<string>;
+      seenNoticeIds: Set<string>;
+      promptStatusById: Map<string, string>;
+    };
+    const edgePrevBySid = new Map<string, EdgePrev>();
+    const bumpRecencyLocal = (sid: string, serverNow?: string): void => {
+      // Server-domain stamps only for facts the transcript carries: comparing
+      // a browser clock against the daemon's updatedAt either never bumps
+      // (slow client) or pins the session in the future (fast client) across
+      // hosts. The exception is a LIVE arrival (a fresh interaction frame):
+      // the transcript carries no stamp for it at all, the arrival IS the
+      // news, and the caller passes nothing so the browser clock reads "now".
+      const now = serverNow ?? new Date().toISOString();
+      rawState.sessions = rawState.sessions.map((s) =>
+        s.id === sid && now > s.updatedAt ? { ...s, updatedAt: now } : s,
+      );
+    };
+    /** Settle every resolved ExitPlanMode interaction in the snapshot once
+     *  (deduped per session): the plan card's outcome is a transcript fact
+     *  even when the resolved frame shared one window with its pending
+     *  frame — or when the whole baseline arrived at once. Returns whether
+     *  anything settled (the caller refetches /transcript/plan then). */
+    const settleResolvedPlanInteractions = (
+      sid: string,
+      snapshot: AgentTranscriptSnapshot,
+      dedupe: Set<string>,
+    ): boolean => {
+      let settled = false;
+      for (const interaction of snapshot.interactions) {
+        if (interaction.state === 'pending') continue;
+        if (dedupe.has(interaction.interactionId)) continue;
+        if (
+          (interaction.request as { toolName?: unknown } | undefined)?.toolName !==
+          'ExitPlanMode'
+        ) {
+          continue;
+        }
+        dedupe.add(interaction.interactionId);
+        settled = true;
+        const request = interaction.request as { toolCallId?: unknown } | undefined;
+        const toolCallId =
+          typeof interaction.toolCallId === 'string'
+            ? interaction.toolCallId
+            : typeof request?.toolCallId === 'string'
+              ? request.toolCallId
+              : undefined;
+        const outcome = interaction.state;
+        if (
+          toolCallId !== undefined &&
+          (outcome === 'approved' || outcome === 'rejected' || outcome === 'cancelled')
+        ) {
+          const response = interaction.response as
+            | { selectedOption?: unknown; feedback?: unknown }
+            | undefined;
+          settlePlanReviewLocally(sid, toolCallId, {
+            state: outcome,
+            selectedOption:
+              typeof response?.selectedOption === 'string' ? response.selectedOption : undefined,
+            feedback: typeof response?.feedback === 'string' ? response.feedback : undefined,
+          });
+        }
+      }
+      return settled;
+    };
+    watch(
+      () =>
+        [...host.pool.subscribedSessions].map(
+          (sid) => host.pool.getEntry(sid)?.version.value ?? -1,
+        ),
+      () => {
+        // An LRU-evicted session's edge tracker must not survive its pool
+        // entry — a later re-open gets a fresh baseline, not phantom edges
+        // computed against the stale record.
+        for (const prevSid of [...edgePrevBySid.keys()]) {
+          if (!host.pool.subscribedSessions.has(prevSid)) {
+            edgePrevBySid.delete(prevSid);
+            pendingInteractionAtBySid.delete(prevSid);
+            spawnedIndexCacheBySid.delete(prevSid);
+            loadOlderFailedAtBySid.delete(prevSid);
+          }
+        }
+        for (const sid of host.pool.subscribedSessions) {
+          const entry = host.pool.getEntry(sid);
+          if (entry === undefined || !entry.baselineLoaded) continue;
+          const snapshot = entry.channel.snapshot;
+          const turns = snapshot.items.filter((item) => item.kind === 'turn');
+          const pendingInteractions = snapshot.interactions.filter(
+            (interaction) => interaction.state === 'pending',
+          );
+          const promptStatusById = new Map(
+            snapshot.prompts.map((prompt) => [prompt.promptId, prompt.status] as const),
+          );
+          const prev = edgePrevBySid.get(sid);
+          const last = turns.at(-1);
+          const lastTurnId = last?.kind === 'turn' ? last.turnId : undefined;
+          const lastTurnState = last?.kind === 'turn' ? last.state : undefined;
+          edgePrevBySid.set(sid, {
+            activity: snapshot.meta.activity,
+            lastTurnId,
+            lastTurnState,
+            maxTurnOrdinal: turns.reduce(
+              (max, turn) => (turn.kind === 'turn' ? Math.max(max, turn.ordinal) : max),
+              -1,
+            ),
+            firstItemId: snapshot.items[0] === undefined ? undefined : transcriptItemId(snapshot.items[0]),
+            seenPendingInteractionIds: new Set(pendingInteractions.map((i) => i.interactionId)),
+            // Carry the settled-plan dedupe across the per-frame record
+            // replace (unlike seen-pending, it is not derivable per frame).
+            settledPlanInteractionIds: prev?.settledPlanInteractionIds ?? new Set<string>(),
+            seenNoticeIds: new Set(
+              snapshot.items
+                .filter((item) => item.kind === 'marker' && item.marker === 'notice')
+                .map((item) => (item.kind === 'marker' ? item.markerId : '')),
+            ),
+            promptStatusById,
+          });
+          // Track pending-interaction stamps PER SUSPENDED STEP on every
+          // frame, cold baseline included: a session reopened while parked on
+          // an approval/question already carries the pending interaction, and
+          // each suspended step's open thinking span settles at its own
+          // observed time. Resolved stamps stay as ceilings until turn end.
+          const hasNewPending = pendingInteractions.some(
+            (interaction) => !prev?.seenPendingInteractionIds.has(interaction.interactionId),
+          );
+          if (pendingInteractions.length > 0 && hasNewPending) {
+            const runningTurn = snapshot.items.findLast(
+              (item) => item.kind === 'turn' && item.state === 'running',
+            );
+            const runningStep =
+              runningTurn?.kind === 'turn'
+                ? runningTurn.steps.findLast((step) => step.state === 'running')
+                : undefined;
+            if (runningStep !== undefined) {
+              // Stamp in the DAEMON time domain: the span is measured against
+              // the step's server-side startedAt, so a browser clock skewed
+              // from the daemon would miscount (or negate) the thinking span.
+              // The interaction entity carries no timestamp of its own — the
+              // snapshot's newest server stamp is the closest "now" available.
+              const next = new Map(pendingInteractionAtBySid.get(sid));
+              next.set(runningStep.stepId, newestServerStamp(snapshot) ?? new Date().toISOString());
+              pendingInteractionAtBySid.set(sid, next);
+            }
+          }
+          if (prev === undefined) {
+            // A baseline reached through FAILED-REST retries (the pool's
+            // recoveredViaEmptyReset — the counter itself already resets in
+            // the success path, so the fact rides this flag until consumed
+            // here) covered a subscription window whose ops (turn ends,
+            // approvals/questions, error notices) landed LIVE but unread —
+            // the seconds-scale window makes them near-certainly fresh, so
+            // surface the interaction and error signals now (turn-end
+            // lifecycle edges still initialize silently: history can't be
+            // told from news there).
+            if (entry.recoveredViaEmptyReset) {
+              entry.recoveredViaEmptyReset = false;
+              for (const interaction of pendingInteractions) {
+                // These interactions landed live-but-unread inside the
+                // seconds-scale recovery window: stamp the arrival, not the
+                // snapshot's newest server stamp (a long-running step's old
+                // startedAt would fail the updatedAt check and never float).
+                bumpRecencyLocal(sid);
+                const approval = interactionToApproval(interaction, sid);
+                if (approval !== undefined) onApprovalRequested(sid, approval);
+                const question = interactionToQuestion(interaction, sid);
+                if (question !== undefined) onQuestionRequested(sid, question);
+              }
+              if (sid !== rawState.activeSessionId) {
+                for (const item of snapshot.items) {
+                  if (item.kind !== 'marker' || item.marker !== 'notice') continue;
+                  const envelope = item.payload as
+                    | { level?: unknown; message?: unknown; event?: { code?: unknown } }
+                    | undefined;
+                  if (envelope?.level !== 'error') continue;
+                  // Same envelope shape as the live edge: the raw error fields
+                  // ride payload.event, not the outer { level, message } wrap.
+                  pushWarning(
+                    buildAgentErrorNotice(
+                      (envelope.event ?? envelope) as Parameters<typeof buildAgentErrorNotice>[0],
+                      t,
+                    ),
+                  );
+                  // Register the shown state with the live branch's content
+                  // key — the next select's or turn end's refreshSessionWarnings
+                  // would otherwise re-toast this same persisted error.
+                  workspaceState.markSessionWarningShown(
+                    sid,
+                    `${typeof envelope.event?.code === 'string' ? envelope.event.code : ''} ${typeof envelope.message === 'string' ? envelope.message : ''}`,
+                  );
+                }
+              }
+            }
+            // A session's first baseline doubles as the open-time in-flight
+            // reconcile (the retired snapshot path's handleSessionSnapshot):
+            // no live turn and no running/queued prompt means any local
+            // prompt state left over is stale — clear it quietly (no
+            // completion side effects; finishPromptLocal's drain gate
+            // suppresses the queue flush on a bare open). Never reap a
+            // locally-witnessed prompt: a baseline requested before the user
+            // submitted still says 'idle' while the turn is starting, and the
+            // turn-end edge owns that lifecycle. The guard is a CURRENTLY
+            // pending local start, not a nonzero generation: the generation
+            // stays nonzero forever after the session's first submit, and
+            // would permanently bar the cleanup of a leftover in-flight.
+            // no live turn and no running/queued prompt means any local
+            // prompt state left over is stale — but only the fate gate may
+            // say so: a live submission (pending POST, skill, in-flight) is
+            // judged by its OWN proof, and a fast turn whose terminal frame
+            // beat the response settles here too. The queue advances only
+            // when every uncertain bubble is proven as well.
+            const openFate = localSubmitFate(sid, snapshot);
+            if (
+              snapshot.meta.activity !== 'turn' &&
+              !snapshot.prompts.some(
+                (prompt) => prompt.status === 'running' || prompt.status === 'queued',
+              ) &&
+              openFate.settle
+            ) {
+              workspaceState.finishPromptLocal(sid, { skipDrain: !openFate.drain });
+            }
+            // A baseline already carrying a terminal ExitPlanMode interaction
+            // must settle it now (the branch below never runs on this first
+            // frame) — a lagging /transcript/plan read must not pin the card
+            // at "awaiting review" until the next unrelated frame.
+            if (
+              settleResolvedPlanInteractions(
+                sid,
+                snapshot,
+                edgePrevBySid.get(sid)!.settledPlanInteractionIds,
+              )
+            ) {
+              void refreshSessionPlans(sid);
+            }
+            continue;
+          }
+
+          // Turn-end edges, ENUMERATED past the tracked watermark: two turns
+          // can end in one notification window (a queued prompt's turn right
+          // on the previous one's heels), and settling only one would drop
+          // the other's title/git/goal refreshes and completion notice
+          // forever. History prepends carry LOWER ordinals (never new work).
+          // A tracked turn gone from the window is a rewind ONLY when the
+          // window's max ordinal also DROPPED (undo/reset rewinds the tail) —
+          // a fresh page that slid FORWARD past it (more turns landed while
+          // disconnected) is new work to enumerate, not an undo.
+          let planRefreshNeeded = false;
+          const windowMaxOrdinal = turns.reduce(
+            (max, turn) => (turn.kind === 'turn' ? Math.max(max, turn.ordinal) : max),
+            -1,
+          );
+          const prevTurnGone =
+            prev.lastTurnId !== undefined &&
+            prev.lastTurnId !== lastTurnId &&
+            !turns.some((turn) => turn.kind === 'turn' && turn.turnId === prev.lastTurnId);
+          const prevTurnRewound = prevTurnGone && windowMaxOrdinal < prev.maxTurnOrdinal;
+          if (prevTurnRewound) {
+            // The rewind may have deleted the turns the spawned-call cache was
+            // built from: a resumed subagent's mapping would keep pointing at a
+            // now-nonexistent call, and the cache holding the key would also
+            // suppress the older-page backfill that could re-prove it. Drop it
+            // and let the post-rewind window (plus the backfill) rebuild it.
+            spawnedIndexCacheBySid.delete(sid);
+          }
+          const endedTurns: TranscriptTurn[] = [];
+          if (!prevTurnRewound) {
+            // The tracked turn's own running→terminal transition (shadowed by
+            // an immediately-started successor that keeps activity at 'turn').
+            const tracked =
+              prev.lastTurnId === undefined
+                ? undefined
+                : turns.find((turn) => turn.kind === 'turn' && turn.turnId === prev.lastTurnId);
+            if (
+              tracked?.kind === 'turn' &&
+              prev.lastTurnState === 'running' &&
+              tracked.state !== 'running'
+            ) {
+              endedTurns.push(tracked);
+            }
+            for (const candidate of turns) {
+              if (
+                candidate.kind === 'turn' &&
+                candidate.ordinal > prev.maxTurnOrdinal &&
+                candidate.state !== 'running'
+              ) {
+                endedTurns.push(candidate);
+              }
+            }
+          }
+          const activityEdge = prev.activity === 'turn' && snapshot.meta.activity !== 'turn';
+          if (endedTurns.length > 0 || activityEdge) {
+            // Filter BEFORE deciding the drain slot: turns the REST baseline
+            // already settled leave the batch entirely — indexing into the
+            // unfiltered array would give a non-final unsettled turn the
+            // drain, and its finish would reap the prompt REST just drained.
+            const unsettled = endedTurns.filter(
+              (turn) => settledTurnEndBySession.get(sid) !== turn.turnId,
+            );
+            for (const [index, endingTurn] of unsettled.entries()) {
+              settledTurnEndBySession.set(sid, endingTurn.turnId);
+              const aborted = endingTurn.state === 'cancelled' || endingTurn.state === 'failed';
+              // Per-turn side effects (title/git/goal refreshes, notification)
+              // fire for every ended turn, but the LOCAL settle and the
+              // batch's ONE drain both wait for the LAST item: computing the
+              // fate against an EARLIER turn with the whole final snapshot
+              // would settle our prompt right there (a drain per settle would
+              // also submit queued prompts concurrently), and the last item's
+              // drain decision would then read an already-cleared state. The
+              // settle itself stays attribution-gated: a remote client's turn
+              // end must not reap our pending submission (P1).
+              const isLast = index === unsettled.length - 1;
+              const fate = isLast
+                ? localSubmitFate(sid, snapshot)
+                : { settle: false, drain: false };
+              onMainTurnEnd(sid, aborted ? 'aborted' : 'idle', true, {
+                drain: isLast && fate.drain,
+                settleLocal: fate.settle,
+              });
+              bumpRecencyLocal(sid, newestServerStamp(snapshot));
+            }
+            // The wait is over: clear the pending-interaction ceiling so the
+            // NEXT turn's thinking settles on its own stamps — but only when
+            // no interaction is pending RIGHT NOW: a successor turn's fresh
+            // approval in this same batch keeps its own ceiling.
+            if (endedTurns.length > 0 && pendingInteractions.length === 0) {
+              pendingInteractionAtBySid.delete(sid);
+            }
+            if (endedTurns.length === 0 && last?.kind === 'turn') {
+              // The activity edge fired with no NEW terminal turn in the
+              // window (a bare idle transition) — settle the tail once.
+              if (settledTurnEndBySession.get(sid) !== last.turnId) {
+                settledTurnEndBySession.set(sid, last.turnId);
+                const aborted = last.state === 'cancelled' || last.state === 'failed';
+                const fate = localSubmitFate(sid, snapshot);
+                onMainTurnEnd(sid, aborted ? 'aborted' : 'idle', true, {
+                  drain: fate.drain,
+                  settleLocal: fate.settle,
+                });
+                bumpRecencyLocal(sid, newestServerStamp(snapshot));
+              }
+            }
+            // No plan scan here: the resolved-edge loop below owns ExitPlanMode
+            // settlement — a historical resolved interaction would otherwise
+            // re-fetch /transcript/plan on EVERY unrelated turn end.
+          } else if (lastTurnId !== prev.lastTurnId && !prevTurnRewound && last?.kind === 'turn') {
+            bumpRecencyLocal(sid, newestServerStamp(snapshot));
+          }
+
+          for (const interaction of pendingInteractions) {
+            if (prev.seenPendingInteractionIds.has(interaction.interactionId)) continue;
+            // A NEW pending interaction is a live arrival — the interaction
+            // entity carries no timestamp, so the snapshot's newest server
+            // stamp is just the suspended step's old startedAt, which fails
+            // the updatedAt check and never floats the session to the top.
+            // Stamp the arrival itself.
+            bumpRecencyLocal(sid);
+            const approval = interactionToApproval(interaction, sid);
+            if (approval !== undefined) onApprovalRequested(sid, approval);
+            const question = interactionToQuestion(interaction, sid);
+            if (question !== undefined) onQuestionRequested(sid, question);
+          }
+
+          // A fresh 'error' notice marks a turn's terminal failure. The
+          // legacy raw `error` event is grade-suppressed and onMainTurnEnd
+          // deliberately stays silent for aborted turns, so without this the
+          // failure of a BACKGROUND session would be invisible unless the
+          // user opens it (the failed-turn card covers only the active one).
+          // The baseline set above keeps cold history from re-toasting, and
+          // the window-head anchor keeps a loadOlder PREPEND's historical
+          // notices from re-firing as live errors.
+          {
+            const headIdx =
+              prev.firstItemId === undefined
+                ? 0
+                : snapshot.items.findIndex((item) => transcriptItemId(item) === prev.firstItemId);
+            const liveItems = headIdx > 0 ? snapshot.items.slice(headIdx) : snapshot.items;
+            for (const item of liveItems) {
+              if (item.kind !== 'marker' || item.marker !== 'notice') continue;
+              if (prev.seenNoticeIds.has(item.markerId)) continue;
+              const payload = item.payload as
+                | { level?: unknown; message?: unknown; event?: { code?: unknown } }
+                | undefined;
+              // Share the content key with refreshSessionWarnings: the
+              // turn-end REST re-pull must not re-toast what already showed.
+              const shownKey = `${typeof payload?.event?.code === 'string' ? payload.event.code : ''} ${typeof payload?.message === 'string' ? payload.message : ''}`;
+              if (payload?.level === 'error') {
+                // The failed-turn card covers the ACTIVE session's errors —
+                // but the content key registers either way, or the turn-end
+                // REST re-pull would toast the same error a second time.
+                workspaceState.markSessionWarningShown(sid, shownKey);
+                if (sid === rawState.activeSessionId) continue;
+                // The raw error fields live at payload.event (the marker's
+                // envelope only carries level/message) — passing the whole
+                // payload would render just the generic title and lose the
+                // HTTP status, request id and error type.
+                pushWarning(
+                  buildAgentErrorNotice(
+                    (payload?.event ?? payload ?? {}) as Parameters<typeof buildAgentErrorNotice>[0],
+                    t,
+                  ),
+                );
+                continue;
+              }
+              if (payload?.level !== 'warning' && payload?.level !== 'info') continue;
+              // A new warning/info notice shows live with its severity, for
+              // every session: the raw `warning` event is grade-suppressed,
+              // nothing renders these markers in-flow, and the REST re-reads
+              // that used to surface them only fire on select / turn end.
+              pushWarning({
+                severity: payload.level,
+                title: t('warnings.noteLabel'),
+                message: typeof payload.message === 'string' ? payload.message : undefined,
+              });
+              workspaceState.markSessionWarningShown(sid, shownKey);
+            }
+          }
+
+          // Resolved edge: an interaction leaving pending WITHOUT a turn end
+          // (handled by another client, or expired) never reaches the
+          // turn-end branch above, and the suppressed approvalResolved event
+          // can no longer settle the plan review — settle it locally from the
+          // interaction's terminal state, then let REST reconcile the detail.
+          for (const prevPendingId of prev.seenPendingInteractionIds) {
+            if (pendingInteractions.some((i) => i.interactionId === prevPendingId)) continue;
+            const resolved = snapshot.interactions.find((i) => i.interactionId === prevPendingId);
+            if (
+              resolved !== undefined &&
+              (resolved.request as { toolName?: unknown } | undefined)?.toolName === 'ExitPlanMode'
+            ) {
+              prev.settledPlanInteractionIds.add(prevPendingId);
+              planRefreshNeeded = true;
+              // Settle first, refresh second: a lagging or failed
+              // /transcript/plan read must not leave the card "awaiting
+              // review" when the outcome is already a transcript fact.
+              const request = resolved.request as { toolCallId?: unknown } | undefined;
+              const toolCallId =
+                typeof resolved.toolCallId === 'string'
+                  ? resolved.toolCallId
+                  : typeof request?.toolCallId === 'string'
+                    ? request.toolCallId
+                    : undefined;
+              const outcome = resolved.state;
+              if (
+                toolCallId !== undefined &&
+                (outcome === 'approved' || outcome === 'rejected' || outcome === 'cancelled')
+              ) {
+                const response = resolved.response as
+                  | { selectedOption?: unknown; feedback?: unknown }
+                  | undefined;
+                settlePlanReviewLocally(sid, toolCallId, {
+                  state: outcome,
+                  selectedOption:
+                    typeof response?.selectedOption === 'string'
+                      ? response.selectedOption
+                      : undefined,
+                  feedback:
+                    typeof response?.feedback === 'string' ? response.feedback : undefined,
+                });
+              }
+            }
+          }
+          // Same-window settle: an interaction whose pending AND resolved
+          // frames landed in ONE notification window (e.g. a reconnect
+          // replay) was never TRACKED pending, so the edge above never sees
+          // it — settle any resolved ExitPlanMode interaction once, deduped
+          // per session (historical ones settle once per baseline too).
+          if (settleResolvedPlanInteractions(sid, snapshot, prev.settledPlanInteractionIds)) {
+            planRefreshNeeded = true;
+          }
+          if (planRefreshNeeded) void refreshSessionPlans(sid);
+
+          for (const prompt of snapshot.prompts) {
+            if (prompt.status === 'running' || prompt.status === 'queued') continue;
+            const prevStatus = prev.promptStatusById.get(prompt.promptId);
+            const terminal =
+              prompt.status === 'blocked' || prompt.status === 'aborted';
+            // A prompt reaching a terminal state without producing a turn
+            // (pre-submit block, queue cancel) never crosses the turn edges
+            // above — stamp the session's activity here like the legacy
+            // reducer did for these two paths. The lastTurnId guard skips the
+            // bump when a turn edge already fired in the same frame. This scan
+            // runs BEFORE the abort-target backfill below so OUR terminal
+            // prompt still matches the locally stored id (the backfill would
+            // overwrite it with another client's live prompt).
+            if (
+              terminal &&
+              prevStatus !== prompt.status &&
+              lastTurnId === prev.lastTurnId
+            ) {
+              // This no-turn terminal IS the session's newest server-side
+              // fact: stamp recency with the prompt's own daemon stamp, not a
+              // scan of the items window (which tops out at an older turn or
+              // — on a fresh session — nothing, falling back to a skewed
+              // browser clock).
+              bumpRecencyLocal(sid, prompt.createdAt);
+              // Settle ONLY by prompt identity. While the submit POST is
+              // unanswered the id isn't known yet, and content attribution
+              // can't tell this terminal apart from another client's
+              // same-text one — reaping on a guess would clear our in-flight
+              // state and drain the queue while our own prompt still starts
+              // afterwards. The unanswered-submit case (a fast turn, or a
+              // skill activation a pre-submit hook blocked — its response
+              // never carries a prompt id) settles when the response lands,
+              // via settleIfFateProven. Re-settling the same terminal frame
+              // twice is already barred by the prevStatus !== prompt.status
+              // transition guard above.
+              if (rawState.promptIdBySession[sid] === prompt.promptId) {
+                workspaceState.finishPromptLocal(sid);
+              }
+            }
+          }
+
+          // Retire uncertain bubbles whose own prompt has LEFT the queue (its
+          // turn started): the overlay already hides them at render time, but
+          // state must drop them too — hasPendingLocalWork reads this very
+          // array for the resident-cap pin, and a stale entry would pin the
+          // session (and its WS subscription) forever.
+          const optimisticNow = rawState.optimisticMessagesBySession[sid];
+          if (
+            optimisticNow !== undefined &&
+            optimisticNow.some((m) => m.metadata?.['kimiWeb.uncertain'] === true)
+          ) {
+            // Same one-to-one pairing as the render overlay: a single prompt
+            // entity must not retire two identical uncertain sends. The
+            // consumption is PERSISTED per session: a prompt that retired a
+            // bubble stays consumed on later frames, or the next identical
+            // bubble would be retired by the same prompt a frame later.
+            const consumed = consumedEchoPromptIdsBySid.get(sid) ?? new Set<string>();
+            for (const promptId of [...consumed]) {
+              if (!snapshot.prompts.some((p) => p.promptId === promptId)) {
+                consumed.delete(promptId);
+              }
+            }
+            consumedEchoPromptIdsBySid.set(sid, consumed);
+            const matched = uncertainEchoMatchedIds(
+              optimisticNow
+                .filter(
+                  (m) =>
+                    m.metadata?.['kimiWeb.uncertain'] === true &&
+                    (m.metadata?.['origin'] as { kind?: unknown } | undefined)?.kind !==
+                      'skill_activation',
+                )
+                .map((m) => ({
+                  id: m.id,
+                  text: m.content
+                    .filter((part) => part.type === 'text')
+                    .map((part) => ('text' in part ? part.text : ''))
+                    .join(''),
+                  floor: promptEchoFloor(snapshot.items, m.metadata),
+                })),
+              snapshot.prompts,
+              consumed,
+            );
+            for (const promptId of matched.values()) consumed.add(promptId);
+            // The skill twin, same persistence shape: a skill turn/marker
+            // that retired an uncertain skill bubble stays consumed.
+            const consumedSkill = consumedSkillEchoIdsBySid.get(sid) ?? new Set<string>();
+            for (const entityId of [...consumedSkill]) {
+              const stillThere = snapshot.items.some(
+                (item) =>
+                  (item.kind === 'turn' && item.turnId === entityId) ||
+                  (item.kind === 'marker' && item.markerId === entityId),
+              );
+              if (!stillThere) consumedSkill.delete(entityId);
+            }
+            consumedSkillEchoIdsBySid.set(sid, consumedSkill);
+            const skillMatched = skillEchoMatchedIds(
+              optimisticNow
+                .filter(
+                  (m) =>
+                    m.metadata?.['kimiWeb.uncertain'] === true &&
+                    (m.metadata?.['origin'] as { kind?: unknown } | undefined)?.kind ===
+                      'skill_activation',
+                )
+                .map((m) => {
+                  const origin = m.metadata?.['origin'] as
+                    | { skillName?: unknown; skillArgs?: unknown }
+                    | undefined;
+                  return {
+                    id: m.id,
+                    anchorTurnId: m.metadata?.['kimiWeb.anchorTurnId'] as string | undefined,
+                    promptFloor: m.metadata?.['kimiWeb.anchorPromptCreatedAt'] as string | undefined,
+                    skillName: origin?.skillName,
+                    skillArgs: origin?.skillArgs,
+                  };
+                }),
+              snapshot.items,
+              consumedSkill,
+            );
+            for (const entityId of skillMatched.values()) consumedSkill.add(entityId);
+            const survivors = optimisticNow.filter((m) => {
+              if (m.metadata?.['kimiWeb.uncertain'] !== true) return true;
+              // An uncertain SKILL bubble retires when its OWN skill turn (or
+              // blocked marker) shows up, paired one-to-one like the prompts.
+              const mOrigin = m.metadata?.['origin'] as
+                | { kind?: unknown; skillName?: unknown; skillArgs?: unknown }
+                | undefined;
+              if (mOrigin?.kind === 'skill_activation') {
+                return !skillMatched.has(m.id);
+              }
+              return !matched.has(m.id);
+            });
+            if (survivors.length !== optimisticNow.length) {
+              const next = { ...rawState.optimisticMessagesBySession };
+              if (survivors.length > 0) next[sid] = survivors;
+              else delete next[sid];
+              rawState.optimisticMessagesBySession = next;
+            }
+          }
+
+          // The abort target is the RUNNING prompt (a queued one is only the
+          // fallback when nothing runs) — never let array order overwrite it.
+          // Written to its OWN field: promptIdBySession stays OUR last
+          // submission's identity (terminal/optimistic reconciliation), so
+          // another client's live prompt can't overwrite it here.
+          const running = snapshot.prompts.find((prompt) => prompt.status === 'running');
+          const fallback = running ?? snapshot.prompts.find((prompt) => prompt.status === 'queued');
+          if (fallback !== undefined && rawState.abortPromptIdBySession[sid] !== fallback.promptId) {
+            rawState.abortPromptIdBySession[sid] = fallback.promptId;
+          } else if (fallback === undefined && rawState.abortPromptIdBySession[sid] !== undefined) {
+            // No live prompt: a cached abort target is provably stale — a
+            // non-attributed turn end never runs finishPromptLocal (its clear
+            // path), and a later id-less turn (e.g. a skill) would watch Stop
+            // try the dead id, get not-found and bail before the session-level
+            // abort that should have fired.
+            delete rawState.abortPromptIdBySession[sid];
+          }
+        }
+        // A session whose local work just settled is no longer pinned past
+        // the resident cap — re-trim so evictable extras don't linger with
+        // their WS subscriptions (the pin has no clear callback otherwise).
+        mainTranscriptHost.trimResident();
+      },
+      { immediate: true },
+    );
+}
 
 // Stable per-session card numbers for background subagents (identity to
 // serial); entries are dropped with the rest of the session's state.
@@ -2655,13 +4386,26 @@ const goal = computed<AppGoal | null>(() => {
 const todos = computed<TodoView[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  return latestTodos(rawState.messagesBySession[sid] ?? []);
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry === null) return [];
+  const doc = transcriptEntry.channel.snapshot.todos.at(-1);
+  return (doc?.items ?? []).map((item) => ({ title: item.title, status: item.status }));
 });
 
 /** Live compaction state of the active session (present only while running). */
 const compaction = computed<CompactionStatus | null>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return null;
+  const transcriptEntry = activeMainTranscriptEntry();
+  if (transcriptEntry !== null) {
+    const marker = transcriptEntry.channel.snapshot.items.findLast(
+      (item): item is Extract<typeof item, { kind: 'marker' }> =>
+        item.kind === 'marker' && item.marker === 'compaction',
+    );
+    const payload = marker?.payload as { phase?: unknown; trigger?: unknown } | undefined;
+    if (marker === undefined || payload?.phase !== 'started') return null;
+    return { status: 'running', trigger: payload.trigger === 'manual' ? 'manual' : 'auto' };
+  }
   return rawState.compactionBySession[sid] ?? null;
 });
 
@@ -2670,16 +4414,18 @@ const connection = computed<ConnectionState>(() => rawState.connection);
 const loading = computed<boolean>(() => rawState.loading);
 const sessionLoading = computed<boolean>(() => rawState.sessionLoading);
 const loadingMoreMessages = computed<boolean>(() => {
-  const sid = rawState.activeSessionId;
-  return sid ? rawState.messagesLoadingMoreBySession[sid] ?? false : false;
+  const transcriptEntry = activeMainTranscriptEntry();
+  return transcriptEntry?.channel.loadingOlder ?? false;
 });
 const hasMoreMessages = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
-  return sid ? rawState.messagesHasMoreBySession[sid] ?? false : false;
+  if (!sid) return false;
+  const transcriptEntry = activeMainTranscriptEntry();
+  return transcriptEntry?.channel.snapshot.hasMoreOlder === true;
 });
 const loadMoreMessagesError = computed<boolean>(() => {
-  const sid = rawState.activeSessionId;
-  return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
+  const transcriptEntry = activeMainTranscriptEntry();
+  return transcriptEntry?.channel.loadOlderError ?? false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
 const webTitle = computed<string>(() => rawState.webTitle);
@@ -2703,7 +4449,12 @@ const thinking = computed<ThinkingLevel | undefined>(() => rawState.thinking);
 // open). Each session keeps its own value in the *BySession maps above.
 const planMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
-  return sid ? (rawState.planModeBySession[sid] ?? false) : draftModes.planMode;
+  if (!sid) return draftModes.planMode;
+  // The shielded map is the single read path: the merge watcher's meta fold
+  // keeps it frame-fresh, so reading the transcript meta directly would only
+  // re-open the flap windows the shields exist to close. A pending profile
+  // write's optimistic value already lives here.
+  return rawState.planModeBySession[sid] ?? false;
 });
 // The user's not-yet-cashed plan intent for the ACTIVE session (or draft).
 // The composer's in-input directive pill reads this; the dock's plan pill
@@ -2714,7 +4465,10 @@ const planArmed = computed<boolean>(() => {
 });
 const swarmMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
-  return sid ? (rawState.swarmModeBySession[sid] ?? false) : draftModes.swarmMode;
+  if (!sid) return draftModes.swarmMode;
+  // Same single read path as planMode above: the shielded map (meta-folded
+  // every frame, /status-confirmed, shield-held through pending writes).
+  return rawState.swarmModeBySession[sid] ?? false;
 });
 const goalMode = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
@@ -2886,12 +4640,15 @@ const modelProvider = useModelProviderState(rawState, {
   savePlanModeToStorage,
   activity,
   updateSession,
-  updateSessionMessages,
   // Lazy: workspaceState is composed below, but only invoked after creation.
   loadConfig: () => workspaceState.loadConfig(),
   checkAuth: () => workspaceState.checkAuth(),
   beginLocalTurn,
   settleLocalTurn,
+  mainTranscriptTailTurnId,
+  mainTranscriptTailPromptCreatedAt,
+  // Invoked only at activation-answer time — after every module is composed.
+  settleIfFateProven,
 });
 
 /** Git info for the active session from the daemon's fs:git_status response */
@@ -3709,12 +5466,42 @@ const workspaceState = useWorkspaceState(rawState, {
   forgetSession,
   unpinSessions,
   setActiveSessionId,
-  updateSessionMessages,
   nextOptimisticMsgId,
+  lastMainUserPromptText: (sessionId: string): string | null => {
+    const entry = mainTranscriptHost.pool.getEntry(sessionId);
+    if (entry === undefined) return null;
+    const turn = entry.channel.snapshot.items.findLast(
+      (item) => item.kind === 'turn' && item.origin.kind === 'user',
+    );
+    return turn?.kind === 'turn' ? turn.prompt ?? null : null;
+  },
+  mainTranscriptTailTurnId,
+  mainTranscriptTailPromptCreatedAt,
+  // Invoked only at submit-answer time — after every module is composed.
+  settleIfFateProven,
   getEventConn: () => eventConn,
-  syncSessionFromSnapshot,
-  reopenSession,
+  subscribeSessionEvents,
+  refreshMainTranscript: async (sessionId: string): Promise<void> => {
+    const entry = mainTranscriptHost.pool.getEntry(sessionId);
+    if (entry === undefined) return;
+    // undo needs a read that STARTED after the rewind: refresh() joins any
+    // in-flight one whose snapshot point may PREDATE the undo and could write
+    // the deleted turns back. The same holds for a pre-undo loadOlder — its
+    // pre-rewind page merging after the refresh would resurrect rewound items.
+    // Wait both out, then force a fresh read. The reads go through the POOL's
+    // serialized path so a reset landing mid-read is buffered and lands
+    // after the older page (a direct channel.refresh() would let the stale
+    // page overwrite the server's newer reset).
+    await entry.channel.settleOlder().catch(() => undefined);
+    await mainTranscriptHost.pool.refreshSession(sessionId).catch(() => undefined);
+    await mainTranscriptHost.pool.refreshSession(sessionId);
+  },
   hasLoadedMessages,
+  // cancelTask's agent-id → background-task-id alias lookup: transcript rows
+  // carry backgroundTaskId on the row itself.
+  resolveTaskRestId: (_sessionId: string, taskId: string): string | undefined =>
+    activeAppTasks.value.find((task) => task.id === taskId)?.backgroundTaskId,
+  whenMainTranscriptBaseline,
   refreshSessionStatus,
   refreshSessionGoal,
   refillSessionGoalOnReload,
@@ -3786,7 +5573,172 @@ function clearWorkingFlags(sid: string): void {
   }
 }
 
-function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: boolean): void {
+/** Is the local submission's fate PROVEN by the transcript? A session-level
+ *  turn end may only settle it then. While the submit POST is unanswered,
+ *  while the response-stamped prompt entity is still queued/running (or not
+ *  yet observed), or while an uncertain bubble's terminal echo is missing,
+ *  the turn that's ending belongs to ANOTHER client (our prompt queued
+ *  behind it) — letting it settle here would clear the local in-flight,
+ *  retire the bubble and drain the queue early, and the late POST response
+ *  would then never record the prompt id (P1: remote turn-end reaping a
+ *  local submit). The blocked/aborted instant deaths settle through the
+ *  prompt-transition path instead, which is identity-attributed. */
+/** Is a bubble's own work PROVEN ended by the transcript? A skill bubble by
+ *  its anchored echo turn (or floored blocked marker); a text bubble by a
+ *  non-running transcript turn after its anchor carrying the same prompt
+ *  (the overlay's cover rule), or by its floored terminal prompt echo. */
+function bubbleFateProven(
+  m: { content: readonly { type: string; text?: string }[]; metadata?: Record<string, unknown> },
+  snapshot: AgentTranscriptSnapshot,
+): boolean {
+  const mOrigin = m.metadata?.['origin'] as
+    | { kind?: unknown; skillName?: unknown; skillArgs?: unknown }
+    | undefined;
+  if (mOrigin?.kind === 'skill_activation') {
+    const anchorId = m.metadata?.['kimiWeb.anchorTurnId'] as string | undefined;
+    return (
+      skillEchoTurnExists(snapshot.items, anchorId, mOrigin.skillName, mOrigin.skillArgs) ||
+      skillMarkerExists(
+        snapshot.items,
+        anchorId,
+        mOrigin.skillName,
+        mOrigin.skillArgs,
+        m.metadata?.['kimiWeb.anchorPromptCreatedAt'] as string | undefined,
+      )
+    );
+  }
+  const text = m.content
+    .filter((part) => part.type === 'text')
+    .map((part) => ('text' in part ? part.text : ''))
+    .join('');
+  const anchorId = m.metadata?.['kimiWeb.anchorTurnId'] as string | undefined;
+  const anchorIdx =
+    anchorId === undefined
+      ? -1
+      : snapshot.items.findIndex((item) => item.kind === 'turn' && item.turnId === anchorId);
+  // A rewound anchor (undo/reset) proves nothing about this bubble.
+  if (anchorId !== undefined && anchorIdx === -1) return false;
+  const turnProves = snapshot.items.slice(anchorIdx + 1).some(
+    (item) =>
+      item.kind === 'turn' &&
+      item.state !== 'running' &&
+      ((item.prompt ?? '') === text || (text === '' && (item.attachmentIds?.length ?? 0) > 0)),
+  );
+  if (turnProves) return true;
+  const floor = promptEchoFloor(snapshot.items, m.metadata);
+  return snapshot.prompts.some(
+    (p) =>
+      p.status !== 'queued' &&
+      p.status !== 'running' &&
+      (floor === undefined ||
+        (floor.exclusive ? p.createdAt > floor.at : p.createdAt >= floor.at)) &&
+      transcriptPromptText(p.content) === text,
+  );
+}
+
+/** The local submission's fate as judged by the transcript. `settle`: the
+ *  CURRENT in-flight submission (or, without one, the bare state) may be
+ *  settled — its bubble and in-flight cleared. `drain`: the queue may also
+ *  advance, which additionally requires every UNCERTAIN bubble's fate to be
+ *  proven (a lost prompt must not be overtaken by the next queued send).
+ *  Historical uncertain bubbles never gate the CURRENT submission's settle —
+ *  their retirement is the survivors sweep's one-to-one business — but they
+ *  do gate the drain. An UNANSWERED submit is always unproven: text or
+ *  bare-attachment matching can't tell its turn apart from another client's
+ *  same-content one — the response landing later is where identity-based
+ *  settling happens (see settleIfFateProven). */
+function localSubmitFate(
+  sid: string,
+  snapshot: AgentTranscriptSnapshot,
+): { settle: boolean; drain: boolean } {
+  const bubbles = rawState.optimisticMessagesBySession[sid] ?? [];
+  const current = bubbles.findLast((m) => m.metadata?.['kimiWeb.uncertain'] !== true);
+  let settle: boolean;
+  const stampedId = rawState.promptIdBySession[sid];
+  if (localTurnStartState(sid).pending) {
+    settle = false;
+  } else if (stampedId !== undefined) {
+    const ours = snapshot.prompts.find((p) => p.promptId === stampedId);
+    // The prompt's identity is KNOWN — its entity is the only arbiter. A
+    // missing entity means the transcript hasn't caught up (queued/running
+    // server-side), so stay UNPROVEN: falling back to text (or bare
+    // attachment) matching would let another client's same-content turn
+    // settle a submission that is not ours.
+    settle = ours !== undefined && ours.status !== 'queued' && ours.status !== 'running';
+  } else if (rawState.inFlightBySession[sid] === true) {
+    settle = current === undefined || bubbleFateProven(current, snapshot);
+  } else {
+    // Nothing live to protect (the bare reconcile case).
+    settle = true;
+  }
+  // The drain asks the ONE-TO-ONE question: has every uncertain bubble's OWN
+  // echo entity arrived? Independent bubbleFateProven checks would let a
+  // single prompt/skill entity "prove" two identical sends and flush the
+  // queue while the second request was never observed — so this uses the
+  // same persisted pairing sets as the survivors sweep.
+  const uncertainTextBubbles = bubbles.filter(
+    (m) =>
+      m.metadata?.['kimiWeb.uncertain'] === true &&
+      (m.metadata?.['origin'] as { kind?: unknown } | undefined)?.kind !== 'skill_activation',
+  );
+  const uncertainSkillBubbles = bubbles.filter(
+    (m) =>
+      m.metadata?.['kimiWeb.uncertain'] === true &&
+      (m.metadata?.['origin'] as { kind?: unknown } | undefined)?.kind === 'skill_activation',
+  );
+  const allUncertainPaired =
+    uncertainEchoMatchedIds(
+      uncertainTextBubbles.map((m) => ({
+        id: m.id,
+        text: m.content
+          .filter((part) => part.type === 'text')
+          .map((part) => ('text' in part ? part.text : ''))
+          .join(''),
+        floor: promptEchoFloor(snapshot.items, m.metadata),
+      })),
+      snapshot.prompts,
+      consumedEchoPromptIdsBySid.get(sid),
+    ).size === uncertainTextBubbles.length &&
+    skillEchoMatchedIds(
+      uncertainSkillBubbles.map((m) => {
+        const origin = m.metadata?.['origin'] as
+          | { skillName?: unknown; skillArgs?: unknown }
+          | undefined;
+        return {
+          id: m.id,
+          anchorTurnId: m.metadata?.['kimiWeb.anchorTurnId'] as string | undefined,
+          promptFloor: m.metadata?.['kimiWeb.anchorPromptCreatedAt'] as string | undefined,
+          skillName: origin?.skillName,
+          skillArgs: origin?.skillArgs,
+        };
+      }),
+      snapshot.items,
+      consumedSkillEchoIdsBySid.get(sid),
+    ).size === uncertainSkillBubbles.length;
+  const drain = settle && allUncertainPaired;
+  return { settle, drain };
+}
+
+/** Called when a submission's POST response lands: the transcript may already
+ *  carry the work's terminal evidence (a fast turn, a pre-submit block) whose
+ *  frame was consumed while the prompt id was still unknown — no later edge
+ *  re-fires for it. With the response's identity now known, settle right here
+ *  if the gate proves it. */
+function settleIfFateProven(sid: string): void {
+  const entry = mainTranscriptHost.pool.getEntry(sid);
+  if (entry === undefined || !entry.baselineLoaded) return;
+  const fate = localSubmitFate(sid, entry.channel.snapshot);
+  if (fate.settle) {
+    workspaceState.finishPromptLocal(sid, { skipDrain: !fate.drain });
+  }
+}
+
+function onMainTurnEnd(
+  sid: string,
+  status: 'idle' | 'aborted',
+  turnWasActive: boolean,
+  opts?: { drain?: boolean; settleLocal?: boolean },
+): void {
   // Capture before finishPromptLocal drops it — it keys the completion
   // notification's dedup tag so each finished turn alerts once.
   const finishedPromptId = rawState.promptIdBySession[sid];
@@ -3803,9 +5755,23 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
     rawState.goalBySession[sid]?.status === 'active' || goalFetchPendingBySession.has(sid);
   // Shared finish cleanup: clears in-flight/prompt-id and drains one
   // queued message. The notification/unread side effects below stay
-  // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
-  // wolf when opening a historical session.
-  workspaceState.finishPromptLocal(sid, { turnWasActive });
+  // turn-boundary-only — the first-baseline path (the transcript edge
+  // watcher's quiet finish) must not cry wolf when opening a historical
+  // session. settleLocal=false: the ending turn is not attributable to our
+  // pending submission — its fate is unproven (see localSubmitFate), so
+  // only the session-level side effects below run.
+  if (opts?.settleLocal !== false) {
+    workspaceState.finishPromptLocal(sid, {
+      turnWasActive,
+      // A turn's end retires EVERY confirmed bubble it absorbed (uncertain
+      // ones stay — only their own prompt entity may retire them). The queue's
+      // drain decision must NOT downgrade the retirement: leftover covered
+      // bubbles keep hasPendingLocalWork true and pin the session's
+      // transcript entry (and its WS subscription) in the LRU.
+      retireOptimistic: 'all',
+      skipDrain: opts?.drain === false,
+    });
+  }
 
   // AI auto-title retry boundary: no-op once a title has been applied (or the
   // attempt budget is spent) — see maybeGenerateSessionTitle. Rides the
@@ -3823,6 +5789,14 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // also mirrors pullRequest into the sessions pool — the sidebar row's only
   // live update channel, since WS events never carry the git domain.
   void filesStore().loadGitStatus(sid);
+  // goal.updated is in the transcript suppression set and meta.goal carries
+  // no detail fields, so the goal card re-reads the REST fact at each turn
+  // boundary instead of streaming live updates.
+  void refreshSessionGoal(sid);
+  // Warnings are otherwise pulled only at session select, and the live
+  // `warning` event is grade-suppressed — re-pull at this turn-end sync point
+  // so a warning persisted WHILE the user stays in the session still surfaces.
+  workspaceState.refreshSessionWarnings(sid);
   if (sid === rawState.activeSessionId) {
     // Runtime status (model/context usage may have changed this turn) is only
     // shown for the session on screen.
@@ -4071,7 +6045,15 @@ export function useKimiWebClient() {
     sessionAdminMaterializingAll: computed(() => sessionAdmin.state.materializingAll),
     archiveSessions: sessionAdmin.archiveSessions,
     restoreSessions: sessionAdmin.restoreSessions,
-    loadOlderMessages: workspaceState.loadOlderMessages,
+    loadOlderMessages: async (sessionId: string): Promise<void> => {
+      // The visible window comes from the transcript channel, so it pages
+      // older items itself; the error/loading facts surface via the channel's
+      // loadOlderError / loadingOlder getters.
+      const channel = mainTranscriptHost.pool.getEntry(sessionId)?.channel;
+      if (channel?.snapshot.hasMoreOlder === true) {
+        await channel.loadOlder().catch(() => undefined);
+      }
+    },
 
     // Workspace actions
     loadWorkspaces: workspaceState.loadWorkspaces,

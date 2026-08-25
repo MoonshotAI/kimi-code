@@ -9,10 +9,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createInitialState, reduceAppEvent, type KimiClientState } from '../src/api';
+import { createInitialState, reduceAppEvent } from '../src/api';
 import type {
   AppEvent,
-  AppMessage,
 } from '../src/api/types';
 import {
   coalesceAppRenderEvents,
@@ -120,20 +119,6 @@ function enqueueAppEvent(
   item: PendingAppEvent,
 ): void {
   for (const part of splitOversizedAppRenderEvent(item)) enqueue(part);
-}
-
-function assistantState(content: AppMessage['content'] = [{ type: 'text', text: '' }]): KimiClientState {
-  const state = createInitialState();
-  state.messagesBySession['session-1'] = [
-    {
-      id: 'message-1',
-      sessionId: 'session-1',
-      role: 'assistant',
-      content,
-      createdAt: '2026-01-01T00:00:00.000Z',
-    },
-  ];
-  return state;
 }
 
 describe('createEventBatcher (ordered bounded scheduling)', () => {
@@ -373,7 +358,7 @@ describe('createEventBatcher (ordered bounded scheduling)', () => {
 describe('coalesceAppRenderEvents (lossless stream grouping)', () => {
   it('reduces 10,000 contiguous deltas in capped groups while preserving every character', () => {
     const scheduler = manualScheduler();
-    let state = assistantState();
+    let state = createInitialState();
     let reducerCalls = 0;
     const groupLengths: number[] = [];
     const groupOffsets: number[] = [];
@@ -409,9 +394,6 @@ describe('coalesceAppRenderEvents (lossless stream grouping)', () => {
       expectedOffset += groupLengths[index]!;
     }
     expect(state.lastSeqBySession['session-1']).toBe(160_000);
-    expect(state.messagesBySession['session-1']?.[0]?.content).toEqual([
-      { type: 'text', text: 'abcdefghijklmnop'.repeat(10_000) },
-    ]);
   });
 
   it('keeps a 10,000-delta hidden-tab backlog in a few capped groups', () => {
@@ -521,13 +503,11 @@ describe('coalesceAppRenderEvents (lossless stream grouping)', () => {
     expect(processed).toBe(2);
   });
 
-  it('coalesces contiguous thinking deltas into the existing thinking block', () => {
+  it('coalesces contiguous thinking deltas into one grouped event', () => {
     const scheduler = manualScheduler();
-    let state = assistantState([{ type: 'thinking', thinking: 'seed' }]);
+    const processed: PendingAppEvent[] = [];
     const enqueue = createEventBatcher<PendingAppEvent>(
-      ({ appEvent, meta }) => {
-        state = reduceAppEvent(state, appEvent, meta);
-      },
+      (item) => processed.push(item),
       ({ appEvent }) => isRenderEvent(appEvent),
       { scheduler, coalesce: coalesceAppRenderEvents },
     );
@@ -536,31 +516,28 @@ describe('coalesceAppRenderEvents (lossless stream grouping)', () => {
     enqueue(pendingDelta(' two', 4, { kind: 'thinking' }));
     scheduler.flushFrame();
 
-    expect(state.messagesBySession['session-1']?.[0]?.content).toEqual([
-      { type: 'thinking', thinking: 'seed one two', signature: undefined },
-    ]);
+    expect(processed).toHaveLength(1);
+    const [first] = processed;
+    expect(first?.appEvent.type === 'assistantDelta' && first.appEvent.delta.thinking).toBe(' one two');
   });
 
-  it('does not reapply a pre-snapshot delta after the snapshot seeds live text', () => {
+  it('does not reapply queued events after a synchronous flush', () => {
     const scheduler = manualScheduler();
-    let state = assistantState();
+    const processed: PendingAppEvent[] = [];
     const enqueue = createEventBatcher<PendingAppEvent>(
-      ({ appEvent, meta }) => {
-        state = reduceAppEvent(state, appEvent, meta);
-      },
+      (item) => processed.push(item),
       ({ appEvent }) => isRenderEvent(appEvent),
       { scheduler, coalesce: coalesceAppRenderEvents },
     );
 
     enqueue(pendingDelta('stale', 0));
     enqueue.flush();
-    state = assistantState([{ type: 'text', text: 'snapshot' }]);
     enqueue(pendingDelta(' live', 8));
     scheduler.flushFrame();
 
-    expect(state.messagesBySession['session-1']?.[0]?.content).toEqual([
-      { type: 'text', text: 'snapshot live' },
-    ]);
+    expect(
+      processed.map(({ appEvent }) => (appEvent.type === 'assistantDelta' ? (appEvent.delta.text ?? '') : '')),
+    ).toEqual(['stale', ' live']);
     expect(scheduler.pendingFrames()).toBe(0);
     expect(scheduler.pendingTasks()).toBe(0);
   });

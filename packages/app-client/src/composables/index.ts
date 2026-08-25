@@ -20,4 +20,6 @@ export * from './useAttachmentUpload';
 export * from './useOAuthLoginFlow';
 export * from './useUpdateStatus';
 export * from './useAuxiliaryTranscripts';
+export * from './useMainTranscripts';
+export * from './useMainTranscriptHost';
 export * from './useSelectionQuoteBubble';

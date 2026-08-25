@@ -13,7 +13,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppSession,
-  AppSessionSnapshot,
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
@@ -77,32 +76,6 @@ const session: AppSession = {
   workspaceId: 'workspace-1',
 };
 
-const initialSnapshot: AppSessionSnapshot = {
-  asOfSeq: 10,
-  epoch: 'epoch-1',
-  session,
-  messages: [
-    {
-      id: 'message-1',
-      sessionId,
-      role: 'assistant',
-      content: [{ type: 'text', text: 'seed' }],
-      createdAt: '2026-01-01T00:00:00.000Z',
-    },
-  ],
-  hasMoreMessages: false,
-  inFlightTurn: {
-    turnId: 1,
-    assistantText: 'seed',
-    thinkingText: '',
-    runningTools: [],
-    promptId: 'prompt-1',
-  },
-  subagents: [],
-  pendingApprovals: [],
-  pendingQuestions: [],
-};
-
 describe('useKimiWebClient (applyEvent slice isolation)', () => {
   it('a pure streaming delta leaves sidebar computeds untouched', async () => {
     vi.stubGlobal('WebSocket', class {});
@@ -111,8 +84,9 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
     const connection: KimiEventConnection = {
       subscribe: vi.fn(),
       unsubscribe: vi.fn(),
+      subscribeTranscript: vi.fn(),
+      unsubscribeTranscript: vi.fn(),
       bindNextPromptId: vi.fn(),
-      seedSnapshot: vi.fn(),
       abort: vi.fn(),
       terminalAttach: vi.fn(),
       terminalInput: vi.fn(),
@@ -156,7 +130,20 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
         nextPageToken: null,
         total: 1,
       })),
-      getSessionSnapshot: vi.fn(async () => initialSnapshot),
+      getSessionTranscript: vi.fn(async () => ({
+        agentId: 'main',
+        agents: [],
+        pendingInteractions: [],
+        items: [],
+        tasks: [],
+        interactions: [],
+        attachments: [],
+        todos: [],
+        prompts: [],
+        meta: {},
+        hasMoreOlder: false,
+        seq: 10,
+      })),
       getSessionStatus: vi.fn(async () => ({
         model: 'model-1',
         thinkingEffort: 'high',
@@ -195,27 +182,28 @@ describe('useKimiWebClient (applyEvent slice isolation)', () => {
       const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
       const client = useKimiWebClient();
       await client.load();
-      const assistantText = (): string | undefined =>
-        client.turns.value.find((turn) => turn.role === 'assistant')?.text;
-      expect(assistantText()).toBe('seed');
       expect(handlers).toBeDefined();
+      // Let the transcript baseline land (its version bump flushes on a 50 ms
+      // task) before capturing computed identities.
+      await new Promise((resolve) => setTimeout(resolve, 120));
 
       // Vue computeds return their CACHED array identity until a dependency
       // changes, so reference equality observes exactly "did this recompute".
       const sessionsBefore = client.sessionsForView.value;
       const groupsBefore = client.workspaceGroups.value;
+      const turnsBefore = client.turns.value;
 
-      // A mid-turn streaming delta: render events drain via the batcher's
-      // task fallback (50 ms) when no animation frame fires.
+      // A mid-turn streaming delta: a no-op for the reducer (the message
+      // stream lives on the transcript channel now), it still drains through
+      // the batcher's task fallback (50 ms) when no animation frame fires.
       handlers!.onEvent(
         { type: 'assistantDelta', sessionId, messageId: 'message-1', contentIndex: 0, delta: { text: ' more' } },
         { sessionId, seq: 11 },
       );
       await new Promise((resolve) => setTimeout(resolve, 120));
 
-      // The chat view consumed the delta…
-      expect(assistantText()).toBe('seed more');
-      // …without re-running the sidebar list derivations.
+      // …leaving the chat view and the sidebar list derivations untouched.
+      expect(client.turns.value).toBe(turnsBefore);
       expect(client.sessionsForView.value).toBe(sessionsBefore);
       expect(client.workspaceGroups.value).toBe(groupsBefore);
 

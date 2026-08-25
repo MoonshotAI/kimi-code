@@ -11,7 +11,7 @@ import { DaemonKimiWebApi } from '../src/api/daemon/client';
 import { createAgentProjector } from '../src/api/daemon/agentEventProjector';
 import { DaemonApiError, DaemonNetworkError, isDaemonTimeoutError } from '../src/api/errors';
 import type { RestRequestInfo, Translator } from '../src/contracts';
-import type { AppEvent, KimiEventConnection, KimiEventMeta } from '../src/api/types';
+import type { AppEvent, KimiEventConnection } from '../src/api/types';
 
 const t: Translator = (key) => key;
 const tracedRequests: RestRequestInfo[] = [];
@@ -430,85 +430,6 @@ describe('DaemonKimiWebApi.connectEvents', () => {
     vi.unstubAllGlobals();
   });
 
-  it('delivers raw assistant stream coordinates with the projected delta', () => {
-    FakeWebSocket.instances = [];
-    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
-    const received: Array<{ event: AppEvent; meta: KimiEventMeta }> = [];
-    connection = createApi().connectEvents({
-      onEvent(event, meta) {
-        received.push({ event, meta });
-      },
-      onResync() {},
-      onError() {},
-      onConnectionChange() {},
-    });
-    const socket = FakeWebSocket.instances[0]!;
-
-    socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
-    socket.emit({
-      type: 'turn.started',
-      seq: 1,
-      session_id: 'session-1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      payload: { agentId: 'main', turnId: 7 },
-    });
-    socket.emit({
-      type: 'turn.step.started',
-      seq: 2,
-      session_id: 'session-1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      payload: { agentId: 'main', turnId: 7, step: 1 },
-    });
-    socket.emit({
-      type: 'assistant.delta',
-      seq: 2,
-      session_id: 'session-1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      volatile: true,
-      offset: 0,
-      payload: { agentId: 'main', turnId: 7, delta: 'hello' },
-    });
-    socket.emit({
-      type: 'thinking.delta',
-      seq: 2,
-      session_id: 'session-1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      volatile: true,
-      offset: 0,
-      payload: { agentId: 'main', turnId: 7, delta: 'thought' },
-    });
-
-    const delta = received.find(({ event }) => event.type === 'assistantDelta');
-    expect(delta).toMatchObject({
-      event: {
-        type: 'assistantDelta',
-        sessionId: 'session-1',
-        delta: { text: 'hello' },
-      },
-      meta: {
-        sessionId: 'session-1',
-        seq: 2,
-        stream: { turnId: 7, offset: 0, kind: 'text' },
-      },
-    });
-
-    const thinking = received.find(
-      ({ event }) => event.type === 'assistantDelta' && event.delta.thinking !== undefined,
-    );
-    expect(thinking).toMatchObject({
-      event: {
-        type: 'assistantDelta',
-        sessionId: 'session-1',
-        delta: { thinking: 'thought' },
-      },
-      meta: {
-        sessionId: 'session-1',
-        seq: 2,
-        stream: { turnId: 7, offset: 0, kind: 'thinking' },
-      },
-    });
-  });
-
   it('projects list-level work facts from the global session event', () => {
     FakeWebSocket.instances = [];
     vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
@@ -588,11 +509,11 @@ describe('DaemonKimiWebApi.connectEvents', () => {
       timestamp: '2026-01-01T00:00:00.000Z',
       payload: { agentId: 'main', turnId: 7, step: 1 },
     });
-    expect(projector.retainedMessageCount('session-1')).toBe(1);
+    expect(projector.hasSessionState('session-1')).toBe(true);
 
     connection.unsubscribe('session-1');
     // The sessions-map entry itself is gone — not just reset to empty.
-    expect(projector.retainedMessageCount('session-1')).toBeUndefined();
+    expect(projector.hasSessionState('session-1')).toBe(false);
   });
 });
 

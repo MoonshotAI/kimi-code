@@ -1,7 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type {
   AppApprovalRequest,
-  AppMessage,
   AppQuestionRequest,
   AppSession,
   AppTask,
@@ -10,15 +9,11 @@ import { createInitialState, reduceAppEvent, type EventMeta, type KimiClientStat
 
 const SID = 's_1';
 
-// Freshness matters: settle only runs for fresh events, so each event gets an
-// increasing seq (reduceAppEvent advances lastSeqBySession from meta.seq).
+// Freshness matters: several cases only run for fresh events, so each event
+// gets an increasing seq (reduceAppEvent advances lastSeqBySession from meta.seq).
 let seq = 0;
 function meta(): EventMeta {
   return { sessionId: SID, seq: ++seq };
-}
-
-function assistantMessage(id: string): AppMessage {
-  return { id, sessionId: SID, role: 'assistant', content: [], createdAt: new Date().toISOString() };
 }
 
 function approval(id: string, createdAt = new Date().toISOString()): AppApprovalRequest {
@@ -42,28 +37,6 @@ function question(id: string): AppQuestionRequest {
     createdAt: new Date().toISOString(),
   };
 }
-
-/** State with one assistant message carrying a live-streamed thinking part. */
-function stateWithOpenThinking(messageId = 'm_1'): KimiClientState {
-  let state = createInitialState();
-  state = reduceAppEvent(state, { type: 'messageCreated', message: assistantMessage(messageId) }, meta());
-  state = reduceAppEvent(
-    state,
-    { type: 'assistantDelta', sessionId: SID, messageId, contentIndex: 0, delta: { thinking: 'hmm' } },
-    meta(),
-  );
-  return state;
-}
-
-function thinkingPart(state: KimiClientState, messageId = 'm_1') {
-  const part = state.messagesBySession[SID]?.find((m) => m.id === messageId)?.content.find((p) => p.type === 'thinking');
-  if (part?.type !== 'thinking') throw new Error('expected a thinking part');
-  return part;
-}
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe('reduceAppEvent session work state', () => {
   it('clears a stale pending interaction when an idle work event omits it', () => {
@@ -110,183 +83,6 @@ describe('reduceAppEvent session work state', () => {
     expect(state.sessions[0]?.pendingInteraction).toBe('none');
     expect(state.approvalsBySession[SID]).toBeUndefined();
     expect(state.questionsBySession[SID]).toBeUndefined();
-  });
-});
-
-describe('reduceAppEvent thinking-part timing on user interactions', () => {
-  it('stamps durationMs on the open thinking part when an approval is requested', () => {
-    const before = Date.now();
-    const state = reduceAppEvent(stateWithOpenThinking(), { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, meta());
-    const part = thinkingPart(state);
-    expect(part.startedAt).toBeDefined();
-    expect(part.durationMs).toBeTypeOf('number');
-    expect(part.durationMs!).toBeGreaterThanOrEqual(0);
-    expect(part.durationMs!).toBeLessThanOrEqual(Date.now() - before + 1000);
-  });
-
-  it('stamps durationMs on the open thinking part when a question is requested', () => {
-    const state = reduceAppEvent(stateWithOpenThinking(), { type: 'questionRequested', sessionId: SID, question: question('q_1') }, meta());
-    expect(thinkingPart(state).durationMs).toBeTypeOf('number');
-  });
-
-  it('settles at the request creation time, not at event consumption time', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
-    let state = stateWithOpenThinking();
-    // The request was created 4s into the thinking stream but consumed at 10s
-    // (throttled tab): the settled span must be ~4s, not ~10s.
-    vi.setSystemTime(1_000_000 + 10_000);
-    state = reduceAppEvent(
-      state,
-      { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1', new Date(1_000_000 + 4_000).toISOString()) },
-      meta(),
-    );
-    expect(thinkingPart(state).durationMs).toBe(4_000);
-  });
-
-  it('does not extend the settled span when the approval wait drags on', () => {
-    let state = reduceAppEvent(stateWithOpenThinking(), { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, meta());
-    const settled = thinkingPart(state).durationMs!;
-    // A later full-content replace (e.g. tool.call.started after approval)
-    // must keep the already-settled span instead of re-stamping it.
-    state = reduceAppEvent(
-      state,
-      {
-        type: 'messageUpdated',
-        sessionId: SID,
-        messageId: 'm_1',
-        content: [...(state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.content), { type: 'toolUse', toolCallId: 'tc_1', toolName: 'Bash', input: {} }],
-        status: 'pending',
-      },
-      meta(),
-    );
-    expect(thinkingPart(state).durationMs).toBe(settled);
-  });
-
-  it('leaves already-settled or untimed content untouched', () => {
-    // History-loaded message: thinking part without renderer stamps.
-    const history = assistantMessage('m_1');
-    history.content = [{ type: 'thinking', thinking: 'old' }];
-    let state = createInitialState();
-    state = reduceAppEvent(state, { type: 'messageCreated', message: history }, meta());
-    state = reduceAppEvent(state, { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, meta());
-    const part = thinkingPart(state);
-    expect(part.startedAt).toBeUndefined();
-    expect(part.durationMs).toBeUndefined();
-  });
-
-  it('ignores replayed (already-listed) approval requests', () => {
-    let state = reduceAppEvent(stateWithOpenThinking(), { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, meta());
-    const settled = thinkingPart(state).durationMs!;
-    state = reduceAppEvent(state, { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, meta());
-    expect(thinkingPart(state).durationMs).toBe(settled);
-  });
-
-  it('does not freeze a later turn when a resolved request replays after reconnect', () => {
-    // Turn N: thinking streams, an approval parks the turn, then resolves.
-    let state = reduceAppEvent(stateWithOpenThinking(), { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, meta());
-    state = reduceAppEvent(state, { type: 'approvalResolved', sessionId: SID, approvalId: 'ap_1', decision: 'approved', resolvedAt: new Date().toISOString() }, meta());
-    // Turn N+1: a fresh assistant message with live thinking.
-    state = reduceAppEvent(state, { type: 'messageCreated', message: assistantMessage('m_2') }, meta());
-    state = reduceAppEvent(
-      state,
-      { type: 'assistantDelta', sessionId: SID, messageId: 'm_2', contentIndex: 0, delta: { thinking: 'new turn' } },
-      meta(),
-    );
-    // The reconnect replay redelivers the resolved request with a stale seq:
-    // the id dedupe misses (resolved dropped it), but the freshness gate must.
-    state = reduceAppEvent(state, { type: 'approvalRequested', sessionId: SID, approval: approval('ap_1') }, { sessionId: SID, seq: 1 });
-    expect(thinkingPart(state, 'm_2').durationMs).toBeUndefined();
-  });
-});
-
-describe('reduceAppEvent settle stamp (endedAt)', () => {
-  it('stamps endedAt when the daemon turn duration lands', () => {
-    const before = Date.now();
-    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
-    state = reduceAppEvent(
-      state,
-      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [{ type: 'text', text: 'done' }], status: 'completed', durationMs: 12_000 },
-      meta(),
-    );
-    const msg = state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!;
-    expect(msg.durationMs).toBe(12_000);
-    expect(msg.endedAt).toBeTypeOf('string');
-    expect(Date.parse(msg.endedAt!)).toBeGreaterThanOrEqual(before);
-    expect(Date.parse(msg.endedAt!)).toBeLessThanOrEqual(Date.now());
-  });
-
-  it('leaves endedAt unset when the update carries no daemon duration', () => {
-    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
-    state = reduceAppEvent(
-      state,
-      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [{ type: 'text', text: 'partial' }], status: 'pending' },
-      meta(),
-    );
-    expect(state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.endedAt).toBeUndefined();
-  });
-
-  it('keeps the first settle stamp when a duration update replays', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(5_000_000);
-    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: assistantMessage('m_1') }, meta());
-    state = reduceAppEvent(
-      state,
-      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [], status: 'completed', durationMs: 12_000 },
-      meta(),
-    );
-    const first = state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.endedAt;
-    vi.setSystemTime(5_060_000);
-    state = reduceAppEvent(
-      state,
-      { type: 'messageUpdated', sessionId: SID, messageId: 'm_1', content: [], status: 'completed', durationMs: 12_000 },
-      meta(),
-    );
-    expect(state.messagesBySession[SID]!.find((m) => m.id === 'm_1')!.endedAt).toBe(first);
-  });
-});
-
-describe('reduceAppEvent optimistic echo reconciliation', () => {
-  function optimisticUser(id: string): AppMessage {
-    return {
-      id,
-      userMessageId: id,
-      sessionId: SID,
-      role: 'user',
-      content: [{ type: 'text', text: '' }],
-      createdAt: new Date().toISOString(),
-      metadata: { 'kimiWeb.optimisticUserMessage': true },
-    };
-  }
-
-  function syntheticUser(id: string, origin: Record<string, unknown>): AppMessage {
-    return {
-      id,
-      sessionId: SID,
-      role: 'user',
-      content: [{ type: 'text', text: '' }],
-      createdAt: new Date().toISOString(),
-      metadata: { origin },
-    };
-  }
-
-  it('appends a system_trigger message instead of reconciling it into an optimistic echo', () => {
-    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: optimisticUser('u_opt') }, meta());
-    state = reduceAppEvent(
-      state,
-      { type: 'messageCreated', message: syntheticUser('goal_1', { kind: 'system_trigger', name: 'goal_continuation' }) },
-      meta(),
-    );
-    const msgs = state.messagesBySession[SID]!;
-    expect(msgs.map((m) => m.id)).toEqual(['u_opt', 'goal_1']);
-    expect(msgs[0]?.metadata?.['kimiWeb.optimisticUserMessage']).toBe(true);
-  });
-
-  it('still reconciles a real user echo by identity', () => {
-    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: optimisticUser('u_opt') }, meta());
-    const echo: AppMessage = { ...syntheticUser('srv_1', { kind: 'user' }), userMessageId: 'u_opt' };
-    state = reduceAppEvent(state, { type: 'messageCreated', message: echo }, meta());
-    expect(state.messagesBySession[SID]!.map((m) => m.id)).toEqual(['u_opt']);
   });
 });
 
@@ -1333,82 +1129,6 @@ describe('sessionWorkChanged fallback freshness', () => {  it('does not clear a 
       { sessionId: SID, seq: 0 },
     );
     expect(state.turnRetryBySession[SID]).toEqual(retry);
-  });
-});
-
-describe('reduceAppEvent toolOutput replace', () => {
-  function stateWithToolUse(toolCallId: string, messageId: string): KimiClientState {
-    const message: AppMessage = {
-      id: messageId,
-      sessionId: SID,
-      role: 'assistant',
-      content: [{ type: 'toolUse', toolCallId, toolName: 'WaitFor', input: {} }],
-      createdAt: new Date().toISOString(),
-    };
-    return reduceAppEvent(createInitialState(), { type: 'messageCreated', message }, meta());
-  }
-
-  function toolUseLines(state: KimiClientState, messageId: string): string[] | undefined {
-    const part = state.messagesBySession[SID]
-      ?.find((m) => m.id === messageId)
-      ?.content.find((p) => p.type === 'toolUse');
-    return part?.type === 'toolUse' ? part.outputLines : undefined;
-  }
-
-  function toolOutput(toolCallId: string, outputChunk: string, replace?: boolean) {
-    return { type: 'toolOutput', sessionId: SID, toolCallId, outputChunk, stream: 'stdout', replace } as const;
-  }
-
-  it('appends chunks by default', () => {
-    let state = stateWithToolUse('tc_1', 'm_1');
-    state = reduceAppEvent(state, toolOutput('tc_1', 'line 1'), meta());
-    state = reduceAppEvent(state, toolOutput('tc_1', 'line 2', false), meta());
-    expect(toolUseLines(state, 'm_1')).toEqual(['line 1', 'line 2']);
-  });
-
-  it('rewrites the last line on replace updates', () => {
-    let state = stateWithToolUse('tc_1', 'm_1');
-    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 1s / 15s', true), meta());
-    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 2s / 15s', true), meta());
-    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 3s / 15s', true), meta());
-    expect(toolUseLines(state, 'm_1')).toEqual(['Waiting 3s / 15s']);
-  });
-
-  it('rewrites only the last line on replace, keeping earlier ones', () => {
-    let state = stateWithToolUse('tc_1', 'm_1');
-    state = reduceAppEvent(state, toolOutput('tc_1', 'first'), meta());
-    state = reduceAppEvent(state, toolOutput('tc_1', 'second'), meta());
-    state = reduceAppEvent(state, toolOutput('tc_1', 'tick 1', true), meta());
-    state = reduceAppEvent(state, toolOutput('tc_1', 'tick 2', true), meta());
-    expect(toolUseLines(state, 'm_1')).toEqual(['first', 'tick 2']);
-  });
-
-  it('pushes a replace chunk when there is no prior line', () => {
-    let state = stateWithToolUse('tc_1', 'm_1');
-    state = reduceAppEvent(state, toolOutput('tc_1', 'Waiting 1s / 15s', true), meta());
-    expect(toolUseLines(state, 'm_1')).toEqual(['Waiting 1s / 15s']);
-  });
-
-  it('only touches the message carrying the matching toolCallId', () => {
-    let state = stateWithToolUse('tc_1', 'm_1');
-    state = reduceAppEvent(
-      state,
-      {
-        type: 'messageCreated',
-        message: {
-          id: 'm_2',
-          sessionId: SID,
-          role: 'assistant',
-          content: [{ type: 'toolUse', toolCallId: 'tc_2', toolName: 'Bash', input: {} }],
-          createdAt: new Date().toISOString(),
-        },
-      },
-      meta(),
-    );
-    state = reduceAppEvent(state, toolOutput('tc_2', 'Waiting 1s / 15s', true), meta());
-    state = reduceAppEvent(state, toolOutput('tc_2', 'Waiting 2s / 15s', true), meta());
-    expect(toolUseLines(state, 'm_1')).toBeUndefined();
-    expect(toolUseLines(state, 'm_2')).toEqual(['Waiting 2s / 15s']);
   });
 });
 

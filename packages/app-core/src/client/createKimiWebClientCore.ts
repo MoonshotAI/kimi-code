@@ -38,7 +38,7 @@ export interface CreateCoreDeps {
 }
 
 export interface KimiWebClientCore {
-  /** The reducer-owned reactive state slice (sessions / messages / tasks / …). */
+  /** The reducer-owned reactive state slice (sessions / approvals / tasks / …). */
   state: KimiClientState;
   /** Reduce one daemon event into `state` (the shell's batcher calls this). */
   apply(event: AppEvent, meta: EventMeta): void;
@@ -56,7 +56,6 @@ export function createKimiWebClientCore(deps: CreateCoreDeps): KimiWebClientCore
     const next = reduceAppEvent(state, event, meta, { t });
     state.sessions = next.sessions;
     state.activeSessionId = next.activeSessionId;
-    state.messagesBySession = next.messagesBySession;
     state.approvalsBySession = next.approvalsBySession;
     state.planReviewByToolCallId = next.planReviewByToolCallId;
     state.questionsBySession = next.questionsBySession;

@@ -13,8 +13,6 @@ import type {
   AppConfig,
   AppEvent,
   AppGoal,
-  AppMessage,
-  AppMessageContent,
   AppNotice,
   AppNoticeDetail,
   AppTaskStatus,
@@ -24,9 +22,7 @@ import type {
   AppQuestionRequest,
   AppSession,
   AppTask,
-  CompactionMarkerMetadata,
 } from '../types';
-import { COMPACTION_MARKER_METADATA_KEY } from '../types';
 
 /** Translator injected by the consumer so the reducer stays free of any
  *  concrete i18n instance. Defaults to the identity (returns the key), which
@@ -36,8 +32,6 @@ export interface ReduceContext {
 }
 
 const DEFAULT_REDUCE_CONTEXT: ReduceContext = { t: (key) => key };
-
-const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
 
 /** Tail cap for accumulated output of non-subagent (bash / background tool)
  *  tasks, whose stdout can be noisy and unbounded. Subagent progress is kept
@@ -49,56 +43,6 @@ const MAX_BACKGROUND_OUTPUT_LINES = 40;
  *  (e.g. after a page refresh, where the snapshot roster — not the WS stream —
  *  carried the real description). */
 const PLACEHOLDER_SUBAGENT_DESCRIPTION = 'Sub Agent';
-
-// ---------------------------------------------------------------------------
-// Thinking-part timing (client-side only)
-// ---------------------------------------------------------------------------
-// The daemon streams thinking deltas without any timing, so the renderer
-// measures it: a part is stamped `startedAt` when it opens and `durationMs`
-// when the stream moves past it (a later part opens, or the message settles).
-// History-loaded and snapshot-restored parts stay untimed — nothing is
-// fabricated for content we never watched stream.
-
-/** Stamp `durationMs` on every open thinking part before `before` (all parts
- *  when omitted). Idempotent. */
-function closeThinkingParts(content: AppMessageContent[], nowMs: number, before = content.length): void {
-  for (let i = 0; i < before; i++) {
-    const part = content[i]!;
-    if (part.type === 'thinking' && part.startedAt !== undefined && part.durationMs === undefined) {
-      content[i] = { ...part, durationMs: Math.max(0, nowMs - Date.parse(part.startedAt)) };
-    }
-  }
-}
-
-/** Settle the open thinking parts of the session's latest assistant message:
- *  an approval/question parks the turn on the user, and the wait must not
- *  count as thinking time. */
-function settleThinkingOnUserInteraction(next: KimiClientState, sessionId: string, nowMs: number): void {
-  const msgs = next.messagesBySession[sessionId];
-  if (!msgs) return;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i]!;
-    if (m.role !== 'assistant') continue;
-    const hasOpenThinking = m.content.some(
-      (part) => part.type === 'thinking' && part.startedAt !== undefined && part.durationMs === undefined,
-    );
-    if (!hasOpenThinking) return;
-    const content = [...m.content];
-    closeThinkingParts(content, nowMs);
-    const patched = [...msgs];
-    patched[i] = { ...m, content };
-    next.messagesBySession[sessionId] = patched;
-    return;
-  }
-}
-
-/** Wall-clock ms of an approval/question request. Settling at the request
- *  moment — not at event-consumption time — keeps delivery delays (throttled
- *  tabs, busy main thread) out of the thinking span. */
-function requestTimeMs(createdAt: string): number {
-  const ms = Date.parse(createdAt);
-  return Number.isNaN(ms) ? Date.now() : ms;
-}
 
 // ---------------------------------------------------------------------------
 // State
@@ -115,7 +59,6 @@ export interface CompactionStatus {
 export interface KimiClientState {
   sessions: AppSession[];
   activeSessionId?: string;
-  messagesBySession: Record<string, AppMessage[]>;
   approvalsBySession: Record<string, AppApprovalRequest[]>;
   /** Preserved `plan_review` displays keyed by toolCallId. Plan content survives
    *  approval resolution so the ExitPlanMode tool card can keep rendering the
@@ -157,7 +100,6 @@ export function createInitialState(): KimiClientState {
   return {
     sessions: [],
     activeSessionId: undefined,
-    messagesBySession: {},
     approvalsBySession: {},
     planReviewByToolCallId: {},
     questionsBySession: {},
@@ -188,7 +130,6 @@ function cloneState(s: KimiClientState): KimiClientState {
     // so the sidebar computeds (sessionsForView / workspaceGroups /
     // mergedWorkspaces) are not dirtied by unrelated events.
     sessions: s.sessions,
-    messagesBySession: { ...s.messagesBySession },
     approvalsBySession: { ...s.approvalsBySession },
     planReviewByToolCallId: { ...s.planReviewByToolCallId },
     questionsBySession: { ...s.questionsBySession },
@@ -235,75 +176,6 @@ function isFreshEvent(state: KimiClientState, meta: EventMeta): boolean {
   return meta.seq > (state.lastSeqBySession[meta.sessionId] ?? 0);
 }
 
-function isOptimisticUserMessage(message: AppMessage): boolean {
-  return (
-    message.role === 'user' &&
-    message.metadata?.[OPTIMISTIC_USER_MESSAGE_METADATA_KEY] === true
-  );
-}
-
-function isCronOriginMessage(message: AppMessage): boolean {
-  const origin = message.metadata?.['origin'] as { kind?: string } | undefined;
-  return origin?.kind === 'cron_job' || origin?.kind === 'cron_missed';
-}
-
-/** System-trigger messages (goal continuations, …) are synthesized by the
-    runtime, never typed by the user — they can never be an optimistic echo. */
-function isSystemTriggerOriginMessage(message: AppMessage): boolean {
-  const origin = message.metadata?.['origin'] as { kind?: string } | undefined;
-  return origin?.kind === 'system_trigger';
-}
-
-function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage): number {
-  const userMessageId = message.userMessageId ?? message.id;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const candidate = messages[i]!;
-    if (
-      isOptimisticUserMessage(candidate) &&
-      candidate.userMessageId === userMessageId
-    ) {
-      return i;
-    }
-  }
-
-  const promptId = message.promptId;
-  if (promptId !== undefined) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const candidate = messages[i]!;
-      if (isOptimisticUserMessage(candidate) && candidate.promptId === promptId) {
-        return i;
-      }
-    }
-  }
-
-  return -1;
-}
-
-function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, outputChunk: string, replace: boolean): AppMessage[] {
-  let changed = false;
-  const next = messages.map((message) => {
-    let contentChanged = false;
-    const content = message.content.map((part) => {
-      if (part.type !== 'toolUse' || part.toolCallId !== toolCallId) return part;
-      contentChanged = true;
-      const lines = part.outputLines ?? [];
-      // A replace update rewrites the line it previously emitted (e.g.
-      // WaitFor's per-second status tick) instead of accumulating one line
-      // per update; with no prior line it simply lands as the first.
-      const outputLines =
-        replace && lines.length > 0 ? [...lines.slice(0, -1), outputChunk] : [...lines, outputChunk];
-      return {
-        ...part,
-        outputLines,
-      };
-    });
-    if (!contentChanged) return message;
-    changed = true;
-    return { ...message, content };
-  });
-  return changed ? next : messages;
-}
-
 // ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
@@ -321,7 +193,7 @@ const AGENT_ERROR_TITLE_KEYS: Readonly<Record<string, string>> = {
   'context.overflow': 'contextOverflow',
 };
 
-interface AgentErrorRaw {
+export interface AgentErrorRaw {
   code?: string;
   message?: string;
   name?: string;
@@ -336,7 +208,7 @@ interface AgentErrorRaw {
  * a diagnostics list (error code, HTTP status, request id, SDK error name,
  * plus any extra detail fields such as finishReason).
  */
-function buildAgentErrorNotice(raw: AgentErrorRaw, t: ReduceContext['t']): AppNotice {
+export function buildAgentErrorNotice(raw: AgentErrorRaw, t: ReduceContext['t']): AppNotice {
   const details: AppNoticeDetail[] = [];
   const push = (label: string, value: unknown): void => {
     if (typeof value === 'number' || typeof value === 'boolean') {
@@ -415,7 +287,6 @@ export function reduceAppEvent(
     case 'sessionDeleted': {
       const id = event.sessionId;
       next.sessions = next.sessions.filter((s) => s.id !== id);
-      delete next.messagesBySession[id];
       delete next.tasksBySession[id];
       delete next.goalBySession[id];
       delete next.approvalsBySession[id];
@@ -524,40 +395,8 @@ export function reduceAppEvent(
 
     case 'compactionCompleted': {
       const sid = event.sessionId;
-      const prev = next.compactionBySession[sid];
       const { [sid]: _doneEntry, ...rest } = next.compactionBySession;
       next.compactionBySession = rest;
-
-      // Append a persistent "context compacted" divider to the loaded
-      // transcript (TUI parity: the scrollback is kept untouched; only a
-      // one-line marker records that compaction happened). The marker id is
-      // derived from the wire seq so an event replay after reconnect can't
-      // duplicate it.
-      if (Object.prototype.hasOwnProperty.call(next.messagesBySession, sid)) {
-        const msgs = next.messagesBySession[sid] ?? [];
-        const markerId = `compaction_${sid}_${meta.seq}`;
-        if (!msgs.some((m) => m.id === markerId)) {
-          const marker: CompactionMarkerMetadata = {
-            trigger: prev?.trigger ?? 'auto',
-            tokensBefore: event.tokensBefore,
-            tokensAfter: event.tokensAfter,
-          };
-          next.messagesBySession[sid] = [
-            ...msgs,
-            {
-              id: markerId,
-              sessionId: sid,
-              role: 'assistant',
-              content: event.summary ? [{ type: 'text', text: event.summary }] : [],
-              createdAt: new Date().toISOString(),
-              metadata: {
-                origin: { kind: 'compaction_summary' },
-                [COMPACTION_MARKER_METADATA_KEY]: marker,
-              },
-            },
-          ];
-        }
-      }
       break;
     }
 
@@ -568,140 +407,14 @@ export function reduceAppEvent(
     }
 
     // -------------------------------------------------------------------------
-    case 'messageCreated': {
-      const sid = event.message.sessionId;
-      // Deliberately NOT bumping the session's `updatedAt` here: messages are
-      // created per step (assistant bubble) and per tool call, and bumping
-      // recency on each one re-sorted the sidebar session list mid-turn.
-      // Recency is turn-grained — see the `turnActiveChanged` case.
-      const msgs = next.messagesBySession[sid] ?? [];
-      const exists = msgs.some((m) => m.id === event.message.id);
-      if (!exists) {
-        // Cron-injected user messages (origin cron_job/cron_missed) carry the
-        // reminder's prompt as their text, which can coincide with a still-
-        // optimistic user message. They must append as their own turn rather
-        // than reconcile into (and replace) that optimistic echo — so skip the
-        // echo lookup entirely for them.
-        if (
-          event.message.role === 'user' &&
-          !isCronOriginMessage(event.message) &&
-          !isSystemTriggerOriginMessage(event.message)
-        ) {
-          const optimisticIndex = findOptimisticUserEchoIndex(msgs, event.message);
-          if (optimisticIndex !== -1) {
-            const updated = [...msgs];
-            const optimistic = updated[optimisticIndex]!;
-            updated[optimisticIndex] = {
-              ...event.message,
-              id: optimistic.id,
-              promptId: event.message.promptId ?? optimistic.promptId,
-              userMessageId: event.message.userMessageId ?? event.message.id,
-              metadata: {
-                ...event.message.metadata,
-                ...optimistic.metadata,
-              },
-            };
-            next.messagesBySession[sid] = updated;
-            break;
-          }
-        }
-        next.messagesBySession[sid] = [...msgs, event.message];
-      }
+    // Message-stream events no longer build client state: the main agent's
+    // transcript arrives over the transcript channel, and the side-channel
+    // (BTW) user echo is intercepted by the web layer. Advance seq silently.
+    case 'messageCreated':
+    case 'messageUpdated':
+    case 'assistantDelta':
+    case 'toolOutput':
       break;
-    }
-
-    // -------------------------------------------------------------------------
-    case 'messageUpdated': {
-      const sid = event.sessionId;
-      const msgs = next.messagesBySession[sid] ?? [];
-      next.messagesBySession[sid] = msgs.map((m) => {
-        if (m.id !== event.messageId) return m;
-        // Preserve renderer-stamped thinking timing across full-content
-        // replaces: the projector's copy carries no stamps, so merge ours back
-        // by index (type-matched).
-        const content = event.content.map((part, i) => {
-          const prev = m.content[i];
-          if (part.type === 'thinking' && prev?.type === 'thinking') {
-            return { ...part, startedAt: prev.startedAt, durationMs: prev.durationMs };
-          }
-          return part;
-        });
-        const nowMs = Date.now();
-        // A thinking part with content after it can no longer be streaming;
-        // once the message settles, neither can the last one.
-        closeThinkingParts(content, nowMs, content.length - 1);
-        if (event.status !== 'pending' || event.durationMs !== undefined) {
-          closeThinkingParts(content, nowMs);
-        }
-        return {
-          ...m,
-          content,
-          durationMs: event.durationMs ?? m.durationMs,
-          // The daemon's turn duration landing IS the settle moment — stamp the
-          // turn end here (first stamp wins). A resync-seeded message's
-          // createdAt is the resync time, so this is its only trustworthy end.
-          endedAt: event.durationMs !== undefined ? (m.endedAt ?? new Date(nowMs).toISOString()) : m.endedAt,
-        };
-      });
-      break;
-    }
-
-    // -------------------------------------------------------------------------
-    case 'assistantDelta': {
-      const sid = event.sessionId;
-      const msgs = next.messagesBySession[sid] ?? [];
-      next.messagesBySession[sid] = msgs.map((m) => {
-        if (m.id !== event.messageId) return m;
-        const content = [...m.content];
-        const idx = event.contentIndex;
-        const isNewSlot = content.length <= idx;
-        // Ensure the slot exists
-        while (content.length <= idx) {
-          content.push({ type: 'text', text: '' });
-        }
-        const existing = content[idx]!;
-        let patched: AppMessageContent;
-        if (event.delta.text !== undefined) {
-          if (existing.type === 'text' && !isNewSlot) {
-            patched = { type: 'text', text: existing.text + event.delta.text };
-          } else {
-            patched = { type: 'text', text: event.delta.text };
-            // A new part opened — any earlier open thinking part is done.
-            closeThinkingParts(content, Date.now(), idx);
-          }
-        } else if (event.delta.thinking !== undefined) {
-          if (existing.type === 'thinking') {
-            patched = {
-              type: 'thinking',
-              thinking: existing.thinking + event.delta.thinking,
-              signature: existing.signature,
-              startedAt: existing.startedAt,
-              durationMs: existing.durationMs,
-            };
-          } else {
-            patched = {
-              type: 'thinking',
-              thinking: event.delta.thinking,
-              startedAt: new Date().toISOString(),
-            };
-            closeThinkingParts(content, Date.now(), idx);
-          }
-        } else {
-          patched = existing;
-        }
-        content[idx] = patched;
-        return { ...m, content };
-      });
-      break;
-    }
-
-    // -------------------------------------------------------------------------
-    case 'toolOutput': {
-      const sid = event.sessionId;
-      const msgs = next.messagesBySession[sid] ?? [];
-      next.messagesBySession[sid] = appendToolOutputToMessages(msgs, event.toolCallId, event.outputChunk, event.replace === true);
-      break;
-    }
 
     // -------------------------------------------------------------------------
     case 'approvalRequested': {
@@ -710,12 +423,11 @@ export function reduceAppEvent(
       const exists = list.some((a) => a.approvalId === event.approval.approvalId);
       if (!exists) {
         next.approvalsBySession[sid] = [...list, event.approval];
-        // A fresh approval waits on the user: settle thinking and float the
-        // session to the top. A replayed request whose approval has since
-        // been resolved (so the id dedupe misses it) must do neither — the
-        // session may already be streaming a later turn's thinking.
+        // A fresh approval waits on the user: float the session to the top.
+        // A replayed request whose approval has since been resolved (so the
+        // id dedupe misses it) must not — the session may already be running
+        // a later turn.
         if (isFreshEvent(state, meta)) {
-          settleThinkingOnUserInteraction(next, sid, requestTimeMs(event.approval.createdAt));
           bumpSessionRecency(next, sid);
         }
       }
@@ -756,7 +468,6 @@ export function reduceAppEvent(
         next.questionsBySession[sid] = [...list, event.question];
         // Same freshness gate as approvals (see there).
         if (isFreshEvent(state, meta)) {
-          settleThinkingOnUserInteraction(next, sid, requestTimeMs(event.question.createdAt));
           bumpSessionRecency(next, sid);
         }
       }
