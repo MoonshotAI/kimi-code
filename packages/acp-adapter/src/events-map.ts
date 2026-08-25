@@ -63,6 +63,8 @@ export function assistantDeltaToSessionUpdate(
  * `blocked`   → `refusal`: a prompt hook blocked the turn before the model
  *   ran. ACP has no separate hook-blocked terminal state, so reuse the
  *   refusal channel instead of reporting a clean `end_turn`.
+ * `interrupted` → `end_turn`: the turn was closed at restore after the
+ *   process died mid-turn; ACP has no interrupted terminal state either.
  */
 export function turnEndReasonToStopReason(
   reason: TurnEndReason,
@@ -78,6 +80,8 @@ export function turnEndReasonToStopReason(
       return 'end_turn';
     case 'blocked':
       return 'refusal';
+    case 'interrupted':
+      return 'end_turn';
   }
 }
 

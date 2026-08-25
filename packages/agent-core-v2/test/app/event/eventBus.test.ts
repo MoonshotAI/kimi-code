@@ -222,9 +222,31 @@ describe('session agent event routing', () => {
 
     expect(seenA).toEqual([1]);
     expect(() => bus.onAgent(stale, TestAgentEvent, () => {})).toThrow('not the active');
-    bus.deactivateAgent(a);
-    expect(() => bus.publish(new TestAgentEvent({ agentId: 'a', value: 3 }), a)).toThrow(
+    const newer = stubAgentContext('a', 3);
+    bus.activateAgent(newer);
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'a', value: 3 }), stale)).not.toThrow();
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'b', value: 3 }), stale)).toThrow(
       'no active lifecycle context',
     );
+    bus.deactivateAgent(newer);
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'a', value: 4 }), newer)).not.toThrow();
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'a', value: 5 }), stubAgentContext('a', 4))).toThrow(
+      'no active lifecycle context',
+    );
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'unknown', value: 6 }), stubAgentContext('unknown', 1))).toThrow(
+      'no active lifecycle context',
+    );
+  });
+
+  it('rejects never-activated generation-zero contexts instead of dropping their events', () => {
+    const bus = new EventBusService();
+    const ghost = stubAgentContext('ghost', 0);
+    const seen: number[] = [];
+    bus.subscribe(TestAgentEvent, (event) => seen.push(event.value));
+
+    expect(() => bus.publish(new TestAgentEvent({ agentId: 'ghost', value: 1 }), ghost)).toThrow(
+      'no active lifecycle context',
+    );
+    expect(seen).toEqual([]);
   });
 });

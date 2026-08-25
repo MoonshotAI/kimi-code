@@ -6,7 +6,7 @@ import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
-export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
 
 export type TurnInterruptReason =
   | 'user_cancelled'

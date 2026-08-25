@@ -68,7 +68,7 @@ describe('turnKey lastEnded', () => {
 });
 
 describe('TurnEnded serialization', () => {
-  it('emits the op record shape without the bus-only interruptReason', () => {
+  it('persists the interruptReason in the op record shape', () => {
     const event = new TurnEnded(
       {
         agentId: 'main',
@@ -85,6 +85,7 @@ describe('TurnEnded serialization', () => {
       turnId: 3,
       reason: 'cancelled',
       durationMs: 12,
+      interruptReason: 'user_cancelled',
       time: 42,
     });
   });

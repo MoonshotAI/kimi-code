@@ -70,7 +70,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import '#/app/event/eventBusService';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
@@ -547,7 +546,7 @@ describe('AgentLifecycleService', () => {
           new AgentActivityUpdated({ lifecycle: 'disposed', background: [], agentId: 'main' }),
           main,
         ),
-      ).toThrow("Agent event 'agent.activity.updated' has no active lifecycle context");
+      ).not.toThrow();
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);

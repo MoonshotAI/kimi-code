@@ -15,7 +15,7 @@ export interface TurnModelState {
   readonly cancelledTurnIds: readonly number[];
   readonly lastEnded?: {
     readonly turnId: number;
-    readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
     readonly durationMs?: number;
   };
 }
@@ -74,15 +74,16 @@ export interface TurnCancel {
 const turnEndedSchema = z.object({
   agentId: z.string(),
   turnId: z.number(),
-  reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
+  reason: z.enum(['completed', 'cancelled', 'failed', 'blocked', 'interrupted']),
   error: z.custom<KimiErrorPayload>().optional(),
   durationMs: z.number().optional(),
+  interruptReason: z.enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked']).optional(),
 });
 
 export interface TurnEndedPayload {
   readonly agentId: string;
   readonly turnId: number;
-  readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
@@ -103,6 +104,7 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
     };
     if (this.error !== undefined) record['error'] = this.error;
     if (this.durationMs !== undefined) record['durationMs'] = this.durationMs;
+    if (this.interruptReason !== undefined) record['interruptReason'] = this.interruptReason;
     record['time'] = this.time;
     return record as SerializedEvent2;
   }
@@ -137,7 +139,7 @@ export const turnKey = defineState(
     lastEnded: { turnId: e.turnId, reason: e.reason, durationMs: e.durationMs },
   }));
 
-function advanceTurnClock(
+export function advanceTurnClock(
   state: TurnModelState,
   nextTurnId: number,
   cancelledTurnIds: readonly number[] = state.cancelledTurnIds,

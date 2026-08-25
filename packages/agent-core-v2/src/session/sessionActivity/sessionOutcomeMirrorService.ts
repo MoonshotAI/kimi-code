@@ -64,7 +64,11 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
           this.write('completed');
           return;
         }
-        if (event.reason === 'failed' || event.reason === 'blocked') {
+        if (
+          event.reason === 'failed' ||
+          event.reason === 'blocked' ||
+          event.reason === 'interrupted'
+        ) {
           this.write('failed');
           return;
         }
@@ -86,7 +90,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
         const reason = event.lastTurn?.reason;
         if (reason === 'completed' || reason === 'cancelled') {
           this.write(reason, { touchUpdatedAt: false });
-        } else if (reason === 'failed' || reason === 'blocked') {
+        } else if (reason === 'failed' || reason === 'blocked' || reason === 'interrupted') {
           this.write('failed', { touchUpdatedAt: false });
         }
       }),

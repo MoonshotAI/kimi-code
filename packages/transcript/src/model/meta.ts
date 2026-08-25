@@ -24,7 +24,7 @@ export interface ModesMetaMerge {
 
 export type ActivityMeta = 'idle' | 'turn' | 'disposing' | 'unknown';
 
-export type TurnEndReasonMeta = 'completed' | 'cancelled' | 'failed' | 'blocked';
+export type TurnEndReasonMeta = 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
 
 export type AgentPhaseMeta =
   | { readonly kind: 'idle' }

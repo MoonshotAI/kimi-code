@@ -2172,6 +2172,70 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t0', tx.getItems()).state).toBe('failed');
   });
 
+  it('folds interrupted turn endings into failed (engine wire contract)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } })));
+    tx.apply(projector.map(ev({ type: 'turn.ended', turnId: 0, reason: 'interrupted' })));
+    expect(turnOps('t0', tx.getItems()).state).toBe('failed');
+  });
+
+  it('settles open prompts when a turn ends interrupted', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', {
+      prompts: () => tx.getPrompts(),
+      restoring: () => true,
+    });
+    tx.apply(projector.map(ev({ type: 'prompt.accepted', promptId: 'p1' })));
+    tx.apply(
+      projector.map(
+        ev({ type: 'prompt.queued', promptId: 'p2', content: [{ type: 'text', text: 'later' }], queueLength: 1 }),
+      ),
+    );
+    tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } })));
+    tx.apply(projector.map(ev({ type: 'turn.ended', turnId: 0, reason: 'interrupted' })));
+    expect(tx.getPrompt('p1')).toMatchObject({ status: 'failed' });
+    expect(tx.getPrompt('p2')).toMatchObject({ status: 'failed' });
+  });
+
+  it('settles open prompts as aborted when a restored turn ends cancelled', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', {
+      prompts: () => tx.getPrompts(),
+      restoring: () => true,
+    });
+    tx.apply(projector.map(ev({ type: 'prompt.accepted', promptId: 'p1' })));
+    tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } })));
+    tx.apply(
+      projector.map(
+        ev({ type: 'turn.ended', turnId: 0, reason: 'cancelled', interruptReason: 'user_cancelled' }),
+      ),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({ status: 'aborted' });
+  });
+
+  it('leaves running and queued prompts pending for live cancelled endings', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', {
+      prompts: () => tx.getPrompts(),
+      restoring: () => false,
+    });
+    tx.apply(projector.map(ev({ type: 'prompt.accepted', promptId: 'p1' })));
+    tx.apply(
+      projector.map(
+        ev({ type: 'prompt.queued', promptId: 'p2', content: [{ type: 'text', text: 'later' }], queueLength: 1 }),
+      ),
+    );
+    tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } })));
+    tx.apply(
+      projector.map(
+        ev({ type: 'turn.ended', turnId: 0, reason: 'cancelled', interruptReason: 'user_cancelled' }),
+      ),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({ status: 'running' });
+    expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });
+  });
+
   it('tracks the prompt queue from accepted/queued through terminal', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

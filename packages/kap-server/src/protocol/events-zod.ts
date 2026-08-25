@@ -478,7 +478,7 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   expiresAt: z.number().optional(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
+export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked', 'interrupted']) satisfies z.ZodType<TurnEndReason>;
 
 export const agentPhaseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),

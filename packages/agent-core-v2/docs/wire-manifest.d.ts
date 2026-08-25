@@ -735,7 +735,7 @@ interface TurnEndedPayload {
   _name: 'turn.ended';
   agentId: string;
   turnId: number;
-  reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  reason: 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
   /** KimiErrorPayload */
   error?: {
     code: (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -781,6 +781,7 @@ interface TurnEndedPayload {
     };
   };
   durationMs?: number;
+  interruptReason?: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
 }
 
 /**

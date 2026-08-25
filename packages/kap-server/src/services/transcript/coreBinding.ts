@@ -3,6 +3,7 @@ import {
   IAgentActivityView,
   IAgentTaskService,
   IEventBus,
+  IEventDispatcher,
   ISessionMetadata,
   MAIN_AGENT_ID,
   listSessionPendingInteractions,
@@ -91,6 +92,14 @@ export function bindSessionTranscript(
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        prompts: () => store.getAgent(agentId)?.getPrompts() ?? new Map(),
+        restoring: () => {
+          const agentHandle = agents.handleOf(agentId);
+          if (agentHandle === undefined) return false;
+          const dispatcher: IEventDispatcher | undefined =
+            agentHandle.accessor.get(IEventDispatcher);
+          return dispatcher?.restorePhase === 'restoring';
+        },
       });
       const agentHandle = agents.handleOf(agentId);
       if (agentHandle !== undefined) {

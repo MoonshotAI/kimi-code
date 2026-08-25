@@ -863,6 +863,27 @@ describe('SessionEventBroadcaster', () => {
     ]);
   });
 
+  it('passes an interrupted last turn through to the legacy ended phase', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        lastTurn: { turnId: 1, reason: 'interrupted', at: 200 },
+      }),
+    );
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      { phase: { kind: 'ended', turnId: 1, reason: 'interrupted' } },
+    ]);
+  });
+
   it('replays durable events since a cursor from the journal', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
