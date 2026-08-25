@@ -30,8 +30,9 @@ import {
 } from '#/agent/runtime/agentRuntime';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { BeforeToolExecuteEvent, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
@@ -1208,7 +1209,7 @@ function createGoalEffectHandlers(runtime: AgentRuntimeContext<GoalRuntimeState>
         event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
       }
     },
-    toolCompleted: (tool: Parameters<Parameters<IAgentToolExecutorService['hooks']['onDidExecuteTool']['register']>[1]>[0]) => {
+    toolCompleted: (tool: ToolDidExecuteContext) => {
       const goalId = goalTurnTarget(context, tool.turnId);
       if (
         goalId !== undefined &&
@@ -1259,7 +1260,7 @@ const goalEffects = fromCallback(({
       handlers.afterStep(context);
       await next();
     }));
-    const tools = input.runtime.get(IAgentToolExecutorService);
+    const tools = input.runtime.get(IAgentLifecycleService).resolve(input.runtime.agent, AgentToolExecutor);
     disposables.push(tools.onBeforeExecuteTool(handlers.approval));
     disposables.push(tools.onBeforeExecuteTool(handlers.veto));
     disposables.push(tools.hooks.onDidExecuteTool.register(

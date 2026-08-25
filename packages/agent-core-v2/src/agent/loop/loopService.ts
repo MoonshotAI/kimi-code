@@ -8,9 +8,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
-import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import { AgentLlmRequester, type LlmRequesterRuntime } from '#/features/llmRequester/llmRequesterAgentRuntime';
+import type { AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { type FinishReason } from '#/kosong/contract/provider';
@@ -23,6 +24,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
@@ -99,11 +101,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
+  private readonly llmRequester: LlmRequesterRuntime;
+  private readonly toolExecutor: ToolExecutorRuntime;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
-    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -112,6 +115,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.llmRequester = manager.resolve(scopeContext.agentContext, AgentLlmRequester);
+    this.toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this.states.contributeState(turnKey);
     this.states.contributeState(loopNextReservedTurnIdKey);
     this.states.contributeState(loopLastRequestTraceIdKey);

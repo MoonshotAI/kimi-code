@@ -1,4 +1,4 @@
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { IGitService } from '#/app/git/git';
 import type { IGitService as GitService } from '#/app/git/git';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';

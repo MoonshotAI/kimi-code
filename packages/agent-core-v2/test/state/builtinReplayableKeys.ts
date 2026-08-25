@@ -4,7 +4,6 @@ import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { staleGuardKey } from '#/features/staleGuard/staleGuardOps';
 import { fullCompactionKey } from '#/agent/fullCompaction/compactionOps';
 import { interruptionReminderKey } from '#/agent/interruptionReminder/interruptionReminderOps';
-import { llmRequestTraceKey } from '#/agent/llmRequester/llmRequestOps';
 import { turnKey } from '#/agent/loop/turnOps';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import {
@@ -28,7 +27,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   staleGuardKey,
   fullCompactionKey,
   interruptionReminderKey,
-  llmRequestTraceKey,
   turnKey,
   mcpDiscoveryKey,
   permissionModeKey,

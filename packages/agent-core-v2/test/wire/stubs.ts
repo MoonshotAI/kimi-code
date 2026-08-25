@@ -15,6 +15,14 @@ import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRu
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import {
+  AgentLlmRequester,
+  llmRequesterAgentRuntimeProvider,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
+import {
+  AgentToolExecutor,
+  toolExecutorAgentRuntimeProvider,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import {
   IWireService,
   type IWireService as AgentWire,
 } from '#/wire/wire';
@@ -156,6 +164,38 @@ export function attachInteractionRuntime(
   runtimes.apply({
     definition: AgentInteraction,
     provider: interactionAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachLlmRequesterRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentLlmRequester,
+    provider: llmRequesterAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachToolExecutorRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentToolExecutor,
+    provider: toolExecutorAgentRuntimeProvider,
     generation: 1,
     active: true,
   });

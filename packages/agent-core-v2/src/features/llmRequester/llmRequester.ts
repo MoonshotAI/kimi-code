@@ -1,4 +1,3 @@
-import { createDecorator } from '#/_base/di/instantiation';
 import type { FinishReason, ThinkingEffort } from '#/kosong/contract/provider';
 import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
@@ -52,25 +51,3 @@ export interface AgentLLMRequestTask {
 export interface PreparedTurnRequestConfig {
   readonly thinkingEffort: ThinkingEffort;
 }
-
-export interface IAgentLLMRequesterService {
-  readonly _serviceBrand: undefined;
-
-  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
-
-  request(
-    overrides?: AgentLLMRequestOverrides,
-    onPart?: AgentLLMRequestPartHandler,
-    signal?: AbortSignal,
-  ): Promise<AgentLLMRequestFinish>;
-
-  start(
-    overrides?: AgentLLMRequestOverrides,
-    onPart?: AgentLLMRequestPartHandler,
-    signal?: AbortSignal,
-  ): AgentLLMRequestTask;
-}
-
-export const IAgentLLMRequesterService = createDecorator<IAgentLLMRequesterService>(
-  'agentLLMRequesterService',
-);

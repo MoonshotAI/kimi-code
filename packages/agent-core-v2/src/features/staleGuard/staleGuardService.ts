@@ -1,12 +1,14 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type {
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -50,9 +52,11 @@ export class StaleGuardService extends Disposable implements IStaleGuardService 
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
     super();
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this.states.contributeState(staleGuardKey);
     this._register(toolExecutor.onBeforeExecuteTool((event) => this.guardWrite(event)));
     this._register(

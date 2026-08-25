@@ -106,7 +106,6 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
@@ -117,7 +116,7 @@ import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMes
 import { type ThinkingEffort } from '#/kosong/contract/provider';
 import { type Tool as KosongTool } from '#/kosong/contract/tool';
 import { type TokenUsage } from '#/kosong/contract/usage';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { AgentTodo } from '#/features/todo/todoAgentRuntime';
@@ -148,7 +147,6 @@ import {
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
-  IAgentLLMRequesterService,
   ILogService,
   IAgentPermissionGate,
   IAgentPermissionModeService,
@@ -175,7 +173,6 @@ import {
   ISessionUsageService,
   ISessionWorkspaceContext,
   IWorkspaceStateService,
-  AgentLLMRequesterService,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -1352,16 +1349,8 @@ export class AgentTestContext {
               IWireService,
               new SyncDescriptor(WireService),
             );
-            reg.defineDescriptor(
-              IEventDispatcher,
-              new SyncDescriptor(EventDispatcherService),
-            );
             reg.defineDescriptor(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
             reg.defineDescriptor(IAgentProfileService, new SyncDescriptor(AgentProfileService));
-            reg.defineDescriptor(
-              IAgentLLMRequesterService,
-              new SyncDescriptor(AgentLLMRequesterService),
-            );
             reg.defineDescriptor(
               IAgentExternalHooksService,
               new SyncDescriptor(AgentExternalHooksService),
@@ -1603,7 +1592,6 @@ export class AgentTestContext {
     void plan.status();
 
     this.get(IAgentUserToolService);
-    this.get(IAgentLLMRequesterService);
     this.get(IAgentFullCompactionService);
     this.get(IAgentProfileService);
     const agentState = this.get(IAgentStateService);

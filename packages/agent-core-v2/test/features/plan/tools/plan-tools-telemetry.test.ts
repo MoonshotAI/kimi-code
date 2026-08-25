@@ -8,7 +8,7 @@ import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanM
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
@@ -205,7 +205,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
   for (const mode of ['manual', 'auto', 'yolo'] as const) {
     describe(`${mode} mode`, () => {
       let ctx: TestAgentContext;
-      let toolExecutor: IAgentToolExecutorService;
+      let toolExecutor: ToolExecutorRuntime;
       const records: TelemetryRecord[] = [];
 
       beforeEach(() => {
@@ -220,7 +220,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
           permissionModeServices(mode),
           telemetryServices(captureTelemetry(records)),
         );
-        toolExecutor = ctx.get(IAgentToolExecutorService);
+        toolExecutor = ctx.resolve(AgentToolExecutor);
       });
 
       afterEach(async () => {

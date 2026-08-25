@@ -11,7 +11,8 @@ import { abortable } from '#/_base/utils/abort';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -54,7 +55,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentLoopService loop: IAgentLoopService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -62,6 +63,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this.states.contributeState(mcpDiscoveryKey);
     this.states.contributeState(mcpMcpToolsByServerKey);
     this.states.contributeState(mcpDiscoveryWritesReadyKey);

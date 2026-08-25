@@ -212,7 +212,8 @@ this.policies = registry.list()
 
 ```ts
 // src/plan/planService.ts —— 构造函数
-constructor(@IAgentToolExecutorService executor, ...) {
+constructor(@IAgentLifecycleService manager, @IAgentScopeContext scopeContext, ...) {
+  const executor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
   executor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
 }
 ```

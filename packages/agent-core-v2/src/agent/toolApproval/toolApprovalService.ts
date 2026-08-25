@@ -14,11 +14,11 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionApprovalService } from '#/session/approval/approval';

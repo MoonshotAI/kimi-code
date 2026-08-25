@@ -3,7 +3,9 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentProfileService, ProfileError, ProfileErrors } from '#/agent/profile/profile';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IConfigService } from '#/app/config/config';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -21,9 +23,11 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     @IConfigService private readonly config: IConfigService,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
     super();
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this._register(
       toolExecutor.registerToolCallGuard(({ name, source }) => {
         const active =

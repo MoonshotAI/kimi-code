@@ -9,7 +9,8 @@ import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemo
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import { AgentLlmRequester, type LlmRequesterRuntime } from '#/features/llmRequester/llmRequesterAgentRuntime';
+import type { AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
@@ -136,12 +137,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private readonly strategy: CompactionStrategy;
   private readonly todo: TodoRuntime;
+  private readonly llmRequester: LlmRequesterRuntime;
   private _compacting: ActiveCompaction | null = null;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
@@ -155,6 +156,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ) {
     super();
     this.todo = manager.resolve(agent.agentContext, AgentTodo);
+    this.llmRequester = manager.resolve(agent.agentContext, AgentLlmRequester);
     this.states.contributeState(fullCompactionKey);
     this.states.contributeState(fullCompactionCompactionCountInTurnKey);
     this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);

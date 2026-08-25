@@ -17,7 +17,8 @@ import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedu
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -34,6 +35,7 @@ import {
   restoreTestEventDispatcher as restoreDispatcher,
   testWireScope,
 } from '../../wire/stubs';
+import { stubToolExecutorResolver } from '../toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const SCOPE = 'wire';
@@ -84,13 +86,12 @@ function createTelemetryStub(): ITelemetryService {
   } as unknown as ITelemetryService;
 }
 
-function createToolExecutorStub(): IAgentToolExecutorService {
+function createToolExecutorStub(): ToolExecutorRuntime {
   return {
-    _serviceBrand: undefined,
     onBeforeExecuteTool: Event.None,
     onWillExecuteTool: Event.None,
     hooks: { onDidExecuteTool: hookSlot() },
-  } as unknown as IAgentToolExecutorService;
+  } as unknown as ToolExecutorRuntime;
 }
 
 function createConfigStub(): IConfigService {
@@ -144,7 +145,7 @@ function buildHost(key: string): GoalHost {
   ix.stub(IAgentContextInjectorService, createInjectorStub());
   ix.stub(IAgentSystemReminderService, createSystemReminderStub());
   ix.stub(ITelemetryService, createTelemetryStub());
-  ix.stub(IAgentToolExecutorService, createToolExecutorStub());
+  ix.stub(IAgentLifecycleService, stubToolExecutorResolver(createToolExecutorStub()));
   ix.stub(IConfigService, createConfigStub());
   ix.set(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
   registerTestAgentWire(ix, testWireScope(SCOPE, key), {

@@ -2,7 +2,7 @@ import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
 import type { UsageRecordedContext, UsageStatus } from '#/agent/usage/usage';
 import { copyUsage } from '#/agent/usage/usageOps';
 import type { TokenUsage } from '#/kosong/contract/usage';

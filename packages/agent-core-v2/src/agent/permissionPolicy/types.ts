@@ -1,4 +1,4 @@
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';

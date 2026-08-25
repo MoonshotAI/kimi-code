@@ -16,7 +16,7 @@ import { AgentPromptService, PromptQueued, PromptSteered } from '#/agent/prompt/
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
@@ -34,6 +34,7 @@ import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire, type StubLoopOptions } from '../loop/stubs';
+import { stubToolExecutorResolver } from '../../features/toolExecutor/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { SteerStepRequest } from '#/agent/prompt/promptStepRequests';
 
@@ -90,7 +91,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentBlobService, noopBlob);
       reg.define(IEventDispatcher, EventDispatcherService);
-      reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+      reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor()));
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);

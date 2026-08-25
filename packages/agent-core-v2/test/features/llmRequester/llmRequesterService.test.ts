@@ -13,12 +13,11 @@ import {
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import {
+  AgentLlmRequester,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
@@ -51,11 +50,11 @@ import {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 import {
+  attachLlmRequesterRuntime,
   recordingWireLog,
   registerTestAgentWire,
   registerTestEventDispatcher,
@@ -255,13 +254,12 @@ function createService(
     log: recordingWireLog(records),
     eventBus,
   });
-  registerTestEventDispatcher(ix);
-  ix.set(IAgentStateService, new AgentStateService());
-  ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
+  const dispatcher = registerTestEventDispatcher(ix);
+  const runtimes = attachLlmRequesterRuntime(ix, dispatcher);
 
   return {
-    service: ix.get(IAgentLLMRequesterService),
-    dispatcher: ix.get(IEventDispatcher),
+    service: runtimes.resolve(AgentLlmRequester),
+    dispatcher,
     records,
     events,
     telemetryRecords,

@@ -15,7 +15,7 @@ import {
 } from '#/agent/loop/turnEvents';
 import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
 import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
-import { ToolCallStarted, ToolResultEvent } from '#/agent/toolExecutor/toolExecutorEvents';
+import { ToolCallStarted, ToolResultEvent } from '#/features/toolExecutor/toolExecutorEvents';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,

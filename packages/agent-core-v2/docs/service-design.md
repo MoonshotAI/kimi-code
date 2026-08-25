@@ -123,7 +123,7 @@ This pattern recurs throughout the codebase and confirms the rule:
   configuration), and `IModelResolver` (`Session`, resolves the active model into a
   runtime provider config plus request authorization). Provider connection
   configuration lives in the sibling `provider` domain (`IProviderService`, `App`).
-  Generation itself is driven by `IAgentLLMRequesterService` (`Agent`) in the `llmRequester`
+  Generation itself is driven by the `AgentLlmRequester` runtime (`Agent`) in the `llmRequester`
   domain.
 - **`tool`** — `IToolDefinitionRegistry` (`App`, tool-definition registry) + `IToolService`
   (`Agent`, this agent's execution).

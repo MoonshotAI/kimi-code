@@ -33,10 +33,11 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import {
-  IAgentToolExecutorService,
-  type ToolExecutionResult,
-} from '#/agent/toolExecutor/toolExecutor';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
@@ -67,7 +68,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
@@ -253,7 +254,7 @@ async function recordStepUsage(
 }
 
 async function runTerminalUpdateGoalResult(
-  toolExecutor: IAgentToolExecutorService,
+  toolExecutor: ToolExecutorRuntime,
   turn: Turn,
   status: 'complete' | 'blocked',
   output: string,
@@ -276,7 +277,7 @@ async function runTerminalUpdateGoalResult(
 }
 
 async function executeToolCall(
-  toolExecutor: IAgentToolExecutorService,
+  toolExecutor: ToolExecutorRuntime,
   turn: Turn,
   toolCall: ToolCall,
 ): Promise<ToolExecutionResult[]> {
@@ -767,11 +768,12 @@ describe('AgentGoalService goal-start review', () => {
   function setup(mode: PermissionMode): void {
     approvalCalls = [];
     executorEvents = stubToolExecutorEvents();
-    ctx = createTestAgent(
+    ctx = createUnrestoredTestAgent(
       permissionModeServices(mode),
       agentService(IAgentToolApprovalService, approvalStub()),
-      agentService(IAgentToolExecutorService, executorEvents.executor),
     );
+    Object.assign(ctx.resolve(AgentToolExecutor), executorEvents.executor);
+    void ctx.restoreRuntimes();
     ctx.resolve(AgentGoal);
   }
 
@@ -848,7 +850,7 @@ describe('AgentGoalService core workflow hooks', () => {
   let context: IAgentContextMemoryService;
   let goals: GoalRuntime;
   let loopService: StubLoop;
-  let toolExecutor: IAgentToolExecutorService;
+  let toolExecutor: ToolExecutorRuntime;
   let usageService: TestAgentContext['usage'];
   let eventBus: IEventBus;
   let clock: ManualGoalDeadlineScheduler;
@@ -863,7 +865,7 @@ describe('AgentGoalService core workflow hooks', () => {
     );
     context = ctx.get(IAgentContextMemoryService);
     goals = ctx.resolve(AgentGoal);
-    toolExecutor = ctx.get(IAgentToolExecutorService);
+    toolExecutor = ctx.resolve(AgentToolExecutor);
     usageService = ctx.usage;
     eventBus = ctx.get(IEventBus);
   });

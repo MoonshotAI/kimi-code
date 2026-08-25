@@ -3,7 +3,6 @@ import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
-import { defineState } from '#/state/state';
 
 export interface LlmRequestToolSchema {
   readonly name: string;
@@ -95,13 +94,3 @@ export interface LlmRequest {
     | 'strict-media-stripped';
   readonly droppedCount?: number;
 }
-
-export const llmRequestTraceKey = defineState(
-  'llm.requestTrace',
-  (): LlmRequestTraceState => ({ seenToolsHashes: [] }),
-).replayable({ schema: z.custom<LlmRequestTraceState>() })
-  .on(LlmToolsSnapshot, (s, e) => {
-    if (s.seenToolsHashes.includes(e.hash)) return;
-    s.seenToolsHashes = [...s.seenToolsHashes, e.hash];
-  })
-  .on(LlmRequest, () => {});

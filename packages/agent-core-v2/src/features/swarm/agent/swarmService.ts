@@ -3,8 +3,9 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -23,11 +24,12 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    const toolExecutor = manager.resolve(agentCtx.agentContext, AgentToolExecutor);
     this.agentState.contributeState(swarmKey);
     this._register(
       instantiation.createInstance(SwarmInjection, {

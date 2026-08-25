@@ -1,7 +1,7 @@
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -32,11 +32,14 @@ export class SessionBtwService implements ISessionBtwService {
       child.accessor.get(IAgentToolApprovalService)?.formatDenyMessage(
         TOOL_CALL_DISABLED_MESSAGE,
       ) ?? TOOL_CALL_DISABLED_MESSAGE;
-    child.accessor
-      .get(IAgentToolExecutorService)
-      ?.onBeforeExecuteTool((event) => {
-        event.veto(denyToolExecution(reason));
-      });
+    try {
+      this.agentLifecycle
+        .resolve(childContext, AgentToolExecutor)
+        .onBeforeExecuteTool((event) => {
+          event.veto(denyToolExecution(reason));
+        });
+    } catch {
+    }
     return childContext.agentId;
   }
 }

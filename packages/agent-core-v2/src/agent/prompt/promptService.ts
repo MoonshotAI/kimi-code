@@ -14,8 +14,9 @@ import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IFileService } from '#/app/file/fileService';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -153,7 +154,7 @@ export class AgentPromptService implements IAgentPromptService {
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -163,6 +164,7 @@ export class AgentPromptService implements IAgentPromptService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {

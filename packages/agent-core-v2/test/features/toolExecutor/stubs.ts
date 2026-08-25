@@ -1,16 +1,17 @@
 import { AsyncEmitter, type IWaitUntilData } from '#/_base/event';
-import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { BeforeToolExecuteEmitter } from '#/agent/toolExecutor/beforeToolExecuteEvent';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { BeforeToolExecuteEmitter } from '#/features/toolExecutor/beforeToolExecuteEvent';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
   WillExecuteToolEvent,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 export interface ToolExecutorEventStubs {
-  readonly executor: IAgentToolExecutorService;
+  readonly executor: ToolExecutorRuntime;
   readonly didExecuteSlot: OrderedHookSlot<ToolDidExecuteContext>;
   fireBeforeExecute(
     context: ResolvedToolExecutionHookContext,
@@ -25,8 +26,7 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
   const beforeEmitter = new BeforeToolExecuteEmitter();
   const willEmitter = new AsyncEmitter<WillExecuteToolEvent>();
   const didExecuteSlot = new OrderedHookSlot<ToolDidExecuteContext>();
-  const executor: IAgentToolExecutorService = {
-    _serviceBrand: undefined,
+  const executor = {
     execute: async function* () {},
     onBeforeExecuteTool: beforeEmitter.event,
     onWillExecuteTool: willEmitter.event,
@@ -35,11 +35,18 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
     registerToolCallGuard: () => ({ dispose() {} }),
     registerUnavailableToolDescriber: () => ({ dispose() {} }),
     registerMissingToolDescriber: () => ({ dispose() {} }),
-  };
+  } as unknown as ToolExecutorRuntime;
   return {
     executor,
     didExecuteSlot,
     fireBeforeExecute: (context) => beforeEmitter.fireBeforeExecute(context),
     fireWillExecute: (data, signal) => willEmitter.fireAsync(data, signal),
   };
+}
+
+export function stubToolExecutorResolver(executor: ToolExecutorRuntime): IAgentLifecycleService {
+  return {
+    _serviceBrand: undefined,
+    resolve: () => executor,
+  } as unknown as IAgentLifecycleService;
 }

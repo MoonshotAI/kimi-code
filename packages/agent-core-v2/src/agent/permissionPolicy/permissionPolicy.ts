@@ -1,7 +1,7 @@
 import { createDecorator } from "#/_base/di/instantiation";
 import type {
   ResolvedToolExecutionHookContext
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import type { PermissionPolicyResult } from './types';
 
 

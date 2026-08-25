@@ -2,7 +2,6 @@ import type { ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import {
@@ -14,17 +13,19 @@ import {
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type {
   BeforeToolExecuteEvent,
   ToolExecutionOutcome,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import {
   ToolCallStarted,
   ToolProgress,
   ToolResultEvent,
-} from '#/agent/toolExecutor/toolExecutorEvents';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+} from '#/features/toolExecutor/toolExecutorEvents';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -32,11 +33,12 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { attachToolExecutorRuntime, registerTestAgentWireServices } from '../../wire/stubs';
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
@@ -45,7 +47,7 @@ type ProtocolEvent = ToolCallStarted | ToolProgress | ToolResultEvent;
 
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
-let executor: IAgentToolExecutorService;
+let executor: ToolExecutorRuntime;
 let registry: IAgentToolRegistryService;
 let events: ToolExecutorEvent[];
 let protocolEvents: ProtocolEvent[];
@@ -63,7 +65,6 @@ beforeEach(() => {
       registerStateServices(reg);
       registerTestAgentWireServices(reg, 'wire/tool-executor');
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-      reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
       reg.defineInstance(IAgentToolResultTruncationService, {
@@ -82,7 +83,7 @@ beforeEach(() => {
     },
     strict: true,
   });
-  executor = ix.get(IAgentToolExecutorService);
+  executor = attachToolExecutorRuntime(ix, ix.get(IEventDispatcher)).resolve(AgentToolExecutor);
   registry = ix.get(IAgentToolRegistryService);
 });
 
@@ -90,7 +91,7 @@ afterEach(() => {
   disposables.dispose();
 });
 
-describe('AgentToolExecutorService', () => {
+describe('ToolExecutorRuntime', () => {
   it('resolves by interface and routes a successful tool call through execute', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);

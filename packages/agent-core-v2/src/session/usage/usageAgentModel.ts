@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
 import type { UsageStatus } from '#/agent/usage/usage';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import {

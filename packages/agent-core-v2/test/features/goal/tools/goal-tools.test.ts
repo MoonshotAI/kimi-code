@@ -17,9 +17,10 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import {
-  IAgentToolExecutorService,
-  type ToolExecutionResult,
-} from '#/agent/toolExecutor/toolExecutor';
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -41,7 +42,7 @@ describe('goal tools', () => {
   let goals: GoalRuntime;
   let loopService: IAgentLoopService;
   let eventBus: IEventBus;
-  let toolExecutor: IAgentToolExecutorService;
+  let toolExecutor: ToolExecutorRuntime;
   let setGoalBudgetTool: SetGoalBudgetTool;
   let updateGoalTool: UpdateGoalTool;
 
@@ -55,7 +56,7 @@ describe('goal tools', () => {
     goals = ctx.resolve(AgentGoal);
     void ctx.restoreRuntimes();
     eventBus = ctx.get(IEventBus);
-    toolExecutor = ctx.get(IAgentToolExecutorService);
+    toolExecutor = ctx.resolve(AgentToolExecutor);
     const manager = { resolve: () => goals } as unknown as IAgentLifecycleService;
     const scope = ctx.get(IAgentScopeContext);
     setGoalBudgetTool = new SetGoalBudgetTool(manager, scope);

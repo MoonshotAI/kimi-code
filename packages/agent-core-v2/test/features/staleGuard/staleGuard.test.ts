@@ -11,12 +11,14 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -31,6 +33,7 @@ import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
 import { createTestAgent } from '../../harness';
+import { stubToolExecutorResolver } from '../toolExecutor/stubs';
 import { stubWireJournal } from '../../wire/stubs';
 
 const noopBlob: IAgentBlobService = {
@@ -45,9 +48,8 @@ interface CapturedHooks {
   readonly did: ((ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>)[];
 }
 
-function stubToolExecutor(captured: CapturedHooks): IAgentToolExecutorService {
+function stubToolExecutor(captured: CapturedHooks): ToolExecutorRuntime {
   return {
-    _serviceBrand: undefined,
     onBeforeExecuteTool: (listener: (event: BeforeToolExecuteEvent) => unknown) => {
       captured.before.push(listener);
       return toDisposable(() => {});
@@ -63,7 +65,7 @@ function stubToolExecutor(captured: CapturedHooks): IAgentToolExecutorService {
         },
       },
     },
-  } as unknown as IAgentToolExecutorService;
+  } as unknown as ToolExecutorRuntime;
 }
 
 let activeFs: IHostFileSystem;
@@ -175,7 +177,8 @@ describe('StaleGuardService', () => {
     ix.set(IWireService, stubWireJournal(journal));
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    ix.set(IAgentToolExecutorService, stubToolExecutor(captured));
+    ix.set(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor(captured)));
+    ix.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
     ix.set(IAgentRuntimeService, stubRuntime());
     ix.set(IStaleGuardService, new SyncDescriptor(StaleGuardService));
     return {

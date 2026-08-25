@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 80 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 72 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -67,12 +67,6 @@
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
-//     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
-//     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaDegradedTurns                 src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaStrippedTurns                 src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
 //     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
 //     loop.nextReservedTurnId                         src/agent/loop/loopService.ts
@@ -120,8 +114,6 @@
 //     toolDedupe.syntheticCallIds                     src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.turnCallRecords                      src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
-//     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
-//     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
@@ -1135,52 +1127,6 @@ export interface AgentStateSnapshot {
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
-  // src/agent/llmRequester/llmRequestOps.ts
-  // replayable · durable — folds: LlmToolsSnapshot, LlmRequest
-  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/llmRequester/llmRequestOps.ts */ {
-    readonly seenToolsHashes: readonly string[];
-  };
-  // src/agent/llmRequester/llmRequesterService.ts
-  'llmRequester.emittedThinkingEffortWarnings': Set<string>;
-  'llmRequester.lastConfigLogSignature': string | undefined;
-  'llmRequester.mediaDegradedTurns': Set<number>;
-  'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand": undefined;
-  }>;
-  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
-    readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
-      readonly modelAlias: string;
-      readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/kosong/contract/capability.ts */ {
-        readonly image_in: boolean;
-        readonly video_in: boolean;
-        readonly audio_in: boolean;
-        readonly thinking: boolean;
-        readonly tool_use: boolean;
-        readonly max_context_tokens: number;
-        readonly max_input_tokens?: number;
-        readonly dynamically_loaded_tools?: boolean;
-      };
-      readonly maxOutputSize: number | undefined;
-      readonly alwaysThinking: boolean | undefined;
-      readonly thinkingLevel: /* ThinkingEffort — packages/agent-core-v2/src/kosong/contract/provider.ts */ 'off' | 'on' | (string & {});
-      readonly reservedContextSize: number | undefined;
-      readonly compactionTriggerRatio: number | undefined;
-    };
-    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/kosong/model/modelRequester.ts */ {
-      readonly cacheKey?: string;
-      readonly sampling?: /* SamplingOptions — packages/agent-core-v2/src/kosong/contract/provider.ts */ {
-        readonly temperature?: number;
-        readonly topP?: number;
-      };
-      readonly thinkingEffort?: 'off' | 'on' | (string & {});
-      readonly thinkingKeep?: string;
-      readonly maxCompletionTokens?: number;
-      readonly usedContextTokens?: number;
-      readonly maxContextTokens?: number;
-      readonly onTraceId?: (traceId: string | null) => void;
-    };
-    readonly systemPrompt: string;
-  }>;
   // src/agent/loop/loopService.ts
   'loop.disposing': boolean;
   'loop.lastRequestTraceId': string | undefined;
@@ -1422,9 +1368,6 @@ export interface AgentStateSnapshot {
     lastStep: number;
   }>;
   'toolDedupe.turnRepeatCount': number;
-  // src/agent/toolExecutor/toolExecutorService.ts
-  'toolExecutor.dupTypeTurnId': number | undefined;
-  'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
   // src/agent/userTool/userToolOps.ts

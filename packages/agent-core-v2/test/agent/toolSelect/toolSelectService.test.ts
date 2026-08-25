@@ -37,8 +37,12 @@ import type {
   ToolDisclosure,
   ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
@@ -57,7 +61,9 @@ import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { stubToolExecutor, stubWire } from '../loop/stubs';
+import { stubToolExecutorResolver } from '../../features/toolExecutor/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
+import { attachToolExecutorRuntime } from '../../wire/stubs';
 
 const MCP_ALPHA = 'mcp__srv__alpha';
 const MCP_BETA = 'mcp__srv__beta';
@@ -351,7 +357,8 @@ function createHarness(): Harness {
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerSharedServices(reg, contextMemory, loop, eventBus);
-      reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+      reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor()));
+      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
     },
     strict: true,
   });
@@ -367,29 +374,34 @@ function createHarness(): Harness {
 }
 
 interface ExecutorHarness extends Harness {
-  readonly executor: IAgentToolExecutorService;
+  readonly executor: ToolExecutorRuntime;
 }
 
 function createExecutorHarness(): ExecutorHarness {
   const contextMemory = new FakeContextMemory();
   const loop = new FakeLoopService();
   const eventBus = new RecordingEventBus();
+  let executor: ToolExecutorRuntime;
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerSharedServices(reg, contextMemory, loop, eventBus);
       reg.defineInstance(ITelemetryService, recordingTelemetry([]));
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-      reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      reg.defineInstance(IAgentLifecycleService, {
+        _serviceBrand: undefined,
+        resolve: () => executor,
+      } as unknown as IAgentLifecycleService);
       registerToolResultTruncationServices(reg);
     },
     strict: true,
   });
+  executor = attachToolExecutorRuntime(ix, ix.get(IEventDispatcher)).resolve(AgentToolExecutor);
   mountAnnouncements(ix);
   return {
     ix,
     sut: ix.get(IAgentToolSelectService),
     registry: ix.get(IAgentToolRegistryService),
-    executor: ix.get(IAgentToolExecutorService),
+    executor,
     contextMemory,
     loop,
     eventBus,

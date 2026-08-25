@@ -6,12 +6,14 @@ import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissi
 import type { PermissionData } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { IAgentPermissionGate } from './permissionGate';
@@ -24,9 +26,11 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     @IAgentPermissionPolicyService private readonly policyService: IAgentPermissionPolicyService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
     super();
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this._register(toolExecutor.onBeforeExecuteTool((event) => this.adjudicate(event)));
   }
 

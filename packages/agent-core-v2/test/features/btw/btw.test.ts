@@ -6,7 +6,6 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import {
   ISessionBtwService,
   SIDE_QUESTION_SYSTEM_REMINDER,
@@ -16,7 +15,7 @@ import { SessionBtwService } from '#/features/btw/btwService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 describe('SessionBtwService', () => {
@@ -40,7 +39,6 @@ describe('SessionBtwService', () => {
         get: (id: unknown) => {
           if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
-          if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
         },
       },
@@ -65,6 +63,7 @@ describe('SessionBtwService', () => {
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
+      resolve: () => executorEvents.executor,
       handleOf: (id: string) => {
         if (id === 'main') return main;
         if (id === 'agent-btw-1') return child;

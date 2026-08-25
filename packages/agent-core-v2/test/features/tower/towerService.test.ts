@@ -15,11 +15,11 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
@@ -43,7 +43,11 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ToolAccesses } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import {
+  stubToolExecutorEvents,
+  stubToolExecutorResolver,
+  type ToolExecutorEventStubs,
+} from '../toolExecutor/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import {
   appService,
@@ -139,7 +143,7 @@ describe('AgentTowerService', () => {
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     executorEvents = stubToolExecutorEvents();
     permissionGateRan = false;
-    ix.stub(IAgentToolExecutorService, executorEvents.executor);
+    ix.stub(IAgentLifecycleService, stubToolExecutorResolver(executorEvents.executor));
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     towerFlagOn = true;
@@ -566,7 +570,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
@@ -666,7 +670,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag(() => false));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
@@ -731,7 +735,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
@@ -803,7 +807,7 @@ describe('AgentTowerService', () => {
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-      ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+      ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
       ix2.stub(ISessionManager, {
@@ -885,7 +889,7 @@ describe('AgentTowerService', () => {
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-      ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+      ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
       ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
       ix2.stub(ISessionManager, {
@@ -967,7 +971,7 @@ describe('AgentTowerService', () => {
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-      ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+      ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
       ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
       ix2.stub(IFlagService, stubFlag(() => false));
       ix2.stub(ISessionManager, {
@@ -1046,7 +1050,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionManager, {
@@ -1121,7 +1125,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, {
@@ -1177,7 +1181,7 @@ describe('AgentTowerService', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
+    ix2.stub(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutorEvents().executor));
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);

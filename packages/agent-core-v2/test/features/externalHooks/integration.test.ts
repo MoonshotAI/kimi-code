@@ -47,7 +47,7 @@ import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import { makeHookRunner } from './runner-stub';
@@ -84,6 +84,7 @@ import { IModelService } from '#/kosong/model/model';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
+import { stubToolExecutorResolver } from '../toolExecutor/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 
@@ -363,7 +364,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor()));
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -471,7 +472,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor()));
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -678,7 +679,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor()));
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
@@ -1214,7 +1215,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(stubToolExecutor()));
           reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),

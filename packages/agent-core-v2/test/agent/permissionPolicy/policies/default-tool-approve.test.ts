@@ -1,7 +1,7 @@
 import type { ToolCall } from '#/kosong/contract/message';
 import { describe, expect, it } from 'vitest';
 
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
 import { ToolAccesses } from '#/tool/toolContract';
 

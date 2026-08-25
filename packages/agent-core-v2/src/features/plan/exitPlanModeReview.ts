@@ -6,7 +6,7 @@ import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApprova
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';

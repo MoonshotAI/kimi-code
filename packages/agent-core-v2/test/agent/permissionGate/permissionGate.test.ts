@@ -6,7 +6,7 @@ import type { TestInstantiationService } from '#/_base/di/test';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -17,8 +17,9 @@ import {
   IAgentPermissionRulesService,
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
 
@@ -26,7 +27,11 @@ import { stubPermissionModeService } from '../permissionMode/stubs';
 import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
 import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
+import {
+  stubToolExecutorEvents,
+  stubToolExecutorResolver,
+  type ToolExecutorEventStubs,
+} from '../../features/toolExecutor/stubs';
 
 function makeContext(
   toolName: string,
@@ -93,7 +98,8 @@ describe('AgentPermissionGate', () => {
         );
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
-        reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
+        reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(executorEvents.executor));
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
         reg.define(IAgentPermissionGate, AgentPermissionGate);
       },
       strict: true,

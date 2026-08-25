@@ -1,4 +1,4 @@
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { isSensitiveFile } from '#/tool/path-access';
 import type {
   PermissionPolicy,

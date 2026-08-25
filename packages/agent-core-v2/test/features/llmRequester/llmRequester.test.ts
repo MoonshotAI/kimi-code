@@ -6,9 +6,10 @@ import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  IAgentLLMRequesterService,
-  type AgentLLMRequestFinish,
-} from '#/agent/llmRequester/llmRequester';
+  AgentLlmRequester,
+  type LlmRequesterRuntime,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
+import { type AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
@@ -46,7 +47,7 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 describe('LLMRequester service migration coverage', () => {
   describe('wire observability records', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LlmRequesterRuntime;
 
     const requestTools: readonly Tool[] = [
       {
@@ -75,7 +76,7 @@ describe('LLMRequester service migration coverage', () => {
     beforeEach(() => {
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.resolve(AgentLlmRequester);
     });
 
     afterEach(async () => {
@@ -187,7 +188,7 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.dispose();
       vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.resolve(AgentLlmRequester);
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -234,7 +235,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         }),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.resolve(AgentLlmRequester);
 
       await llmRequester.request();
 
@@ -343,7 +344,7 @@ describe('LLMRequester service migration coverage', () => {
         }),
         logServices(logger),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.resolve(AgentLlmRequester);
 
       await expect(
         llmRequester.request({
@@ -376,7 +377,7 @@ describe('LLMRequester service migration coverage', () => {
           throw new APIConnectionError('terminated');
         }),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.resolve(AgentLlmRequester);
 
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIConnectionError',
@@ -392,7 +393,7 @@ describe('LLMRequester service migration coverage', () => {
         }),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.resolve(AgentLlmRequester);
 
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIStatusError',
@@ -422,7 +423,7 @@ describe('LLMRequester service migration coverage', () => {
         }),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.resolve(AgentLlmRequester);
 
       await expect(
         llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
@@ -454,7 +455,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('request timing and budget', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LlmRequesterRuntime;
     let profile: IAgentProfileService;
     let requestMaxTokens: unknown;
     let logEntries: CapturedLogEntry[];
@@ -502,7 +503,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         logServices(logger),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.resolve(AgentLlmRequester);
       profile = ctx.get(IAgentProfileService);
       profile.update({
         modelAlias: 'deepseek/deepseek-v4-flash',
@@ -519,7 +520,7 @@ describe('LLMRequester service migration coverage', () => {
       }
     });
 
-    it('emits stream timing and applies the model output budget through IAgentLLMRequesterService', async () => {
+    it('emits stream timing and applies the model output budget through AgentLlmRequester', async () => {
       const { parts, finish } = await collectLLMRequest((onPart) =>
         llmRequester.request(undefined, onPart),
       );
@@ -596,7 +597,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('per-turn intent handoff', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LlmRequesterRuntime;
     let capturedCacheKey: unknown;
 
     beforeEach(() => {
@@ -617,7 +618,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         }),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.resolve(AgentLlmRequester);
     });
 
     afterEach(async () => {

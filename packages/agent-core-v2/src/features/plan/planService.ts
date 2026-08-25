@@ -13,12 +13,16 @@ import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -58,7 +62,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ITelemetryService telemetry: ITelemetryService,
@@ -85,10 +89,12 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     );
 
     this._register(new PlanModeInjection(injector, this, this.context, agentState));
-    this._register(this.registerPlanGuard(toolExecutor));
+    this._register(
+      this.registerPlanGuard(manager.resolve(agentCtx.agentContext, AgentToolExecutor)),
+    );
   }
 
-  private registerPlanGuard(toolExecutor: IAgentToolExecutorService): IDisposable {
+  private registerPlanGuard(toolExecutor: ToolExecutorRuntime): IDisposable {
     return toolExecutor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
   }
 

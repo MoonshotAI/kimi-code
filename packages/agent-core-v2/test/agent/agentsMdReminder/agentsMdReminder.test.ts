@@ -29,8 +29,11 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -49,7 +52,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import {
   AgentAgentsMdReminderService,
@@ -57,10 +60,11 @@ import {
 } from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../features/toolExecutor/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
+import { attachToolExecutorRuntime } from '../../wire/stubs';
 
 let disposables: DisposableStore;
 let homeDir: string;
@@ -87,6 +91,7 @@ interface CapturedReminder {
 interface Harness {
   readonly ix: TestInstantiationService;
   readonly events: ToolExecutorEventStubs;
+  readonly executor: ToolExecutorRuntime;
   readonly reminder: IAgentAgentsMdReminderService;
   readonly dispatcher: IEventDispatcher;
   readonly telemetryEvents: TelemetryRecord[];
@@ -112,8 +117,19 @@ function createHarness(
   const reminders: CapturedReminder[] = [];
   const events = stubToolExecutorEvents();
   const instructionsChange = disposables.add(new Emitter<readonly HostFsChange[]>());
+  let executor: ToolExecutorRuntime;
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
+      reg.defineInstance(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'main',
+        agentContext: stubAgentContext('main', 0),
+        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
+      } satisfies IAgentScopeContext);
+      reg.defineInstance(IAgentLifecycleService, {
+        _serviceBrand: undefined,
+        resolve: () => executor,
+      } as unknown as IAgentLifecycleService);
       if (options.withRealExecutor === true) {
         reg.defineInstance(IEventBus, {
           _serviceBrand: undefined,
@@ -121,20 +137,11 @@ function createHarness(
           subscribe: () => ({ dispose: () => {} }),
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-        reg.define(IAgentToolExecutorService, AgentToolExecutorService);
-        reg.defineInstance(IAgentScopeContext, {
-          _serviceBrand: undefined,
-          agentId: 'main',
-          agentContext: stubAgentContext('main', 0),
-          scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
-        } satisfies IAgentScopeContext);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
         reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
         registerLogServices(reg);
-      } else {
-        reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
       const dispatcher: IEventDispatcher = {
         _serviceBrand: undefined,
@@ -228,9 +235,13 @@ function createHarness(
     },
     strict: true,
   });
+  executor =
+    options.withRealExecutor === true
+      ? attachToolExecutorRuntime(ix, ix.get(IEventDispatcher)).resolve(AgentToolExecutor)
+      : events.executor;
   const reminder = ix.get(IAgentAgentsMdReminderService);
   const dispatcher = ix.get(IEventDispatcher);
-  return { ix, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
+  return { ix, events, executor, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
 }
 
 function didCtx(
@@ -604,9 +615,10 @@ describe('agentsMdReminder duplicate calls', () => {
       { type: 'function', id: 'call-2', name: 'Read', arguments: JSON.stringify(args) },
     ];
     const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute(calls, { turnId: 1, signal: new AbortController().signal })) {
+    for await (const item of h.executor.execute(calls, {
+      turnId: 1,
+      signal: new AbortController().signal,
+    })) {
       results.push(item);
     }
 
@@ -934,9 +946,10 @@ describe('agentsMdReminder round-2 hardening', () => {
       arguments: JSON.stringify({ path: join(workDir, 'packages', 'kap-server', 'big.ts') }),
     };
     const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute([toolCall], { turnId: 1, signal: new AbortController().signal })) {
+    for await (const item of h.executor.execute([toolCall], {
+      turnId: 1,
+      signal: new AbortController().signal,
+    })) {
       results.push(item);
     }
 
@@ -972,7 +985,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     h.ix.get(IAgentToolRegistryService).register(new ResolvedReadTool());
 
     const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+    for await (const item of h.executor.execute(
       [
         {
           type: 'function',
@@ -1016,12 +1029,12 @@ describe('agentsMdReminder round-2 hardening', () => {
       }
     }
     h.ix.get(IAgentToolRegistryService).register(new ReadTool());
-    h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
+    h.executor.onBeforeExecuteTool((event) => {
       event.veto({ output: 'permission denied', isError: true });
     });
 
     const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+    for await (const item of h.executor.execute(
       [
         {
           type: 'function',
@@ -1113,7 +1126,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
     ];
     const pending = (async () => {
       const results = [];
-      for await (const item of h.ix.get(IAgentToolExecutorService).execute(calls, {
+      for await (const item of h.executor.execute(calls, {
         turnId: 1,
         signal: controller.signal,
       })) {
@@ -1133,7 +1146,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
     ).toEqual([]);
 
     const real = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+    for await (const item of h.executor.execute(
       [
         {
           type: 'function',

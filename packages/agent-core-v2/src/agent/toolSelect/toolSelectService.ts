@@ -13,7 +13,9 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
 import {
@@ -43,12 +45,14 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(
       toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),

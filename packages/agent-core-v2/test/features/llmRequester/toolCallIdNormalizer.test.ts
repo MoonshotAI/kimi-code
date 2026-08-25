@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Message, ToolCall } from '#/kosong/contract/message';
 
-import { ToolCallIdNormalizer } from '#/agent/llmRequester/toolCallIdNormalizer';
+import { ToolCallIdNormalizer } from '#/features/llmRequester/internal/toolCallIdNormalizer';
 
 function call(id: string, streamIndex?: number): ToolCall {
   return { type: 'function', id, name: 'Bash', arguments: '{}', _streamIndex: streamIndex };

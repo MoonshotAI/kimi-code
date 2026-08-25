@@ -16,11 +16,11 @@ import { AgentPlanService } from '#/features/plan/planService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -33,7 +33,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubToolExecutorEvents, stubToolExecutorResolver, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 const SESSION_DIR = '/session';
@@ -178,7 +178,7 @@ describe('AgentPlanService plan-guard listener', () => {
           register: () => ({ dispose: () => {} }),
         });
         reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
-        reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
+        reg.defineInstance(IAgentLifecycleService, stubToolExecutorResolver(executorEvents.executor));
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));

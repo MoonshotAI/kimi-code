@@ -3,7 +3,7 @@ import * as win32Path from 'node:path/win32';
 
 import type { GitWorkTree } from '#/app/git/workTree';
 import type { ToolFileAccess } from '#/tool/toolContract';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import {
   isWithinDirectory,
   type PathClass,

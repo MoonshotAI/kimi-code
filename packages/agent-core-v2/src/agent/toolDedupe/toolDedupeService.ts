@@ -18,7 +18,13 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
-import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolCallDupType } from '#/features/toolExecutor/toolExecutor';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
 
@@ -155,15 +161,19 @@ export const toolDedupeTurnRepeatCountKey = defineState<number>(
 export class AgentToolDedupeService extends Service implements IAgentToolDedupeService {
   declare readonly _serviceBrand: undefined;
   private readonly stepDeferreds = new Map<string, Deferred<ToolDedupeResult>>();
+  private readonly toolExecutor: ToolExecutorRuntime;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService loop: IAgentLoopService,
-    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
+    this.toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
+    const toolExecutor = this.toolExecutor;
     this.states.contributeState(toolDedupeStepCallsKey);
     this.states.contributeState(toolDedupeOriginalCallIndexKey);
     this.states.contributeState(toolDedupeSyntheticCallIdsKey);

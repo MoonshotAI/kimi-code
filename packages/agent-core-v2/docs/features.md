@@ -89,10 +89,11 @@ keep their static registrations; the service and the two tools go through the Fe
   (`src/app/event/fiberEventResolver.ts`), which resolves the event against the scope's
   `IEventBus` (attaching lazily if the bus is not materialized yet). Constructor
   injection of `@IEventBus` + `subscribe` remains the fully explicit equivalent.
-- Tool-call guards (e.g. the plan-mode write veto) subscribe to
-  `IAgentToolExecutorService.onBeforeExecuteTool` inside the contributed Agent-scope
-  service — see `src/features/plan/planService.ts` for the canonical veto-listener
-  pattern.
+- Tool-call guards (e.g. the plan-mode write veto) subscribe to the
+  `AgentToolExecutor` runtime's `onBeforeExecuteTool` (resolved via
+  `IAgentLifecycleService.resolve(agentContext, AgentToolExecutor)`) inside the
+  contributed Agent-scope service — see `src/features/plan/planService.ts` for
+  the canonical veto-listener pattern.
 
 ## Adding a new feature
 

@@ -8,8 +8,9 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -45,7 +46,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
@@ -58,6 +59,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventBus eventBus: IEventBus,
   ) {
     super();
+    const toolExecutor = manager.resolve(agentCtx.agentContext, AgentToolExecutor);
     this.agentState.contributeState(towerKey);
     this.agentState.contributeState(towerOwnerKey);
     this._register(

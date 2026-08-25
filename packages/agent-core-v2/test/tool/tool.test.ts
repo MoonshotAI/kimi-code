@@ -105,6 +105,14 @@ import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/in
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 import { AgentSkill, skillAgentRuntimeProvider } from '#/features/skill/skillAgentRuntime';
+import {
+  AgentLlmRequester,
+  llmRequesterAgentRuntimeProvider,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
+import {
+  AgentToolExecutor,
+  toolExecutorAgentRuntimeProvider,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -481,6 +489,18 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentSkill,
           provider: skillAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentLlmRequester,
+          provider: llmRequesterAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentToolExecutor,
+          provider: toolExecutorAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

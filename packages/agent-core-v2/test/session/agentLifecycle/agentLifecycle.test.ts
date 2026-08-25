@@ -61,7 +61,7 @@ import { CRON_SECTION } from '#/features/cron/configSection';
 import { interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
+import { AgentRuntimeContributionPoint, defineAgentRuntimeProvider } from '#/agent/runtime/agentRuntime';
 import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
 import '#/agent/toolDedupe/toolDedupeService';
@@ -79,7 +79,10 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -299,22 +302,34 @@ describe('AgentLifecycleService', () => {
     } as IAgentMediaToolsRegistrar);
     beforeExecuteListeners = 0;
     didExecuteHookIds = [];
-    ix.stub(IAgentToolExecutorService, {
-      _serviceBrand: undefined,
-      onBeforeExecuteTool: () => {
-        beforeExecuteListeners += 1;
-        return { dispose: () => {} };
+    const toolExecutorStubProvider = defineAgentRuntimeProvider<null, ToolExecutorRuntime>(
+      AgentToolExecutor,
+      {
+        id: 'toolExecutor',
+        createApi: () =>
+          ({
+            onBeforeExecuteTool: () => {
+              beforeExecuteListeners += 1;
+              return { dispose: () => {} };
+            },
+            onWillExecuteTool: () => ({ dispose: () => {} }),
+            hooks: {
+              onDidExecuteTool: {
+                register: (id: string) => {
+                  didExecuteHookIds.push(id);
+                  return { dispose: () => {} };
+                },
+              },
+            },
+          }) as unknown as ToolExecutorRuntime,
       },
-      onWillExecuteTool: () => ({ dispose: () => {} }),
-      hooks: {
-        onDidExecuteTool: {
-          register: (id: string) => {
-            didExecuteHookIds.push(id);
-            return { dispose: () => {} };
-          },
-        },
-      },
-    } as unknown as IAgentToolExecutorService);
+    );
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test',
+      new Ledger('test'),
+      toolExecutorStubProvider,
+    );
     loopActiveTurnId = undefined;
     loopPendingTurnIds = [];
     loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
@@ -1233,7 +1248,9 @@ describe('AgentLifecycleService', () => {
 
     await vi.waitFor(() => { expect(reminders).toBe(0); });
     expect(() => svc.resolve(main, AgentTodo)).toThrow('unavailable');
-    expect(svc.inspect(main).contributions[0]).toMatchObject({ id: 'todo', status: 'retired' });
+    expect(
+      svc.inspect(main).contributions.find((entry) => entry.id === 'todo'),
+    ).toMatchObject({ id: 'todo', status: 'retired' });
   });
 
   it('de-dupes concurrent create calls for the same agent id', async () => {

@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentProfileService } from '#/index';
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import {
+  AgentLlmRequester,
+  type LlmRequesterRuntime,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
 import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
@@ -25,7 +28,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { userCancellationReason } from '#/_base/utils/abort';
 
 import {
-  agentService,
   createTestAgent,
   permissionModeServices,
   type TestAgentContext,
@@ -1384,7 +1386,8 @@ describe('interruption reminder', () => {
 
 describe('step timing split propagation', () => {
   it('carries the split from the llmRequester timing event to the turn.step.completed protocol event', async () => {
-    const ctx = createTestAgent(agentService(IAgentLLMRequesterService, createTimingRequester()));
+    const ctx = createTestAgent();
+    Object.assign(ctx.resolve(AgentLlmRequester), createTimingRequester());
     try {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
       await ctx.untilTurnEnd();
@@ -1503,7 +1506,7 @@ function nextTurnMessage(text: string): MessageStepRequest {
   );
 }
 
-function createTimingRequester(): IAgentLLMRequesterService {
+function createTimingRequester(): Pick<LlmRequesterRuntime, 'prepareTurnConfig' | 'request' | 'start'> {
   const timing: ModelRequestTiming = {
     firstTokenLatencyMs: 100,
     streamDurationMs: 200,
@@ -1513,27 +1516,27 @@ function createTimingRequester(): IAgentLLMRequesterService {
     clientConsumeMs: 50,
   };
 
-  const requester: IAgentLLMRequesterService = {
-    _serviceBrand: undefined,
-    prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-    async request(_overrides, onPart = () => {}) {
-      await onPart({ type: 'text', text: 'answer' });
-      return {
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: 'answer' }],
-          toolCalls: [],
-        },
-        usage: emptyUsage(),
-        model: 'mock-model',
-        timing,
-      };
-    },
-    start(overrides, onPart, signal) {
-      return { trace: { traceId: undefined }, result: this.request(overrides, onPart, signal) };
-    },
+  const request: LlmRequesterRuntime['request'] = async (_overrides, onPart = () => {}) => {
+    await onPart({ type: 'text', text: 'answer' });
+    return {
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'answer' }],
+        toolCalls: [],
+      },
+      usage: emptyUsage(),
+      model: 'mock-model',
+      timing,
+    };
   };
-  return requester;
+  return {
+    prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
+    request,
+    start: (overrides, onPart, signal) => ({
+      trace: { traceId: undefined },
+      result: request(overrides, onPart, signal),
+    }),
+  };
 }
 
 function createAbortedStepGenerate(): GenerateFn {

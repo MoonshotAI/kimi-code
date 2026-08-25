@@ -114,7 +114,8 @@ Most growth goes through the data path — node count is bounded by "kinds of be
 
 ```ts
 // src/plan/planService.ts — constructor
-constructor(@IAgentToolExecutorService executor, ...) {
+constructor(@IAgentLifecycleService manager, @IAgentScopeContext scopeContext, ...) {
+  const executor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
   executor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
 }
 ```

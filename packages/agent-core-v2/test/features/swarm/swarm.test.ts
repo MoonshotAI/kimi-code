@@ -45,11 +45,10 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -77,7 +76,7 @@ import {
   testWireScope,
 } from '../../wire/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubToolExecutorEvents, stubToolExecutorResolver, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
 
 const signal = new AbortController().signal;
@@ -304,15 +303,14 @@ describe('AgentSwarmService', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IAgentContextInjectorService, new SyncDescriptor(AgentContextInjectorService));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.stub(IAgentLifecycleService, {});
     ix.stub(ISessionSwarmService, {
       getSwarmItem: async () => undefined,
       run: async () => [],
       cancel: () => {},
     });
     executorEvents = stubToolExecutorEvents();
+    ix.stub(IAgentLifecycleService, stubToolExecutorResolver(executorEvents.executor));
     permissionGateRan = false;
-    ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {

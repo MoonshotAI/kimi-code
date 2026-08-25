@@ -26,8 +26,10 @@ import {
 import { profileKey } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';
@@ -57,7 +59,8 @@ export class AgentAgentsMdReminderService
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -70,6 +73,7 @@ export class AgentAgentsMdReminderService
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
+    const toolExecutor = manager.resolve(scopeContext.agentContext, AgentToolExecutor);
     this.states.contributeState(agentsMdReminderKnownKey);
     this.states.contributeState(agentsMdReminderCwdKey);
     this.states.contributeState(agentsMdReminderSeededKey);

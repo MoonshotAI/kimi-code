@@ -30,9 +30,13 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/features/toolExecutor/beforeToolExecuteEvent';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -135,7 +139,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this.registerPermissionHooks();
 
     this.registerToolHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
+      this.instantiation.invokeFunction((accessor) =>
+        accessor
+          .get(IAgentLifecycleService)
+          .resolve(this.scopeContext.agentContext, AgentToolExecutor),
+      ),
     );
 
     this.registerPromptHooks(
@@ -157,7 +165,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
+  private registerToolHooks(toolExecutor: ToolExecutorRuntime): void {
     this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
         const reason = await this.runPreToolUse(event);

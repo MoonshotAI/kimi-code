@@ -15,19 +15,24 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/features/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
-import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
-import { stubToolExecutorEvents } from '../toolExecutor/stubs';
+import { stubToolExecutorEvents } from '../../features/toolExecutor/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { attachToolExecutorRuntime, registerTestAgentWireServices } from '../../wire/stubs';
 import { createTestAgent, execEnvServices, telemetryServices } from '../../harness';
 import { createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -54,7 +59,7 @@ afterEach(() => disposables.dispose());
 interface Harness {
   readonly ix: TestInstantiationService;
   readonly loop: IAgentLoopService;
-  readonly executor: IAgentToolExecutorService;
+  readonly executor: ToolExecutorRuntime;
   readonly registry: IAgentToolRegistryService;
   readonly fireBefore: (
     ctx: ResolvedToolExecutionHookContext,
@@ -67,6 +72,7 @@ function createHarness(
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
+  let executor: ToolExecutorRuntime;
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerTestAgentWireServices(reg, 'wire/tool-dedupe');
@@ -95,19 +101,21 @@ function createHarness(
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-      if (events === undefined) {
-        reg.define(IAgentToolExecutorService, AgentToolExecutorService);
-      } else {
-        reg.defineInstance(IAgentToolExecutorService, events.executor);
-      }
+      reg.defineInstance(IAgentLifecycleService, {
+        _serviceBrand: undefined,
+        resolve: () => executor,
+      } as unknown as IAgentLifecycleService);
       registerToolResultTruncationServices(reg);
       reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       registerLogServices(reg);
     },
     strict: true,
   });
+  executor =
+    events !== undefined
+      ? events.executor
+      : attachToolExecutorRuntime(ix, ix.get(IEventDispatcher)).resolve(AgentToolExecutor);
   ix.get(IAgentToolDedupeService);
-  const executor = ix.get(IAgentToolExecutorService);
   const registry = ix.get(IAgentToolRegistryService);
   return {
     ix,

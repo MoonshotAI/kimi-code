@@ -23,8 +23,8 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -36,8 +36,10 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { createTestAgent, mcpServices, type TestAgentContext } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
+import { stubToolExecutorResolver } from '../../features/toolExecutor/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
 import {
+  attachToolExecutorRuntime,
   recordingWireLog,
   registerTestAgentWire,
   registerTestEventDispatcher,
@@ -223,7 +225,6 @@ describe('AgentMcpService', () => {
     });
     ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
@@ -234,6 +235,12 @@ describe('AgentMcpService', () => {
       }),
     });
     dispatcher = registerTestEventDispatcher(ix);
+    ix.stub(
+      IAgentLifecycleService,
+      stubToolExecutorResolver(
+        attachToolExecutorRuntime(ix, dispatcher).resolve(AgentToolExecutor),
+      ),
+    );
   });
   afterEach(() => {
     disposables.dispose();
