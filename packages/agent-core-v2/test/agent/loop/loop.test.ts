@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { AgentProfile, type ProfileRuntime } from '#/index';
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
-import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import type { ModelRequester, ModelRequestTiming } from '#/kosong/model/modelRequester';
+import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
@@ -25,7 +26,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { userCancellationReason } from '#/_base/utils/abort';
 
 import {
-  agentService,
+  appService,
   createTestAgent,
   applyPermissionMode,
   type TestAgentContext,
@@ -1385,7 +1386,7 @@ describe('interruption reminder', () => {
 
 describe('step timing split propagation', () => {
   it('carries the split from the llmRequester timing event to the turn.step.completed protocol event', async () => {
-    const ctx = createTestAgent(agentService(IAgentLLMRequesterService, createTimingRequester()));
+    const ctx = createTestAgent(appService(IModelCatalog, createTimingCatalog()));
     try {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
       await ctx.untilTurnEnd();
@@ -1504,7 +1505,7 @@ function nextTurnMessage(text: string): MessageStepRequest {
   );
 }
 
-function createTimingRequester(): IAgentLLMRequesterService {
+function createTimingCatalog(): IModelCatalog {
   const timing: ModelRequestTiming = {
     firstTokenLatencyMs: 100,
     streamDurationMs: 200,
@@ -1513,28 +1514,61 @@ function createTimingRequester(): IAgentLLMRequesterService {
     serverDecodeMs: 150,
     clientConsumeMs: 50,
   };
-
-  const requester: IAgentLLMRequesterService = {
-    _serviceBrand: undefined,
-    prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
-    async request(_overrides, onPart = () => {}) {
-      await onPart({ type: 'text', text: 'answer' });
-      return {
+  const capabilities: ModelCapability = {
+    image_in: false,
+    video_in: false,
+    audio_in: false,
+    thinking: false,
+    tool_use: true,
+    max_context_tokens: 128_000,
+  };
+  const model: Model = {
+    id: 'mock-model',
+    name: 'mock-model',
+    aliases: [],
+    protocol: 'openai',
+    baseUrl: 'https://example.test',
+    headers: {},
+    capabilities,
+    maxContextSize: 128_000,
+    alwaysThinking: false,
+    providerName: 'mock',
+    authProvider: { getAuth: async () => undefined },
+  };
+  const requester: ModelRequester = {
+    model,
+    request: async function* () {
+      yield { type: 'part', part: { type: 'text', text: 'answer' } };
+      yield { type: 'usage', usage: emptyUsage(), model: 'mock-model' };
+      yield {
+        type: 'finish',
         message: {
           role: 'assistant',
           content: [{ type: 'text', text: 'answer' }],
           toolCalls: [],
         },
-        usage: emptyUsage(),
-        model: 'mock-model',
-        timing,
+        providerFinishReason: 'completed',
+        rawFinishReason: 'stop',
+        id: 'resp-1',
       };
-    },
-    start(overrides, onPart, signal) {
-      return { trace: { traceId: undefined }, result: this.request(overrides, onPart, signal) };
+      yield { type: 'timing', ...timing };
     },
   };
-  return requester;
+  return {
+    _serviceBrand: undefined,
+    get: () => model,
+    getRequester: () => requester,
+    inspect: () => {
+      throw new Error('not implemented');
+    },
+    ping: () => Promise.reject(new Error('not implemented')),
+    findByName: () => [],
+    listModels: () => Promise.resolve([]),
+    listProviders: () => Promise.resolve([]),
+    getProvider: () => Promise.reject(new Error('not implemented')),
+    setDefaultModel: () => Promise.reject(new Error('not implemented')),
+    notifyConfigChanged: () => {},
+  } as unknown as IModelCatalog;
 }
 
 function createAbortedStepGenerate(): GenerateFn {

@@ -44,8 +44,8 @@
 //   interaction.request                (none)                           src/features/interaction/interactionOps.ts
 //   interaction.resolved               (none)                           src/features/interaction/interactionOps.ts
 //   interruptionReminder.recorded      interruptionReminder             src/agent/interruptionReminder/interruptionReminderOps.ts
-//   llm.request                        llm.requestTrace                 src/agent/llmRequester/llmRequestOps.ts
-//   llm.tools_snapshot                 llm.requestTrace                 src/agent/llmRequester/llmRequestOps.ts
+//   llm.request                        (none)                           src/features/llmRequester/llmRequesterOps.ts
+//   llm.tools_snapshot                 (none)                           src/features/llmRequester/llmRequesterOps.ts
 //   mcp.tools_discovered               mcp.discovery                    src/agent/mcp/mcpDiscoveryOps.ts
 //   permission.record_approval_result  (none)                           src/features/permissionRules/permissionRulesOps.ts
 //   permission.set_mode                (none)                           src/features/permissionMode/permissionModeOps.ts
@@ -339,8 +339,8 @@ interface InterruptionReminderRecordedPayload {
 }
 
 /**
- * states: llm.requestTrace
- * owner: src/agent/llmRequester/llmRequestOps.ts
+ * states: (none)
+ * owner: src/features/llmRequester/llmRequesterOps.ts
  */
 interface LlmRequestPayload {
   _name: 'llm.request';
@@ -368,8 +368,8 @@ interface LlmRequestPayload {
 }
 
 /**
- * states: llm.requestTrace
- * owner: src/agent/llmRequester/llmRequestOps.ts
+ * states: (none)
+ * owner: src/features/llmRequester/llmRequesterOps.ts
  */
 interface LlmToolsSnapshotPayload {
   _name: 'llm.tools_snapshot';

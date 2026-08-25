@@ -2,7 +2,7 @@ import { assign, setup, type Snapshot } from 'xstate';
 
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,

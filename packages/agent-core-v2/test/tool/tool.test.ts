@@ -121,6 +121,10 @@ import {
   AgentPermissionRules,
   permissionRulesAgentRuntimeProvider,
 } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import {
+  AgentLlmRequester,
+  llmRequesterAgentRuntimeProvider,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -530,6 +534,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentProfile,
           provider: profileAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentLlmRequester,
+          provider: llmRequesterAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

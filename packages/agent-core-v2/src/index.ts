@@ -666,9 +666,13 @@ export * from '#/agent/fullCompaction/fullCompaction';
 export * from '#/agent/fullCompaction/fullCompactionService';
 export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
-export * from '#/agent/llmRequester/llmRequester';
-export * from '#/agent/llmRequester/llmRequesterService';
-export * from '#/agent/llmRequester/llmRequestOps';
+export * from '#/features/llmRequester/llmRequester';
+export * from '#/features/llmRequester/llmRequesterOps';
+export {
+  AgentLlmRequester,
+  LlmRequesterRuntime,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
+import '#/features/llmRequester/llmRequesterFeature';
 export * from '#/_base/utils/promise';
 export * from '#/_base/utils/retry';
 export * from '#/_base/utils/timer';

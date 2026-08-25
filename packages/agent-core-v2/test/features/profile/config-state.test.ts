@@ -1,7 +1,10 @@
 import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import {
+  AgentLlmRequester,
+  type LlmRequesterRuntime,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import type { ModelRecord } from '#/kosong/model/model';
 import {
@@ -26,7 +29,7 @@ function defaultGenerate(): ReturnType<GenerateFn> {
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let requester: IAgentLLMRequesterService;
+  let requester: LlmRequesterRuntime;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
   let records: TelemetryRecord[];
@@ -43,7 +46,7 @@ describe('ConfigState model capabilities', () => {
       telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.resolve(AgentProfile);
-    requester = ctx.get(IAgentLLMRequesterService);
+    requester = ctx.resolve(AgentLlmRequester);
   });
 
   afterEach(async () => {
@@ -223,7 +226,7 @@ describe('ConfigState model capabilities', () => {
       systemPrompt: 'system',
       thinkingLevel: 'off',
     });
-    await requester.request({}, undefined, new AbortController().signal);
+    await requester.generate({}, undefined, new AbortController().signal);
 
     expect(requestMaxTokens).toBe(384000);
   });
@@ -279,7 +282,7 @@ describe('ConfigState prompt cache hint', () => {
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let requester: IAgentLLMRequesterService;
+  let requester: LlmRequesterRuntime;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
 
@@ -342,7 +345,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
       }),
     );
     profile = ctx.resolve(AgentProfile);
-    requester = ctx.get(IAgentLLMRequesterService);
+    requester = ctx.resolve(AgentLlmRequester);
   });
 
   afterEach(async () => {
@@ -362,7 +365,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   it('sends the clamped thinking effort in the per-turn intent after thinking was set off', async () => {
     profile.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
 
-    await requester.request({}, undefined, new AbortController().signal);
+    await requester.generate({}, undefined, new AbortController().signal);
 
     expect(capturedThinking).toMatchObject({ effort: 'high' });
   });
@@ -463,7 +466,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
   let profile: ProfileRuntime;
-  let requester: IAgentLLMRequesterService;
+  let requester: LlmRequesterRuntime;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
   let capturedOptions: Parameters<GenerateFn>[5];
@@ -517,7 +520,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       }),
     );
     profile = ctx.resolve(AgentProfile);
-    requester = ctx.get(IAgentLLMRequesterService);
+    requester = ctx.resolve(AgentLlmRequester);
   }
 
   it('injects KIMI_MODEL_TEMPERATURE into the per-turn sampling intent (the compaction request also uses)', async () => {
@@ -525,7 +528,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code' });
-    await requester.request({}, undefined, new AbortController().signal);
+    await requester.generate({}, undefined, new AbortController().signal);
 
     expect(capturedOptions?.sampling).toMatchObject({
       temperature: 0.3,
@@ -537,7 +540,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    await requester.request({}, undefined, new AbortController().signal);
+    await requester.generate({}, undefined, new AbortController().signal);
 
     expect(capturedOptions?.thinking).toMatchObject({ effort: 'on', keep: 'all' });
   });
@@ -547,7 +550,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
-    await requester.request({}, undefined, new AbortController().signal);
+    await requester.generate({}, undefined, new AbortController().signal);
 
     expect(capturedOptions?.thinking?.effort).toBe('off');
     expect(capturedOptions?.thinking?.keep).toBeUndefined();
@@ -570,7 +573,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       thinkingEffort: 'max',
     });
 
-    await requester.request({}, undefined, new AbortController().signal);
+    await requester.generate({}, undefined, new AbortController().signal);
 
     expect(capturedProvider).toMatchObject({ name: 'anthropic' });
     expect(capturedOptions?.thinking?.effort).toBe('max');

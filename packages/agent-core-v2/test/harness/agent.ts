@@ -118,7 +118,7 @@ import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMes
 import { type ThinkingEffort } from '#/kosong/contract/provider';
 import { type Tool as KosongTool } from '#/kosong/contract/tool';
 import { type TokenUsage } from '#/kosong/contract/usage';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
 import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { type TodoItem } from '#/features/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
@@ -148,7 +148,6 @@ import {
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
-  IAgentLLMRequesterService,
   ILogService,
   IAgentPermissionGate,
   ISessionPermissionModeService,
@@ -175,7 +174,6 @@ import {
   ISessionUsageService,
   ISessionWorkspaceContext,
   IWorkspaceStateService,
-  AgentLLMRequesterService,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -1351,10 +1349,6 @@ export class AgentTestContext {
             );
             reg.defineDescriptor(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
             reg.defineDescriptor(
-              IAgentLLMRequesterService,
-              new SyncDescriptor(AgentLLMRequesterService),
-            );
-            reg.defineDescriptor(
               IAgentExternalHooksService,
               new SyncDescriptor(AgentExternalHooksService),
             );
@@ -1584,7 +1578,6 @@ export class AgentTestContext {
     void plan.status();
 
     this.get(IAgentUserToolService);
-    this.get(IAgentLLMRequesterService);
     this.get(IAgentFullCompactionService);
     this.resolve(AgentProfile);
     const agentState = this.get(IAgentStateService);

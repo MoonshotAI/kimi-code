@@ -8,7 +8,11 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
-import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import {
+  AgentLlmRequester,
+  type LlmRequesterRuntime,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
+import { type AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
@@ -105,9 +109,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private readonly context: ContextMemoryRuntime;
 
+  private get llmRequester(): LlmRequesterRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentLlmRequester);
+  }
+
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -502,7 +509,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     let thinkingEffort: string | undefined;
     let result: TurnResult | undefined;
     try {
-      thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
+      thinkingEffort = this.llmRequester.getRequestConfig(turn.id)?.thinkingEffort;
       const started: TurnStartedTelemetryEvent = {
         turn_id: turn.id,
         mode,
@@ -848,7 +855,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     let stepEndAppended = false;
     try {
       const streamParts = this.createStreamPartHandler(turnId, markStepStarted);
-      const request = this.llmRequester.start(
+      const request = this.llmRequester.stream(
         { source: { type: 'turn', turnId, step: currentStep } },
         streamParts.handle,
         signal,

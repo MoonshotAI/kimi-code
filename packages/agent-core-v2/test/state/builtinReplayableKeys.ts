@@ -3,7 +3,6 @@ import type { ReplayableStateKey } from '#/state/state';
 import { staleGuardKey } from '#/features/staleGuard/staleGuardOps';
 import { fullCompactionKey } from '#/agent/fullCompaction/compactionOps';
 import { interruptionReminderKey } from '#/agent/interruptionReminder/interruptionReminderOps';
-import { llmRequestTraceKey } from '#/agent/llmRequester/llmRequestOps';
 import { turnKey } from '#/agent/loop/turnOps';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
@@ -20,7 +19,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   staleGuardKey,
   fullCompactionKey,
   interruptionReminderKey,
-  llmRequestTraceKey,
   turnKey,
   mcpDiscoveryKey,
   pluginSessionStartSnapshotKey,

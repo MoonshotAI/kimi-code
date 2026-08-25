@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/state/state';
-import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
@@ -10,13 +8,12 @@ import {
 } from '#/agent/contextProjector/contextProjector';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { type ProfileModelContext } from '#/features/profile/profile';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   APIContextOverflowError,
   APIRequestTooLargeError,
@@ -47,13 +44,10 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/kosong/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { WarningIssued } from '#/features/profile/profileOps';
 
 import {
-  IAgentLLMRequesterService,
+  KIMI_CODE_INFINITE_RETRY_ENV,
   type AgentLLMRequestFinish,
   type AgentLLMRequestLogFields,
   type AgentLLMRequestOverrides,
@@ -61,19 +55,20 @@ import {
   type AgentLLMRequestSource,
   type AgentLLMRequestTask,
   type PreparedTurnRequestConfig,
-} from './llmRequester';
+} from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import {
-  ToolCallIdNormalizer,
-  type ToolCallIdResponseNormalizer,
-} from './toolCallIdNormalizer';
+import type { ToolCallIdResponseNormalizer } from '#/features/llmRequester/internal/toolCallIdNormalizer';
 import {
   LlmRequest,
-  llmRequestTraceKey,
   LlmToolsSnapshot,
   type LlmRequestPayload,
   type LlmRequestToolSchema,
-} from './llmRequestOps';
+  type LlmRequestTraceState,
+} from '#/features/llmRequester/llmRequesterOps';
+import type {
+  LlmRequesterActorContext,
+  TurnRequestConfig,
+} from '#/features/llmRequester/internal/actorContext';
 import { isAbortError } from '#/_base/utils/abort';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
@@ -91,8 +86,6 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 };
 
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
-
-export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
 
 interface ResolvedLLMRequest {
   readonly requester: ModelRequester;
@@ -120,93 +113,99 @@ interface LLMRequestLogInput {
   readonly fields?: AgentLLMRequestLogFields;
 }
 
-interface TurnRequestConfig {
-  readonly resolved: ProfileModelContext;
-  readonly params: ModelRequestParams;
-  readonly systemPrompt: string;
-}
+export class LlmRequestExecutor {
+  constructor(private readonly runtime: AgentRuntimeContext<LlmRequestTraceState>) {}
 
-export const llmRequesterLastConfigLogSignatureKey = defineState<string | undefined>(
-  'llmRequester.lastConfigLogSignature',
-  () => undefined as string | undefined,
-);
-export const llmRequesterTurnConfigsKey = defineState<Map<number, TurnRequestConfig>>(
-  'llmRequester.turnConfigs',
-  () => new Map(),
-);
-export const llmRequesterMediaDegradedTurnsKey = defineState<Set<number>>(
-  'llmRequester.mediaDegradedTurns',
-  () => new Set(),
-);
-export const llmRequesterMediaStrippedTurnsKey = defineState<Map<number, MediaStripSnapshot>>(
-  'llmRequester.mediaStrippedTurns',
-  () => new Map(),
-);
-export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<string>>(
-  'llmRequester.emittedThinkingEffortWarnings',
-  () => new Set(),
-);
+  private get manager(): IAgentLifecycleService {
+    return this.runtime.get(IAgentLifecycleService);
+  }
 
-export class AgentLLMRequesterService implements IAgentLLMRequesterService {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly toolCallIdNormalizer = new ToolCallIdNormalizer();
-
-  private readonly context: ContextMemoryRuntime;
-
-  constructor(
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentContextProjectorService private readonly projector: IAgentContextProjectorService,
-    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
-    @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IAgentMediaResolverService private readonly mediaResolver: IAgentMediaResolverService,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
-    @IConfigService private readonly config: IConfigService,
-    @IModelService private readonly modelService: IModelService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
-    @ILogService private readonly log: ILogService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentStateService private readonly states: IAgentStateService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
-  ) {
-    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
-    this.states.contributeState(llmRequestTraceKey);
-    this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
-    this.states.contributeState(llmRequesterTurnConfigsKey);
-    this.states.contributeState(llmRequesterMediaDegradedTurnsKey);
-    this.states.contributeState(llmRequesterMediaStrippedTurnsKey);
-    this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
+  private get context(): ContextMemoryRuntime {
+    return this.manager.resolve(this.runtime.agent, AgentContextMemory);
   }
 
   private get profile(): ProfileRuntime {
-    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
+    return this.manager.resolve(this.runtime.agent, AgentProfile);
+  }
+
+  private get projector(): IAgentContextProjectorService {
+    return this.runtime.get(IAgentContextProjectorService);
+  }
+
+  private get tokenCounting(): ISessionTokenCountingService {
+    return this.runtime.get(ISessionTokenCountingService);
+  }
+
+  private get tools(): IAgentToolRegistryService {
+    return this.runtime.get(IAgentToolRegistryService);
+  }
+
+  private get toolSelect(): IAgentToolSelectService {
+    return this.runtime.get(IAgentToolSelectService);
+  }
+
+  private get mediaResolver(): IAgentMediaResolverService {
+    return this.runtime.get(IAgentMediaResolverService);
+  }
+
+  private get usage(): ISessionUsageService {
+    return this.runtime.get(ISessionUsageService);
+  }
+
+  private get config(): IConfigService {
+    return this.runtime.get(IConfigService);
+  }
+
+  private get modelService(): IModelService {
+    return this.runtime.get(IModelService);
+  }
+
+  private get modelCatalog(): IModelCatalog {
+    return this.runtime.get(IModelCatalog);
+  }
+
+  private get log(): ILogService {
+    return this.runtime.get(ILogService);
+  }
+
+  private get telemetry(): ITelemetryService {
+    return this.runtime.get(ITelemetryService);
+  }
+
+  private get bootstrap(): IBootstrapService {
+    return this.runtime.get(IBootstrapService);
+  }
+
+  private get agentId(): string {
+    return this.runtime.agent.agentId;
+  }
+
+  private logic(): LlmRequesterActorContext {
+    return this.runtime.getLogicState();
   }
 
   private get lastConfigLogSignature(): string | undefined {
-    return this.states.get(llmRequesterLastConfigLogSignatureKey);
+    return this.logic().lastConfigLogSignature;
   }
 
   private set lastConfigLogSignature(value: string | undefined) {
-    this.states.set(llmRequesterLastConfigLogSignatureKey, value);
+    this.runtime.send({ type: 'llmRequester.patch', patch: { lastConfigLogSignature: value } });
   }
 
   private get turnConfigs(): Map<number, TurnRequestConfig> {
-    return this.states.get(llmRequesterTurnConfigsKey);
+    return this.logic().turnConfigs;
   }
 
   private get mediaDegradedTurns(): Set<number> {
-    return this.states.get(llmRequesterMediaDegradedTurnsKey);
+    return this.logic().mediaDegradedTurns;
   }
 
   private get mediaStrippedTurns(): Map<number, MediaStripSnapshot> {
-    return this.states.get(llmRequesterMediaStrippedTurnsKey);
+    return this.logic().mediaStrippedTurns;
   }
 
   private get emittedThinkingEffortWarnings(): Set<string> {
-    return this.states.get(llmRequesterEmittedThinkingEffortWarningsKey);
+    return this.logic().emittedThinkingEffortWarnings;
   }
 
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined {
@@ -303,7 +302,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
-    const currentTurn = this.usage.status(this.scopeContext.agentContext).currentTurn;
+    const currentTurn = this.usage.status(this.runtime.agent).currentTurn;
     if (currentTurn !== undefined) properties['input_tokens'] = inputTotal(currentTurn);
     this.telemetry.track2('api_error', properties);
     return traceId;
@@ -325,7 +324,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal: AbortSignal | undefined,
     onRequestTrace: (traceId: string | undefined) => void,
   ): Promise<AgentLLMRequestFinish> {
-    this.toolCallIdNormalizer.seedFrom(this.context.get());
+    this.logic().toolCallIdNormalizer.seedFrom(this.context.get());
     const shaped = this.toolSelect.shapeHistory(request.messages);
     const recoveredStrip = this.mediaStripSnapshotForTurn(request.source);
     let policy: ProjectionPolicy | undefined =
@@ -375,7 +374,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
-      const toolCallIds = this.toolCallIdNormalizer.beginResponse();
+      const toolCallIds = this.logic().toolCallIdNormalizer.beginResponse();
 
       const setTraceId = (traceId: string | null | undefined): void => {
         const normalized = traceId ?? undefined;
@@ -431,13 +430,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       void this.usage.record(
-        this.scopeContext.agentContext,
+        this.runtime.agent,
         request.modelAlias,
         usage ?? emptyUsage(),
         request.source,
       );
       if (usage !== undefined) {
-        this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
+        this.tokenCounting.measured(this.runtime.agent, request.messages, [message], usage);
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
 
@@ -589,8 +588,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     } catch {
     }
     try {
-      void this.dispatcher.dispatch(
-        new WarningIssued({ agentId: this.scopeContext.agentId, code, message }),
+      void this.runtime.dispatch(
+        new WarningIssued({ agentId: this.agentId, code, message }),
       );
     } catch {
     }
@@ -641,7 +640,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       capability: resolved.modelCapabilities,
       usedContextTokens:
         overrides.messages === undefined
-          ? this.tokenCounting.get(this.scopeContext.agentContext).measured
+          ? this.tokenCounting.get(this.runtime.agent).measured
           : undefined,
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);
@@ -714,9 +713,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const wireTools = providerVisibleTools(input.tools);
     const tools = toolSignature(wireTools);
     const toolsHash = fingerprint(JSON.stringify(tools));
-    if (!this.states.get(llmRequestTraceKey).seenToolsHashes.includes(toolsHash)) {
-      void this.dispatcher.dispatch(
-        new LlmToolsSnapshot({ agentId: this.scopeContext.agentId, hash: toolsHash, tools }),
+    if (!this.runtime.getState().seenToolsHashes.includes(toolsHash)) {
+      void this.runtime.dispatch(
+        new LlmToolsSnapshot({ agentId: this.agentId, hash: toolsHash, tools }),
       );
     }
 
@@ -726,7 +725,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const modelConfig =
       input.modelAlias === undefined ? undefined : this.modelService.get(input.modelAlias);
     const payload: LlmRequestPayload = {
-      agentId: this.scopeContext.agentId,
+      agentId: this.agentId,
       kind: requestKindForRecord(fields),
       provider: input.protocol,
       model: input.modelName,
@@ -754,7 +753,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       projection: projectionField(fields),
       droppedCount: numberField(fields, 'droppedCount'),
     };
-    void this.dispatcher.dispatch(new LlmRequest(payload));
+    void this.runtime.dispatch(new LlmRequest(payload));
   }
 
   private logResponse(
@@ -911,11 +910,3 @@ function apiTraceId(error: unknown): string | undefined {
   }
   return undefined;
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentLLMRequesterService,
-  AgentLLMRequesterService,
-  ScopeActivation.OnScopeCreated,
-  'llmRequester',
-);

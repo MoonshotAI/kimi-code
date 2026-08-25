@@ -9,7 +9,11 @@ import { buildCompactionSummaryText, isRealUserInput } from '#/features/contextM
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import {
+  AgentLlmRequester,
+  type LlmRequesterRuntime,
+} from '#/features/llmRequester/llmRequesterAgentRuntime';
+import { type AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
@@ -140,9 +144,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private readonly context: ContextMemoryRuntime;
   private _compacting: ActiveCompaction | null = null;
 
+  private get llmRequester(): LlmRequesterRuntime {
+    return this.manager.resolve(this.agent.agentContext, AgentLlmRequester);
+  }
+
   constructor(
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
@@ -659,7 +666,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         const estimatedCompactionRequestTokens = this.requestTokens(messages);
 
         try {
-          const request = this.llmRequester.start(
+          const request = this.llmRequester.stream(
             {
               messages,
               maxOutputSize: compactionMaxOutputSize,
