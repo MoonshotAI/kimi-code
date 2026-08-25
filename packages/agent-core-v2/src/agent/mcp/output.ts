@@ -118,8 +118,11 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
+  const hasUsableText = converted.some(
+    (part) => part.type === 'text' && part.text.trim().length > 0,
+  );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (result.structuredContent !== undefined && !hasUsableText) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {

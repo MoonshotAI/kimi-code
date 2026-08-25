@@ -264,7 +264,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out).toEqual({ output: 'oops', isError: true });
   });
 
-  test('surfaces structuredContent and _meta as a serialized mcp-structured-result block', async () => {
+  test('omits structuredContent when content already carries usable text', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'text', text: 'ok' }],
@@ -276,10 +276,29 @@ describe('mcpResultToExecutableOutput', () => {
     );
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    // Dual-emitting servers already place the serialized JSON in a
+    // TextContent block per the MCP spec, so forwarding structuredContent
+    // too would send the same data to the model twice. _meta has no such
+    // overlap and still passes through.
+    expect(joined).not.toContain('"structuredContent"');
     expect(joined).toContain('<mcp-structured-result>');
-    expect(joined).toContain('"structuredContent":{"foo":1}');
     expect(joined).toContain('"_meta":{"bar":2}');
     expect(out.isError).toBe(false);
+  });
+
+  test('falls back to structuredContent when content carries no usable text', async () => {
+    const out = await mcpResultToExecutableOutput(
+      {
+        content: [{ type: 'text', text: '   ' }],
+        isError: false,
+        structuredContent: { foo: 1 },
+      },
+      'mcp__s__t',
+    );
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).toContain('<mcp-structured-result>');
+    expect(joined).toContain('"structuredContent":{"foo":1}');
   });
 
   test('keeps the mcp_tool_result wrap when a media-only result carries structuredContent', async () => {

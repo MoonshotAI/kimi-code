@@ -195,8 +195,17 @@ export async function mcpResultToExecutableOutput(
   // payload are stripped so server data cannot fake an early end of the
   // block. Protocol-reserved _meta keys are dropped first: those carry
   // host/protocol plumbing, not model-facing data.
+  //
+  // structuredContent is only a FALLBACK for content blocks without usable
+  // text: the MCP spec asks servers returning structuredContent to also
+  // place the serialized JSON in a TextContent block, so forwarding it next
+  // to real text would send the same data to the model twice. _meta has no
+  // such overlap and always passes through.
+  const hasUsableText = converted.some(
+    (part) => part.type === 'text' && part.text.trim().length > 0,
+  );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (result.structuredContent !== undefined && !hasUsableText) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
