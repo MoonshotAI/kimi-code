@@ -226,6 +226,62 @@ describe('selectionQuoteAnchor (shared mouseup/keyup evaluation)', () => {
   });
 });
 
+describe('selectionQuoteAnchor / sharedQuoteContainer — custom container selector (file preview)', () => {
+  class FakeElement {}
+  const RECT = { left: 100, top: 40, bottom: 60, width: 80, height: 20, right: 180, x: 100, y: 40, toJSON: () => ({}) };
+  const BODY = { id: 'fp-body' };
+  const OTHER_BODY = { id: 'fp-body-2' };
+  // An element inside the file preview body: only the preview selector matches.
+  const fpEl = Object.assign(new FakeElement(), {
+    closest: (sel: string) => (sel === '.file-preview .fp-body' ? BODY : null),
+  });
+  const fpOtherEl = Object.assign(new FakeElement(), {
+    closest: (sel: string) => (sel === '.file-preview .fp-body' ? OTHER_BODY : null),
+  });
+  // An element inside an assistant message: only the transcript selector matches.
+  const msgEl = Object.assign(new FakeElement(), {
+    closest: (sel: string) => (sel === '.a-msg .msg' ? { id: 'msg' } : null),
+  });
+  function fakeSel(start: unknown, end: unknown): Selection {
+    const range = { startContainer: start, endContainer: end, getBoundingClientRect: () => RECT };
+    return {
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => '选中文件内容',
+      getRangeAt: () => range,
+    } as unknown as Selection;
+  }
+
+  let savedElement: unknown;
+  beforeEach(() => {
+    savedElement = (globalThis as { Element?: unknown }).Element;
+    (globalThis as { Element?: unknown }).Element = FakeElement;
+  });
+  afterEach(() => {
+    (globalThis as { Element?: unknown }).Element = savedElement;
+  });
+
+  it('returns the anchor for a selection inside the preview body with the preview selector', () => {
+    expect(selectionQuoteAnchor(fakeSel(fpEl, fpEl), '.file-preview .fp-body')).toEqual({
+      x: 140,
+      y: 40,
+      bottom: 60,
+      quote: '选中文件内容',
+    });
+  });
+
+  it('rejects a transcript selection under the preview selector (and vice versa)', () => {
+    expect(selectionQuoteAnchor(fakeSel(msgEl, msgEl), '.file-preview .fp-body')).toBeNull();
+    expect(selectionQuoteAnchor(fakeSel(fpEl, fpEl))).toBeNull();
+  });
+
+  it('still rejects a cross-container selection under the custom selector', () => {
+    expect(sharedQuoteContainer(fpEl, fpOtherEl, '.file-preview .fp-body')).toBeNull();
+    expect(sharedQuoteContainer(fpEl, msgEl, '.file-preview .fp-body')).toBeNull();
+    expect(sharedQuoteContainer(fpEl, fpEl, '.file-preview .fp-body')).toBe(BODY);
+  });
+});
+
 describe('clampOverlayAxis (viewport clamp for floating overlays)', () => {
   it('clamps both ends when the overlay is smaller than the viewport', () => {
     expect(clampOverlayAxis(2, 100, 800, 8)).toBe(8); // above the top margin

@@ -20,3 +20,4 @@ export * from './useAttachmentUpload';
 export * from './useOAuthLoginFlow';
 export * from './useUpdateStatus';
 export * from './useAuxiliaryTranscripts';
+export * from './useSelectionQuoteBubble';

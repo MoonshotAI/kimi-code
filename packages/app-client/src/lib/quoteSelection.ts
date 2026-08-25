@@ -33,17 +33,29 @@ function closestCrossingShadow(el: Element, selector: string): Element | null {
   return null;
 }
 
-/** The shared assistant-markdown container a selection must live in for the
- *  quote bubble to apply: BOTH boundary containers of the range must resolve
- *  to the SAME `.a-msg .msg` ancestor — a selection spanning two messages (or
- *  anchored outside an assistant body) gets no bubble. Takes the range's
- *  start/end containers already resolved to elements (text nodes → parent),
- *  so reverse drags need no anchor/focus juggling. Endpoints inside a code
- *  block's shadow root resolve through the host chain. */
-export function sharedQuoteContainer(start: Element | null, end: Element | null): Element | null {
-  const startContainer = start === null ? null : closestCrossingShadow(start, '.a-msg .msg');
+/** The default container a transcript selection must live in for the quote
+ *  bubble to apply: one assistant message's markdown body. */
+export const TRANSCRIPT_QUOTE_CONTAINER = '.a-msg .msg';
+
+/** The container a FILE-PREVIEW selection must live in for the quote bubble
+ *  to apply: the detail panel's preview body (every content kind — markdown,
+ *  code, json, csv, text — mounts under it; iframe kinds never leak a
+ *  selection out of their frame). */
+export const FILE_PREVIEW_QUOTE_CONTAINER = '.file-preview .fp-body';
+
+/** The shared container a selection must live in for the quote bubble to
+ *  apply: BOTH boundary containers of the range must resolve to the SAME
+ *  `selector` ancestor — a selection spanning two containers (or anchored
+ *  outside one) gets no bubble. The transcript passes `.a-msg .msg` (an
+ *  assistant markdown body), the file preview passes `.file-preview
+ *  .fp-body`. Takes the range's start/end containers already resolved to
+ *  elements (text nodes → parent), so reverse drags need no anchor/focus
+ *  juggling. Endpoints inside a code block's shadow root resolve through the
+ *  host chain. */
+export function sharedQuoteContainer(start: Element | null, end: Element | null, selector = TRANSCRIPT_QUOTE_CONTAINER): Element | null {
+  const startContainer = start === null ? null : closestCrossingShadow(start, selector);
   if (startContainer === null) return null;
-  const endContainer = end === null ? null : closestCrossingShadow(end, '.a-msg .msg');
+  const endContainer = end === null ? null : closestCrossingShadow(end, selector);
   return endContainer === startContainer ? startContainer : null;
 }
 
@@ -95,14 +107,15 @@ export function selectionOwnedByRoot(sel: Selection | null, root: Node | null): 
 }
 
 /** Evaluate the current selection for the quote bubble: non-collapsed, fully
- *  inside ONE assistant markdown body (shadow-chain aware via
- *  sharedQuoteContainer) — returns the bubble anchor or null. The quote
- *  keeps the selection's ORIGINAL text (leading indentation is part of a
- *  code excerpt's meaning): trim only gates emptiness, and at most the outer
- *  newlines are stripped — inner whitespace is never touched. Shared by the
- *  ChatPane mouseup AND keyup entries (keyboard selections — Shift+Arrows,
- *  cursor browse mode — fire no mouseup). */
-export function selectionQuoteAnchor(sel: Selection | null): SelectionQuoteAnchor | null {
+ *  inside ONE `containerSelector` ancestor (shadow-chain aware via
+ *  sharedQuoteContainer — the transcript's default is `.a-msg .msg`, the file
+ *  preview passes `.file-preview .fp-body`) — returns the bubble anchor or
+ *  null. The quote keeps the selection's ORIGINAL text (leading indentation
+ *  is part of a code excerpt's meaning): trim only gates emptiness, and at
+ *  most the outer newlines are stripped — inner whitespace is never touched.
+ *  Shared by the mouseup AND keyup entries (keyboard selections —
+ *  Shift+Arrows, cursor browse mode — fire no mouseup). */
+export function selectionQuoteAnchor(sel: Selection | null, containerSelector = TRANSCRIPT_QUOTE_CONTAINER): SelectionQuoteAnchor | null {
   // Multi-range selections (Firefox Ctrl+drag) merge every range's text but
   // validate only the first — a later range could come from another message.
   // Rare path: refuse outright rather than validating range by range.
@@ -115,7 +128,7 @@ export function selectionQuoteAnchor(sel: Selection | null): SelectionQuoteAncho
   // document-ordered, so reverse drags need no anchor/focus juggling.
   const toElement = (node: Node | null): Element | null =>
     typeof Element !== 'undefined' && node instanceof Element ? node : (node?.parentElement ?? null);
-  if (sharedQuoteContainer(toElement(range.startContainer), toElement(range.endContainer)) === null) return null;
+  if (sharedQuoteContainer(toElement(range.startContainer), toElement(range.endContainer), containerSelector) === null) return null;
   const rect = range.getBoundingClientRect();
   return { x: rect.left + rect.width / 2, y: rect.top, bottom: rect.bottom, quote };
 }

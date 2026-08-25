@@ -16,6 +16,7 @@ import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
+import SelectionActionBubble from './components/chat/SelectionActionBubble.vue';
 import DiffView from './components/chat/DiffView.vue';
 import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
 import MediaLightbox from './components/chat/MediaLightbox.vue';
@@ -35,9 +36,9 @@ import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient, promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';
 import { getKimiWebApi } from './api';
-import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { useConfirmDialog, useSelectionQuoteBubble } from '@moonshot-ai/app-client/composables';
 import { runComposerMenuEdit, startMentionTooltip, type AttachmentEntry } from '@moonshot-ai/app-composer';
-import { buildQuoteBlock, sweepPendingQuotes, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
+import { buildQuoteBlock, sweepPendingQuotes, FILE_PREVIEW_QUOTE_CONTAINER, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { ColorScheme, FontScale, PromptAttachment } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -1443,6 +1444,33 @@ function handleQuoteAction(payload: SelectionActionPayload): void {
   }
 }
 
+// Selection quote bubble for the detail panel's FILE PREVIEW (划词): the same
+// bubble the transcript mounts, scoped to `.file-preview .fp-body` by the
+// container selector — every preview content kind (markdown / code / json /
+// csv / text) mounts under it (iframe kinds keep their selection inside the
+// frame and simply never match). The pointer handlers are delegated on the
+// aside in the template (the keyboard path is document-level inside the
+// composable — the aside is not focusable); actions ride the SAME
+// handleQuoteAction pipeline as transcript quotes (composer pill /
+// side-chat draft). On MOBILE the preview is a full-screen overlay, so a
+// quote/comment also closes it — insertQuote focuses the composer, and the
+// user must actually SEE it (sidechat needs no help: it switches the panel).
+const {
+  selectionBubble: previewSelectionBubble,
+  selectionKeyboard: previewSelectionKeyboard,
+  onMouseup: onPreviewQuoteMouseup,
+  onPointerdown: onPreviewQuotePointerdown,
+  onBubbleClose: onPreviewQuoteBubbleClose,
+  onBubbleAction: onPreviewQuoteBubbleAction,
+} = useSelectionQuoteBubble({
+  root: previewPanelEl,
+  containerSelector: FILE_PREVIEW_QUOTE_CONTAINER,
+  onAction: (payload) => {
+    handleQuoteAction(payload);
+    if (isMobile.value && payload.action !== 'sidechat') closeFilePreview();
+  },
+});
+
 // Handler for slash commands emitted by Composer (via ConversationPane)
 //
 // Rebuild composer-editable attachments for a gated/cancelled payload: the
@@ -2251,6 +2279,8 @@ function openPr(url: string): void {
       role="complementary"
       :aria-label="t('layout.detailPanelAria')"
       :aria-hidden="!sidePanelVisible"
+      @mouseup="onPreviewQuoteMouseup"
+      @pointerdown="onPreviewQuotePointerdown"
     >
       <ThinkingPanel
         v-if="detailTarget === 'compaction' && compactionPanelVisible"
@@ -2327,6 +2357,22 @@ function openPr(url: string): void {
         @open-file="openFilePreview({ path: $event })"
       />
     </aside>
+
+    <!-- Selection quote bubble for the file preview (划词) — teleports to
+         body, anchored to a selection inside `.file-preview .fp-body`. The
+         transcript's own bubble lives in ChatPane; the two never pop for the
+         same selection (each is ownership-gated to its own surface). -->
+    <SelectionActionBubble
+      :visible="previewSelectionBubble !== null"
+      :x="previewSelectionBubble?.x ?? 0"
+      :y="previewSelectionBubble?.y ?? 0"
+      :bottom="previewSelectionBubble?.bottom ?? 0"
+      :quote="previewSelectionBubble?.quote ?? ''"
+      :focus-on-open="previewSelectionKeyboard"
+      :focus-return-el="previewPanelEl"
+      @action="onPreviewQuoteBubbleAction"
+      @close="onPreviewQuoteBubbleClose"
+    />
 
     <!-- Desktop-only native terminal: permanent bottom grid row (design:
          docs/plans/2026-07-27-desktop-native-terminal.md). Kept mounted after
