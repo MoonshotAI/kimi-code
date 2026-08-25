@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ResolvedAgentProfile } from '#/features/profile/profile';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -78,7 +79,7 @@ const exactProfile: ResolvedAgentProfile = normalizeAgentProfile({
   tools: ['Read', 'Write'],
 });
 
-describe('AgentProfileService.applyProfile', () => {
+describe('ProfileRuntime.apply', () => {
   let ctx: TestAgentContext;
   let homeDir: string;
   let workDir: string;
@@ -96,7 +97,7 @@ describe('AgentProfileService.applyProfile', () => {
 
   function buildContext(
     ...extra: readonly (TestAgentServiceOverride | TestAgentOptions)[]
-  ): { ctx: TestAgentContext; profile: IAgentProfileService } {
+  ): { ctx: TestAgentContext; profile: ProfileRuntime } {
     const fs = new HostFileSystem();
     ctx = createTestAgent(
       execEnvServices({ hostFs: fs }),
@@ -104,7 +105,7 @@ describe('AgentProfileService.applyProfile', () => {
       { cwd: workDir },
       ...extra,
     );
-    return { ctx, profile: ctx.get(IAgentProfileService) };
+    return { ctx, profile: ctx.resolve(AgentProfile) };
   }
 
   describe('custom identity', () => {
@@ -119,7 +120,7 @@ describe('AgentProfileService.applyProfile', () => {
         appService(IAgentIdentity, stubAgentIdentity({ displayName: 'Acme Dev', slug: 'acme' })),
       );
 
-      await svc.applyProfile(selfNaming);
+      await svc.apply(selfNaming);
 
       expect(svc.data().systemPrompt).toBe('You are Acme Dev');
     });
@@ -129,7 +130,7 @@ describe('AgentProfileService.applyProfile', () => {
         appService(IAgentIdentity, stubAgentIdentity()),
       );
 
-      await svc.applyProfile(selfNaming);
+      await svc.apply(selfNaming);
 
       expect(svc.data().systemPrompt).toBe(`You are ${DEFAULT_PRODUCT_NAME}`);
     });
@@ -139,18 +140,18 @@ describe('AgentProfileService.applyProfile', () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
     const { profile: svc } = buildContext();
 
-    await svc.applyProfile(profile);
+    await svc.apply(profile);
 
     expect(svc.data().systemPrompt).toContain('project instructions');
     expect(svc.data().systemPrompt).toContain(`<!-- From: ${join(workDir, 'AGENTS.md')} -->`);
-    expect(svc.getAgentsMdWarning()).toBeUndefined();
+    expect(svc.agentsMdWarning()).toBeUndefined();
   });
 
   it('renders the complete runtime context exactly', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
     const { profile: svc } = buildContext();
 
-    await svc.applyProfile(exactProfile);
+    await svc.apply(exactProfile);
 
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'project instructions'));
   });
@@ -176,7 +177,7 @@ describe('AgentProfileService.applyProfile', () => {
         ),
       );
 
-      await svc.applyProfile(exactProfile, { additionalDirs: [localExtra] });
+      await svc.apply(exactProfile, { additionalDirs: [localExtra] });
 
       const prompt = svc.data().systemPrompt;
       expect(prompt).toContain(`cwd:${mappedDir}`);
@@ -198,23 +199,23 @@ describe('AgentProfileService.applyProfile', () => {
       agentService(IAgentRuntimeService, mappedRuntimeService(fs, homeDir, (path) => path, [])),
     );
 
-    await svc.applyProfile(exactProfile);
+    await svc.apply(exactProfile);
 
     const prompt = svc.data().systemPrompt;
     expect(prompt).toContain(`cwd:${workDir}`);
     expect(prompt).toContain('ls:\nextra:');
   });
 
-  it('keeps the system prompt frozen until an explicit applyProfile rebuild', async () => {
+  it('keeps the system prompt frozen until an explicit apply rebuild', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const { profile: svc } = buildContext();
-    await svc.applyProfile(exactProfile);
+    await svc.apply(exactProfile);
     const before = svc.data().systemPrompt;
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
 
     expect(svc.data().systemPrompt).toBe(before);
 
-    await svc.applyProfile(exactProfile);
+    await svc.apply(exactProfile);
 
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'new instructions'));
   });
@@ -224,10 +225,10 @@ describe('AgentProfileService.applyProfile', () => {
     await writeFile(join(workDir, 'AGENTS.md'), largeContent, 'utf-8');
     const { ctx: context, profile: svc } = buildContext();
 
-    await svc.applyProfile(profile);
+    await svc.apply(profile);
 
     expect(svc.data().systemPrompt).toContain(largeContent);
-    const warning = svc.getAgentsMdWarning();
+    const warning = svc.agentsMdWarning();
     expect(warning).toBeDefined();
     expect(warning).toContain('exceeds the recommended');
 
@@ -246,9 +247,9 @@ describe('AgentProfileService.applyProfile', () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'small instructions', 'utf-8');
     const { profile: svc } = buildContext();
 
-    await svc.applyProfile(profile);
+    await svc.apply(profile);
 
-    expect(svc.getAgentsMdWarning()).toBeUndefined();
+    expect(svc.agentsMdWarning()).toBeUndefined();
   });
 
   it('injects enabled plugin system-prompt sections into the rendered prompt', async () => {
@@ -257,7 +258,7 @@ describe('AgentProfileService.applyProfile', () => {
     };
     const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
 
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(
       '<!-- From: plugin demo -->\nAlways cite sources.',
@@ -273,13 +274,13 @@ describe('AgentProfileService.applyProfile', () => {
       appService(IPluginService, pluginStub(sections)),
       skillCatalogWithChange(change),
     );
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
     const before = svc.data().systemPrompt;
     expect(before).toContain('V1');
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
     change.dispose();
@@ -292,11 +293,11 @@ describe('AgentProfileService.applyProfile', () => {
       ] as readonly EnabledPluginSystemPrompt[],
     };
     const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
     const before = svc.data().systemPrompt;
 
     sections.value = [];
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
   });
@@ -304,11 +305,11 @@ describe('AgentProfileService.applyProfile', () => {
   it('does not change a live agent prompt when a plugin is installed', async () => {
     const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
     const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
     const before = svc.data().systemPrompt;
 
     sections.value = [{ pluginId: 'demo', content: 'Always cite sources.' }];
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
   });
@@ -317,12 +318,12 @@ describe('AgentProfileService.applyProfile', () => {
     const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
     const loaded = { value: false };
     const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections, loaded)));
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
     expect(svc.data().systemPrompt).toBe('');
 
     loaded.value = true;
     sections.value = [{ pluginId: 'demo', content: 'V1' }];
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin demo -->');
   });
@@ -332,12 +333,12 @@ describe('AgentProfileService.applyProfile', () => {
       value: [{ pluginId: 'demo', content: 'V1' }] as readonly EnabledPluginSystemPrompt[],
     };
     const first = buildContext(appService(IPluginService, pluginStub(sections)));
-    await first.profile.applyProfile(pluginProfile);
+    await first.profile.apply(pluginProfile);
     expect(first.profile.data().systemPrompt).toContain('V1');
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
     const second = buildContext(appService(IPluginService, pluginStub(sections)));
-    await second.profile.applyProfile(pluginProfile);
+    await second.profile.apply(pluginProfile);
 
     expect(second.profile.data().systemPrompt).toContain('V2');
     await first.ctx.dispose();
@@ -349,13 +350,13 @@ describe('AgentProfileService.applyProfile', () => {
       value: [{ pluginId: 'demo', content: 'cite' }] as readonly EnabledPluginSystemPrompt[],
     };
     const { profile: svc } = buildContext(appService(IPluginService, pluginStub(sections)));
-    await svc.applyProfile(agentsAndPluginsProfile);
+    await svc.apply(agentsAndPluginsProfile);
     expect(svc.data().systemPrompt).toContain('old instructions');
     expect(svc.data().systemPrompt).toContain('cite');
 
     sections.value = [];
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
-    await svc.applyProfile(agentsAndPluginsProfile);
+    await svc.apply(agentsAndPluginsProfile);
 
     expect(svc.data().systemPrompt).toContain('new instructions');
     expect(svc.data().systemPrompt).toContain('cite');
@@ -368,12 +369,12 @@ describe('AgentProfileService.applyProfile', () => {
       getModelSkillListing: () => listing.value,
     } as unknown as SkillCatalog;
     const { profile: svc } = buildContext(skillCatalogWithChange(change, catalog));
-    await svc.applyProfile(skillsProfile);
+    await svc.apply(skillsProfile);
     expect(svc.data().systemPrompt).toBe('skills:before');
 
     listing.value = 'after';
     change.fire(BUILTIN_SKILL_SOURCE_ID);
-    await svc.applyProfile(skillsProfile);
+    await svc.apply(skillsProfile);
 
     expect(svc.data().systemPrompt).toBe('skills:before');
     change.dispose();
@@ -388,7 +389,7 @@ describe('AgentProfileService.applyProfile', () => {
     });
     const change = new Emitter<string>();
     const { profile: svc } = buildContext(skillCatalogWithChange(change));
-    await svc.applyProfile(countingProfile);
+    await svc.apply(countingProfile);
     expect(svc.data().systemPrompt).toBe('render:1');
 
     change.fire(PLUGIN_SKILL_SOURCE_ID);
@@ -407,7 +408,7 @@ describe('AgentProfileService.applyProfile', () => {
     });
     const change = new Emitter<string>();
     const { profile: svc } = buildContext(skillCatalogWithChange(change));
-    await svc.applyProfile(countingProfile);
+    await svc.apply(countingProfile);
     expect(svc.data().systemPrompt).toBe('render:1');
 
     change.fire(BUILTIN_SKILL_SOURCE_ID);
@@ -431,13 +432,13 @@ describe('AgentProfileService.applyProfile', () => {
       skillCatalogWithChange(change),
     );
 
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
 
     sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await svc.applyProfile(pluginProfile);
+    await svc.apply(pluginProfile);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');

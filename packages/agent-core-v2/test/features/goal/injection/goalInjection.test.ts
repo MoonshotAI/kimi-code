@@ -6,7 +6,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
 
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import {
   InMemoryWireRecordPersistence,
@@ -25,7 +25,7 @@ async function injectDynamic(ctx: TestAgentContext, isNewTurn: boolean): Promise
 
 async function registerLookupTool(
   ctx: TestAgentContext,
-  profile: IAgentProfileService,
+  profile: ProfileRuntime,
 ): Promise<void> {
   profile.update({ activeToolNames: ['Lookup'] });
   await ctx.rpc.registerTool({
@@ -261,7 +261,7 @@ describe('GoalInjection integration', () => {
   describe('enabled goal injection', () => {
     let ctx: TestAgentContext;
     let goals: GoalServiceTestManager;
-    let profile: IAgentProfileService;
+    let profile: ProfileRuntime;
     let persistence: InMemoryWireRecordPersistence;
 
     beforeEach(async () => {
@@ -271,7 +271,7 @@ describe('GoalInjection integration', () => {
         agentService(IAgentSwarmService, stubAgentSwarm()),
       );
       goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       await ctx.restorePersisted();
       await ctx.restoreRuntimes();
     });

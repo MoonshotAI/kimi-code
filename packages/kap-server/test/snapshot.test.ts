@@ -10,7 +10,7 @@ import {
   IAppendLogStore,
   IEventBus,
   IAgentLifecycleService,
-  IAgentProfileService,
+  AgentProfile,
   IAgentPromptService,
   ISessionContext,
   ISessionIndex,
@@ -53,9 +53,19 @@ describe('server-v2 snapshot route enrichment', () => {
     const promptId = 'msg_snapshot_prompt';
     const workspaceId = 'wd_snapshot_012345abcdef';
     const now = Date.parse('2026-01-01T00:00:00.000Z');
+    const profile = {
+      modelCapabilities: () => ({ max_input_tokens: 262144 }),
+      model: () => 'kimi-for-test',
+    };
     const main = {
       accessor: fakeAccessor([
-        [IAgentLifecycleService, { resolve: () => ({ get: () => [] }) }],
+        [
+          IAgentLifecycleService,
+          {
+            resolve: (_agent: unknown, definition: unknown) =>
+              definition === AgentProfile ? profile : { get: () => [] },
+          },
+        ],
         [
           IAgentPromptService,
           { list: () => ({ active: { id: promptId }, pending: [] }) },
@@ -63,13 +73,6 @@ describe('server-v2 snapshot route enrichment', () => {
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],
         [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
-        [
-          IAgentProfileService,
-          {
-            getModelCapabilities: () => ({ max_input_tokens: 262144 }),
-            getModel: () => 'kimi-for-test',
-          },
-        ],
         [
           ISessionUsageService,
           {
@@ -237,11 +240,18 @@ describe('server-v2 snapshot route enrichment', () => {
     const now = Date.parse('2026-01-01T00:00:00.000Z');
     const main = {
       accessor: fakeAccessor([
-        [IAgentLifecycleService, { resolve: () => ({ get: () => [] }) }],
+        [
+          IAgentLifecycleService,
+          {
+            resolve: (_agent: unknown, definition: unknown) => {
+              if (definition === AgentProfile) throw new Error('profile unavailable');
+              return { get: () => [] };
+            },
+          },
+        ],
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot_degraded' }],
         [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
-        [IAgentProfileService, undefined],
         [ISessionUsageService, undefined],
         [ISessionTokenCountingService, undefined],
       ]),

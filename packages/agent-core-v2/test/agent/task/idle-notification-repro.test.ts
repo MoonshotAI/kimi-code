@@ -9,7 +9,7 @@ import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   taskServices,
@@ -42,13 +42,13 @@ describe('task notification → main agent (real Agent instance)', () => {
     let ctx: TestAgentContext;
     let background: IAgentTaskService;
     let loop: IAgentLoopService;
-    let profile: IAgentProfileService;
+    let profile: ProfileRuntime;
 
     beforeEach(() => {
       ctx = createTestAgent();
       background = ctx.get(IAgentTaskService);
       loop = ctx.get(IAgentLoopService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: [] });
     });
 
@@ -351,7 +351,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
       background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
       loop = ctx.get(IAgentLoopService);
-      const profile = ctx.get(IAgentProfileService);
+      const profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: [] });
     });
 

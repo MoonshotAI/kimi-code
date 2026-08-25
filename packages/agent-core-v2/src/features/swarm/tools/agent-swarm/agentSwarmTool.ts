@@ -9,8 +9,9 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -85,14 +86,18 @@ export class AgentSwarmTool implements IAgentSwarmTool {
 
   constructor(
     @ISessionSwarmService private readonly swarmService: ISessionSwarmService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     this.callerAgentId = scopeContext.agentId;
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   get description(): string {

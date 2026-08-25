@@ -15,7 +15,8 @@ import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contex
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { stubProfileRuntime } from '../../features/profile/stubs';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -160,21 +161,26 @@ describe('AgentTowerService', () => {
     addedTools = [];
     removedTools = [];
     activeTools = undefined;
-    ix.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      getActiveToolNames: () => activeTools,
-      addActiveTool: (name: string) => {
-        addedTools.push(name);
-        activeTools = [...(activeTools ?? []), name];
-      },
-      removeActiveTool: (name: string) => {
-        removedTools.push(name);
-        activeTools = activeTools?.filter((candidate) => candidate !== name);
-      },
-    } as unknown as IAgentProfileService);
     ix.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          activeTools: () => activeTools,
+          addActiveTool: (name: string) => {
+            addedTools.push(name);
+            activeTools = [...(activeTools ?? []), name];
+          },
+          removeActiveTool: (name: string) => {
+            removedTools.push(name);
+            activeTools = activeTools?.filter((candidate) => candidate !== name);
+          },
+        }),
+      ),
     );
     ix.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     registerTestAgentWire(ix, testWireScope('wire', 'tower-test'), {
@@ -570,18 +576,23 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
+    const restoredAdded: string[] = [];
     ix2.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          addActiveTool: (name: string) => {
+            restoredAdded.push(name);
+          },
+          removeActiveTool: () => {},
+        }),
+      ),
     );
-    const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      addActiveTool: (name: string) => {
-        restoredAdded.push(name);
-      },
-      removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -667,18 +678,23 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag(() => false));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
+    const restoredAdded: string[] = [];
     ix2.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          addActiveTool: (name: string) => {
+            restoredAdded.push(name);
+          },
+          removeActiveTool: () => {},
+        }),
+      ),
     );
-    const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      addActiveTool: (name: string) => {
-        restoredAdded.push(name);
-      },
-      removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore-flag-off'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -729,18 +745,23 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
+    const restoredAdded: string[] = [];
     ix2.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          addActiveTool: (name: string) => {
+            restoredAdded.push(name);
+          },
+          removeActiveTool: () => {},
+        }),
+      ),
     );
-    const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      addActiveTool: (name: string) => {
-        restoredAdded.push(name);
-      },
-      removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore-non-main'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -804,18 +825,23 @@ describe('AgentTowerService', () => {
         cwd: repo,
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
+      const restoredAdded: string[] = [];
       ix2.stub(
         IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub()),
+        lifecycleWithReminder(
+          createReminderStub(),
+          undefined,
+          undefined,
+          undefined,
+          stubProfileRuntime({
+            data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+            addActiveTool: (name: string) => {
+              restoredAdded.push(name);
+            },
+            removeActiveTool: () => {},
+          }),
+        ),
       );
-      const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
-        data: () => ({ profileName: undefined }),
-        addActiveTool: (name: string) => {
-          restoredAdded.push(name);
-        },
-        removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -883,18 +909,23 @@ describe('AgentTowerService', () => {
         cwd: repo,
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
+      const restoredAdded: string[] = [];
       ix2.stub(
         IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub()),
+        lifecycleWithReminder(
+          createReminderStub(),
+          undefined,
+          undefined,
+          undefined,
+          stubProfileRuntime({
+            data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+            addActiveTool: (name: string) => {
+              restoredAdded.push(name);
+            },
+            removeActiveTool: () => {},
+          }),
+        ),
       );
-      const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
-        data: () => ({ profileName: undefined }),
-        addActiveTool: (name: string) => {
-          restoredAdded.push(name);
-        },
-        removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-stale-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -962,18 +993,23 @@ describe('AgentTowerService', () => {
         cwd: repo,
         sessionId: 'session-fork',
       } as unknown as ISessionContext);
+      const restoredAdded: string[] = [];
       ix2.stub(
         IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub()),
+        lifecycleWithReminder(
+          createReminderStub(),
+          undefined,
+          undefined,
+          undefined,
+          stubProfileRuntime({
+            data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+            addActiveTool: (name: string) => {
+              restoredAdded.push(name);
+            },
+            removeActiveTool: () => {},
+          }),
+        ),
       );
-      const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
-        data: () => ({ profileName: undefined }),
-        addActiveTool: (name: string) => {
-          restoredAdded.push(name);
-        },
-        removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-flag-off-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -1038,18 +1074,23 @@ describe('AgentTowerService', () => {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-fork',
     } as unknown as ISessionContext);
+    const restoredAdded: string[] = [];
     ix2.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          addActiveTool: (name: string) => {
+            restoredAdded.push(name);
+          },
+          removeActiveTool: () => {},
+        }),
+      ),
     );
-    const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      addActiveTool: (name: string) => {
-        restoredAdded.push(name);
-      },
-      removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-noinit'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -1107,18 +1148,23 @@ describe('AgentTowerService', () => {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-owner',
     } as unknown as ISessionContext);
+    const restoredAdded: string[] = [];
     ix2.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          addActiveTool: (name: string) => {
+            restoredAdded.push(name);
+          },
+          removeActiveTool: () => {},
+        }),
+      ),
     );
-    const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      addActiveTool: (name: string) => {
-        restoredAdded.push(name);
-      },
-      removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-resume-noinit'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -1157,18 +1203,23 @@ describe('AgentTowerService', () => {
     ix2.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix2.stub(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID));
     ix2.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
+    const restoredAdded: string[] = [];
     ix2.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(
+        createReminderStub(),
+        undefined,
+        undefined,
+        undefined,
+        stubProfileRuntime({
+          data: () => ({ profileName: undefined }) as ReturnType<ProfileRuntime['data']>,
+          addActiveTool: (name: string) => {
+            restoredAdded.push(name);
+          },
+          removeActiveTool: () => {},
+        }),
+      ),
     );
-    const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
-      data: () => ({ profileName: undefined }),
-      addActiveTool: (name: string) => {
-        restoredAdded.push(name);
-      },
-      removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore-idle'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -1218,9 +1269,18 @@ describe('AgentTowerService', () => {
       });
       worktree = join(repo, '.tower/worktrees/wt-1');
 
-      ix.stub(IAgentProfileService, {
-        data: () => ({ profileName: 'tower-worker' }),
-      } as unknown as IAgentProfileService);
+      ix.stub(
+        IAgentLifecycleService,
+        lifecycleWithReminder(
+          createReminderStub(),
+          undefined,
+          undefined,
+          undefined,
+          stubProfileRuntime({
+            data: () => ({ profileName: 'tower-worker' }) as ReturnType<ProfileRuntime['data']>,
+          }),
+        ),
+      );
       ix.stub(
         IAgentScopeContext,
         makeAgentScopeContext({ agentId: WORKER_AGENT_ID, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
@@ -1285,9 +1345,18 @@ describe('AgentTowerService', () => {
     });
 
     it('abstains when the agent is not a tower worker', async () => {
-      ix.stub(IAgentProfileService, {
-        data: () => ({ profileName: 'coder' }),
-      } as unknown as IAgentProfileService);
+      ix.stub(
+        IAgentLifecycleService,
+        lifecycleWithReminder(
+          createReminderStub(),
+          undefined,
+          undefined,
+          undefined,
+          stubProfileRuntime({
+            data: () => ({ profileName: 'coder' }) as ReturnType<ProfileRuntime['data']>,
+          }),
+        ),
+      );
       ix.get(IAgentTowerService);
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));

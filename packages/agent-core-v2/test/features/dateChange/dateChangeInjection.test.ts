@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
@@ -56,7 +57,7 @@ function systemPromptWithDate(iso: string): string {
 }
 
 function updateSystemPromptWithDate(
-  profile: IAgentProfileService,
+  profile: ProfileRuntime,
   cwd: string,
   iso: string,
   localDate: string,
@@ -77,7 +78,7 @@ function updateSystemPromptWithDate(
   });
 }
 
-function updateSystemPromptWithoutDate(profile: IAgentProfileService, cwd: string): void {
+function updateSystemPromptWithoutDate(profile: ProfileRuntime, cwd: string): void {
   const environment: EnvironmentDisclosureSnapshot = {
     cwd,
     date: { disclosed: false },
@@ -105,14 +106,14 @@ describe('dateChangeAgentRuntime', () => {
   let context: ContextMemoryRuntime;
   let clock: TestHostClock;
   let loop: IAgentLoopService;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
 
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent(appService(IHostClock, clock));
     context = ctx.resolve(AgentContextMemory);
     loop = ctx.get(IAgentLoopService);
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     await ctx.restoreRuntimes();
   });
 
@@ -203,7 +204,7 @@ describe('dateChangeAgentRuntime', () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     updateSystemPromptWithDate(
       profile,
       ctx.get(ISessionContext).cwd,
@@ -234,8 +235,9 @@ describe('dateChangeAgentRuntime', () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
-    profile = ctx.get(IAgentProfileService);
-    profile.applyBindingSnapshot({
+    profile = ctx.resolve(AgentProfile);
+    profile.applyData({
+      modelCapabilities: UNKNOWN_CAPABILITY,
       modelAlias: 'mock-model',
       profileName: 'agent',
       thinkingLevel: 'off',
@@ -276,7 +278,7 @@ describe('dateChangeAgentRuntime', () => {
       ctx = createTestAgent(appService(IHostClock, clock), hostEnvironmentServices(homeDir));
       context = ctx.resolve(AgentContextMemory);
       loop = ctx.get(IAgentLoopService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
         await ctx.restorePersisted();
 
       await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });

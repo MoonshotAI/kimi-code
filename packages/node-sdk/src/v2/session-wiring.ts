@@ -34,8 +34,8 @@ import type {
 } from '@moonshot-ai/agent-core';
 import {
   agentContextOf,
+  AgentProfile,
   IAgentLifecycleService,
-  IAgentProfileService,
   IEventBus,
   ISessionApprovalService,
   ISessionQuestionService,
@@ -281,24 +281,27 @@ export class SessionEventWiring {
  * wire-compatibility concerns.
  */
 function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
-  const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
+  const lifecycle = agent.accessor.get(IAgentLifecycleService) as
+    | IAgentLifecycleService
+    | undefined;
   const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
   const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
     | ISessionTokenCountingService
     | undefined;
-  if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
+  if (lifecycle === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
   // Externally reported context size, resolved by the `[token_counting]`
   // strategy inside the service (`ISessionTokenCountingService.statusSize`).
   const context = agentContextOf(agent);
+  const profile = lifecycle.resolve(context, AgentProfile);
   const contextTokens = tokenCounting.statusSize(context);
-  const capabilities = profile.getModelCapabilities();
+  const capabilities = profile.modelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   return Object.assign({}, event, {
     usage: usageService.status(context),
     contextTokens,
     maxContextTokens,
-    model: profile.getModel(),
+    model: profile.model(),
   }) as unknown as Event2<any>;
 }

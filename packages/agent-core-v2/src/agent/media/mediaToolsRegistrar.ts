@@ -12,7 +12,9 @@ import { type ModelRequester } from '#/kosong/model/modelRequester';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
@@ -31,7 +33,8 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IEventBus eventBus: IEventBus,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -48,6 +51,10 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this._register(toDisposable(() => this.registration?.dispose()));
   }
 
+  private get profile(): ProfileRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
+  }
+
   private get registeredKey(): string | undefined {
     return this.states.get(mediaRegisteredKeyKey);
   }
@@ -57,8 +64,8 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   }
 
   private refresh(): void {
-    const capabilities = this.profile.getModelCapabilities();
-    const modelAlias = this.profile.getModel();
+    const capabilities = this.profile.modelCapabilities();
+    const modelAlias = this.profile.model();
     if (!this.runtime.isAvailable(['fs'])) {
       const key = [
         modelAlias,

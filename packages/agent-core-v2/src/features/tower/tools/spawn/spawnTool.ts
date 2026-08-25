@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -61,16 +61,19 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @IAgentTowerService private readonly tower: IAgentTowerService,
     @ITowerRateLimitService private readonly rateLimit: ITowerRateLimitService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   resolveExecution(args: TowerSpawnToolInput): ToolExecution {

@@ -23,6 +23,7 @@ import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agent
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
 import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
+import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
 import type {
   InteractionKind,
@@ -125,6 +126,24 @@ function agentContextMemoryServiceView(agent: IAgentScopeHandle): Record<string,
   const memory = () => manager.resolve(agentContextOf(agent), AgentContextMemory);
   return {
     get: () => memory().get(),
+  };
+}
+
+/**
+ * `agentProfileService` stays on the wire after the engine moved the profile
+ * kernel into a per-agent runtime: the view forwards to the agent's resolved
+ * `AgentProfile` facade through the session's agent lifecycle.
+ */
+function agentProfileServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const manager = agent.accessor.get(IAgentLifecycleService);
+  const profile = () => manager.resolve(agentContextOf(agent), AgentProfile);
+  return {
+    getModel: () => profile().model(),
+    setModel: (model: string) => profile().setModel(model),
+    setThinking: (level: string) => {
+      profile().setThinking(level);
+    },
+    getEffectiveThinkingLevel: () => profile().effectiveThinkingLevel(),
   };
 }
 
@@ -259,6 +278,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return agentContextMemoryServiceView(resolved.like as IAgentScopeHandle);
+    }
+    if (service === 'agentProfileService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentProfileServiceView(resolved.like as IAgentScopeHandle);
     }
     const token = serviceTokens[service];
     if (token === undefined) {

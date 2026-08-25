@@ -8,7 +8,6 @@ import { turnKey } from '#/agent/loop/turnOps';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { promptAdmissionKey } from '#/agent/prompt/promptOps';
-import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import { runtimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingOps';
 import { taskKey } from '#/agent/task/taskOps';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
@@ -26,8 +25,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   mcpDiscoveryKey,
   pluginSessionStartSnapshotKey,
   promptAdmissionKey,
-  profileKey,
-  profileActiveToolsKey,
   runtimeBindingKey,
   taskKey,
   taskNotificationDeliveryKey,

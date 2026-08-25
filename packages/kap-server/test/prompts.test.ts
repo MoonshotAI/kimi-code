@@ -10,7 +10,7 @@ import {
   IAgentTitlePromptSource,
   IAgentLifecycleService,
   ISessionPermissionModeService,
-  IAgentProfileService,
+  AgentProfile,
   IAgentToolPolicyService,
   IBootstrapService,
   IFileService,
@@ -1157,7 +1157,12 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
-    expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
+    expect(
+      session.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(main!), AgentProfile)
+        .data().profileName,
+    ).toBe('route-reviewer');
 
     const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'again' }],
@@ -1200,7 +1205,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
-    const profile = main?.accessor.get(IAgentProfileService);
+    const profile =
+      main === undefined
+        ? undefined
+        : session.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentProfile);
     expect(profile?.data().profileName).toBe('agent');
     expect(profile?.data().thinkingLevel).toBe('high');
   });

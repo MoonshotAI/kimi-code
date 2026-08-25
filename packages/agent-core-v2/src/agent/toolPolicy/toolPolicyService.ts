@@ -1,7 +1,10 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentProfileService, ProfileError, ProfileErrors } from '#/agent/profile/profile';
+import { ProfileError, ProfileErrors } from '#/features/profile/errors';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
@@ -17,7 +20,8 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IConfigService private readonly config: IConfigService,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
@@ -35,6 +39,10 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
           : `Tool "${name}" is disabled by the active tool policy`;
       }),
     );
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {

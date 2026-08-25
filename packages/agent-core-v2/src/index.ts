@@ -728,9 +728,15 @@ export {
 import '#/features/permissionRules/permissionRulesFeature';
 export * from '#/agent/pluginCommand/pluginCommand';
 export * from '#/agent/pluginCommand/pluginCommandService';
-export * from '#/agent/profile/profile';
-export * from '#/agent/profile/profileService';
-export * from '#/agent/profile/context';
+export { ProfileError, type ProfileErrorCode } from '#/features/profile/errors';
+export * from '#/features/profile/profile';
+export * from '#/features/profile/profileOps';
+export * from '#/features/profile/profileContext';
+export {
+  AgentProfile,
+  ProfileRuntime,
+} from '#/features/profile/profileAgentRuntime';
+import '#/features/profile/profileFeature';
 export * from '#/agent/prompt/prompt';
 export * from '#/agent/prompt/promptOps';
 export * from '#/agent/prompt/promptService';

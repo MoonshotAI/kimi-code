@@ -4,7 +4,8 @@ import {
   IBootstrapService,
   IAgentLifecycleService,
   ISessionPermissionModeService,
-  IAgentProfileService,
+  AgentProfile,
+  type ProfileRuntime,
   IAgentToolPolicyService,
   IAgentPromptService,
   agentContextOf,
@@ -114,7 +115,9 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     skill: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentSkill),
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
-    profile: agent.accessor.get(IAgentProfileService),
+    profile: agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentProfile),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: {
       setMode: (mode: PromptPermissionMode) => {
@@ -146,7 +149,7 @@ async function assertActivatableSkills(
 }
 
 async function applyProfileSelection(
-  profile: IAgentProfileService,
+  profile: ProfileRuntime,
   profileName: string,
   model: string | undefined,
   thinking: string | undefined,

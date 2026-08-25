@@ -38,9 +38,9 @@ import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolRe
 import { IEventBus } from '#/app/event/eventBus';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { profileKey } from '#/agent/profile/profileOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
@@ -48,6 +48,7 @@ import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { PromptOrigin } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { stubProfileRuntime } from '../../features/profile/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -145,21 +146,28 @@ function createHarness(
       reg.defineInstance(IEventDispatcher, dispatcher);
       reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
       const agentState = new AgentStateService();
-      agentState.contributeState(profileKey);
-      agentState.set(profileKey, {
-        thinkingLevel: 'off',
-        renderGeneration: 0,
-        systemPrompt: options.restoredProfile?.systemPrompt ?? '',
-        agentsMdPaths: options.restoredProfile?.agentsMdPaths,
-      });
       reg.defineInstance(IAgentStateService, agentState);
       reg.defineInstance(
         IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub({
-          notify: (content, notification) => {
-            reminders.push({ content, origin: { kind: 'injection', ...notification } });
-          },
-        })),
+        lifecycleWithReminder(
+          createReminderStub({
+            notify: (content, notification) => {
+              reminders.push({ content, origin: { kind: 'injection', ...notification } });
+            },
+          }),
+          undefined,
+          undefined,
+          undefined,
+          stubProfileRuntime({
+            data: () => ({
+              modelCapabilities: UNKNOWN_CAPABILITY,
+              thinkingLevel: 'off',
+              systemPrompt: options.restoredProfile?.systemPrompt ?? '',
+              agentsMdPaths: options.restoredProfile?.agentsMdPaths,
+              disallowedTools: [],
+            }),
+          }),
+        ),
       );
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,

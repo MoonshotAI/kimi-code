@@ -5,7 +5,9 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -23,7 +25,8 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   constructor(
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IEventBus eventBus: IEventBus,
@@ -44,6 +47,10 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         }
       }),
     );
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   activate(): Promise<void> {

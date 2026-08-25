@@ -2,8 +2,8 @@
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+import { agentContextOf, tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -96,10 +96,12 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
-  const childProfile = requester.accessor
-    .get(IAgentLifecycleService)
-    .handleOf(targetAgentId)
-    ?.accessor.get(IAgentProfileService);
+  const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
+  const childHandle = agentLifecycle.handleOf(targetAgentId);
+  const childProfile =
+    childHandle === undefined
+      ? undefined
+      : agentLifecycle.resolve(agentContextOf(childHandle), AgentProfile);
   void requester.accessor.get(IEventDispatcher)?.dispatch(
     new SubagentSpawned({
       subagentId: targetAgentId,
@@ -112,7 +114,7 @@ export function emitAgentRunSpawned(
       swarmIndex: meta.swarmIndex,
       runInBackground: meta.runInBackground ?? false,
       model: meta.model,
-      thinkingEffort: childProfile?.getEffectiveThinkingLevel(),
+      thinkingEffort: childProfile?.effectiveThinkingLevel(),
       taskId: meta.taskId,
     }),
   );

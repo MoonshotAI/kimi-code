@@ -8,7 +8,7 @@ import type {
   RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import type { BindAgentInput } from '#/agent/profile/profile';
+import type { BindAgentInput } from '#/features/profile/profile';
 
 export interface AgentScopeCreatedEvent {
   readonly context: AgentContext;

@@ -8,9 +8,12 @@ import { LifecycleScope } from '#/app/scopes';
 import { type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import '#/agent/profile/profileService';
-import { ProfileBind } from '#/agent/profile/profileOps';
+import {
+  AgentProfile,
+  profileAgentRuntimeProvider,
+} from '#/features/profile/profileAgentRuntime';
+import { ProfileBind } from '#/features/profile/profileOps';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
@@ -463,6 +466,12 @@ describe('AgentLifecycleService', () => {
       'test-permission-mode',
       new Ledger('test-permission-mode'),
       permissionModeAgentRuntimeProvider,
+    );
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-profile',
+      new Ledger('test-profile'),
+      profileAgentRuntimeProvider,
     );
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
@@ -1174,7 +1183,8 @@ describe('AgentLifecycleService', () => {
   it('fork copies the bound profile snapshot without catalog resolution', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
-    svc.handleOf('main')!.accessor.get(IAgentProfileService).applyBindingSnapshot({
+    svc.resolve(source, AgentProfile).applyData({
+      modelCapabilities: UNKNOWN_CAPABILITY,
       profileName: 'deleted-profile',
       thinkingLevel: 'high',
       systemPrompt: 'original prompt',
@@ -1185,7 +1195,7 @@ describe('AgentLifecycleService', () => {
 
     const child = await svc.fork(source, { agentId: 'forked' });
 
-    expect(svc.handleOf(child.agentId)!.accessor.get(IAgentProfileService).data()).toMatchObject({
+    expect(svc.resolve(child, AgentProfile).data()).toMatchObject({
       profileName: 'deleted-profile',
       thinkingLevel: 'high',
       systemPrompt: 'original prompt',

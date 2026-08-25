@@ -13,7 +13,6 @@
  * status badge. Session creation still goes through the v1 REST endpoint.
  */
 
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import {
@@ -210,14 +209,18 @@ export function Sidebar({
     }
     const sessionId = envelope.data.id;
     // The REST create route ignores agent_config, so bind the default model
-    // over the channel — the same resume + setModel path the Model Catalog's
-    // "+ Session" button uses. Best-effort: a failure leaves the session
-    // model-less instead of blocking the creation flow.
+    // through the profile update route — the same resume + setModel path the
+    // Model Catalog's "+ Session" button uses. Best-effort: a failure leaves
+    // the session model-less instead of blocking the creation flow.
     try {
       const model = await resolveDefaultModel(klient);
       if (model !== undefined) {
         await klient.core(ISessionManager).resume(sessionId);
-        await klient.session(sessionId).agent('main').service(IAgentProfileService).setModel(model);
+        await fetch(`${baseUrl}/api/v1/sessions/${sessionId}/profile`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ agent_config: { model } }),
+        });
       }
     } catch (error) {
       console.warn('failed to set the default model on the new session', error);

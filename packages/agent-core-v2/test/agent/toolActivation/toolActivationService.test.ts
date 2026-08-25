@@ -14,9 +14,13 @@ import {
   type ScopeSeed,
 } from '#/_base/di/scope';
 import { createServices } from '#/_base/di/test';
+import { stubProfileRuntime } from '../../features/profile/stubs';
 import { IEventBus } from '#/app/event/eventBus';
 import { Emitter, Event } from '#/_base/event';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ProfileData } from '#/features/profile/profile';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
@@ -140,6 +144,8 @@ describe('AgentToolActivationService', () => {
     disallowedTools?: readonly string[];
   } = {};
   const gateData: { disabledTools: readonly string[] } = { disabledTools: [] };
+  const profileRuntime = (): ProfileRuntime =>
+    stubProfileRuntime({ data: () => profileData as ProfileData });
   const runtimeChangeEmitter = new Emitter<void>();
   const runtimeData = {
     available: true,
@@ -151,9 +157,13 @@ describe('AgentToolActivationService', () => {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
-        reg.definePartialInstance(IAgentProfileService, {
-          data: () => profileData as ProfileData,
+        reg.definePartialInstance(IAgentLifecycleService, {
+          resolve: (() => profileRuntime()) as IAgentLifecycleService['resolve'],
         });
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+        );
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
         });
@@ -455,7 +465,8 @@ describe('AgentToolActivationService', () => {
 
     function agentSeeds(extra: ScopeSeed = []): ScopeSeed {
       return [
-        [IAgentProfileService, { data: () => profileData as ProfileData }],
+        [IAgentLifecycleService, { resolve: () => profileRuntime() }],
+        [IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' })],
         [IEventBus, { subscribe: () => toDisposable(() => {}) }],
         [
           IAgentRuntimeService,

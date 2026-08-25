@@ -1,8 +1,8 @@
 import {
   ErrorCodes,
   AgentContextMemory,
+  AgentProfile,
   IAgentLifecycleService,
-  IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentLoopService,
@@ -819,7 +819,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       }
       try {
         const agent = await ensureMainAgent(session);
-        const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
+        const agentsMdWarning = agent.accessor
+          .get(IAgentLifecycleService)
+          .resolve(agentContextOf(agent), AgentProfile)
+          .agentsMdWarning();
         const warnings =
           agentsMdWarning === undefined
             ? []

@@ -6,6 +6,7 @@ import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IEventBus } from '#/app/event/eventBus';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import type { PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
@@ -20,6 +21,7 @@ import type {
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubPermissionModeRuntime } from '../permissionMode/stubs';
+import { stubProfileRuntime } from '../profile/stubs';
 import { stubUsage } from '../usage/stubs';
 
 export function createReminderStub(input: {
@@ -39,12 +41,14 @@ export function lifecycleWithReminder(
   contextMemory: ContextMemoryRuntime = stubContextMemory(),
   usage: UsageRuntime = stubUsage(),
   permissionMode: PermissionModeRuntime = stubPermissionModeRuntime(() => 'manual'),
+  profile: ProfileRuntime = stubProfileRuntime(),
 ): IAgentLifecycleService {
   return {
     resolve: (_agent: unknown, definition: unknown) => {
       if (definition === AgentContextMemory) return contextMemory;
       if (definition === AgentUsage) return usage;
       if (definition === AgentPermissionMode) return permissionMode;
+      if (definition === AgentProfile) return profile;
       return reminder;
     },
     handleOf: () => ({}),

@@ -29,7 +29,7 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 
@@ -1440,14 +1440,14 @@ describe('AgentMcpService', () => {
 describe('AgentMcpService + AgentProfileService', () => {
   let ctx: TestAgentContext;
   let manager: FakeMcpManager;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
 
   beforeEach(() => {
     manager = new FakeMcpManager();
     ctx = createTestAgent(mcpServices({ manager: manager as unknown as McpConnectionManager }));
     const mcp = ctx.get(IAgentMcpService);
     mcp.list();
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
   });
 
   afterEach(async () => {

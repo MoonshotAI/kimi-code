@@ -29,7 +29,7 @@ import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSel
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
-  IAgentProfileService,
+  AgentProfile,
   IAgentToolRegistryService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
@@ -362,8 +362,8 @@ describe('FullCompaction', () => {
         { autoConfigure: false, cwd: workDir },
       );
       ctx.configureRuntimeModel(CATALOGUED_PROVIDER, CATALOGUED_MODEL_CAPABILITIES);
-      const profile = ctx.get(IAgentProfileService);
-      await profile.applyProfile(EXACT_COMPACTION_PROFILE);
+      const profile = ctx.resolve(AgentProfile);
+      await profile.apply(EXACT_COMPACTION_PROFILE);
       profile.update({ activeToolNames: ['Read'] });
 
       const before = profile.data().systemPrompt;
@@ -379,7 +379,7 @@ describe('FullCompaction', () => {
       await completed;
 
       expect(profile.data().systemPrompt).toBe(before);
-      expect(profile.getActiveToolNames()).toEqual(['Read']);
+      expect(profile.activeTools()).toEqual(['Read']);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       rmSync(workDir, { recursive: true, force: true });
@@ -2645,7 +2645,7 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
+    ctx.resolve(AgentProfile).update({ thinkingLevel: 'high' });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -2699,7 +2699,7 @@ describe('FullCompaction', () => {
       Object.defineProperty(resolved, 'capabilities', { value: UNKNOWN_CAPABILITY });
       return resolved;
     };
-    expect(ctx.get(IAgentProfileService).data().modelCapabilities.max_context_tokens).toBe(0);
+    expect(ctx.resolve(AgentProfile).data().modelCapabilities.max_context_tokens).toBe(0);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 

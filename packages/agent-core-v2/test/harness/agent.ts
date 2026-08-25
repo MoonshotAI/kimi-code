@@ -36,7 +36,7 @@ import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedu
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
-import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
+import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/features/profile/profileContext';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -44,7 +44,8 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
-import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type AgentConfigData } from '#/features/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type {
@@ -59,7 +60,7 @@ import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/g
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
-import type { ProfileSetModelResult } from '#/agent/profile/profile';
+import type { ProfileSetModelResult } from '#/features/profile/profile';
 import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
@@ -179,7 +180,6 @@ import {
   AgentMcpService,
   AgentPermissionGate,
   AgentPermissionRules,
-  AgentProfileService,
   SyncDescriptor,
   AgentUserToolService,
   SessionWorkspaceContextService,
@@ -1350,7 +1350,6 @@ export class AgentTestContext {
               new SyncDescriptor(EventDispatcherService),
             );
             reg.defineDescriptor(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
-            reg.defineDescriptor(IAgentProfileService, new SyncDescriptor(AgentProfileService));
             reg.defineDescriptor(
               IAgentLLMRequesterService,
               new SyncDescriptor(AgentLLMRequesterService),
@@ -1587,7 +1586,7 @@ export class AgentTestContext {
     this.get(IAgentUserToolService);
     this.get(IAgentLLMRequesterService);
     this.get(IAgentFullCompactionService);
-    this.get(IAgentProfileService);
+    this.resolve(AgentProfile);
     const agentState = this.get(IAgentStateService);
     const expected = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.map((key) => key.name));
     const contributed = new Set(agentState.replayableKeys().map((key) => key.name));
@@ -1606,7 +1605,7 @@ export class AgentTestContext {
     modelCapabilities,
   }: ConfigureOptions = {}): void {
     this.configureRuntimeModel(provider, modelCapabilities);
-    const profile = this.get(IAgentProfileService);
+    const profile = this.resolve(AgentProfile);
     profile.update({
       modelAlias: provider.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
@@ -1630,7 +1629,7 @@ export class AgentTestContext {
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
     (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
-    const profile = this.get(IAgentProfileService);
+    const profile = this.resolve(AgentProfile);
     profile.update({ modelAlias: provider.model });
   }
 
@@ -2189,9 +2188,9 @@ export class AgentTestContext {
       runShellCommand: (payload) => this.get(IAgentShellCommandService).run(payload),
       cancelShellCommand: (payload) =>
         this.get(IAgentShellCommandService).cancel(payload.commandId),
-      setThinking: (payload) => this.get(IAgentProfileService).setThinking(payload.level),
-      setModel: (payload) => this.get(IAgentProfileService).setModel(payload.model),
-      getModel: () => this.get(IAgentProfileService).getModel(),
+      setThinking: (payload) => this.resolve(AgentProfile).setThinking(payload.level),
+      setModel: (payload) => this.resolve(AgentProfile).setModel(payload.model),
+      getModel: () => this.resolve(AgentProfile).model(),
       enterPlan: () => this.get(IAgentPlanService).enter(),
       cancelPlan: (payload) => this.get(IAgentPlanService).cancel(payload.id),
       clearPlan: () => this.get(IAgentPlanService).clear(),
@@ -2207,7 +2206,7 @@ export class AgentTestContext {
       registerTool: (payload) => this.get(IAgentUserToolService).register(payload),
       unregisterTool: (payload) => this.get(IAgentUserToolService).unregister(payload.name),
       setActiveTools: (payload) =>
-        this.get(IAgentProfileService).update({ activeToolNames: payload.names }),
+        this.resolve(AgentProfile).update({ activeToolNames: payload.names }),
       stopTask: (payload) => {
         const tasks = this.get(IAgentTaskService);
         if (payload.reason === undefined) {
@@ -2225,7 +2224,7 @@ export class AgentTestContext {
       cancelGoal: () => this.resolve(AgentGoal).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
-      getConfig: () => this.get(IAgentProfileService).data(),
+      getConfig: () => this.resolve(AgentProfile).data(),
       getPermission: () => this.get(IAgentPermissionGate).data(),
       getPlan: () => this.get(IAgentPlanService).status(),
       getUsage: () => this.usage.status(),
@@ -2274,7 +2273,7 @@ export class AgentTestContext {
     const context = this.resolve(AgentContextMemory);
     const tokenCounting = this.tokenCounting;
     tokenCounting.measured(context.get(), [], usage);
-    const profile = this.get(IAgentProfileService);
+    const profile = this.resolve(AgentProfile);
     void this.usage.record(profile.data().modelAlias ?? 'mock-model', usage, {
       type: 'turn',
       turnId: context.get().length,
@@ -2444,7 +2443,7 @@ function taskNotificationKey(taskId: string, status: string): string {
 }
 
 function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config'] {
-  const profile = ctx.get(IAgentProfileService);
+  const profile = ctx.resolve(AgentProfile);
   const data = profile.data();
   let model: Model | undefined;
   try {

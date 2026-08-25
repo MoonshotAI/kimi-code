@@ -38,7 +38,9 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IModelCatalog } from '#/kosong/model/catalog';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -868,9 +870,13 @@ describe('AgentMediaToolsRegistrar', () => {
       capabilities: capabilities({ image_in: false, video_in: false }),
     };
     const profile = {
-      getModelCapabilities: () => state.capabilities,
-      getModel: () => state.alias,
-    } as unknown as IAgentProfileService;
+      modelCapabilities: () => state.capabilities,
+      model: () => state.alias,
+    } as unknown as ProfileRuntime;
+    const manager = {
+      resolve: () => profile,
+    } as unknown as IAgentLifecycleService;
+    const scopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
     const brokenAliases = new Set<string>();
     const modelCatalog = {
       getRequester: (id: string) => {
@@ -896,7 +902,8 @@ describe('AgentMediaToolsRegistrar', () => {
     };
     const registrar = new AgentMediaToolsRegistrar(
       registry,
-      profile,
+      manager,
+      scopeContext,
       modelCatalog,
       eventBus,
       runtime,

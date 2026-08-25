@@ -9,7 +9,7 @@ import {
   AgentGoal,
   IAgentLifecycleService,
   ISessionPermissionModeService,
-  IAgentProfileService,
+  AgentProfile,
   IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
@@ -128,16 +128,14 @@ function makeFakeHarness() {
   const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
+  const profile = {
+    bind: vi.fn(async () => {}),
+    setModel: vi.fn(async () => ({ model: 'k2' })),
+    model: () => 'k2',
+    data: () => ({ profileName: profileState.profileName }),
+  };
   const agentServices = new Map<unknown, unknown>([
-    [
-      IAgentProfileService,
-      {
-        bind: vi.fn(async () => {}),
-        setModel: vi.fn(async () => ({ model: 'k2' })),
-        getModel: () => 'k2',
-        data: () => ({ profileName: profileState.profileName }),
-      },
-    ],
+    [AgentProfile, profile],
     [ISessionPermissionModeService, { mode: () => 'auto', setMode: vi.fn() }],
     [IAuthSummaryService, { ensureReady: vi.fn(async () => {}) }],
     [
@@ -186,6 +184,7 @@ function makeFakeHarness() {
         resolve: vi.fn((_context: unknown, capability: unknown) => {
           if (capability === AgentGoal) return goal;
           if (capability === AgentCron) return cron;
+          if (capability === AgentProfile) return profile;
           throw new Error('unexpected capability');
         }),
       },
@@ -355,7 +354,7 @@ describe('runV2Print', () => {
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'reviewer', model: 'k2' },
     });
-    const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
+    const profile = agentServices.get(AgentProfile) as { bind: ReturnType<typeof vi.fn> };
     expect(profile.bind).not.toHaveBeenCalled();
   });
 
@@ -387,7 +386,7 @@ describe('runV2Print', () => {
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'file-reviewer', model: 'k2' },
     });
-    const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
+    const profile = agentServices.get(AgentProfile) as { bind: ReturnType<typeof vi.fn> };
     expect(profile.bind).not.toHaveBeenCalled();
   });
 
@@ -421,7 +420,7 @@ describe('runV2Print', () => {
       runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', { stdout, stderr }),
     ).rejects.toThrow(/Invalid agent file/);
 
-    const profile = agentServices.get(IAgentProfileService) as {
+    const profile = agentServices.get(AgentProfile) as {
       bind: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
@@ -476,7 +475,7 @@ describe('runV2Print', () => {
       stderr,
     });
 
-    const profile = agentServices.get(IAgentProfileService) as {
+    const profile = agentServices.get(AgentProfile) as {
       bind: ReturnType<typeof vi.fn>;
       setModel: ReturnType<typeof vi.fn>;
     };
@@ -502,7 +501,7 @@ describe('runV2Print', () => {
       { stdout, stderr },
     );
 
-    const profile = agentServices.get(IAgentProfileService) as {
+    const profile = agentServices.get(AgentProfile) as {
       bind: ReturnType<typeof vi.fn>;
       setModel: ReturnType<typeof vi.fn>;
     };

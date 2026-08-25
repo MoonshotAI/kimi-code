@@ -13,7 +13,10 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { type ProfileData } from '#/features/profile/profile';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { stubProfileRuntime } from '../../../../features/profile/stubs';
 import {
   _clearAgentToolContributionsForTests,
   AgentToolContribution,
@@ -357,6 +360,10 @@ describe('GrepTool', () => {
             _serviceBrand: undefined,
             catalog: { getSkillRoots: () => [] },
           } as unknown as ISessionSkillCatalog);
+          reg.defineInstance(
+            IAgentScopeContext,
+            makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+          );
           reg.define(IGrepTool, ProductionGrepTool);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
           reg.define(IAgentToolActivationService, AgentToolActivationService);
@@ -365,8 +372,11 @@ describe('GrepTool', () => {
             disabledTools: [],
             onDidChange: Event.None as Event<void>,
           } satisfies ISessionToolPolicyGate);
-          reg.definePartialInstance(IAgentProfileService, {
-            data: () => ({}) as unknown as ProfileData,
+          reg.definePartialInstance(IAgentLifecycleService, {
+            resolve: (() =>
+              stubProfileRuntime({
+                data: () => ({}) as unknown as ProfileData,
+              })) as IAgentLifecycleService['resolve'],
           });
           reg.definePartialInstance(IEventBus, {
             subscribe: () => toDisposable(() => {}),

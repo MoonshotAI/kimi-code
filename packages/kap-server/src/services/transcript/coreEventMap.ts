@@ -20,7 +20,7 @@ import type {
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/app/event/agentEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
-import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
+import type { WarningIssued } from '@moonshot-ai/agent-core-v2/features/profile/profileOps';
 import type {
   PromptAborted,
   PromptCompleted,

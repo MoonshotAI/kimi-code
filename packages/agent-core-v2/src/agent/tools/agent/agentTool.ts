@@ -12,7 +12,7 @@ import {
   IAgentTaskService,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
@@ -31,7 +31,7 @@ import {
   registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
-import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import {
   rootDelegationExtras,
@@ -95,15 +95,14 @@ export class SubagentTool implements ISubagentTool {
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
   private catalogReady = false;
-  private frozenCatalogProfiles: readonly AgentProfile[] | undefined;
+  private frozenCatalogProfiles: readonly CatalogAgentProfile[] | undefined;
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
@@ -120,6 +119,10 @@ export class SubagentTool implements ISubagentTool {
     void this.catalog.ready.then(() => {
       this.catalogReady = true;
     });
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   get description(): string {
@@ -157,7 +160,7 @@ export class SubagentTool implements ISubagentTool {
     return description;
   }
 
-  private catalogProfiles(): readonly AgentProfile[] {
+  private catalogProfiles(): readonly CatalogAgentProfile[] {
     if (this.frozenCatalogProfiles !== undefined) return this.frozenCatalogProfiles;
     const profiles = this.catalog.list();
     if (this.catalogReady) this.frozenCatalogProfiles = profiles;
@@ -169,7 +172,7 @@ export class SubagentTool implements ISubagentTool {
       readonly profileName?: string;
       readonly subagents?: readonly string[];
     },
-    profiles: readonly AgentProfile[],
+    profiles: readonly CatalogAgentProfile[],
   ): readonly string[] | undefined {
     if (this.callerAgentId !== 'main') return undefined;
     return rootDelegationExtras(this.catalog, own, profiles);
@@ -180,7 +183,7 @@ export class SubagentTool implements ISubagentTool {
       readonly profileName?: string;
       readonly subagents?: readonly string[];
     },
-    profiles: readonly AgentProfile[],
+    profiles: readonly CatalogAgentProfile[],
   ): readonly string[] | undefined {
     const allowlist = subagentAllowlistFor(
       this.catalog,
@@ -253,7 +256,9 @@ export class SubagentTool implements ISubagentTool {
   private resumeProfileName(agentId: string): string | undefined {
     const target = this.agentLifecycle.handleOf(agentId);
     if (target === undefined) return undefined;
-    return target.accessor.get(IAgentProfileService).data().profileName;
+    return this.agentLifecycle
+      .resolve(target.accessor.get(IAgentScopeContext).agentContext, AgentProfile)
+      .data().profileName;
   }
 
   private async launch(
@@ -286,7 +291,9 @@ export class SubagentTool implements ISubagentTool {
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       agentId = target.id;
-      const resumed = target.accessor.get(IAgentProfileService).data();
+      const resumed = this.agentLifecycle
+        .resolve(target.accessor.get(IAgentScopeContext).agentContext, AgentProfile)
+        .data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
       displayModel = resumed.modelAlias;
     } else {
@@ -329,9 +336,13 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
-      thinkingEffort: this.agentLifecycle.handleOf(agentId)
-        ?.accessor.get(IAgentProfileService)
-        .getEffectiveThinkingLevel(),
+      thinkingEffort: (() => {
+        const handle = this.agentLifecycle.handleOf(agentId);
+        if (handle === undefined) return undefined;
+        return this.agentLifecycle
+          .resolve(handle.accessor.get(IAgentScopeContext).agentContext, AgentProfile)
+          .effectiveThinkingLevel();
+      })(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
     };
   }
@@ -512,7 +523,7 @@ registerAgentToolService(ISubagentTool, SubagentTool, {
 });
 
 function buildProfileDescriptions(
-  profiles: readonly AgentProfile[],
+  profiles: readonly CatalogAgentProfile[],
   tools: readonly ToolReference[],
   isToolActive: (
     profile: { readonly tools?: readonly string[]; readonly disallowedTools?: readonly string[] },

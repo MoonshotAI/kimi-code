@@ -15,7 +15,7 @@ import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/age
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
@@ -32,8 +32,8 @@ export type PromptLaunchResult = Awaited<ReturnType<IAgentPromptService['submit'
 export type PromptWithSkillsInput = Parameters<SkillRuntime['promptWithSkills']>[0];
 export type PromptWithSkillsResult = Awaited<ReturnType<SkillRuntime['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
-export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
-export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
+export type SetModelResult = Awaited<ReturnType<ProfileRuntime['setModel']>>;
+export type ThinkingLevel = ReturnType<ProfileRuntime['effectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 export type AgentContextData = {
   history: ReturnType<ContextMemoryRuntime['get']>;

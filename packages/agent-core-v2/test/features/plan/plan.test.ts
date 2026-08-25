@@ -14,7 +14,7 @@ import {
   AgentPermissionRules,
   type PermissionRulesRuntime,
 } from '#/features/permissionRules/permissionRulesAgentRuntime';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
@@ -81,7 +81,7 @@ describe('Plan service', () => {
   let ctx: TestAgentContext;
   let permissionRules: PermissionRulesRuntime;
   let plan: IAgentPlanService;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let tempDirs: string[];
 
   beforeEach(async () => {
@@ -96,7 +96,7 @@ describe('Plan service', () => {
     context = ctx.resolve(AgentContextMemory);
     permissionRules = ctx.resolve(AgentPermissionRules);
     plan = ctx.get(IAgentPlanService);
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
   });

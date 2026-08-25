@@ -9,7 +9,7 @@ import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemo
 import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -44,10 +44,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
@@ -79,6 +78,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.states.get(toolSelectPendingLoadedKey);
   }
 
+  private profile(): ProfileRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
+  }
+
   private dropPendingLoadedNotLanded(): void {
     if (this.pendingLoaded.size === 0) return;
     const landed = collectLoadedDynamicToolNames(this.context.get());
@@ -88,7 +91,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   enabled(): boolean {
-    const capabilities = this.profile.getModelCapabilities();
+    const capabilities = this.profile().modelCapabilities();
     return (
       capabilities.dynamically_loaded_tools === true &&
       capabilities.tool_use &&

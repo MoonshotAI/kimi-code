@@ -11,9 +11,11 @@ import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import {
   normalizeAgentProfile,
-  type AgentProfile,
+  type AgentProfile as CatalogAgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { type ProfileData } from '#/features/profile/profile';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -49,7 +51,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let callerData: ProfileData;
-  let profiles: AgentProfile[];
+  let profiles: CatalogAgentProfile[];
   let modelIds: Set<string>;
   let modelMeta: Map<string, Partial<Model>>;
   let caller: IAgentScopeHandle;
@@ -75,12 +77,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     } as unknown as IAgentUserToolService;
   }
 
-  function profileServiceStub(data: ProfileData): IAgentProfileService {
+  function profileServiceStub(data: ProfileData): ProfileRuntime {
     return {
-      _serviceBrand: undefined,
       data: () => data,
-      getActiveToolNames: () => data.activeToolNames,
-    } as unknown as IAgentProfileService;
+      activeTools: () => data.activeToolNames,
+    } as unknown as ProfileRuntime;
   }
 
   function createdHandle(agentId: string): IAgentScopeHandle {
@@ -89,9 +90,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       kind: LifecycleScope.Agent,
       accessor: {
         get: (serviceId: unknown) => {
-          if (serviceId === IAgentProfileService) {
-            return profileServiceStub({ ...callerData, modelCapabilities: {} as never });
-          }
           if (serviceId === IAgentScopeContext) {
             return { agentContext: stubAgentContext(agentId, 1) };
           }
@@ -141,7 +139,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       kind: LifecycleScope.Agent,
       accessor: {
         get: (serviceId: unknown) => {
-          if (serviceId === IAgentProfileService) return profileServiceStub(callerData);
           if (serviceId === ISessionPermissionModeService) return sessionPermissionModes;
           if (serviceId === IAgentUserToolService) return callerUserTools;
           if (serviceId === IAgentRuntimeService) {
@@ -184,6 +181,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       get: (agentId: string) => (agentId === CALLER_ID ? stubAgentContext(CALLER_ID, 1) : undefined),
       handleOf: (agentId: string) =>
         agentId === CALLER_ID ? caller : createdHandles.get(agentId),
+      resolve: (agent: AgentContext, definition: unknown) => {
+        if (definition !== AgentProfile) return undefined;
+        return agent.agentId === CALLER_ID
+          ? profileServiceStub(callerData)
+          : profileServiceStub({ ...callerData, modelCapabilities: {} as never });
+      },
       list: () => [stubAgentContext(CALLER_ID, 1)],
       remove: async () => {},
       broadcastPermissionMode: () => {},

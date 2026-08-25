@@ -23,7 +23,8 @@ import {
   AgentGoal,
   IAgentLifecycleService,
   ISessionPermissionModeService,
-  IAgentProfileService,
+  AgentProfile,
+  type ProfileRuntime,
   IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
@@ -317,7 +318,7 @@ async function resolveNativeSession(
   // together with --session/--continue, so resume paths only apply an
   // explicitly requested model — the bound profile is restored by the engine.
   const applyModelOverride = async (
-    profile: IAgentProfileService,
+    profile: ProfileRuntime,
     model: string | undefined,
   ): Promise<void> => {
     if (model !== undefined) await profile.setModel(model);
@@ -360,9 +361,11 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-    const profile = agent.accessor.get(IAgentProfileService);
+    const profile = session.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentProfile);
     await applyModelOverride(profile, opts.model);
-    const currentModel = profile.getModel();
+    const currentModel = profile.model();
     const { restorePermission } = forceAuto(agent);
     return {
       session,
@@ -380,9 +383,11 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
       const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-      const profile = agent.accessor.get(IAgentProfileService);
+      const profile = session.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentProfile);
       await applyModelOverride(profile, opts.model);
-      const currentModel = profile.getModel();
+      const currentModel = profile.model();
       const { restorePermission } = forceAuto(agent);
       return {
         session,

@@ -2,7 +2,7 @@ import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
@@ -25,7 +25,7 @@ function defaultGenerate(): ReturnType<GenerateFn> {
 
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
@@ -42,7 +42,7 @@ describe('ConfigState model capabilities', () => {
       llmGenerateServices((...args) => generate(...args)),
       telemetryServices(recordingTelemetry(records)),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     requester = ctx.get(IAgentLLMRequesterService);
   });
 
@@ -76,9 +76,9 @@ describe('ConfigState model capabilities', () => {
 
     profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
 
-    expect(profile.getModel()).toBe('kimi-code/kimi-for-coding');
+    expect(profile.model()).toBe('kimi-code/kimi-for-coding');
     expect(ctx.modelResolver.get('kimi-code/kimi-for-coding').name).toBe('kimi-for-coding');
-    expect(profile.getModelCapabilities()).toMatchObject({
+    expect(profile.modelCapabilities()).toMatchObject({
       image_in: true,
       video_in: true,
       audio_in: false,
@@ -180,7 +180,7 @@ describe('ConfigState model capabilities', () => {
 
     profile.update({ modelAlias: 'kimi-code' });
 
-    expect(profile.getModelCapabilities()).toMatchObject({
+    expect(profile.modelCapabilities()).toMatchObject({
       image_in: false,
       video_in: false,
       audio_in: false,
@@ -231,7 +231,7 @@ describe('ConfigState model capabilities', () => {
 
 describe('ConfigState prompt cache hint', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let kimiConfig: TestKimiConfig;
 
   beforeEach(() => {
@@ -255,7 +255,7 @@ describe('ConfigState prompt cache hint', () => {
       configServices(() => kimiConfig),
       modelProviderOptionServices({ promptCacheKey: 'session-test' }),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
   });
 
   afterEach(async () => {
@@ -278,7 +278,7 @@ describe('ConfigState prompt cache hint', () => {
 
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
@@ -341,7 +341,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         };
       }),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     requester = ctx.get(IAgentLLMRequesterService);
   });
 
@@ -462,7 +462,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
@@ -516,7 +516,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
         };
       }),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     requester = ctx.get(IAgentLLMRequesterService);
   }
 
@@ -559,7 +559,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
     profile.update({ modelAlias: 'kimi-code-anthropic', thinkingLevel: 'high' });
     expect(profile.data().thinkingLevel).toBe('high');
-    expect(profile.resolveModelContext().thinkingLevel).toBe('max');
+    expect(profile.modelContext().thinkingLevel).toBe('max');
     const statusEvent = ctx?.allEvents.findLast(
       (event) =>
         event.event === 'agent.status.updated' &&

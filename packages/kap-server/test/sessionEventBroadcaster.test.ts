@@ -23,7 +23,7 @@ import {
   IAgentActivityView,
   LifecycleScope,
   IAgentLifecycleService,
-  IAgentProfileService,
+  AgentProfile,
   IAgentScopeContext,
   IEventBus,
   IEventService,
@@ -117,6 +117,9 @@ class FakeAgentHandle {
     this.context = scope.agentContext;
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
+    this.services.set(IAgentLifecycleService, {
+      resolve: (_agent: unknown, definition: unknown) => this.services.get(definition),
+    });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
     };
@@ -653,9 +656,9 @@ describe('SessionEventBroadcaster', () => {
     main.set(ISessionTokenCountingService, {
       statusSize: () => contextSize,
     });
-    main.set(IAgentProfileService, {
-      getModel: () => 'example-model',
-      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    main.set(AgentProfile, {
+      model: () => 'example-model',
+      modelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     main.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
@@ -696,9 +699,9 @@ describe('SessionEventBroadcaster', () => {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
     sub.set(ISessionTokenCountingService, { statusSize: () => 10 });
-    sub.set(IAgentProfileService, {
-      getModel: () => 'sub-model',
-      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    sub.set(AgentProfile, {
+      model: () => 'sub-model',
+      modelCapabilities: () => ({ max_context_tokens: 128_000 }),
     });
     sub.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
@@ -730,9 +733,9 @@ describe('SessionEventBroadcaster', () => {
       total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     };
     main.set(ISessionTokenCountingService, { statusSize: () => 10 });
-    main.set(IAgentProfileService, {
-      getModel: () => 'example-model',
-      getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
+    main.set(AgentProfile, {
+      model: () => 'example-model',
+      modelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
     });
     main.set(ISessionUsageService, { status: () => usage });
     sessions.set('s1', lc);
@@ -752,9 +755,9 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     main.set(ISessionTokenCountingService, { statusSize: () => 10 });
-    main.set(IAgentProfileService, {
-      getModel: () => 'ghost-model',
-      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    main.set(AgentProfile, {
+      model: () => 'ghost-model',
+      modelCapabilities: () => ({ max_context_tokens: 0 }),
     });
     main.set(ISessionUsageService, { status: () => ({}) });
     sessions.set('s1', lc);
@@ -775,9 +778,9 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     main.set(ISessionTokenCountingService, { statusSize: () => 10 });
-    main.set(IAgentProfileService, {
-      getModel: () => '',
-      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    main.set(AgentProfile, {
+      model: () => '',
+      modelCapabilities: () => ({ max_context_tokens: 0 }),
     });
     main.set(ISessionUsageService, { status: () => ({}) });
     main.set(IModelService, { getDefaultModel: () => 'default-model' });
@@ -803,9 +806,9 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     main.set(ISessionTokenCountingService, { statusSize: () => 10 });
-    main.set(IAgentProfileService, {
-      getModel: () => '',
-      getModelCapabilities: () => ({ max_context_tokens: 0 }),
+    main.set(AgentProfile, {
+      model: () => '',
+      modelCapabilities: () => ({ max_context_tokens: 0 }),
     });
     main.set(ISessionUsageService, { status: () => ({}) });
     main.set(IModelService, { getDefaultModel: () => 'removed-model' });

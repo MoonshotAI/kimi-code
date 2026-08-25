@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { AgentContextMemory, type ContextMemoryRuntime, IAgentProfileService } from '#/index';
+import { AgentContextMemory, AgentProfile, type ContextMemoryRuntime, type ProfileRuntime } from '#/index';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { ContextAppendMessage } from '#/features/contextMemory/contextEvents';
 import {
@@ -22,14 +22,14 @@ describe('Agent token counting (AgentTokenCounting)', () => {
   let ctx: TestAgentContext;
   let context: ContextMemoryRuntime;
   let tokenCounting: TestAgentContext['tokenCounting'];
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let usage: TestAgentContext['usage'];
 
   beforeEach(() => {
     ctx = createTestAgent();
     context = ctx.resolve(AgentContextMemory);
     tokenCounting = ctx.tokenCounting;
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
     usage = ctx.usage;
   });
 
@@ -294,7 +294,7 @@ describe('Agent token counting (AgentTokenCounting)', () => {
     const persistence = new InMemoryWireRecordPersistence();
     const live = createTestAgent({ persistence });
     try {
-      live.get(IAgentProfileService).update({ activeToolNames: [] });
+      live.resolve(AgentProfile).update({ activeToolNames: [] });
 
       live.mockNextResponse({ type: 'text', text: 'Hi there!' });
       await live.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });

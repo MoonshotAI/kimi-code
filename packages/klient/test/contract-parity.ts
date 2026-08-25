@@ -26,7 +26,7 @@ import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/comm
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
@@ -636,7 +636,7 @@ type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
 type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 type RunShellCommandPayload = Parameters<IAgentShellCommandService['run']>[0];
 type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
-type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
+type SetModelResult = Awaited<ReturnType<ProfileRuntime['setModel']>>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
 type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
 

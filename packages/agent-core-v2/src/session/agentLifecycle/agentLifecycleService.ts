@@ -21,8 +21,8 @@ import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAge
 import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { profileKey } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -32,7 +32,6 @@ import {
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
@@ -42,7 +41,6 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IWireService } from '#/wire/wire';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -293,7 +291,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     opts: CreateAgentOptions,
   ): Promise<void> {
     if (opts.binding !== undefined) {
-      await handle.accessor.get(IAgentProfileService).bind(opts.binding);
+      await this.resolve(agentContextOf(handle), AgentProfile).bind(opts.binding);
     }
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
     const bridge = handle.accessor.get(ISessionPermissionModeService);
@@ -324,10 +322,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       forkedFrom: source.id,
       labels: opts?.labels,
     });
-    const child = this.requireManaged(childContext).handle;
 
-    const sourceData = source.accessor.get(IAgentProfileService).data();
-    const childProfile = child.accessor.get(IAgentProfileService);
+    const sourceData = this.resolve(sourceManaged.context, AgentProfile).data();
+    const childProfile = this.resolve(childContext, AgentProfile);
     const override = opts?.binding;
     if (override?.profile !== undefined) {
       await childProfile.bind({
@@ -336,7 +333,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         thinking: override?.thinking ?? sourceData.thinkingLevel,
       });
     } else {
-      childProfile.applyBindingSnapshot(sourceData);
+      childProfile.applyData(sourceData);
       if (override?.model !== undefined) await childProfile.setModel(override.model);
       if (override?.thinking !== undefined) childProfile.setThinking(override.thinking);
     }
@@ -387,10 +384,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   broadcastPermissionMode(mode: PermissionMode): void {
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
-      const handle = managed.handle;
       if (
-        handle.accessor.get(IAgentStateService).get(profileKey).profileName ===
-        TOWER_WORKER_PROFILE
+        this.resolve(managed.context, AgentProfile).data().profileName === TOWER_WORKER_PROFILE
       ) {
         continue;
       }

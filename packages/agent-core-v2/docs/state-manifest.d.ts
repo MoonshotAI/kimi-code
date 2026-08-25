@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 67 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -82,13 +82,6 @@
 //     plan                                            src/features/plan/planOps.ts
 //     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     pluginSessionStartSnapshot                      src/agent/plugin/agentPluginOps.ts
-//     profile                                         src/agent/profile/profileOps.ts
-//     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
-//     profile.activeTools                             src/agent/profile/profileOps.ts
-//     profile.agentsMdWarning                         src/agent/profile/profileService.ts
-//     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
-//     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
-//     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
 //     prompt.launching                                src/agent/prompt/promptService.ts
 //     promptAdmission                                 src/agent/prompt/promptOps.ts
 //     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
@@ -1026,7 +1019,7 @@ export interface AgentStateSnapshot {
     readonly "__@mediaStripSnapshotBrand": undefined;
   }>;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
-    readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
+    readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/features/profile/profile.ts */ {
       readonly modelAlias: string;
       readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/kosong/contract/capability.ts */ {
         readonly image_in: boolean;
@@ -1119,38 +1112,6 @@ export interface AgentStateSnapshot {
   };
   // src/agent/plugin/agentPluginService.ts
   'agentPlugin.sessionStartRefreshPending': boolean;
-  // src/agent/profile/profileOps.ts
-  // replayable · durable — folds: ProfileBind, ConfigUpdate
-  'profile': /* ProfileModelState — packages/agent-core-v2/src/agent/profile/profileOps.ts */ {
-    readonly modelAlias?: string;
-    readonly profileName?: string;
-    readonly thinkingLevel: string;
-    readonly systemPrompt: string;
-    readonly environmentDisclosure?: /* EnvironmentDisclosureSnapshot — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-      readonly cwd: string;
-      readonly date: {
-        readonly disclosed: true;
-        readonly value: {
-          readonly localDate: string;
-          readonly timeZone: string;
-        };
-      } | {
-        readonly disclosed: false;
-      };
-    };
-    readonly renderGeneration: number;
-    readonly agentsMdPaths?: readonly string[];
-    readonly disallowedTools?: readonly string[];
-    readonly subagents?: readonly string[];
-  };
-  // replayable · durable — folds: ToolsSetActiveTools, ToolsResetActiveTools, ProfileBind
-  'profile.activeTools': /* ActiveToolsState — packages/agent-core-v2/src/agent/profile/profileOps.ts */ readonly string[] | undefined;
-  // src/agent/profile/profileService.ts
-  'profile.activeToolNamesOverlay': readonly string[] | undefined;
-  'profile.agentsMdWarning': string | undefined;
-  'profile.emittedPluginBudgetWarnings': Set<string>;
-  'profile.emittedThinkingEffortWarnings': Set<string>;
-  'profile.emittedToolPatternWarnings': Set<string>;
   // src/agent/prompt/promptOps.ts
   // replayable · durable — folds: PromptAccepted
   'promptAdmission': Map<string, true>;

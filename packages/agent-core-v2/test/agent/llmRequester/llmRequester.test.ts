@@ -9,7 +9,7 @@ import {
   IAgentLLMRequesterService,
   type AgentLLMRequestFinish,
 } from '#/agent/llmRequester/llmRequester';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
@@ -171,7 +171,7 @@ describe('LLMRequester service migration coverage', () => {
           max_context_tokens: 1_000_000,
         },
       });
-      ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
+      ctx.resolve(AgentProfile).update({ thinkingLevel: 'high' });
       ctx.mockNextResponse({ type: 'text', text: 'thinking response' });
 
       await llmRequester.request();
@@ -198,10 +198,10 @@ describe('LLMRequester service migration coverage', () => {
           max_context_tokens: 1_000_000,
         },
       });
-      const profile = ctx.get(IAgentProfileService);
+      const profile = ctx.resolve(AgentProfile);
       profile.update({ thinkingLevel: 'high' });
       expect(profile.data().thinkingLevel).toBe('on');
-      expect(profile.resolveModelContext().thinkingLevel).toBe('max');
+      expect(profile.modelContext().thinkingLevel).toBe('max');
       ctx.mockNextResponse({ type: 'text', text: 'forced thinking response' });
 
       await llmRequester.request();
@@ -247,11 +247,11 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('tool-call deltas', () => {
     let ctx: TestAgentContext;
-    let profile: IAgentProfileService;
+    let profile: ProfileRuntime;
 
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['Lookup'] });
     });
 
@@ -455,7 +455,7 @@ describe('LLMRequester service migration coverage', () => {
   describe('request timing and budget', () => {
     let ctx: TestAgentContext;
     let llmRequester: IAgentLLMRequesterService;
-    let profile: IAgentProfileService;
+    let profile: ProfileRuntime;
     let requestMaxTokens: unknown;
     let logEntries: CapturedLogEntry[];
 
@@ -503,7 +503,7 @@ describe('LLMRequester service migration coverage', () => {
         logServices(logger),
       );
       llmRequester = ctx.get(IAgentLLMRequesterService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({
         modelAlias: 'deepseek/deepseek-v4-flash',
         systemPrompt: 'system',

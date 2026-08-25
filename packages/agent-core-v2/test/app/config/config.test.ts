@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ResolvedAgentProfile } from '#/features/profile/profile';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   Error2,
@@ -136,12 +137,12 @@ const TEST_OS_ENV = {
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
 
   beforeEach(() => {
     ctx = createTestAgent();
     void ctx.restoreRuntimes();
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
   });
 
   afterEach(async () => {

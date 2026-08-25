@@ -3,7 +3,7 @@ import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { IAgentProfileService } from '#/index';
+import { AgentProfile, type ProfileRuntime } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
 import type { ContextMessage } from '#/features/contextMemory/types';
@@ -38,13 +38,13 @@ type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
   let loop: IAgentLoopService;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
 
   beforeEach(() => {
     ctx = createTestAgent();
     void ctx.restoreRuntimes();
     loop = ctx.get(IAgentLoopService);
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.resolve(AgentProfile);
   });
 
   afterEach(async () => {
@@ -796,7 +796,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.resolve(AgentProfile).update({ activeToolNames: [] });
       local.mockNextResponse({ type: 'text', text: 'hi' });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -835,7 +835,7 @@ describe('turn telemetry', () => {
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
       const localLoop = local.get(IAgentLoopService);
-      const localProfile = local.get(IAgentProfileService);
+      const localProfile = local.resolve(AgentProfile);
       local.configure({
         modelCapabilities: {
           image_in: false,
@@ -878,7 +878,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.resolve(AgentProfile).update({ activeToolNames: [] });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'hi' }],
         traceId: 'trace-turn-1',
@@ -904,7 +904,7 @@ describe('turn telemetry', () => {
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
       const localLoop = local.get(IAgentLoopService);
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.resolve(AgentProfile).update({ activeToolNames: [] });
       localLoop.hooks.onDidFinishStep.register('test-continue-after-first-step', async (hookCtx, next) => {
         if (hookCtx.step === 1) {
           localLoop.enqueue(new ContinuationStepRequest());
@@ -1598,7 +1598,7 @@ function registerAbortableWorkTool(ctx: TestAgentContext): ReturnType<typeof def
       },
     }),
   };
-  ctx.get(IAgentProfileService).update({ activeToolNames: ['Work'] });
+  ctx.resolve(AgentProfile).update({ activeToolNames: ['Work'] });
   ctx.get(IAgentToolRegistryService).register(tool);
   return slowToolStarted;
 }

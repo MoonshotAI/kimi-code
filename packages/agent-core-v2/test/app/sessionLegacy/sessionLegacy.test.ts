@@ -13,7 +13,7 @@ import {
 } from '#/agent/scopeContext/scopeContext';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
@@ -117,23 +117,25 @@ describe('Session legacy status (best-effort runtime state)', () => {
         thinkingLevel: 'high',
         systemPrompt: '',
       }),
-      getModel: () => 'removed-model',
-      getModelCapabilities: () => UNKNOWN_CAPABILITY,
-      getEffectiveThinkingLevel: () => 'high',
-      resolveModelContext: () => {
+      model: () => 'removed-model',
+      modelCapabilities: () => UNKNOWN_CAPABILITY,
+      effectiveThinkingLevel: () => 'high',
+      modelContext: () => {
         throw new Error('removed-model cannot be resolved');
       },
-    } as unknown as IAgentProfileService;
+    } as unknown as ProfileRuntime;
     const agent: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
-        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentLifecycleService,
+          { main: () => Promise.resolve(agent), resolve: () => profile },
+        ],
         [
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
         ],
-        [IAgentProfileService, profile],
         [ISessionTokenCountingService, { get: () => ({ size: 25, measured: 20, estimated: 5 }), statusSize: () => 25 }],
         [ISessionPermissionModeService, { mode: () => 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
@@ -182,20 +184,22 @@ describe('Session legacy status (best-effort runtime state)', () => {
         thinkingLevel: 'off',
         systemPrompt: '',
       }),
-      getModel: () => '',
-      getModelCapabilities: () => UNKNOWN_CAPABILITY,
-      getEffectiveThinkingLevel: () => 'off',
-    } as unknown as IAgentProfileService;
+      model: () => '',
+      modelCapabilities: () => UNKNOWN_CAPABILITY,
+      effectiveThinkingLevel: () => 'off',
+    } as unknown as ProfileRuntime;
     const agent: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
-        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentLifecycleService,
+          { main: () => Promise.resolve(agent), resolve: () => profile },
+        ],
         [
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
         ],
-        [IAgentProfileService, profile],
         [ISessionTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
         [ISessionPermissionModeService, { mode: () => 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
@@ -245,20 +249,22 @@ describe('Session legacy status (best-effort runtime state)', () => {
         thinkingLevel: 'off',
         systemPrompt: '',
       }),
-      getModel: () => '',
-      getModelCapabilities: () => UNKNOWN_CAPABILITY,
-      getEffectiveThinkingLevel: () => 'off',
-    } as unknown as IAgentProfileService;
+      model: () => '',
+      modelCapabilities: () => UNKNOWN_CAPABILITY,
+      effectiveThinkingLevel: () => 'off',
+    } as unknown as ProfileRuntime;
     const agent: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
-        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentLifecycleService,
+          { main: () => Promise.resolve(agent), resolve: () => profile },
+        ],
         [
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
         ],
-        [IAgentProfileService, profile],
         [ISessionTokenCountingService, { get: () => ({ size: 0, measured: 0, estimated: 0 }), statusSize: () => 0 }],
         [ISessionPermissionModeService, { mode: () => 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
@@ -324,8 +330,8 @@ describe('Session legacy status (best-effort runtime state)', () => {
         thinkingLevel: 'medium',
         systemPrompt: '',
       }),
-      getModel: () => 'gpt-5',
-      getModelCapabilities: () => ({
+      model: () => 'gpt-5',
+      modelCapabilities: () => ({
         image_in: false,
         video_in: false,
         audio_in: false,
@@ -335,18 +341,20 @@ describe('Session legacy status (best-effort runtime state)', () => {
         max_input_tokens: 100_000,
         dynamically_loaded_tools: false,
       }),
-      getEffectiveThinkingLevel: () => 'medium',
-    } as unknown as IAgentProfileService;
+      effectiveThinkingLevel: () => 'medium',
+    } as unknown as ProfileRuntime;
     const agent: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: accessor([
-        [IAgentLifecycleService, { main: () => Promise.resolve(agent) }],
+        [
+          IAgentLifecycleService,
+          { main: () => Promise.resolve(agent), resolve: () => profile },
+        ],
         [
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
         ],
-        [IAgentProfileService, profile],
         [ISessionTokenCountingService, { get: () => ({ size: 120_000, measured: 110_000, estimated: 10_000 }), statusSize: () => 120_000 }],
         [ISessionPermissionModeService, { mode: () => 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],

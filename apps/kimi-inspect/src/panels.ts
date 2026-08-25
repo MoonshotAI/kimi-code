@@ -19,7 +19,6 @@
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
@@ -141,20 +140,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     label: 'AgentActivityView',
     scope: 'agent',
     fetch: (svc) => call(svc, 'state'),
-  },
-  {
-    id: String(IAgentProfileService),
-    label: 'AgentProfileService',
-    scope: 'agent',
-    fetch: async (svc) => ({
-      model: await call(svc, 'getModel'),
-      hasModel: await call(svc, 'hasModel'),
-      isRunnable: await call(svc, 'isRunnable'),
-      data: await call(svc, 'data'),
-    }),
-    actions: [
-      { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
-    ],
   },
   {
     id: String(IAgentPlanService),

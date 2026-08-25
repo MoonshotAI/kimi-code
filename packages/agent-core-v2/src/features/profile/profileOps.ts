@@ -1,13 +1,12 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { nothing, original } from 'immer';
+import { original, type Draft } from 'immer';
 import { z } from 'zod';
 
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
-import { defineState } from '#/state/state';
 
-import { ProfileError, ProfileErrors } from './profile';
+import { ProfileError, ProfileErrors } from './errors';
 
 export interface ProfileModelState {
   readonly modelAlias?: string;
@@ -20,6 +19,22 @@ export interface ProfileModelState {
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
 }
+
+export type ActiveToolsState = readonly string[] | undefined;
+
+export interface ProfileState {
+  readonly profile: ProfileModelState;
+  readonly activeTools: ActiveToolsState;
+}
+
+export const INITIAL_PROFILE_STATE: ProfileState = {
+  profile: {
+    thinkingLevel: 'off',
+    systemPrompt: '',
+    renderGeneration: 0,
+  },
+  activeTools: undefined,
+};
 
 const profileBindSchema = z.object({
   agentId: z.string(),
@@ -127,56 +142,68 @@ export class WarningIssued extends AgentEvent2<WarningIssuedPayload> {
 }
 export interface WarningIssued extends WarningIssuedPayload {}
 
-export const profileKey = defineState(
-  'profile',
-  (): ProfileModelState => ({
-    thinkingLevel: 'off',
-    systemPrompt: '',
-    renderGeneration: 0,
-  }),
-).replayable({ schema: z.custom<ProfileModelState>() })
-  .on(ProfileBind, (s, e) => ({
-    modelAlias: e.modelAlias ?? s.modelAlias,
-    profileName: e.profileName ?? s.profileName,
-    thinkingLevel: e.thinkingEffort,
-    systemPrompt: e.systemPrompt,
-    environmentDisclosure: e.environmentDisclosure,
-    renderGeneration: e.renderGeneration ?? s.renderGeneration + 1,
-    agentsMdPaths: e.agentsMdPaths ?? s.agentsMdPaths,
-    disallowedTools: e.disallowedTools,
-    subagents: e.subagents,
-  }))
-  .on(ConfigUpdate, (s, e) => {
-    if (e.modelAlias !== undefined && e.modelAlias !== s.modelAlias) {
-      s.modelAlias = e.modelAlias;
-    }
-    if (e.profileName !== undefined && e.profileName !== s.profileName) {
-      s.profileName = e.profileName;
-    }
-    const thinkingLevel = configUpdateThinkingLevel(e);
-    if (thinkingLevel !== undefined && thinkingLevel !== s.thinkingLevel) {
-      s.thinkingLevel = thinkingLevel;
-    }
-    if (
-      e.systemPrompt !== undefined &&
-      (e.systemPrompt !== s.systemPrompt ||
-        e.environmentDisclosure !== undefined ||
-        e.renderGeneration !== undefined)
-    ) {
-      s.systemPrompt = e.systemPrompt;
-      s.environmentDisclosure = e.environmentDisclosure;
-      s.renderGeneration = e.renderGeneration ?? s.renderGeneration + 1;
-    }
-    if (e.agentsMdPaths !== undefined && !stringArrayEqual(e.agentsMdPaths, s.agentsMdPaths)) {
-      s.agentsMdPaths = e.agentsMdPaths as string[];
-    }
-    if (
-      e.disallowedTools !== undefined &&
-      !stringArrayEqual(e.disallowedTools, s.disallowedTools)
-    ) {
-      s.disallowedTools = e.disallowedTools as string[];
-    }
-  });
+export function foldProfileBind(state: Draft<ProfileState>, event: ProfileBind): ProfileState {
+  return {
+    profile: {
+      modelAlias: event.modelAlias ?? state.profile.modelAlias,
+      profileName: event.profileName ?? state.profile.profileName,
+      thinkingLevel: event.thinkingEffort,
+      systemPrompt: event.systemPrompt,
+      environmentDisclosure: event.environmentDisclosure,
+      renderGeneration: event.renderGeneration ?? state.profile.renderGeneration + 1,
+      agentsMdPaths: event.agentsMdPaths ?? state.profile.agentsMdPaths,
+      disallowedTools: event.disallowedTools,
+      subagents: event.subagents,
+    },
+    activeTools: event.activeToolNames,
+  };
+}
+
+export function foldConfigUpdate(state: Draft<ProfileState>, event: ConfigUpdate): void {
+  const s = state.profile;
+  if (event.modelAlias !== undefined && event.modelAlias !== s.modelAlias) {
+    s.modelAlias = event.modelAlias;
+  }
+  if (event.profileName !== undefined && event.profileName !== s.profileName) {
+    s.profileName = event.profileName;
+  }
+  const thinkingLevel = configUpdateThinkingLevel(event);
+  if (thinkingLevel !== undefined && thinkingLevel !== s.thinkingLevel) {
+    s.thinkingLevel = thinkingLevel;
+  }
+  if (
+    event.systemPrompt !== undefined &&
+    (event.systemPrompt !== s.systemPrompt ||
+      event.environmentDisclosure !== undefined ||
+      event.renderGeneration !== undefined)
+  ) {
+    s.systemPrompt = event.systemPrompt;
+    s.environmentDisclosure = event.environmentDisclosure;
+    s.renderGeneration = event.renderGeneration ?? s.renderGeneration + 1;
+  }
+  if (event.agentsMdPaths !== undefined && !stringArrayEqual(event.agentsMdPaths, s.agentsMdPaths)) {
+    s.agentsMdPaths = event.agentsMdPaths as string[];
+  }
+  if (
+    event.disallowedTools !== undefined &&
+    !stringArrayEqual(event.disallowedTools, s.disallowedTools)
+  ) {
+    s.disallowedTools = event.disallowedTools as string[];
+  }
+}
+
+export function foldToolsSetActiveTools(
+  state: Draft<ProfileState>,
+  event: ToolsSetActiveTools,
+): void {
+  if (state.activeTools !== undefined && event.names === original(state.activeTools)) return;
+  state.activeTools = event.names as string[];
+}
+
+export function foldToolsResetActiveTools(state: Draft<ProfileState>): void {
+  if (state.activeTools === undefined) return;
+  state.activeTools = undefined;
+}
 
 function stringArrayEqual(
   a: readonly string[] | undefined,
@@ -205,23 +232,3 @@ function configUpdateThinkingLevel(e: ConfigUpdatePayload): ThinkingEffort | und
   if (e.thinkingEffort !== undefined) return e.thinkingEffort;
   return e.thinkingLevel;
 }
-
-export type ActiveToolsState = readonly string[] | undefined;
-
-export const profileActiveToolsKey = defineState(
-  'profile.activeTools',
-  (): ActiveToolsState => undefined,
-).replayable({ schema: z.custom<ActiveToolsState>() })
-  .on(ToolsSetActiveTools, (s, e) => {
-    if (s !== undefined && e.names === original(s)) return;
-    return e.names;
-  })
-  .on(ToolsResetActiveTools, (s) => {
-    if (s === undefined) return;
-    return nothing as unknown as ActiveToolsState;
-  })
-  .on(ProfileBind, (s, e) =>
-    e.activeToolNames === undefined && s !== undefined
-      ? (nothing as unknown as ActiveToolsState)
-      : e.activeToolNames,
-  );

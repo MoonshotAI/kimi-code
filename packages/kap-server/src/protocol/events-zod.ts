@@ -53,7 +53,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { WarningEvent } from '@moonshot-ai/agent-core-v2/agent/profile/profileService';
+import type { WarningIssuedPayload as WarningEvent } from '@moonshot-ai/agent-core-v2/features/profile/profileOps';
 import type { PluginCommandActivatedPayload } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type {
   ShellCompletedPayload,

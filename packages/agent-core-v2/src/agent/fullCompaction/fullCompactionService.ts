@@ -16,7 +16,8 @@ import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
-import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ProfileModelContext } from '#/features/profile/profile';
 import {
   agentContextOfScope,
   IAgentScopeContext,
@@ -142,10 +143,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   constructor(
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -199,6 +199,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         handle: (context) => this.recoverFromContextOverflow(context),
       }),
     );
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.manager.resolve(this.agent.agentContext, AgentProfile);
   }
 
   private get compactionCountInTurn(): number {
@@ -264,7 +268,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private resolveModelContextWithEffectiveMax(): ProfileModelContext {
-    const resolved = this.profile.resolveModelContext();
+    const resolved = this.profile.modelContext();
     const effectiveMax = this.getEffectiveMaxContextTokens();
     return {
       ...resolved,
@@ -282,7 +286,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private requestTokens(messages: readonly Message[]): number {
     return this.tokenCounting.requestSize({
-      systemPrompt: this.profile.getSystemPrompt(),
+      systemPrompt: this.profile.systemPrompt(),
       tools: this.defaultTools().filter((tool) => tool.deferred !== true),
       messages,
     });
@@ -628,7 +632,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       await this.hooks.onWillCompact.run(active);
 
-      const resolvedModel = this.profile.resolveModelContext();
+      const resolvedModel = this.profile.modelContext();
       thinkingEffort = resolvedModel.thinkingLevel;
       const maxContextTokens = resolvedModel.modelCapabilities.max_context_tokens;
       const defaultCompactionCap =

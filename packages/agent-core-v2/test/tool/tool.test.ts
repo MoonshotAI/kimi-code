@@ -19,7 +19,9 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { AgentProfile, profileAgentRuntimeProvider, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ProfileData } from '#/features/profile/profile';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
@@ -67,7 +69,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { normalizeAgentProfile, type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -294,15 +296,13 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             scope: (subKey?: string) => subKey ?? '',
           } as never;
         }
-        if (serviceId === IAgentProfileService) {
+        if (serviceId === (AgentProfile as unknown)) {
           return {
-            _serviceBrand: undefined,
             data: () => ({ profileName: profileByAgentId.get(agentId) }),
             update: () => {},
             republishStatus: () => {},
-            getEffectiveThinkingLevel: () => 'off',
-            getActiveToolNames: () => [],
-            isToolActive: () => false,
+            effectiveThinkingLevel: () => 'off',
+            activeTools: () => [],
           } as never;
         }
         if (serviceId === IAgentLoopService) {
@@ -443,6 +443,9 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         return adoptedManaged.runtimeSet.resolve(definition);
       }
       if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => 'manual');
+      if (definition === AgentProfile) {
+        return handles.get(agent.agentId)?.accessor.get(AgentProfile as never);
+      }
       throw new Error('unexpected resolve');
     }) as IAgentLifecycleService['resolve']),
     inspect: vi.fn((agent) => {
@@ -524,6 +527,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
           generation: 1,
           active: true,
         },
+        {
+          definition: AgentProfile,
+          provider: profileAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
       ]);
       return adoptedManaged.context;
     }),
@@ -563,7 +572,7 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
     'main',
     'agent',
     new Map<unknown, unknown>([
-      [IAgentProfileService, ctx.get(IAgentProfileService)],
+      [AgentProfile, ctx.resolve(AgentProfile)],
       [IAgentRuntimeService, ctx.get(IAgentRuntimeService)],
     ]),
     ctx.get(IAgentScopeContext).agentContext,
@@ -811,7 +820,8 @@ describe('Agent tool description', () => {
 
   it('lists discovered custom agents for the main agent alongside the builtin allowlist', () => {
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, discoveredCatalog()));
-    ctx.get(IAgentProfileService).applyBindingSnapshot({
+    ctx.resolve(AgentProfile).applyData({
+      modelCapabilities: UNKNOWN_CAPABILITY,
       modelAlias: 'mock-model',
       profileName: 'agent',
       thinkingLevel: 'off',
@@ -852,16 +862,17 @@ describe('Agent tool description', () => {
     } as unknown as ProfileData;
     ctx = createTestAgent(
       { autoConfigure: false },
-      agentService(IAgentProfileService, {
-        _serviceBrand: undefined,
-        data: () => callerData,
-        onDidChange: Event.None,
-      } as unknown as IAgentProfileService),
       configServices(() => ({
         providers: {},
         tools: { disabled: ['Write'] },
       })),
     );
+    ctx.resolve(AgentProfile).applyData({
+      ...callerData,
+      thinkingLevel: 'off',
+      systemPrompt: '',
+      modelCapabilities: UNKNOWN_CAPABILITY,
+    });
 
     const description = agentDescription();
     const agentTools = description.match(/- agent: [^\n]*\n  Tools: ([^\n]*)/)?.[1];
@@ -872,14 +883,14 @@ describe('Agent tool description', () => {
   });
 
   it('renders effective tools after applying disallowedTools', () => {
-    const restricted: AgentProfile = normalizeAgentProfile({
+    const restricted: CatalogAgentProfile = normalizeAgentProfile({
       name: 'restricted',
       description: 'Restricted agent',
       tools: ['Bash', 'Read', 'mcp__github__*'],
       disallowedTools: ['Bash', 'mcp__github__*'],
       systemPrompt: () => 'restricted',
     });
-    const allowAllExcept: AgentProfile = normalizeAgentProfile({
+    const allowAllExcept: CatalogAgentProfile = normalizeAgentProfile({
       name: 'allow-all-except',
       description: 'Allow all except one',
       disallowedTools: ['Bash'],
@@ -907,18 +918,18 @@ describe('Agent tool description', () => {
   });
 
   it('lists only subagent types allowed by the caller profile', () => {
-    const caller: AgentProfile = normalizeAgentProfile({
+    const caller: CatalogAgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: ['explore'],
       systemPrompt: () => 'orchestrator',
     });
-    const coder: AgentProfile = normalizeAgentProfile({
+    const coder: CatalogAgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
     });
-    const explore: AgentProfile = normalizeAgentProfile({
+    const explore: CatalogAgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       tools: ['Read'],
@@ -945,18 +956,18 @@ describe('Agent tool description', () => {
   });
 
   it('lists subagent types from the persisted binding instead of the current catalog profile', () => {
-    const caller: AgentProfile = normalizeAgentProfile({
+    const caller: CatalogAgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: ['coder'],
       systemPrompt: () => 'orchestrator',
     });
-    const coder: AgentProfile = normalizeAgentProfile({
+    const coder: CatalogAgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
     });
-    const explore: AgentProfile = normalizeAgentProfile({
+    const explore: CatalogAgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       systemPrompt: () => 'explore',
@@ -973,7 +984,8 @@ describe('Agent tool description', () => {
       reload: async () => {},
     };
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
-    ctx.get(IAgentProfileService).applyBindingSnapshot({
+    ctx.resolve(AgentProfile).applyData({
+      modelCapabilities: UNKNOWN_CAPABILITY,
       profileName: 'deleted-profile',
       thinkingLevel: 'off',
       systemPrompt: 'persisted prompt',
@@ -987,17 +999,17 @@ describe('Agent tool description', () => {
   });
 
   it('freezes the subagent type list once the profile catalog is ready', async () => {
-    const caller: AgentProfile = normalizeAgentProfile({
+    const caller: CatalogAgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       systemPrompt: () => 'orchestrator',
     });
-    const coder: AgentProfile = normalizeAgentProfile({
+    const coder: CatalogAgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
     });
-    const explore: AgentProfile = normalizeAgentProfile({
+    const explore: CatalogAgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       systemPrompt: () => 'explore',
@@ -1028,17 +1040,17 @@ describe('Agent tool description', () => {
   });
 
   it('reflects the current catalog list in the description before the catalog is ready', async () => {
-    const caller: AgentProfile = normalizeAgentProfile({
+    const caller: CatalogAgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       systemPrompt: () => 'orchestrator',
     });
-    const coder: AgentProfile = normalizeAgentProfile({
+    const coder: CatalogAgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       systemPrompt: () => 'coder',
     });
-    const explore: AgentProfile = normalizeAgentProfile({
+    const explore: CatalogAgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       systemPrompt: () => 'explore',
@@ -1260,19 +1272,19 @@ describe('Agent tool execution contract', () => {
   }
 
   function allowlistCatalog(allowlist: readonly string[]): ISessionAgentProfileCatalog {
-    const caller: AgentProfile = normalizeAgentProfile({
+    const caller: CatalogAgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
       description: 'Orchestrator',
       subagents: allowlist,
       systemPrompt: () => 'orchestrator',
     });
-    const coder: AgentProfile = normalizeAgentProfile({
+    const coder: CatalogAgentProfile = normalizeAgentProfile({
       name: 'coder',
       description: 'Coder',
       tools: ['Bash', 'Read'],
       systemPrompt: () => 'coder',
     });
-    const explore: AgentProfile = normalizeAgentProfile({
+    const explore: CatalogAgentProfile = normalizeAgentProfile({
       name: 'explore',
       description: 'Explorer',
       tools: ['Read'],
@@ -1317,7 +1329,8 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['coder'])),
     );
-    context.get(IAgentProfileService).applyBindingSnapshot({
+    context.resolve(AgentProfile).applyData({
+      modelCapabilities: UNKNOWN_CAPABILITY,
       profileName: 'deleted-profile',
       thinkingLevel: 'off',
       systemPrompt: 'persisted prompt',
@@ -1355,7 +1368,7 @@ describe('Agent tool execution contract', () => {
       tools: ['Read'],
       systemPrompt: () => 'explore',
     });
-    const profiles: AgentProfile[] = [agent, coder, explore];
+    const profiles: CatalogAgentProfile[] = [agent, coder, explore];
     const catalog: ISessionAgentProfileCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -1375,7 +1388,8 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(ISessionAgentProfileCatalog, catalog),
     );
-    context.get(IAgentProfileService).applyBindingSnapshot({
+    context.resolve(AgentProfile).applyData({
+      modelCapabilities: UNKNOWN_CAPABILITY,
       modelAlias: 'mock-model',
       profileName: 'coder',
       thinkingLevel: 'off',
@@ -1482,7 +1496,7 @@ describe('Agent tool execution contract', () => {
   it('labels fork launches with the caller profile for display and approval rules', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'orchestrator' });
+    context.resolve(AgentProfile).update({ profileName: 'orchestrator' });
 
     const execution = await agentTool(context).resolveExecution({
       prompt: 'Continue',
@@ -1535,7 +1549,7 @@ describe('Agent tool execution contract', () => {
   it('rejects fork with a different subagent type', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'coder' });
+    context.resolve(AgentProfile).update({ profileName: 'coder' });
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -1592,7 +1606,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: async () => ({ summary: 'child result' }),
     });
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'coder' });
+    context.resolve(AgentProfile).update({ profileName: 'coder' });
 
     const result = await executeAgentTool(context, {
       prompt: 'Continue the analysis',
@@ -1619,7 +1633,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: async () => ({ summary: 'child result' }),
     });
     const context = createAgentToolContext(lifecycle, forkFlags());
-    context.get(IAgentProfileService).update({ profileName: 'withdrawn-profile' });
+    context.resolve(AgentProfile).update({ profileName: 'withdrawn-profile' });
 
     const result = await executeAgentTool(context, {
       prompt: 'Continue the analysis',
@@ -2288,13 +2302,11 @@ describe('Agent tool execution contract', () => {
 
   it('keeps a directly resumed subagent on its own recorded model', async () => {
     const targetProfile = {
-      _serviceBrand: undefined,
       data: () => ({ profileName: 'explore', modelAlias: 'stale-model' }),
       update: vi.fn(),
       republishStatus: vi.fn(),
-      getEffectiveThinkingLevel: () => 'medium',
-      isToolActive: () => false,
-    } as unknown as IAgentProfileService;
+      effectiveThinkingLevel: () => 'medium',
+    } as unknown as ProfileRuntime;
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'resumed result' }),
     });
@@ -2308,7 +2320,7 @@ describe('Agent tool execution contract', () => {
     lifecycle.addHandle(
       'agent-existing',
       'explore',
-      new Map([[IAgentProfileService, targetProfile]]),
+      new Map([[AgentProfile, targetProfile]]),
     );
 
     await executeAgentTool(context, {
@@ -2355,7 +2367,7 @@ describe('Agent tool execution contract', () => {
   it('rejects background subagents when background execution is disabled', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(lifecycle);
-    context.get(IAgentProfileService).update({ activeToolNames: ['Agent'] });
+    context.resolve(AgentProfile).update({ activeToolNames: ['Agent'] });
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',
@@ -2628,7 +2640,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: () => completion.promise,
     });
     const context = createAgentToolContext(lifecycle);
-    context.get(IAgentProfileService).update({ activeToolNames: ['Agent'] });
+    context.resolve(AgentProfile).update({ activeToolNames: ['Agent'] });
     const tasks = context.get(IAgentTaskService);
 
     const running = executeAgentTool(context, {
@@ -3483,7 +3495,7 @@ describe('AgentSwarm tool execution contract', () => {
 describe('Agent tools', () => {
   let context: ContextMemoryRuntime;
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: ProfileRuntime;
   let tools: IAgentToolRegistryService;
   let tempHomeDirs: string[] = [];
 
@@ -3533,7 +3545,7 @@ describe('Agent tools', () => {
         externalHookServices(hookEngine),
       );
       context = ctx.resolve(AgentContextMemory);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['Bash'] });
     });
 
@@ -3592,7 +3604,7 @@ describe('Agent tools', () => {
         execEnvServices({ processRunner: createCommandRunner('hook-output') }),
         externalHookServices(hookEngine),
       );
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['Bash'] });
       await ctx.rpc.setPermission({ mode: 'auto' });
     });
@@ -3642,7 +3654,7 @@ describe('Agent tools', () => {
         execEnvServices({ processRunner: createFailingCommandRunner('hook-output') }),
         externalHookServices(hookEngine),
       );
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['Bash'] });
       await ctx.rpc.setPermission({ mode: 'auto' });
     });
@@ -3663,7 +3675,7 @@ describe('Agent tools', () => {
   describe('Bash tool call start event', () => {
     beforeEach(async () => {
       ctx = createTestAgent(execEnvServices({ processRunner: createCommandRunner('ok') }));
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['Bash'] });
       await ctx.rpc.setPermission({ mode: 'yolo' });
     });
@@ -3809,7 +3821,7 @@ describe('Agent tools', () => {
   describe('active builtin tool set', () => {
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['Write', 'Bash'] });
     });
 
@@ -3830,7 +3842,7 @@ describe('Agent tools', () => {
   describe('Bash background mode', () => {
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       tools = ctx.get(IAgentToolRegistryService);
       profile.update({ activeToolNames: ['Bash'] });
     });
@@ -3864,7 +3876,7 @@ describe('Agent tools', () => {
   describe('AgentSwarm visibility', () => {
     beforeEach(() => {
       ctx = createTestAgent();
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: ['AgentSwarm'] });
     });
 

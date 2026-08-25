@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -132,7 +132,11 @@ describe('TowerSpawnTool', () => {
       release,
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
-    ix.stub(IAgentScopeContext, { agentId: 'main', scope: (subKey?: string) => subKey ?? '' });
+    ix.stub(IAgentScopeContext, {
+      agentId: 'main',
+      agentContext: stubAgentContext('main', 1),
+      scope: (subKey?: string) => subKey ?? '',
+    });
     const createdHandle = {
       id: 'agent-7',
       accessor: {
@@ -150,6 +154,9 @@ describe('TowerSpawnTool', () => {
         },
       },
     } as never;
+    const profile = {
+      data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),
+    } as unknown as ProfileRuntime;
     const mainHandle = {
       id: 'main',
       accessor: {
@@ -162,6 +169,8 @@ describe('TowerSpawnTool', () => {
       },
     } as never;
     ix.stub(IAgentLifecycleService, {
+      resolve: (agent: AgentContext, definition: unknown) =>
+        definition === AgentProfile && agent.agentId === 'main' ? profile : undefined,
       handleOf: (agentId: string) => {
         if (agentId === 'main') return mainHandle;
         if (agentId === 'agent-7') return createdHandle;
@@ -171,9 +180,6 @@ describe('TowerSpawnTool', () => {
     } as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
     ix.stub(IAgentTaskService, { registerTask } as unknown as IAgentTaskService);
-    ix.stub(IAgentProfileService, {
-      data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),
-    } as unknown as IAgentProfileService);
     ix.stub(IConfigService, {
       get: ((domain: string) =>
         domain === SECONDARY_MODEL_SECTION

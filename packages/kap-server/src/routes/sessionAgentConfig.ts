@@ -2,9 +2,9 @@ import {
   ErrorCodes,
   Error2,
   AgentGoal,
+  AgentProfile,
   IAgentLifecycleService,
   IAgentPlanService,
-  IAgentProfileService,
   IAgentSwarmService,
   IAgentTowerService,
   agentContextOf,
@@ -27,7 +27,9 @@ export async function applySessionAgentConfig(
   }
   const agent = await ensureMainAgent(session);
 
-  const profile = agent.accessor.get(IAgentProfileService);
+  const profile = agent.accessor
+    .get(IAgentLifecycleService)
+    .resolve(agentContextOf(agent), AgentProfile);
   if (agentConfig.model !== undefined && agentConfig.model !== '') {
     await profile.setModel(agentConfig.model);
   }

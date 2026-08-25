@@ -5,7 +5,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/features/contextMemory/openToolExchange';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -140,7 +140,7 @@ describe('fork subagent first-request parity', () => {
     const agentLifecycle = ctx.get(IAgentLifecycleService);
     const parentContext = await agentLifecycle.create({ agentId: 'parent' });
     const parent = agentLifecycle.handleOf(parentContext.agentId)!;
-    const profile = parent.accessor.get(IAgentProfileService);
+    const profile = agentLifecycle.resolve(parentContext, AgentProfile);
     profile.update({
       modelAlias: 'mock-model',
       systemPrompt: PARENT_SYSTEM_PROMPT,

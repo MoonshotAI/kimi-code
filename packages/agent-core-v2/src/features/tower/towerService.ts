@@ -5,7 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -47,14 +47,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
     @ISessionManager private readonly sessions: ISessionManager,
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
@@ -86,7 +85,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       eventBus.subscribe(AgentStatusUpdated, () => {
         if (this.agentCtx.agentId !== 'main') return;
         if (!this.isActive) return;
-        const active = this.profile.getActiveToolNames();
+        const active = this.profile.activeTools();
         if (active === undefined) return;
         if (TOWER_MODE_TOOLS.every((name) => active.includes(name))) return;
         for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
@@ -169,6 +168,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         );
       }),
     );
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.agentLifecycle.resolve(this.agentCtx.agentContext, AgentProfile);
   }
 
   async enter(): Promise<void> {

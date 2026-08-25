@@ -1,12 +1,12 @@
 import { assign, fromCallback, setup } from 'xstate';
 
-import { IAgentProfileService } from '#/agent/profile/profile';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import type {
   ContextInjectionContext,
@@ -65,7 +65,7 @@ const dateChangeInjection = fromCallback(({
   const reminder = runtime
     .get(IAgentLifecycleService)
     .resolve(runtime.agent, AgentReminder);
-  const profile = runtime.get(IAgentProfileService);
+  const profile = runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentProfile);
   const clock = runtime.get(IHostClock);
   const sessionContext = runtime.get(ISessionContext);
   const belongsToCurrentCwd = (): boolean => {

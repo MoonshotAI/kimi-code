@@ -11,7 +11,8 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ProfileData } from '#/features/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
@@ -1045,7 +1046,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
+    expect((child.accessor.get(AgentProfile as never) as ProfileRuntime).data().modelAlias).toBe('stale-model');
     expect(eventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'subagent.spawned',
@@ -1266,9 +1267,8 @@ function lifecycleStub(
     get: (agentId: string) => (handles.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
     handleOf: (agentId: string) => handles.get(agentId),
     list: () => [...handles.keys()].map((agentId) => stubAgentContext(agentId, 1)),
-    resolve: () => {
-      throw new Error('unexpected resolve');
-    },
+    resolve: (agent: AgentContext, definition: unknown) =>
+      handles.get(agent.agentId)?.accessor.get(definition as never),
     inspect: () => {
       throw new Error('unexpected inspect');
     },
@@ -1353,7 +1353,7 @@ function agentHandle(
       get: ((serviceId: unknown) => {
         const service = services.get(serviceId);
         if (service !== undefined) return service;
-        if (serviceId === IAgentProfileService) return profile;
+        if (serviceId === AgentProfile) return profile;
         if (serviceId === IAgentRuntimeBindingService) {
           return {
             _serviceBrand: undefined,
@@ -1389,17 +1389,16 @@ function agentHandle(
   };
 }
 
-function profileService(data: ProfileData): IAgentProfileService {
+function profileService(data: ProfileData): ProfileRuntime {
   let current = data;
   return {
-    _serviceBrand: undefined,
     data: () => current,
-    update: (changed) => {
+    update: (changed: Partial<ProfileData>) => {
       current = { ...current, ...changed };
     },
     republishStatus: () => {},
-    getEffectiveThinkingLevel: () => current.thinkingLevel,
-  } as IAgentProfileService;
+    effectiveThinkingLevel: () => current.thinkingLevel,
+  } as unknown as ProfileRuntime;
 }
 
 function userToolServiceStub(): IAgentUserToolService {

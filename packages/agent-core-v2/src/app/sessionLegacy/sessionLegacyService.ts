@@ -16,7 +16,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -70,15 +70,17 @@ export class SessionLegacyService implements ISessionLegacyService {
     sessionId: string,
     agent: IAgentScopeHandle,
   ): Promise<SessionStatusResponse> {
-    const profile = agent.accessor.get(IAgentProfileService);
+    const profile = agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentProfile);
     const tokenCounting = agent.accessor.get(ISessionTokenCountingService);
     const permission = agent.accessor.get(ISessionPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
     const tower = agent.accessor.get(IAgentTowerService);
 
-    const model = profile.getModel();
-    const capabilities = profile.getModelCapabilities();
+    const model = profile.model();
+    const capabilities = profile.modelCapabilities();
     let maxTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
     if (maxTokens === 0 && model === '') {
       maxTokens = resolveDefaultModelContextTokens(agent) ?? 0;
@@ -89,7 +91,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
-      thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
+      thinking_level: model === '' ? '' : profile.effectiveThinkingLevel(),
       permission: permission.mode(agentContextOf(agent)),
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,

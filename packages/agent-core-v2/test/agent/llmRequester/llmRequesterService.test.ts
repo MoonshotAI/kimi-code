@@ -18,7 +18,7 @@ import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -173,8 +173,8 @@ function createService(
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
-  const profile: Partial<IAgentProfileService> = {
-    resolveModelContext: () => ({
+  const profile: Partial<ProfileRuntime> = {
+    modelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
@@ -183,8 +183,8 @@ function createService(
       reservedContextSize: undefined,
       compactionTriggerRatio: undefined,
     }),
-    resolveRequestParams: () => ({}),
-    getSystemPrompt: () => 'system',
+    requestParams: () => ({}),
+    systemPrompt: () => 'system',
     data: () => ({
       cwd: '',
       modelAlias: 'm',
@@ -229,7 +229,16 @@ function createService(
     subscribe: () => toDisposable(() => {}),
   };
 
-  ix.stub(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), context));
+  ix.stub(
+    IAgentLifecycleService,
+    lifecycleWithReminder(
+      createReminderStub(),
+      context,
+      undefined,
+      undefined,
+      profile as ProfileRuntime,
+    ),
+  );
   ix.stub(IAgentToolSelectService, toolSelect);
   ix.stub(IAgentMediaResolverService, options.mediaResolver ?? { resolve: async (messages) => messages });
   if (projector === undefined) {
@@ -245,7 +254,6 @@ function createService(
   }
   ix.stub(ISessionTokenCountingService, tokenCounting);
   ix.stub(IAgentToolRegistryService, tools);
-  ix.stub(IAgentProfileService, profile);
   ix.stub(ISessionUsageService, usage);
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);

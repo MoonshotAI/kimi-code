@@ -22,8 +22,8 @@ import {
   findProjectRoot,
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
-} from '#/agent/profile/context';
-import { profileKey } from '#/agent/profile/profileOps';
+} from '#/features/profile/profileContext';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -69,7 +69,6 @@ export class AgentAgentsMdReminderService
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-      @IAgentStateService private readonly agentState: IAgentStateService,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
@@ -83,7 +82,9 @@ export class AgentAgentsMdReminderService
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
-        const profile = this.agentState.get(profileKey);
+        const profile = this.agentLifecycle
+          .resolve(this.scopeContext.agentContext, AgentProfile)
+          .data();
         const paths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
         this.seedInjected(paths, this.sessionContext.cwd);

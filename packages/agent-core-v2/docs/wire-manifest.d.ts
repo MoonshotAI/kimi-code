@@ -25,7 +25,7 @@
 // media to blob storage), owner (the source file declaring the class).
 
 // Index (55 record types)
-//   config.update                      profile                          src/agent/profile/profileOps.ts
+//   config.update                      (none)                           src/features/profile/profileOps.ts
 //   context.append_loop_event          turn                             src/features/contextMemory/contextEvents.ts
 //   context.append_message             plan, task.notificationDelivery  src/features/contextMemory/contextEvents.ts
 //   context.apply_compaction           plan, task.notificationDelivery  src/features/contextMemory/contextEvents.ts
@@ -54,7 +54,7 @@
 //   plan_mode.exit                     plan                             src/features/plan/planOps.ts
 //   plan.revision                      plan                             src/features/plan/planOps.ts
 //   plugin.session_start               pluginSessionStartSnapshot       src/agent/plugin/agentPluginOps.ts
-//   profile.bind                       profile, profile.activeTools     src/agent/profile/profileOps.ts
+//   profile.bind                       (none)                           src/features/profile/profileOps.ts
 //   prompt.accepted                    promptAdmission                  src/agent/prompt/promptOps.ts
 //   runtime.set_binding                runtimeBinding                   src/agent/runtimeBinding/runtimeBindingOps.ts
 //   staleGuard.cleared                 staleGuard                       src/features/staleGuard/staleGuardOps.ts
@@ -69,8 +69,8 @@
 //   token_counting.truncated           (none)                           src/features/tokenCounting/tokenCountingOps.ts
 //   token_counting.turn_recorded       (none)                           src/features/tokenCounting/tokenCountingOps.ts
 //   tools.register_user_tool           userTool                         src/agent/userTool/userToolOps.ts
-//   tools.reset_active_tools           profile.activeTools              src/agent/profile/profileOps.ts
-//   tools.set_active_tools             profile.activeTools              src/agent/profile/profileOps.ts
+//   tools.reset_active_tools           (none)                           src/features/profile/profileOps.ts
+//   tools.set_active_tools             (none)                           src/features/profile/profileOps.ts
 //   tools.unregister_user_tool         userTool                         src/agent/userTool/userToolOps.ts
 //   tools.update_store                 (none)                           src/features/todo/todoOps.ts
 //   tower_mode.enter                   tower, tower.owner               src/features/tower/towerOps.ts
@@ -82,8 +82,8 @@
 //   usage.record                       (none)                           src/features/usage/usageOps.ts
 
 /**
- * states: profile
- * owner: src/agent/profile/profileOps.ts
+ * states: (none)
+ * owner: src/features/profile/profileOps.ts
  */
 interface ConfigUpdatePayload {
   _name: 'config.update';
@@ -481,8 +481,8 @@ interface PluginSessionStartPayload {
 }
 
 /**
- * states: profile, profile.activeTools
- * owner: src/agent/profile/profileOps.ts
+ * states: (none)
+ * owner: src/features/profile/profileOps.ts
  */
 interface ProfileBindPayload {
   _name: 'profile.bind';
@@ -657,8 +657,8 @@ interface ToolsRegisterUserToolPayload {
 }
 
 /**
- * states: profile.activeTools
- * owner: src/agent/profile/profileOps.ts
+ * states: (none)
+ * owner: src/features/profile/profileOps.ts
  */
 interface ToolsResetActiveToolsPayload {
   _name: 'tools.reset_active_tools';
@@ -666,8 +666,8 @@ interface ToolsResetActiveToolsPayload {
 }
 
 /**
- * states: profile.activeTools
- * owner: src/agent/profile/profileOps.ts
+ * states: (none)
+ * owner: src/features/profile/profileOps.ts
  */
 interface ToolsSetActiveToolsPayload {
   _name: 'tools.set_active_tools';

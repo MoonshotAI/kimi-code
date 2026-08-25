@@ -1,6 +1,6 @@
 import type { AgentTaskInfo } from '#/agent/task/task';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
-import type { AgentConfigData, AgentConfigUpdateData } from '#/agent/profile/profile';
+import type { AgentConfigData, AgentConfigUpdateData } from '#/features/profile/profile';
 import type { AgentContextData, ContextMessage } from '#/features/contextMemory/types';
 import type { GoalChange, GoalSnapshot } from '#/features/goal/types';
 import type { PermissionApprovalResultRecord } from '#/features/permissionRules/types';

@@ -16,6 +16,7 @@ import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderHarness, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { stubProfileRuntime } from '../../features/profile/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
   IAgentLoopService,
@@ -28,7 +29,6 @@ import {
 } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import type { StepRequest } from '#/agent/loop/stepRequest';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
@@ -311,9 +311,6 @@ function registerSharedServices(
     IAgentScopeContext,
     makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
   );
-  reg.definePartialInstance(IAgentProfileService, {
-    getModelCapabilities: () => capabilities,
-  });
   reg.definePartialInstance(IAgentToolPolicyService, {
     isToolActive: (name: string) => activeToolNames === undefined || activeToolNames.has(name),
     isToolActiveForDisclosure: () => disclosureToolActive,
@@ -334,6 +331,9 @@ function registerSharedServices(
     lifecycleWithReminder(
       createReminderHarness(loop, contextMemory as unknown as ContextMemoryRuntime, eventBus),
       contextMemory as unknown as ContextMemoryRuntime,
+      undefined,
+      undefined,
+      stubProfileRuntime({ modelCapabilities: () => capabilities }),
     ),
   );
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);

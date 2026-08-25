@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import type { Event } from '@moonshot-ai/agent-core';
 import {
   IAgentLifecycleService,
-  IAgentProfileService,
+  AgentProfile,
   IAgentScopeContext,
   IEventBus,
   ISessionTokenCountingService,
@@ -111,9 +111,13 @@ const USAGE = {
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
   agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
-  agent.set(IAgentProfileService, {
-    getModel: () => model,
-    getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+  const profile = {
+    model: () => model,
+    modelCapabilities: () => ({ max_context_tokens: 128_000 }),
+  };
+  agent.set(IAgentLifecycleService, {
+    resolve: (_agent: unknown, definition: unknown) =>
+      definition === AgentProfile ? profile : undefined,
   });
   agent.set(ISessionUsageService, { status: () => USAGE });
 }

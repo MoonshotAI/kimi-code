@@ -10,7 +10,8 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -60,7 +61,15 @@ describe('SessionInitService', () => {
       },
       notifyAgentTaskStopped: vi.fn(),
       handleOf: vi.fn((agentId: string) => handles[agentId]),
-      resolve: vi.fn(() => ({ notify: appendReminder })),
+      resolve: vi.fn((agent: AgentContext, definition: unknown) => {
+        if (definition === AgentReminder) return { notify: appendReminder };
+        if (definition === AgentProfile) {
+          return agent.agentId === 'main'
+            ? profile
+            : { republishStatus, effectiveThinkingLevel: () => 'off' };
+        }
+        return undefined;
+      }),
       create: vi.fn(async () => stubAgentContext('agent-0', 1)),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
@@ -87,7 +96,6 @@ describe('SessionInitService', () => {
           if (id === IAgentScopeContext) {
             return { agentContext: stubAgentContext('main', 1) };
           }
-          if (id === IAgentProfileService) return profile;
           if (id === ISessionPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IEventDispatcher) {
@@ -115,8 +123,6 @@ describe('SessionInitService', () => {
             };
           }
           if (id === ISessionPermissionModeService) return permissionMode;
-          if (id === IAgentProfileService)
-            return { republishStatus, getEffectiveThinkingLevel: () => 'off' };
           return undefined;
         },
       },

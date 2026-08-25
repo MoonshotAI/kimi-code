@@ -11,7 +11,7 @@ import {
   loadAgentsMd,
   loadAgentsMdDetailed,
   prepareSystemPromptContext,
-} from '#/agent/profile/context';
+} from '#/features/profile/profileContext';
 
 function createFs(): IHostFileSystem {
   return new HostFileSystem();

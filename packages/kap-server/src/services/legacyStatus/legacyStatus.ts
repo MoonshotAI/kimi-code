@@ -1,6 +1,8 @@
 import {
   agentContextOf,
-  IAgentProfileService,
+  AgentProfile,
+  type ProfileRuntime,
+  IAgentLifecycleService,
   ISessionTokenCountingService,
   ISessionUsageService,
   IModelCatalog,
@@ -82,33 +84,43 @@ export interface LegacyStatusSnapshot {
 }
 
 export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
-  const profile = agent.accessor.get(IAgentProfileService) as
-    | IAgentProfileService
-    | undefined;
   const usageService = agent.accessor.get(ISessionUsageService) as
     | ISessionUsageService
     | undefined;
   const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
     | ISessionTokenCountingService
     | undefined;
+  const profile = readProfile(agent);
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
   const context = agentContextOf(agent);
   const usage = usageService.status(context);
   const contextTokens = tokenCounting.statusSize(context);
-  const capabilities = profile.getModelCapabilities();
+  const capabilities = profile.modelCapabilities();
   let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
-  if (maxContextTokens === 0 && profile.getModel() === '') {
+  if (maxContextTokens === 0 && profile.model() === '') {
     maxContextTokens = defaultModelContextTokens(agent) ?? 0;
   }
-  const model = profile.getModel();
+  const model = profile.model();
   return {
     usage,
     contextTokens,
     maxContextTokens: maxContextTokens > 0 ? maxContextTokens : undefined,
     model,
   };
+}
+
+function readProfile(agent: IAgentScopeHandle): ProfileRuntime | undefined {
+  try {
+    const lifecycle = agent.accessor.get(IAgentLifecycleService) as
+      | IAgentLifecycleService
+      | undefined;
+    if (lifecycle === undefined) return undefined;
+    return lifecycle.resolve(agentContextOf(agent), AgentProfile);
+  } catch {
+    return undefined;
+  }
 }
 
 function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {

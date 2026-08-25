@@ -9,7 +9,8 @@ import {
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ProfileModelContext } from '#/features/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -49,7 +50,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { WarningIssued } from '#/agent/profile/profileOps';
+import { WarningIssued } from '#/features/profile/profileOps';
 
 import {
   IAgentLLMRequesterService,
@@ -154,13 +155,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   private readonly context: ContextMemoryRuntime;
 
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentContextProjectorService private readonly projector: IAgentContextProjectorService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentMediaResolverService private readonly mediaResolver: IAgentMediaResolverService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IConfigService private readonly config: IConfigService,
     @IModelService private readonly modelService: IModelService,
@@ -179,6 +179,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     this.states.contributeState(llmRequesterMediaDegradedTurnsKey);
     this.states.contributeState(llmRequesterMediaStrippedTurnsKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
+  }
+
+  private get profile(): ProfileRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   private get lastConfigLogSignature(): string | undefined {
@@ -625,8 +629,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
-    const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
-    const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
+    const resolved = turnConfig?.resolved ?? this.profile.modelContext();
+    const baseParams = turnConfig?.params ?? this.profile.requestParams();
     const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
@@ -649,7 +653,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       params: { ...baseParams, ...budgetParams },
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
-      systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
+      systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.systemPrompt(),
       tools: [...(overrides.tools ?? this.defaultTools())],
       messages: [...messages],
       source: overrides.source,
@@ -669,9 +673,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     let snapshot = this.turnConfigs.get(turnId);
     if (snapshot === undefined) {
       snapshot = {
-        resolved: this.profile.resolveModelContext(),
-        params: this.profile.resolveRequestParams(),
-        systemPrompt: this.profile.getSystemPrompt(),
+        resolved: this.profile.modelContext(),
+        params: this.profile.requestParams(),
+        systemPrompt: this.profile.systemPrompt(),
       };
       this.turnConfigs.set(turnId, snapshot);
     }

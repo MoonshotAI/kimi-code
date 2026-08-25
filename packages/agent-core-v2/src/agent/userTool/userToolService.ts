@@ -5,7 +5,7 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import type {
   ExecutableTool,
   ExecutableToolContext,
@@ -44,8 +44,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -62,6 +61,10 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
 
   list(): readonly UserToolRegistration[] {
     return [...this.agentState.get(userToolKey).values()];
+  }
+
+  private profile(): ProfileRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
   }
 
   inheritUserTools(
@@ -93,7 +96,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   }
 
   private restoreRegisteredTools(): void {
-    const persistedActive = this.profile.getActiveToolNames();
+    const persistedActive = this.profile().activeTools();
     for (const registration of this.agentState.get(userToolKey).values()) {
       const activate =
         persistedActive === undefined || persistedActive.includes(registration.name);
@@ -120,7 +123,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
       ),
     );
     if (options?.activate === false) return;
-    this.profile.addActiveTool(name);
+    this.profile().addActiveTool(name);
   }
 
   private applyUnregister(name: string): void {
@@ -128,7 +131,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     if (registration === undefined) return;
     registration.dispose();
     this.registrations.delete(name);
-    this.profile.removeActiveTool(name);
+    this.profile().removeActiveTool(name);
   }
 
   private async executeUserTool(

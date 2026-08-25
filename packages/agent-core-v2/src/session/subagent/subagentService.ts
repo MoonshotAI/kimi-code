@@ -17,7 +17,7 @@ import {
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -97,7 +97,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(input.callerAgentId);
     const fork = input.fork === true;
     await this.catalog.ready;
-    const own = caller.accessor.get(IAgentProfileService).data();
+    const own = this.agentLifecycle.resolve(agentContextOf(caller), AgentProfile).data();
     const requested = input.profileName !== undefined && input.profileName.length > 0
       ? input.profileName
       : undefined;
@@ -181,7 +181,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         throw wrapSubagentModelError(
           error,
           plan.model,
-          caller.accessor.get(IAgentProfileService).data().modelAlias,
+          this.agentLifecycle.resolve(agentContextOf(caller), AgentProfile).data().modelAlias,
         );
       }
       const permissionModes = caller.accessor.get(ISessionPermissionModeService);
@@ -192,7 +192,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       const createdUserTools = created.accessor.get(IAgentUserToolService);
       const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {
-        const activeToolNames = created.accessor.get(IAgentProfileService).getActiveToolNames();
+        const activeToolNames = this.agentLifecycle
+          .resolve(agentContextOf(created), AgentProfile)
+          .activeTools();
         createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
       } else {
         createdUserTools.inheritUserTools(callerUserTools);
@@ -243,7 +245,9 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   }
 
   private summaryPolicyFor(handle: IAgentScopeHandle): AgentProfileSummaryPolicy | undefined {
-    const profileName = handle.accessor.get(IAgentProfileService).data().profileName;
+    const profileName = this.agentLifecycle
+      .resolve(agentContextOf(handle), AgentProfile)
+      .data().profileName;
     if (profileName === undefined) return undefined;
     return this.catalog.get(profileName)?.summaryPolicy;
   }

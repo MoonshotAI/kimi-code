@@ -3,7 +3,7 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { Event2 } from '#/app/event/event2';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -151,10 +151,10 @@ export class SessionSwarmService implements ISessionSwarmService {
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
-    const profileName =
-      child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
+    const childProfile = this.agentLifecycle.resolve(agentContextOf(child), AgentProfile).data();
+    const profileName = childProfile.profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
-      const resumedModel = child.accessor.get(IAgentProfileService).data().modelAlias;
+      const resumedModel = childProfile.modelAlias;
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
