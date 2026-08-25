@@ -45,6 +45,10 @@ function createClient(
   });
 }
 
+function isTransportSettledError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('Not connected');
+}
+
 describe('StdioMcpClient', () => {
   it('rejects unsupported executor at construction time', () => {
     expect(
@@ -320,17 +324,19 @@ describe('StdioMcpClient', () => {
       expect(client.stderrSnapshot()).toContain(banner);
 
       const drainDeadline = Date.now() + 5000;
-      let transportConfirmedDead = false;
+      let closeProcessed = false;
       while (Date.now() < drainDeadline) {
         try {
           await client.callTool('echo', { text: 'probe' });
-        } catch {
-          transportConfirmedDead = true;
-          break;
+        } catch (error) {
+          if (isTransportSettledError(error)) {
+            closeProcessed = true;
+            break;
+          }
         }
         await new Promise((r) => setTimeout(r, 10));
       }
-      expect(transportConfirmedDead).toBe(true);
+      expect(closeProcessed).toBe(true);
 
       let received: { stderr?: string } | undefined;
       let syncedOnRegister = false;
