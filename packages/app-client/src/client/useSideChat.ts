@@ -512,29 +512,30 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       return;
     }
     const optimisticNow = rawState.sideChatMessagesByAgent[agentId] ?? [];
-    const stampedPids = optimisticNow
-      .filter((msg) => msg.metadata?.['kimiWeb.optimisticUserMessage'] === true)
-      .map((msg) => msg.promptId)
-      .filter((pid): pid is string => pid !== undefined);
     const currentPid = optimisticNow.findLast(
       (msg) => msg.metadata?.['kimiWeb.optimisticUserMessage'] === true,
     )?.promptId;
     let currentRoundEnded: boolean;
     try {
       const snapshot = await api.getSessionTranscript(sessionId, { agentId });
-      const isLive = (pid: string): boolean => {
-        const own = snapshot.prompts.find((prompt) => prompt.promptId === pid);
-        // A missing entity means the transcript hasn't caught up — unproven,
-        // so treat the round as live rather than guess.
-        return own === undefined || own.status === 'queued' || own.status === 'running';
-      };
-      if (stampedPids.length > 0) {
-        // Concurrent rounds exist: accepting is only sound when NONE of them
-        // is live — the newest bubble's fate alone says nothing about the
-        // others.
-        currentRoundEnded = !stampedPids.some(isLive);
-      } else if (currentPid !== undefined) {
-        currentRoundEnded = !isLive(currentPid);
+      if (currentPid !== undefined) {
+        // The taskCompleted belongs to the CURRENT round only when its prompt
+        // is terminal — the newest local bubble, not a whole-history set
+        // (every local send stays flagged optimistic forever, and old ids
+        // that scrolled out of the window would pin the verdict forever).
+        const own = snapshot.prompts.find((prompt) => prompt.promptId === currentPid);
+        const ownTerminal =
+          own !== undefined && own.status !== 'queued' && own.status !== 'running';
+        // Accepting is sound only when the transcript is quiet AND no prompt
+        // in the window is still queued/running: local bubble order is NOT
+        // the daemon's order (a slower prep can submit an earlier bubble
+        // behind a later one), so the newest being terminal says nothing
+        // about a sibling that may still be queued.
+        const anyLive = snapshot.prompts.some(
+          (prompt) => prompt.status === 'queued' || prompt.status === 'running',
+        );
+        currentRoundEnded =
+          ownTerminal && !anyLive && snapshot.meta.activity !== 'turn';
       } else {
         // No local prompt identity (the POST's fate was uncertain): the
         // transcript's activity is the only arbiter.
@@ -747,6 +748,12 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       metadata: { 'kimiWeb.optimisticUserMessage': true },
     };
     appendSideChatMessage(agentId, userMsg);
+    // The arbitration window opens with the bubble — BEFORE any submit-prep
+    // await (resolving the thinking level can cost a /status round-trip in a
+    // cold session): a straggler taskCompleted arriving in that prep window
+    // would otherwise judge against an idle pre-submit snapshot and end a
+    // round whose POST is still being assembled.
+    pendingSubmitCountByAgent.set(agentId, (pendingSubmitCountByAgent.get(agentId) ?? 0) + 1);
     // Set right before the submit POST; shared by the success ack and the catch.
     let thinkingToken: number | undefined;
     // Set only at the submit POST itself: a failure thrown earlier provably
@@ -772,7 +779,6 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       const thinking = (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
       thinkingToken = rawState.pendingThinkingBySession[sid];
       submitAttempted = true;
-      pendingSubmitCountByAgent.set(agentId, (pendingSubmitCountByAgent.get(agentId) ?? 0) + 1);
       const result = await api.submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,

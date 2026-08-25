@@ -976,6 +976,249 @@ describe('useSideChat — session dies mid-submit', () => {
     ).toBe(false);
   });
 
+  it('parks a straggler arriving in the submit-prep window (thinking resolve in flight)', async () => {
+    // The arbitration window opens with the bubble — BEFORE the thinking
+    // resolve's await (a /status round-trip in a cold session). A straggler
+    // landing in that prep window must park; judging against the idle
+    // pre-submit snapshot would end a round whose POST is still assembling.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw_2', userMessageId: 'msg_2' });
+    let roundTwoLive = false;
+    apiMock.getSessionTranscript.mockImplementation(async () => ({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: roundTwoLive
+        ? [{ promptId: 'pr_btw_2', status: 'running', createdAt: '2026-08-24T10:00:00.000Z' }]
+        : [],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: roundTwoLive ? 'turn' : 'idle' },
+      hasMoreOlder: false,
+    }));
+
+    const state = createState();
+    let resolveThinking!: (value: undefined) => void;
+    let thinkingCalls = 0;
+    const deps = {
+      ...makeUniqueIdDeps(),
+      resolveThinkingForPrompt: () => {
+        thinkingCalls += 1;
+        // Round 1 resolves at once; round 2's prep is held mid-flight.
+        if (thinkingCalls === 1) return Promise.resolve(undefined);
+        return new Promise<undefined>((resolve) => {
+          resolveThinking = resolve;
+        });
+      },
+    };
+    const sideChat = useSideChat(state, deps);
+    // Round 1 (its turn-end was swallowed — the agent is NOT terminated).
+    await sideChat.openSideChatOn('sess_1', 'round one');
+
+    // Round 2: the thinking resolve is held — the submit is still in prep.
+    const pendingRound2 = sideChat.sendSideChatPrompt('round two');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
+
+    // The straggler arrives mid-prep: it must park — NO arbitration read.
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(apiMock.getSessionTranscript).not.toHaveBeenCalled();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // Prep completes, the POST answers — the arbitration now runs and drops
+    // the straggler (round 2 reads RUNNING).
+    roundTwoLive = true;
+    resolveThinking(undefined);
+    await pendingRound2;
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('drops a straggler when a lost-response submit may still be running (stamped prompts terminal)', async () => {
+    // Round 2's POST was accepted but its response lost: the catch clears the
+    // bubble, and every STAMPED prompt reads terminal — yet the transcript's
+    // activity says a turn is live, so the straggler must NOT be accepted as
+    // the current round's terminal.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({ promptId: 'pr_btw_1', userMessageId: 'msg_1' })
+      .mockRejectedValueOnce(new TypeError('offline'));
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        {
+          promptId: 'pr_btw_1',
+          status: 'completed',
+          createdAt: '2026-08-24T10:00:00.000Z',
+          finishedAt: '2026-08-24T10:00:01.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
+    // Round 1 answered and stamped (its turn-end was swallowed).
+    await sideChat.openSideChatOn('sess_1', 'round one');
+
+    // Round 2: the POST will be lost (ambiguous) — the straggler is parked
+    // while it's out, and the arbitration must still drop it once the catch
+    // leaves the activity fact ('turn') as the only live evidence.
+    const pendingRound2 = sideChat.sendSideChatPrompt('round two');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+    await pendingRound2;
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('accepts the current round’s terminal even with older stamped bubbles scrolled out of the window', async () => {
+    // The chat history is long: an older local bubble (stamped long ago) has
+    // scrolled out of the transcript window, while the CURRENT round's
+    // prompt is terminal and the transcript is quiet. The arbitration must
+    // judge the newest bubble, not the whole history — a missing old id
+    // would otherwise pin the verdict on "live" forever and drop the
+    // terminal output.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_new', userMessageId: 'msg_new' });
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        {
+          promptId: 'pr_new',
+          status: 'completed',
+          createdAt: '2026-08-24T10:00:00.000Z',
+          finishedAt: '2026-08-24T10:00:01.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'idle' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // An older LOCAL bubble whose prompt has scrolled out of the window.
+    state.sideChatMessagesByAgent.agent_btw_1 = [
+      {
+        id: 'm_ancient',
+        sessionId: 'sess_1',
+        role: 'user',
+        content: [{ type: 'text', text: 'ancient question' }],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        promptId: 'pr_ancient',
+        metadata: { 'kimiWeb.optimisticUserMessage': true },
+      },
+      ...state.sideChatMessagesByAgent.agent_btw_1!,
+    ];
+
+    // The current round's turn-end was swallowed — the taskCompleted is its
+    // only terminal evidence, and it must be accepted.
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'the final answer', true);
+    await vi.waitFor(() => expect(state.sideChatSendingByAgent.agent_btw_1).toBe(false));
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('the final answer')),
+      ),
+    ).toBe(true);
+  });
+
+  it('drops a straggler while a sibling prompt is queued, even when the newest reads terminal and meta is idle', async () => {
+    // Local bubble order is NOT the daemon's order: the newer bubble's round
+    // completed first while an elder sibling is still QUEUED (its prep took
+    // longer, so its POST landed behind). The quiet meta and the newest
+    // terminal say nothing about that sibling — the arbitration must also
+    // require no queued/running prompt in the window.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({ promptId: 'pr_elder', userMessageId: 'msg_elder' })
+      .mockResolvedValue({ promptId: 'pr_new', userMessageId: 'msg_new' });
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        { promptId: 'pr_elder', status: 'queued', createdAt: '2026-08-24T10:00:00.000Z' },
+        {
+          promptId: 'pr_new',
+          status: 'completed',
+          createdAt: '2026-08-24T10:00:01.000Z',
+          finishedAt: '2026-08-24T10:00:02.000Z',
+        },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'idle' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
+    // Two local rounds: the elder stamped pr_elder, the newest stamped
+    // pr_new (its round already completed server-side; turn-end swallowed).
+    await sideChat.openSideChatOn('sess_1', 'elder question');
+    await sideChat.sendSideChatPrompt('newer question');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
   it('does not duplicate the terminal output when the reply text lives past content[0]', () => {
     // A rebuilt/continued assistant message can carry text at a non-zero part
     // index: the terminal dedup must find that trailing text part, or the
