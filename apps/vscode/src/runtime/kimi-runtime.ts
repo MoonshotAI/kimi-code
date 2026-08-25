@@ -45,6 +45,12 @@ export interface OpenSessionOptions {
   readonly model: string;
   readonly effort: string;
   readonly yoloMode: boolean;
+  /**
+   * Other multi-root workspace folders (ephemeral, per-session). Must be
+   * resent on every create/resume: the engine's additional-dirs state is not
+   * persisted across process restarts.
+   */
+  readonly additionalDirs?: readonly string[];
 }
 
 /** Extension-host owner for one in-process Node SDK harness. */
@@ -115,8 +121,13 @@ export class KimiRuntime {
               thinking: normalizeEffort(options.effort),
               permission: corePermissionForLegacyApproval(defaultApproval),
               metadata: legacyApprovalMetadata(defaultApproval),
+              additionalDirs: options.additionalDirs,
             })
-          : await this.harness.resumeSession({ id: requestedId, includeSubagents: true });
+          : await this.harness.resumeSession({
+              id: requestedId,
+              includeSubagents: true,
+              additionalDirs: options.additionalDirs,
+            });
       try {
         assertSessionWorkDir(session, options.workDir);
         const storedApproval = readLegacyApprovalFlags(session.summary?.metadata);

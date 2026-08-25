@@ -318,6 +318,27 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(opened.subscribers).toEqual(["view-1"]);
   });
 
+  it("forwards additional workspace directories when creating an SDK session", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    await runtime.openSession(openOptions({ additionalDirs: ["/workspace-2", "/workspace-3"] }));
+
+    expect(sdk.createInputs[0]?.additionalDirs).toEqual(["/workspace-2", "/workspace-3"]);
+  });
+
+  it("forwards additional workspace directories when resuming an SDK session", async () => {
+    const { runtime, sdk } = createRuntime();
+    sdk.addSession("saved-1", "/workspace");
+
+    await runtime.openSession(
+      openOptions({ sessionId: "saved-1", additionalDirs: ["/workspace-2"] }),
+    );
+
+    expect(sdk.resumeInputs).toEqual([
+      { id: "saved-1", includeSubagents: true, additionalDirs: ["/workspace-2"] },
+    ]);
+  });
+
   it("accepts the normalized SDK workDir when a Windows session is created", async () => {
     const { runtime } = createRuntime((workDir) => workDir.replaceAll("\\", "/"));
 

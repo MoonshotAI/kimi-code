@@ -475,6 +475,29 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     await vi.waitFor(() => expect(showLogs).toHaveBeenCalledOnce());
   });
 
+  it("passes the other multi-root workspace folders as additionalDirs when resuming a session", async () => {
+    const secondRoot = await mkdtemp(join(tmpdir(), "kimi-vscode-bridge-root2-"));
+    host.workspaceFolders.push({ uri: new host.Uri(secondRoot) });
+    const session = createResumedSession("session-1", root);
+    host.harness.resumeSession.mockResolvedValueOnce(session as never);
+
+    await bridge.handle(
+      {
+        id: "rpc-1",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1" },
+      },
+      "view-1",
+    );
+
+    expect(host.harness.resumeSession).toHaveBeenCalledWith({
+      id: "session-1",
+      includeSubagents: true,
+      additionalDirs: [secondRoot],
+    });
+    await rm(secondRoot, { recursive: true, force: true });
+  });
+
   it("returns a readable error when persisted session state is corrupt without wedging the bridge", async () => {
     host.harness.resumeSession.mockRejectedValueOnce(
       new Error("Session state is invalid JSON at line 4"),

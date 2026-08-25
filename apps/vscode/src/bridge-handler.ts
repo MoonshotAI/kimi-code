@@ -95,6 +95,11 @@ export class BridgeHandler {
     return vscode.workspace.workspaceFolders?.[0]?.uri ?? null;
   }
 
+  /** Other multi-root workspace folders, passed to the session as ephemeral additionalDirs. */
+  private get additionalWorkspaceDirs(): readonly string[] {
+    return vscode.workspace.workspaceFolders?.slice(1).map((folder) => folder.uri.fsPath) ?? [];
+  }
+
   private getWorkDir(webviewId: string): string | null {
     return this.customWorkDirs.get(webviewId) ?? this.workspaceRoot;
   }
@@ -172,6 +177,7 @@ export class BridgeHandler {
           model,
           effort,
           yoloMode: VSCodeSettings.yoloMode,
+          additionalDirs: this.additionalWorkspaceDirs,
           ...(sessionId === undefined ? {} : { sessionId }),
         });
         this.fileManager.setSession(webviewId, baselineSession(runtime));
@@ -181,7 +187,11 @@ export class BridgeHandler {
         const current = this.runtime.getSession(sessionId);
         const session =
           current?.session ??
-          (await this.runtime.harness.resumeSession({ id: sessionId, includeSubagents: true }));
+          (await this.runtime.harness.resumeSession({
+            id: sessionId,
+            includeSubagents: true,
+            additionalDirs: this.additionalWorkspaceDirs,
+          }));
         if (!areSameFsPath(session.workDir, this.requireWorkDir(webviewId))) {
           if (current === undefined) {
             await session.close().catch((error: unknown) => {
