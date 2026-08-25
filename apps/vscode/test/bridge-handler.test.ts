@@ -293,6 +293,36 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     });
   });
 
+  it("resolves the fallback-profile default effort with the provider type", async () => {
+    // claude-latest declares efforts but no default; the Anthropic fallback
+    // profile only matches when the provider type joins the resolution.
+    host.harness.getConfig.mockResolvedValueOnce({
+      defaultModel: "custom/claude",
+      providers: {
+        custom: { type: "anthropic", apiKey: "test-key" },
+      },
+      models: {
+        "custom/claude": {
+          provider: "custom",
+          model: "claude-latest",
+          supportEfforts: ["low", "medium", "high", "xhigh", "max"],
+        },
+      },
+    });
+
+    const result = await bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1");
+
+    expect(result).toMatchObject({
+      result: {
+        models: [{
+          id: "custom/claude",
+          support_efforts: ["low", "medium", "high", "xhigh", "max"],
+          default_effort: "high",
+        }],
+      },
+    });
+  });
+
   it("does not expose the session storage path when listing sessions", async () => {
     host.harness.listSessions.mockResolvedValueOnce([
       {

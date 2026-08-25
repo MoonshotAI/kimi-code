@@ -3,6 +3,7 @@ import {
   effectiveModelAlias,
   type KimiConfig as SdkKimiConfig,
   type ModelAlias,
+  type ProviderType,
   type ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
 
@@ -131,7 +132,12 @@ export const configHandlers = {
 
 export function toWebviewConfig(config: SdkKimiConfig): WebviewKimiConfig {
   const models: ModelConfig[] = Object.entries(config.models ?? {})
-    .map(([id, model]) => toWebviewModel(id, model))
+    // Resolve with the provider type the way saveConfig does: without it the
+    // Anthropic fallback profile never matches, and the webview's effort
+    // persistence seed would gate on a different effective model.
+    .map(([id, model]) =>
+      toWebviewModel(id, model, config.providers?.[model.provider]?.type ?? model.protocol),
+    )
     .toSorted((left, right) => left.name.localeCompare(right.name));
   return {
     defaultModel: config.defaultModel ?? models[0]?.id ?? null,
@@ -141,8 +147,8 @@ export function toWebviewConfig(config: SdkKimiConfig): WebviewKimiConfig {
   };
 }
 
-function toWebviewModel(id: string, model: ModelAlias): ModelConfig {
-  const effective = effectiveModelAlias(model);
+function toWebviewModel(id: string, model: ModelAlias, providerType?: ProviderType): ModelConfig {
+  const effective = effectiveModelAlias(model, providerType);
   return {
     id,
     name: effective.displayName ?? effective.model ?? id,
