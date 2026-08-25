@@ -15,6 +15,7 @@ import {
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import type { DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
+import type { WireRecord } from '#/wire/record';
 
 const agent = { agentId: 'main', generation: 1, space: {} } as AgentContext;
 const accessor = { get: vi.fn() } as unknown as ServicesAccessor;
@@ -140,6 +141,35 @@ describe('AgentRuntimeSet', () => {
     expect(attach).toHaveBeenCalledTimes(1);
     await set.close();
     expect(attach.mock.results[0]!.value.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('mirrors the custom onUndo and blob channels onto the attached durable participant', async () => {
+    const onUndo = (draft: string[], count: number): string[] => draft.slice(0, count);
+    const blobs = {
+      dehydrate: (record: WireRecord) => record,
+      rehydrate: (state: string[]) => state,
+    };
+    let attached: DurableAgentRuntimeParticipant | undefined;
+    const set = new AgentRuntimeSet(agent, accessor);
+    const runtime = record('durable-channels', undefined, 1, undefined, {
+      events: [],
+      undoable: true,
+      onUndo,
+      blobs,
+      transition: () => {},
+      read: () => undefined,
+      commit: () => {},
+    });
+    set.apply(runtime);
+    set.attachDurable(host(vi.fn((participant: DurableAgentRuntimeParticipant) => {
+      attached = participant;
+      return { dispose: vi.fn() };
+    })));
+
+    expect(attached?.undoable).toBe(true);
+    expect(attached?.onUndo).toBe(onUndo);
+    expect(attached?.blobs).toBe(blobs);
+    await set.close();
   });
 
   it('materializes an eager non-durable runtime at durable attach while a lazy one stays registered', async () => {
@@ -362,5 +392,24 @@ describe('AgentRuntimeSet', () => {
         createApi: () => ({}),
       }),
     ).toThrow("Agent runtime 'durable-without-logic' declares durable state without logic");
+  });
+
+  it('rejects a custom onUndo without undoable durable state at define time', () => {
+    const definition = defineAgentRuntimeContract('onundo-without-undoable');
+    expect(() =>
+      defineAgentRuntimeProvider(definition, {
+        id: 'onundo-without-undoable',
+        logic: fromCallback(() => {}),
+        durable: {
+          events: [],
+          undoable: false,
+          onUndo: () => undefined,
+          transition: () => undefined,
+          read: () => null,
+          commit: () => {},
+        },
+        createApi: () => ({}),
+      }),
+    ).toThrow("Agent runtime 'onundo-without-undoable' declares a custom onUndo without undoable state");
   });
 });

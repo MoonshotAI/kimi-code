@@ -9,7 +9,7 @@ import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { registerEvent2Class, type Event2, type Event2Class } from '#/app/event/event2';
-import type { StateFold } from '#/state/state';
+import type { StateBlobCodec, StateFold, UndoableOptions } from '#/state/state';
 
 export type AgentRuntimeStatus = 'registered' | 'materialized' | 'done' | 'failed' | 'retired';
 
@@ -36,6 +36,8 @@ export interface AgentRuntimeRestoreEvent {
 export interface AgentRuntimeDurableDefinition<State> {
   readonly events: readonly Event2Class<any, any>[];
   readonly undoable: boolean;
+  readonly onUndo?: UndoableOptions<State>['onUndo'];
+  readonly blobs?: StateBlobCodec<State>;
   readonly transition: StateFold<State>;
   read(snapshot: Snapshot<unknown>): State;
   commit(actor: AnyActorRef, state: State): void;
@@ -78,6 +80,7 @@ export function defineAgentRuntimeProvider<State, Runtime>(
   descriptor: AgentRuntimeDescriptor<State, Runtime>,
 ): AgentRuntimeProvider<Runtime> {
   assertLogicPresent(descriptor);
+  assertOnUndoUndoable(descriptor);
   for (const cls of descriptor.durable?.events ?? []) registerEvent2Class(cls);
   const provider = Object.freeze({ contract }) as AgentRuntimeProvider<Runtime>;
   descriptors.set(provider, descriptor);
@@ -87,6 +90,12 @@ export function defineAgentRuntimeProvider<State, Runtime>(
 function assertLogicPresent(descriptor: AgentRuntimeDescriptor<any, any>): void {
   if (descriptor.durable !== undefined && descriptor.logic === undefined) {
     throw new Error(`Agent runtime '${descriptor.id}' declares durable state without logic`);
+  }
+}
+
+function assertOnUndoUndoable(descriptor: AgentRuntimeDescriptor<any, any>): void {
+  if (descriptor.durable?.onUndo !== undefined && !descriptor.durable.undoable) {
+    throw new Error(`Agent runtime '${descriptor.id}' declares a custom onUndo without undoable state`);
   }
 }
 
@@ -150,6 +159,8 @@ export interface DurableAgentRuntimeParticipant<State = any> {
   readonly id: string;
   readonly events: readonly Event2Class<any, any>[];
   readonly undoable: boolean;
+  readonly onUndo?: UndoableOptions<State>['onUndo'];
+  readonly blobs?: StateBlobCodec<State>;
   readonly transition: StateFold<State>;
   getState(): State;
   commit(state: State): void;

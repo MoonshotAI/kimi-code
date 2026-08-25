@@ -5,8 +5,9 @@ import { z } from 'zod';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import type { DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
 import type { ContentPart } from '#/kosong/contract/message';
-import { Event2 } from '#/app/event/event2';
+import { Event2, registerEvent2Class } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -14,12 +15,14 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { defineState } from '#/state/state';
+import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
 import {
   recordingWireLog,
   registerTestAgentWire,
   registerTestEventDispatcher,
+  stubWireJournal,
   testWireScope,
 } from './stubs';
 
@@ -62,6 +65,38 @@ const attachKey = defineState('store-event.attach', (): { parts: unknown[] } => 
   .on(AttachAdded, (s, e) => {
     s.parts.push(...e.parts);
   });
+
+class RuntimeAttachAdded extends Event2<{ parts: readonly unknown[] }> {
+  static override readonly type = 'store-event.runtime-attach.added';
+  static override readonly durable = true;
+  static override readonly observable = true;
+  static override readonly schema = z.object({ parts: z.array(z.unknown()) });
+}
+interface RuntimeAttachAdded extends z.infer<typeof RuntimeAttachAdded.schema> {}
+
+registerEvent2Class(RuntimeAttachAdded);
+
+function runtimeBlobsParticipant(box: { state: unknown[] }): DurableAgentRuntimeParticipant {
+  return {
+    id: 'runtime.test.blobs',
+    events: [RuntimeAttachAdded],
+    undoable: false,
+    blobs: {
+      dehydrate: async (record, transform) => ({
+        ...record,
+        parts: await transform(record['parts'] as readonly unknown[]),
+      }),
+      rehydrate: async (current, transform) => [
+        ...(await transform(current as readonly unknown[])),
+      ],
+    },
+    transition: (draft, event) => {
+      if (event instanceof RuntimeAttachAdded) draft.push(...event.parts);
+    },
+    getState: () => box.state,
+    commit: (next) => { box.state = next; },
+  };
+}
 
 let disposables: DisposableStore;
 let bus: IEventBus;
@@ -143,5 +178,52 @@ describe('durable observable events', () => {
         time: expect.any(Number),
       },
     ]);
+  });
+
+  it('round-trips a runtime participant blob channel through the dehydrate queue and restore rehydration', async () => {
+    const offloadCalls: unknown[][] = [];
+    const blob: IAgentBlobService = {
+      _serviceBrand: undefined,
+      offloadParts: async (parts) => {
+        offloadCalls.push([...parts]);
+        return parts.map((part) => ({ type: 'blob_ref', part })) as unknown as ContentPart[];
+      },
+      loadParts: async (parts) =>
+        parts.map((part) =>
+          typeof part === 'object' && part !== null &&
+            (part as { type?: unknown }).type === 'blob_ref'
+            ? (part as unknown as { part: unknown }).part
+            : part,
+        ) as unknown as ContentPart[],
+      isBlobRef: () => false,
+    };
+    setup(blob);
+    const live = { state: [] as unknown[] };
+    dispatcher.attach(runtimeBlobsParticipant(live));
+
+    await dispatcher.dispatch(new RuntimeAttachAdded({ parts: [{ type: 'text', text: 'x' }] }));
+    await dispatcher.flush();
+
+    expect(live.state).toEqual([{ type: 'text', text: 'x' }]);
+    expect(offloadCalls).toEqual([[{ type: 'text', text: 'x' }]]);
+    expect(journal).toEqual([
+      {
+        type: 'store-event.runtime-attach.added',
+        parts: [{ type: 'blob_ref', part: { type: 'text', text: 'x' } }],
+        time: expect.any(Number),
+      },
+    ]);
+
+    const replayIx = disposables.add(new TestInstantiationService());
+    replayIx.set(IEventBus, new SyncDescriptor(EventBusService));
+    replayIx.set(IAgentBlobService, blob);
+    replayIx.set(IWireService, stubWireJournal([...journal]));
+    const replayed = registerTestEventDispatcher(replayIx);
+    const restored = { state: [] as unknown[] };
+    replayed.attach(runtimeBlobsParticipant(restored));
+
+    await replayed.restore();
+
+    expect(restored.state).toEqual([{ type: 'text', text: 'x' }]);
   });
 });

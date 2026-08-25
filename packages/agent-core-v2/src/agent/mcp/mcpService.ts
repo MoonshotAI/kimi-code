@@ -29,7 +29,8 @@ import {
   McpToolsDiscovered,
   type McpToolCollision,
 } from './mcpDiscoveryOps';
-import { AgentErrorEvent, McpServerStatus, ToolListUpdated } from './mcpEvents';
+import { AgentErrorEvent } from '#/app/event/agentEvents';
+import { McpServerStatus, ToolListUpdated } from './mcpEvents';
 
 interface McpToolRegistration {
   readonly disposable: IDisposable;

@@ -274,6 +274,7 @@ export function expandedRuntimeFolds(
   owner: string,
   undoable: boolean,
   folds: ReadonlyMap<Event2Class<any, any>, StateFold<any, any>>,
+  onUndo: ((state: any, count: number) => any) | undefined,
 ): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
   if (!undoable) return folds;
   if (undoableProtocol === undefined) {
@@ -288,10 +289,11 @@ export function expandedRuntimeFolds(
       `Undoable agent runtime '${owner}' must not fold the undo event itself`,
     );
   }
+  const custom = onUndo !== undefined;
   const expanded = new Map(folds);
   const domainAppend = expanded.get(protocol.events.appendMessage);
   expanded.set(protocol.events.appendMessage, (state, event, ctx) => {
-    if (protocol.isUndoAnchor(event.message)) {
+    if (!custom && protocol.isUndoAnchor(event.message)) {
       ctx.checkpoint();
       return;
     }
@@ -304,8 +306,12 @@ export function expandedRuntimeFolds(
       return domain?.(state, event, ctx);
     });
   }
-  expanded.set(protocol.events.undo, (_state, event, ctx) => {
-    if (protocol.isValidUndoCount(event.count)) ctx.undoToCheckpoint(event.count);
+  expanded.set(protocol.events.undo, (state, event, ctx) => {
+    if (!protocol.isValidUndoCount(event.count)) return;
+    if (onUndo !== undefined) {
+      return onUndo(state, event.count);
+    }
+    ctx.undoToCheckpoint(event.count);
   });
   return expanded;
 }

@@ -265,6 +265,8 @@ export class AgentRuntimeSet {
       id: entry.descriptor.id,
       events: durable.events,
       undoable: durable.undoable,
+      onUndo: durable.onUndo,
+      blobs: durable.blobs,
       transition: durable.transition,
       getState: () => durable.read(actor.getSnapshot()),
       commit: (state) => { durable.commit(actor, state); },

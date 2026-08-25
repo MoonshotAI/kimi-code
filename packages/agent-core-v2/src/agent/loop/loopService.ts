@@ -12,7 +12,7 @@ import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/l
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
-import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
+import { AgentErrorEvent } from '#/app/event/agentEvents';
 import { type FinishReason } from '#/kosong/contract/provider';
 import { mergeInPlace, type ContentPart, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type TokenUsage } from '#/kosong/contract/usage';

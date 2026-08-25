@@ -1,6 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { assign, createMachine } from 'xstate';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -13,6 +14,12 @@ import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/agent/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
+import {
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
+} from '#/agent/runtime/agentRuntime';
+import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -492,6 +499,84 @@ describe('EventDispatcherService', () => {
       id: 'runtime.test.checkpointed',
       depth: 0,
     });
+  });
+
+  it('rolls back an undoable runtime durable through its custom onUndo instead of inverse patches', async () => {
+    const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, stubWireJournal([]));
+    ix2.set(IAgentScopeContext, scope);
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const scoped = ix2.get(IEventDispatcher);
+
+    const undoCalls: number[] = [];
+    const CustomUndoRuntime = defineAgentRuntimeContract<{ get(): string[] }>(
+      'runtime.test.custom-undo',
+    );
+    const provider = defineAgentRuntimeProvider<string[], { get(): string[] }>(
+      CustomUndoRuntime,
+      {
+        id: 'runtime.test.custom-undo',
+        logic: createMachine({
+          context: { items: [] as string[] },
+          on: {
+            commit: {
+              actions: assign({ items: ({ event }) => event.items }),
+            },
+          },
+        }),
+        durable: {
+          events: [ItemAdd],
+          undoable: true,
+          onUndo: (draft, count) => {
+            undoCalls.push(count);
+            return [...draft.slice(0, Math.max(0, draft.length - count)), 'custom-cut'];
+          },
+          transition: (draft, event) => {
+            if (event instanceof ItemAdd) draft.push(event.item);
+          },
+          read: (snapshot) => (snapshot as unknown as { context: { items: string[] } }).context.items,
+          commit: (actor, items) => { actor.send({ type: 'commit', items }); },
+        },
+        createApi: (context) => ({ get: () => context.getState() }),
+      },
+    );
+    const runtimes = new AgentRuntimeSet(scope.agentContext, { get: (id) => ix2.get(id) });
+    runtimes.apply({ definition: CustomUndoRuntime, provider, generation: 1, active: true });
+    runtimes.attachDurable(scoped);
+    const runtime = runtimes.resolve(CustomUndoRuntime);
+
+    await scoped.dispatch(new ItemAdd({ item: 'a' }));
+    await scoped.dispatch(new ContextAppendMessage({
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'anchor' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    }));
+    await scoped.dispatch(new ItemAdd({ item: 'b' }));
+
+    expect(runtime.get()).toEqual(['a', 'b']);
+    expect(scoped.modelCheckpointDepths()).toEqual([]);
+
+    await scoped.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+
+    expect(runtime.get()).toEqual(['a', 'custom-cut']);
+    expect(undoCalls).toEqual([1]);
+    expect(scoped.modelCheckpointDepths()).toEqual([]);
+
+    await scoped.dispatch(new ContextUndo({ agentId: 'main', count: 0 }));
+    expect(runtime.get()).toEqual(['a', 'custom-cut']);
+    expect(undoCalls).toEqual([1]);
+
+    await scoped.dispatch(new ItemAdd({ item: 'c' }));
+    expect(runtime.get()).toEqual(['a', 'custom-cut', 'c']);
+    await runtimes.close();
   });
 
   it('does not own AgentSpace teardown', () => {

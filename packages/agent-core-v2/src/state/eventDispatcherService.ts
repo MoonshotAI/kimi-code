@@ -38,6 +38,7 @@ import {
   expandedRuntimeFolds,
   keepsUndoCheckpoints,
   type EventApplier,
+  type StateBlobCodec,
   type StateFold,
   type FoldContext,
   type PatchEntry,
@@ -97,6 +98,7 @@ interface ParticipantAttachment {
   readonly meta: StateMeta;
   readonly undoable: boolean;
   readonly keepsCheckpoints: boolean;
+  readonly blobs?: StateBlobCodec<any>;
   readonly getState: () => any;
   readonly commit: (state: any) => void;
 }
@@ -258,7 +260,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
     const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
     for (const cls of participant.events) base.set(cls, participant.transition);
-    const folds = expandedRuntimeFolds(participant.id, participant.undoable, base);
+    const folds = expandedRuntimeFolds(
+      participant.id,
+      participant.undoable,
+      base,
+      participant.onUndo,
+    );
     const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
     for (const [cls, fold] of folds) {
       appliers.set(cls, (state, event, ctx) => fold(state, event, ctx));
@@ -268,7 +275,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       appliers,
       meta: { history: [], checkpoints: [], nextPatchId: 1 },
       undoable: participant.undoable,
-      keepsCheckpoints: participant.undoable,
+      keepsCheckpoints: participant.undoable && participant.onUndo === undefined,
+      blobs: participant.blobs,
       getState: () => participant.getState(),
       commit: (state) => { participant.commit(state); },
     };
@@ -559,8 +567,11 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     if (silent) return;
     const cls = event.constructor as Event2Class;
     if (cls.durable) {
-      const dehydrator = folds?.find(({ key }) => key.replayable.blobs !== undefined)?.key
-        .replayable.blobs?.dehydrate;
+      const dehydrator =
+        folds?.find(({ key }) => key.replayable.blobs !== undefined)?.key.replayable.blobs
+          ?.dehydrate ??
+        participantTargets?.find((attachment) => attachment.blobs !== undefined)?.blobs
+          ?.dehydrate;
       this.wire.appendRecord(event.serialize(), dehydrator);
     }
     if (cls.observable && !this.disposed) {
@@ -780,6 +791,11 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       const codec = key.replayable.blobs;
       if (codec?.rehydrate === undefined) continue;
       this.agentState.set(key, Object.freeze(await codec.rehydrate(this.agentState.get(key), transform)));
+    }
+    for (const attachment of this.participantAttachments.values()) {
+      const codec = attachment.blobs;
+      if (codec?.rehydrate === undefined) continue;
+      attachment.commit(Object.freeze(await codec.rehydrate(attachment.getState(), transform)));
     }
   }
 
