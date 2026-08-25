@@ -56,6 +56,10 @@ function checkFile(file) {
 
   const comments = [];
   let cursor = 0;
+  if (text.startsWith('#!')) {
+    const nl = text.indexOf('\n');
+    cursor = nl === -1 ? text.length : nl + 1;
+  }
   for (const leaf of leaves) {
     const s = leaf.getStart(sf);
     if (s > cursor) extractGapComments(text.slice(cursor, s), cursor, comments);
