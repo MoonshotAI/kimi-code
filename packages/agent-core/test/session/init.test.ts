@@ -11,6 +11,7 @@ import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
 import type { KimiConfig } from '../../src/config';
 import { FlagResolver } from '../../src/flags';
+import { McpOAuthService, type McpOAuthEvent } from '../../src/mcp';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -41,6 +42,33 @@ afterEach(async () => {
 });
 
 describe('Session.init', () => {
+  it('subscribes to MCP credential events before app-level registration', async () => {
+    const mcpOAuth = new McpOAuthService({ kimiHomeDir: await makeTempDir() });
+    const session = new Session({
+      id: 'test-mcp-credentials-during-init',
+      kaos: testKaos.withCwd(await makeTempDir()),
+      homedir: await makeTempDir(),
+      rpc: createSessionRpc([]),
+      providerManager: testProviderManager(),
+      mcpOAuthService: mcpOAuth,
+    });
+    const handle = vi
+      .spyOn(
+        session as unknown as {
+          handleMcpOAuthEvent(event: McpOAuthEvent): Promise<void>;
+        },
+        'handleMcpOAuthEvent',
+      )
+      .mockResolvedValue(undefined);
+
+    await mcpOAuth.invalidate('remote', 'https://mcp.example.test/service', 'tokens');
+    expect(handle).toHaveBeenCalledOnce();
+
+    await session.close();
+    await mcpOAuth.invalidate('remote', 'https://mcp.example.test/service', 'tokens');
+    expect(handle).toHaveBeenCalledOnce();
+  });
+
   it('runs an isolated system-trigger turn and records the latest AGENTS as a system reminder', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();

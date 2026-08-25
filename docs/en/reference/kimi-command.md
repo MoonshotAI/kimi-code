@@ -157,7 +157,7 @@ kimi acp
 
 Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
 
-When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document.
+When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Local server and API](../guides/server.md); for the protocol details, see the [Server API](./server-api.md) reference.
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
@@ -175,6 +175,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
+| `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
@@ -268,7 +269,7 @@ Immediately check for the latest version and display an update prompt; exits aft
 kimi upgrade
 ```
 
-For global npm, pnpm, yarn, bun, and macOS / Linux native installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. When the current installation method cannot be upgraded automatically (e.g., Windows native installation), the manual update command is printed instead.
+For global npm, pnpm, yarn, and bun installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. For native installations (including Windows), it downloads and verifies the new binary in the foreground and swaps it in on the next start. When the current installation method cannot be upgraded automatically, the manual update command is printed instead.
 
 ### `kimi vis`
 
@@ -343,7 +344,7 @@ kimi provider list --json | jq '.providers | keys'
 
 #### `kimi provider catalog list [providerId]`
 
-Browse the public [models.dev](https://models.dev/) model catalog without modifying any configuration. Without an argument, lists all providers along with their protocol type and model count; with a `providerId`, lists all models under that provider along with their context window and capabilities.
+Browse the public [models.dev](https://models.dev/) model catalog without modifying any configuration. Without an argument, lists all providers along with their protocol type and model count; with a `providerId`, lists all models under that provider along with their context window and capabilities. If the catalog URL cannot be reached, a built-in snapshot of the catalog is used instead.
 
 | Parameter / Option | Description |
 | --- | --- |
@@ -360,7 +361,7 @@ kimi provider catalog list anthropic
 
 #### `kimi provider catalog add <providerId>`
 
-Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required. Vendors whose protocol the catalog does not declare (e.g. xai, openrouter, and other vendor-specific SDKs) are imported as OpenAI-compatible and the output notes the guess; when the catalog provides no usable endpoint, `--base-url` is required. Proprietary protocols (e.g. Amazon Bedrock) cannot be imported.
+Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required. Vendors whose protocol the catalog does not declare (e.g. xai, openrouter, and other vendor-specific SDKs) are imported as OpenAI-compatible and the output notes the guess; when the catalog provides no usable endpoint, `--base-url` is required. Proprietary protocols (e.g. Amazon Bedrock) cannot be imported. When the public catalog is unreachable, the import uses the built-in snapshot, so it still works offline or in blocked networks.
 
 | Parameter / Option | Description |
 | --- | --- |

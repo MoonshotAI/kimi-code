@@ -1,12 +1,3 @@
-/**
- * The single convergence path for L1.
- *
- * `applyOperation` is a pure, copy-on-write reducer: every op maps
- * `(state, op) → { state', ... }` where `state'` shares untouched branches
- * with `state`. All ops except `append` are state-style and idempotent —
- * replaying, duplicating, or reordering them converges to the same store.
- */
-
 import type { AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
 import { turnOrdinal } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
@@ -25,22 +16,15 @@ import type {
   StepHeader,
 } from './operation';
 
-/** Mutable-free aggregate state behind one AgentTranscript. */
 export interface AgentState {
   readonly items: readonly TranscriptItem[];
   readonly tasks: ReadonlyMap<TaskId, TranscriptTask>;
-  /** Global interaction entities (approvals / questions), keyed by id. */
   readonly interactions: ReadonlyMap<InteractionId, TranscriptInteraction>;
-  /** Global attachment entities (media metadata), keyed by id. */
   readonly attachments: ReadonlyMap<AttachmentId, TranscriptAttachment>;
-  /** Global todo documents (latest state), keyed by id. */
   readonly todos: ReadonlyMap<TodoId, TranscriptTodo>;
-  /** Global prompt queue entities, keyed by id. */
   readonly prompts: ReadonlyMap<PromptId, TranscriptPrompt>;
   readonly meta: TranscriptMeta;
-  /** Interaction ids currently in 'pending' state (derived index). */
   readonly pendingInteractions: ReadonlySet<InteractionId>;
-  /** Set by windowed resets: older turns exist beyond the loaded window. */
   readonly hasMoreOlder: boolean;
 }
 
@@ -58,9 +42,7 @@ export const EMPTY_AGENT_STATE: AgentState = {
 
 export interface ApplyResult {
   readonly state: AgentState;
-  /** True when the op changed observable state. */
   readonly changed: boolean;
-  /** Present when an append failed to land (offset beyond local length). */
   readonly gap?: { readonly expected: number; readonly got: number };
 }
 
@@ -97,11 +79,7 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
   }
 }
 
-// ---------------------------------------------------------------- reset
-
 function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'reset' }>): ApplyResult {
-  // Pending derives from the global interaction entities (the only channel —
-  // interactions are never step frames).
   const pending = new Set<InteractionId>();
   for (const interaction of op.snapshot.interactions) {
     if (interaction.state === 'pending') pending.add(interaction.interactionId);
@@ -125,8 +103,6 @@ function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'r
     changed: true,
   };
 }
-
-// ---------------------------------------------------------------- turn / step / frame
 
 function turnHeaderToTurn(header: TurnHeader, steps: readonly TranscriptStep[]): TranscriptTurn {
   return { ...header, kind: 'turn', steps: [...steps] };
@@ -153,7 +129,6 @@ function getTurn(state: AgentState, turnId: TurnId): TranscriptTurn | undefined 
   return item?.kind === 'turn' ? item : undefined;
 }
 
-/** Insert a new turn keeping turns ordered by ordinal; markers stay put. */
 function insertTurn(items: readonly TranscriptItem[], turn: TranscriptTurn): readonly TranscriptItem[] {
   const next = [...items];
   let at = next.length;
@@ -323,8 +298,6 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
   return false;
 }
 
-// ---------------------------------------------------------------- append (only non-idempotent op)
-
 function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
   if (op.target.type === 'task') return applyTaskAppend(state, op);
   const { turnId, stepId, frameId } = op.target;
@@ -368,14 +341,6 @@ function applyTaskAppend(state: AgentState, op: AppendOp): ApplyResult {
   return { state: { ...state, tasks }, changed: true };
 }
 
-/**
- * Offset placement, mirroring the web client's alignDelta semantics:
- * `offset > local length` is a gap (caller should re-snapshot); a chunk that
- * is already fully present is a duplicate (no change); a partially present
- * chunk is trimmed to its novel suffix — but only when the overlap region
- * agrees. A chunk behind local state whose overlap does NOT match is a gap
- * too (diverged stream), never a silent rewrite that drops local content.
- */
 export function appendAtOffset(
   local: string,
   offset: number,
@@ -386,10 +351,6 @@ export function appendAtOffset(
     return { text: local, changed: false };
   }
   const overlap = local.length - offset;
-  // The overlap region must agree before trimming: a chunk whose head does
-  // not match the local tail at `offset` belongs to a diverged stream, and
-  // rewriting from `offset` would silently drop local content (e.g. a stale
-  // buffered append landing on a refreshed page).
   if (local.slice(offset) !== chunk.slice(0, overlap)) {
     return { text: local, changed: false, gap: { expected: local.length, got: offset } };
   }
@@ -397,8 +358,6 @@ export function appendAtOffset(
   if (novel.length === 0) return { text: local, changed: false };
   return { text: local.slice(0, offset) + chunk, changed: true };
 }
-
-// ---------------------------------------------------------------- standalone items
 
 function applyItemUpsert(
   state: AgentState,
@@ -418,10 +377,6 @@ function applyItemUpsert(
     if (!changed) return { state, changed: false };
     return { state: { ...state, items }, changed: true };
   }
-  // Anchored insert (backfill): land before the first turn at or past the
-  // anchor so historical standalone items keep their position relative to
-  // turns that arrived live ahead of them. Re-applies of an existing id stay
-  // in place (above); only the first insert places.
   if (beforeTurn !== undefined) {
     const items = [...state.items];
     let at = items.length;
@@ -456,8 +411,6 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
   );
   const items = state.items.filter((entry) => !drop.has(itemIdOf(entry)));
   if (items.length === state.items.length) return { state, changed: false };
-  // Removing a turn kills the interaction ENTITIES anchored to a tool call
-  // inside it (they die with their anchor), pending entries included.
   let pending = state.pendingInteractions;
   let interactions = state.interactions;
   if (removedTurns.length > 0) {
@@ -486,8 +439,6 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
   }
   return { state: { ...state, items, interactions, pendingInteractions: pending }, changed: true };
 }
-
-// ---------------------------------------------------------------- tasks / meta
 
 function applyTaskUpsert(state: AgentState, task: TranscriptTask): ApplyResult {
   const current = state.tasks.get(task.taskId);
@@ -600,23 +551,26 @@ function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
 }
 
 function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResult {
-  // `null` clears a mode badge (the mode exited); an absent key keeps it.
   const modes =
     meta.modes !== undefined
       ? {
           plan: meta.modes.plan === null ? undefined : (meta.modes.plan ?? state.meta.modes?.plan),
           swarm: meta.modes.swarm === null ? undefined : (meta.modes.swarm ?? state.meta.modes?.swarm),
+          tower: meta.modes.tower === null ? undefined : (meta.modes.tower ?? state.meta.modes?.tower),
         }
       : state.meta.modes;
-  // The agent status arrives in slices (`agent.status.updated` carries only
-  // the fields that changed), so the key merges one level deep instead of
-  // replacing wholesale — a replace would drop fields from earlier slices.
   const agent =
     meta.agent !== undefined ? { ...state.meta.agent, ...meta.agent } : state.meta.agent;
   const next: TranscriptMeta = {
-    goal: meta.goal ?? state.meta.goal,
+    goal: meta.goal === null ? undefined : (meta.goal ?? state.meta.goal),
     activity: meta.activity ?? state.meta.activity,
-    modes: modes !== undefined && modes.plan === undefined && modes.swarm === undefined ? undefined : modes,
+    modes:
+      modes !== undefined &&
+      modes.plan === undefined &&
+      modes.swarm === undefined &&
+      modes.tower === undefined
+        ? undefined
+        : modes,
     agent,
   };
   if (

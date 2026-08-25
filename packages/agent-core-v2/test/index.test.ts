@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import * as AgentCore from '#/index';
 import {
   WIRE_PROTOCOL_VERSION,
-  CHECKPOINTED_MODELS,
+  EVENT2_REGISTRY,
   IAgentContextMemoryService,
-  IAgentContextSizeService,
-  IAgentGoalService,
+  AgentGoal,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -18,16 +18,23 @@ import {
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import {
+  ContextAppendMessage,
+  ContextApplyCompaction,
+  ContextClear,
+  ContextUndo,
+} from '#/agent/contextMemory/contextEvents';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { todoSet, TodoModel } from '#/session/todo/todoOps';
-import { OP_REGISTRY } from '#/wire/op';
-import { MODEL_CROSS_REDUCERS } from '#/wire/model';
-import { IWireService } from '#/wire/wire';
+import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { registerTestAgentWire, restoreTestAgentWire } from './wire/stubs';
+import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'metadata',
@@ -64,38 +71,53 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'llm.request',
   'mcp.tools_discovered',
 ]);
-// `profile.bind` is deliberately classified v2-only: v1's replay switch has no
-// case for it and silently skips the record, so a v1 resume of a v2-bound
-// session loses the binding (model / prompt / tool policy), and v1's
-// empty-prompt fallback then writes builtin defaults back into the shared
-// wire, overwriting the binding for later v2 resumes too. Accepted tradeoff
-// for the custom-agent rollout; revisit by teaching v1 to replay the record
-// rather than by dual-writing v1-shaped companions from v2.
 const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tools.reset_active_tools',
   'profile.bind',
 ]);
 
-// Persisted record types introduced after the v1 vocabulary: the task
-// lifecycle journal (the restore seed for ghosts and the cold transcript
-// fold), the interaction request/resolution journal, the plan revision
-// reference journal, and the terminal turn record. Replay tolerates unknown
-// record types (skip + warn), so older readers degrade gracefully.
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'tower_mode.enter',
+  'tower_mode.exit',
   'task.started',
   'task.terminated',
+  'task.waitDelivered',
+  'staleGuard.recorded',
+  'staleGuard.cleared',
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
   'interruptionReminder.recorded',
+  'plugin.session_start',
+  'runtime.set_binding',
   'turn.ended',
+  'prompt.accepted',
+  'token_counting.measured',
+  'token_counting.truncated',
+  'token_counting.rebased',
+  'cron.add',
+  'cron.delete',
+  'cron.cursor',
+  'token_counting.turn_recorded',
 ]);
+
+describe('package runtime exports', () => {
+  it('exports the opaque runtime contract surface without internal descriptors or hosts', () => {
+    expect(AgentCore).toHaveProperty('AgentRuntimeContributionPoint');
+    expect(AgentCore).toHaveProperty('AgentRuntimeOverrideContributionPoint');
+    expect(AgentCore).toHaveProperty('defineAgentRuntimeContract');
+    expect(AgentCore).toHaveProperty('defineAgentRuntimeProvider');
+    expect(AgentCore).not.toHaveProperty('AgentRuntimeSet');
+    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDescriptor');
+    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDefinitionId');
+  });
+});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
 
   let disposables: DisposableStore;
-  let wire: IWireService;
+  let dispatcher: IEventDispatcher;
   let log: IAppendLogStore;
 
   beforeEach(() => {
@@ -104,13 +126,14 @@ describe('v1 wire vocabulary', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
-    wire = registerTestAgentWire(ix, SCOPE, { log });
+    registerTestAgentWire(ix, SCOPE, { log });
+    dispatcher = registerTestEventDispatcher(ix);
   });
 
   afterEach(() => disposables.dispose());
 
   async function readRecords(): Promise<WireRecord[]> {
-    await wire.flush();
+    await dispatcher.flush();
     const out: WireRecord[] = [];
     for await (const record of log.read<WireRecord>(SCOPE, AGENT_WIRE_RECORD_KEY)) {
       out.push(record);
@@ -118,21 +141,22 @@ describe('v1 wire vocabulary', () => {
     return out;
   }
 
-  it('every persisted op type is a known (v1 or v2) record type', () => {
-    for (const [type, descriptor] of OP_REGISTRY) {
-      if (descriptor.persist === false) continue;
+  it('every durable event type is a known (v1 or v2) record type', () => {
+    for (const type of EVENT2_REGISTRY.keys()) {
       expect(
         V1_RECORD_TYPES.has(type) ||
           V2_ONLY_RECORD_TYPES.has(type) ||
           V2_RECORD_TYPES.has(type),
-        `op "${type}" persists an unregistered record type`,
+        `event "${type}" persists an unregistered record type`,
       ).toBe(true);
     }
   });
 
   it('stamps persisted records with time, except the metadata envelope', async () => {
-    await wire.restore();
-    wire.dispatch(todoSet({ key: 'todo', value: [{ title: 'x', status: 'pending' }] }));
+    await dispatcher.restore();
+    await dispatcher.dispatch(
+      new ToolsUpdateStore({ agentId: 'test-agent', key: 'todo', value: [{ title: 'x', status: 'pending' }] }),
+    );
 
     const records = await readRecords();
     expect(records).toEqual([
@@ -143,6 +167,7 @@ describe('v1 wire vocabulary', () => {
       },
       {
         type: 'tools.update_store',
+        agentId: 'test-agent',
         key: 'todo',
         value: [{ title: 'x', status: 'pending' }],
         time: expect.any(Number),
@@ -151,8 +176,8 @@ describe('v1 wire vocabulary', () => {
   });
 
   it('round-trips the todo list through the persisted tools.update_store record', async () => {
-    wire.dispatch(
-      todoSet({ key: 'todo', value: [{ title: 'restore me', status: 'in_progress' }] }),
+    await dispatcher.dispatch(
+      new ToolsUpdateStore({ agentId: 'test-agent', key: 'todo', value: [{ title: 'restore me', status: 'in_progress' }] }),
     );
     const records = await readRecords();
 
@@ -162,44 +187,45 @@ describe('v1 wire vocabulary', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
-    const fresh = registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    registerTestAgentWire(ix2, SCOPE, { log: log2 });
+    const fresh = registerTestEventDispatcher(ix2);
+    const runtimes = attachTodoRuntime(ix2, fresh);
+    store.add({ dispose: () => { void runtimes.close(); } });
 
-    await restoreTestAgentWire(fresh, log2, SCOPE, records);
+    await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    expect(fresh.getModel(TodoModel).current).toEqual([
+    expect(runtimes.inspect()[0]?.state).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });
 });
 
 describe('conversation-time checkpoint registration', () => {
-  // Models that react to context.* records but deliberately stay on world time
-  // (ephemeral notice state that must not travel through undo) are exempt.
-  // Registering a new context-reacting model without `defineCheckpointedModel`
-  // fails this test — add the name here only with a justification.
-  const CHECKPOINT_EXEMPT_MODELS: ReadonlySet<string> = new Set([
-    // goalForkNotice is one-shot reminder bookkeeping, not conversation state.
+  const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
   ]);
-  const CONTEXT_OPS = [
-    'context.append_message',
-    'context.apply_compaction',
-    'context.clear',
-    'context.undo',
+  const CONTEXT_OWNER_STATE = 'contextMemory';
+  const CONTEXT_EVENTS: readonly Event2Class[] = [
+    ContextAppendMessage,
+    ContextApplyCompaction,
+    ContextClear,
+    ContextUndo,
   ];
 
-  it('registers every context-reacting model as checkpointed or explicitly exempt', () => {
+  it('registers every context-reacting state as checkpointed or explicitly exempt', () => {
     const violations: string[] = [];
     let entries = 0;
-    for (const opType of CONTEXT_OPS) {
-      for (const entry of MODEL_CROSS_REDUCERS.get(opType) ?? []) {
-        entries += 1;
-        if (CHECKPOINTED_MODELS.includes(entry.model)) continue;
-        if (CHECKPOINT_EXEMPT_MODELS.has(entry.model.name)) continue;
-        violations.push(`${entry.model.name} (on ${opType})`);
-      }
+    const undoable = BUILTIN_REPLAYABLE_STATE_KEYS.filter(
+      (key) => key.replayable.undoable !== undefined,
+    );
+    for (const key of BUILTIN_REPLAYABLE_STATE_KEYS) {
+      if (key.name === CONTEXT_OWNER_STATE) continue;
+      if (!CONTEXT_EVENTS.some((cls) => key.replayable.folds.has(cls))) continue;
+      entries += 1;
+      if (undoable.includes(key)) continue;
+      if (CHECKPOINT_EXEMPT_STATES.has(key.name)) continue;
+      violations.push(key.name);
     }
-    // Guard against a vacuous pass when module loading changes.
     expect(entries).toBeGreaterThan(0);
     expect(violations).toEqual([]);
   });
@@ -207,7 +233,7 @@ describe('conversation-time checkpoint registration', () => {
 
 describe('AgentRecords persistence metadata', () => {
   let context: IAgentContextMemoryService;
-  let contextSize: IAgentContextSizeService;
+  let tokenCounting: TestAgentContext['tokenCounting'];
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
   let persistence: RecordingInMemoryWireRecordPersistence;
@@ -217,7 +243,7 @@ describe('AgentRecords persistence metadata', () => {
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
     context = ctx.get(IAgentContextMemoryService);
-    contextSize = ctx.get(IAgentContextSizeService);
+    tokenCounting = ctx.tokenCounting;
   });
 
   afterEach(async () => {
@@ -246,7 +272,6 @@ describe('AgentRecords persistence metadata', () => {
     expectResumeMatches = false;
     await ctx.restorePersisted();
 
-    // The envelope was synthesized and rewritten ahead of the records.
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
@@ -255,7 +280,6 @@ describe('AgentRecords persistence metadata', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
     });
-    // And the orphaned message landed in the restored context.
     expect(ctx.context.get()).toHaveLength(1);
   });
 
@@ -375,7 +399,7 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'g1',
       objective: 'do work',
       completionCriterion: 'tests pass',
@@ -403,9 +427,12 @@ describe('AgentRecords persistence metadata', () => {
       'goal.create',
       'forked',
     ]);
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
-    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(reminder?.origin).toEqual({
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
+    });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
@@ -426,13 +453,13 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'fork-goal',
       objective: 'fork work',
     });
     expect(context.get().at(-1)?.origin).toEqual({
-      kind: 'system_trigger',
-      name: 'goal_fork_cleared',
+      kind: 'injection',
+      variant: 'goal_fork_cleared',
     });
   });
 
@@ -446,7 +473,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(context.get()).toHaveLength(0);
   });
 
-  it('preconstructs context size restore handlers during runtime activation', async () => {
+  it('keeps context size tracking live across runtime restore', async () => {
     await ctx.restore([
       { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
@@ -456,11 +483,6 @@ describe('AgentRecords persistence metadata', () => {
           content: [{ type: 'text', text: 'restored prompt' }],
           toolCalls: [],
         },
-      },
-      {
-        type: 'context_size.measured',
-        length: 1,
-        tokens: 42,
       },
       {
         type: 'usage.record',
@@ -476,7 +498,15 @@ describe('AgentRecords persistence metadata', () => {
     ]);
 
     expect(context.get()).toHaveLength(1);
-    expect(contextSize.get()).toEqual({
+    const restored = tokenCounting.get();
+    expect(restored.measured).toBe(0);
+    expect(restored.size).toBe(restored.estimated);
+    expect(restored.size).toBeGreaterThan(0);
+
+    await ctx.dispatcher.dispatch(
+      new TokenCountingMeasured({ agentId: 'main', length: 1, tokens: 42 }),
+    );
+    expect(tokenCounting.get()).toEqual({
       size: 42,
       measured: 42,
       estimated: 0,

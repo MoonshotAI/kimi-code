@@ -1,31 +1,37 @@
-/**
- * `di` domain — DI Scope tree (`Scope`, `LifecycleScope`) and scoped service registry.
- *
- * Scoped services are resolved when their scope is created by default;
- * registrations that defer construction until first resolution use `OnDemand`.
- */
-
+import { BugIndicatingError } from '../errors/errors';
 import { SyncDescriptor } from './descriptors';
+import { ScopeActivation, type ProvideAllEntry } from './instantiation';
 import type { ServiceIdentifier, ServicesAccessor, IInstantiationService } from './instantiation';
 import { InstantiationService } from './instantiationService';
 import { DisposableStore, type IDisposable } from './lifecycle';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 import { ServiceCollection } from './serviceCollection';
+import { watchScopeUnits } from './scopeUnits';
 
-export enum LifecycleScope {
-  App = 0,
-  Workspace = 1,
-  Session = 2,
-  Agent = 3,
-}
+export { ScopeActivation };
 
-export enum ScopeActivation {
-  OnScopeCreated = 0,
-  OnDemand = 1,
+export type ScopeKind = string;
+
+let _scopeTopology: readonly string[] | undefined;
+
+export function setScopeTopology(kinds: readonly string[]): void {
+  if (_scopeTopology === undefined) {
+    _scopeTopology = [...kinds];
+    return;
+  }
+  if (
+    _scopeTopology.length === kinds.length &&
+    _scopeTopology.every((kind, index) => kind === kinds[index])
+  ) {
+    return;
+  }
+  throw new BugIndicatingError(
+    `scope topology already declared as [${_scopeTopology.join(', ')}]; cannot redeclare as [${kinds.join(', ')}]`,
+  );
 }
 
 export interface ScopedEntry {
-  readonly scope: LifecycleScope;
+  readonly scope: ScopeKind;
   readonly id: ServiceIdentifier<unknown>;
   readonly descriptor: SyncDescriptor<unknown>;
   readonly domain: string;
@@ -34,14 +40,23 @@ export interface ScopedEntry {
 
 const _scopedRegistry: ScopedEntry[] = [];
 
+function findScopedEntryIndex(scope: ScopeKind, id: ServiceIdentifier<unknown>): number {
+  return _scopedRegistry.findIndex((entry) => entry.scope === scope && entry.id === id);
+}
+
 export function registerScopedService<T>(
-  scope: LifecycleScope,
+  scope: ScopeKind,
   id: ServiceIdentifier<T>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
   activation: ScopeActivation = ScopeActivation.OnScopeCreated,
   domain: string = 'unknown',
 ): void {
+  const existing = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (existing !== -1) {
+    throw new BugIndicatingError(
+      `duplicate scoped service registration for '${String(id)}' in scope '${scope}' (registered domain '${_scopedRegistry[existing]?.domain}', attempted domain '${domain}'); use overrideScopedService for intentional replacement`,
+    );
+  }
   const descriptor = new SyncDescriptor<T>(ctor);
   _scopedRegistry.push({
     scope,
@@ -52,7 +67,30 @@ export function registerScopedService<T>(
   });
 }
 
-export function getScopedServiceDescriptors(scope: LifecycleScope): ReadonlyArray<ScopedEntry> {
+export function overrideScopedService<T>(
+  scope: ScopeKind,
+  id: ServiceIdentifier<T>,
+  ctor: new (...args: any[]) => T,
+  activation: ScopeActivation = ScopeActivation.OnScopeCreated,
+  domain: string = 'unknown',
+): void {
+  const index = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (index === -1) {
+    throw new BugIndicatingError(
+      `overrideScopedService found no registration for '${String(id)}' in scope '${scope}' (domain '${domain}'); use registerScopedService for the initial registration`,
+    );
+  }
+  const descriptor = new SyncDescriptor<T>(ctor);
+  _scopedRegistry[index] = {
+    scope,
+    id: id as ServiceIdentifier<unknown>,
+    descriptor: descriptor as SyncDescriptor<unknown>,
+    domain,
+    activation,
+  };
+}
+
+export function getScopedServiceDescriptors(scope: ScopeKind): ReadonlyArray<ScopedEntry> {
   return _scopedRegistry.filter((entry) => entry.scope === scope);
 }
 
@@ -61,69 +99,70 @@ export function _clearScopedRegistryForTests(): void {
 }
 
 export type ScopeSeed = ReadonlyArray<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly [ServiceIdentifier<any>, unknown]
 >;
 
 export interface ScopeOptions {
   readonly id?: string;
-  readonly extra?: ScopeSeed;
+  readonly seeds?: ScopeSeed;
+  readonly configureContainer?: (container: InstantiationService) => void;
 }
 
-export interface IScopeHandle<K extends LifecycleScope = LifecycleScope> {
+export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
   readonly id: string;
   readonly kind: K;
   readonly accessor: ServicesAccessor;
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
-export type IAppScopeHandle = IScopeHandle<LifecycleScope.App>;
-export type IWorkspaceScopeHandle = IScopeHandle<LifecycleScope.Workspace>;
-export type ISessionScopeHandle = IScopeHandle<LifecycleScope.Session>;
-export type IAgentScopeHandle = IScopeHandle<LifecycleScope.Agent>;
+export type IAppScopeHandle = IScopeHandle<'app'>;
+export type ISessionScopeHandle = IScopeHandle<'session'>;
+export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
-function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollection {
+function buildCollection(seeds?: ScopeSeed): ServiceCollection {
   const collection = new ServiceCollection();
-  for (const entry of _scopedRegistry) {
-    if (entry.scope === kind) {
-      collection.set(entry.id, entry.descriptor);
-    }
-  }
-  if (extra) {
-    for (const [id, value] of extra) {
+  if (seeds) {
+    for (const [id, value] of seeds) {
       collection.set(id, value);
     }
   }
   return collection;
 }
 
-function activateScopeServices(
+function provideScopeServices(
   instantiation: IInstantiationService,
-  kind: LifecycleScope,
+  kind: ScopeKind,
   collection: ServiceCollection,
 ): void {
+  const entries: ProvideAllEntry[] = [];
   for (const entry of _scopedRegistry) {
-    if (
-      entry.scope !== kind ||
-      entry.activation !== ScopeActivation.OnScopeCreated ||
-      collection.get(entry.id) !== entry.descriptor
-    ) {
+    if (entry.scope !== kind || collection.get(entry.id) !== undefined) {
       continue;
     }
-    instantiation.invokeFunction((accessor) => accessor.get(entry.id));
+    entries.push({
+      id: entry.id,
+      descriptor: entry.descriptor,
+      options: {
+        activation: entry.activation === ScopeActivation.OnDemand ? 'ondemand' : 'eager',
+      },
+    });
   }
+  instantiation.provideAll(entries);
 }
 
 export function createScopedChildHandle(
   parent: IInstantiationService,
-  kind: LifecycleScope,
+  kind: ScopeKind,
   id: string,
   options: ScopeOptions = {},
 ): IScopeHandle {
-  const collection = buildCollection(kind, options.extra);
+  const collection = buildCollection(options.seeds);
   const child = parent.createChild(collection);
+  (child as InstantiationService).debugLabel = id;
   try {
-    activateScopeServices(child, kind, collection);
+    watchScopeUnits(child as InstantiationService, kind);
+    options.configureContainer?.(child as InstantiationService);
+    provideScopeServices(child, kind, collection);
   } catch (error) {
     child.dispose();
     throw error;
@@ -132,7 +171,7 @@ export function createScopedChildHandle(
     get: <T>(serviceId: ServiceIdentifier<T>): T =>
       child.invokeFunction((a) => a.get(serviceId)),
   };
-  return { id, kind, accessor, dispose: () => child.dispose() };
+  return { id, kind, accessor, dispose: () => child.disposeAsync() };
 }
 
 export class Scope implements IDisposable {
@@ -146,12 +185,10 @@ export class Scope implements IDisposable {
 
   private constructor(
     readonly id: string,
-    readonly kind: LifecycleScope,
+    readonly kind: ScopeKind,
     readonly instantiation: IInstantiationService,
     private readonly _parent?: Scope,
   ) {
-    // Registration order is reversed at teardown: children (registered later)
-    // go first, then the store, then the instantiation container.
     this._ledger = new Ledger(`scope:${id}`);
     this._ledger.register(() => {
       this.instantiation.dispose();
@@ -165,12 +202,19 @@ export class Scope implements IDisposable {
     };
   }
 
+  get ledger(): Ledger {
+    return this._ledger;
+  }
+
   static createApp(options: ScopeOptions = {}): Scope {
-    const kind = LifecycleScope.App;
-    const collection = buildCollection(kind, options.extra);
+    const kind: ScopeKind = 'app';
+    const collection = buildCollection(options.seeds);
     const instantiation = new InstantiationService(collection, true);
+    instantiation.debugLabel = options.id ?? 'app';
     try {
-      activateScopeServices(instantiation, kind, collection);
+      watchScopeUnits(instantiation, kind);
+      options.configureContainer?.(instantiation);
+      provideScopeServices(instantiation, kind, collection);
     } catch (error) {
       instantiation.dispose();
       throw error;
@@ -184,20 +228,27 @@ export class Scope implements IDisposable {
     }
   }
 
-  createChild(kind: LifecycleScope, id: string, options: ScopeOptions = {}): Scope {
+  createChild(kind: ScopeKind, id: string, options: ScopeOptions = {}): Scope {
     this._assertNotDisposed();
-    if (kind <= this.kind) {
-      throw new Error(
-        `child scope kind ${LifecycleScope[kind]}(${kind}) must be greater than parent kind ${LifecycleScope[this.kind]}(${this.kind})`,
-      );
+    if (_scopeTopology !== undefined) {
+      const parentIndex = _scopeTopology.indexOf(this.kind);
+      const childIndex = _scopeTopology.indexOf(kind);
+      if (parentIndex === -1 || childIndex === -1 || childIndex <= parentIndex) {
+        throw new Error(
+          `child scope kind '${kind}' must be greater than parent kind '${this.kind}' in the declared scope topology`,
+        );
+      }
     }
     if (this.children.has(id)) {
       throw new Error(`Scope '${this.id}' already has a child with id '${id}'`);
     }
-    const collection = buildCollection(kind, options.extra);
+    const collection = buildCollection(options.seeds);
     const childInstantiation = this.instantiation.createChild(collection);
+    (childInstantiation as InstantiationService).debugLabel = id;
     try {
-      activateScopeServices(childInstantiation, kind, collection);
+      watchScopeUnits(childInstantiation as InstantiationService, kind);
+      options.configureContainer?.(childInstantiation as InstantiationService);
+      provideScopeServices(childInstantiation, kind, collection);
     } catch (error) {
       childInstantiation.dispose();
       throw error;

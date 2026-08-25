@@ -1,18 +1,8 @@
-/**
- * `mcpCore` domain — `McpConnectionManager`, the workspace-shared MCP
- * server connection orchestrator.
- *
- * Owns the configured MCP servers and their runtime clients: connects
- * (stdio / SSE / HTTP), discovers and registers tools, attaches the OAuth
- * provider when tokens are present, flips failing servers into `needs-auth`
- * on 401, and reconnects after authentication. Applies per-server settings
- * over the configured defaults and emits status changes to subscribers.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
 import type { Tool } from '#/kosong/contract/tool';
+import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 
 import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
@@ -23,7 +13,7 @@ import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
-export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
 
 export interface McpServerEntry {
   readonly name: string;
@@ -47,6 +37,28 @@ interface InternalEntry {
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
 
+export interface McpConnectionView {
+  readonly oauthService: McpOAuthService | undefined;
+  list(): readonly McpServerEntry[];
+  get(name: string): McpServerEntry | undefined;
+  resolved(
+    name: string,
+  ):
+    | {
+        client: MCPClient;
+        tools: readonly Tool[];
+        rawTools: readonly MCPToolDefinition[];
+        enabledNames: ReadonlySet<string>;
+      }
+    | undefined;
+  getRemoteServerUrl(name: string): string | undefined;
+  reconnect(name: string): Promise<void>;
+  reconnectAndJoin(name: string): Promise<void>;
+  waitForInitialLoad(signal?: AbortSignal): Promise<void>;
+  initialLoadDurationMs(): number;
+  onStatusChange(listener: McpStatusListener): () => void;
+}
+
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
 type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
@@ -66,12 +78,17 @@ export interface McpDefaultTimeouts {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
+  readonly runtimeResolver?: import('#/workspace/workspaceInstance/workspaceInstanceManager').IRuntimeResolver;
+  readonly workspaceId?: string;
+  readonly runtimeId?: string;
+  readonly requireStdioRuntimeId?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
   readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
+  readonly resolveClientName?: () => string | undefined;
 }
 
-export class McpConnectionManager {
+export class McpConnectionManager implements McpConnectionView {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
   private readonly inFlightReconnects = new Map<string, Promise<void>>();
@@ -162,6 +179,12 @@ export class McpConnectionManager {
   async connect(name: string, config: McpServerConfig): Promise<void> {
     const previous = this.entries.get(name);
     if (previous !== undefined) {
+      if (
+        (previous.status === 'pending' || previous.status === 'connected') &&
+        mcpServerConfigsEqual(previous.config, config)
+      ) {
+        return;
+      }
       await this.closeClient(previous);
     }
     const disabled = config.enabled === false;
@@ -189,6 +212,19 @@ export class McpConnectionManager {
     entry.error = undefined;
     this.emit(entry);
     this.entries.delete(name);
+    return true;
+  }
+
+  async markRemoved(name: string): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) return false;
+    await this.closeClient(entry);
+    entry.status = 'removed';
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.rawTools = undefined;
+    entry.error = undefined;
+    this.emit(entry);
     return true;
   }
 
@@ -225,7 +261,7 @@ export class McpConnectionManager {
 
   async reconnect(name: string): Promise<void> {
     const entry = this.entries.get(name);
-    if (entry === undefined) {
+    if (entry === undefined || entry.status === 'removed') {
       throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
     }
     if (entry.config.enabled === false) {
@@ -253,6 +289,12 @@ export class McpConnectionManager {
     });
     this.inFlightReconnects.set(name, work);
     return work;
+  }
+
+  async reconnectAfterCurrent(name: string): Promise<void> {
+    const existing = this.inFlightReconnects.get(name);
+    if (existing !== undefined) await existing.catch(() => undefined);
+    await this.reconnectAndJoin(name);
   }
 
   async shutdown(): Promise<void> {
@@ -343,11 +385,22 @@ export class McpConnectionManager {
   ): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs =
       config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
+    const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
+      const runtimeResolver = this.options.runtimeResolver;
+      const workspaceId = this.options.workspaceId;
+      const runtimeId = config.runtime_id ?? this.options.runtimeId;
+      if (runtimeResolver === undefined || workspaceId === undefined || runtimeId === undefined || (this.options.requireStdioRuntimeId === true && config.runtime_id === undefined)) {
+        throw new Error('MCP stdio requires runtime_id and runtime binding');
+      }
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
+        clientName,
+        runtimeResolver,
+        workspaceId,
+        runtimeId,
       });
     }
     if (config.transport === 'sse') {
@@ -356,6 +409,7 @@ export class McpConnectionManager {
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: await this.resolveOAuthProvider(config, name),
+        clientName,
       });
     }
     return new HttpMcpClient(config, {
@@ -363,6 +417,7 @@ export class McpConnectionManager {
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: await this.resolveOAuthProvider(config, name),
+      clientName,
     });
   }
 
@@ -382,7 +437,7 @@ export class McpConnectionManager {
     if (this.oauthService === undefined) return false;
     if (!isRemoteMcpConfig(entry.config)) return false;
     if (entry.config.bearerTokenEnvVar !== undefined) return false;
-    if (entry.config.headers !== undefined) return false;
+    if (entry.config.headers !== undefined && entry.config.auth !== 'oauth') return false;
     return isUnauthorizedLikeError(error);
   }
 
@@ -476,7 +531,12 @@ function isUnauthorizedLikeError(error: unknown): boolean {
 }
 
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {
-  const base = error instanceof Error ? error.message : String(error);
+  const source = error instanceof HostProcessError &&
+    error.code === HostProcessErrorCode.SpawnFailed &&
+    error.cause instanceof Error
+    ? error.cause
+    : error;
+  const base = source instanceof Error ? source.message : String(source);
   const tail = stderrTail(client);
   if (tail === undefined) return base;
   return `${base}\nstderr: ${tail}`;
@@ -499,6 +559,24 @@ function stderrTail(client: RuntimeMcpClient | undefined): string | undefined {
   const snapshot = client.stderrSnapshot();
   if (snapshot.length === 0) return undefined;
   return snapshot.trimEnd();
+}
+
+export function mcpServerConfigsEqual(a: McpServerConfig, b: McpServerConfig): boolean {
+  return stableConfigJson(a) === stableConfigJson(b);
+}
+
+function stableConfigJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableConfigJson).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableConfigJson(entryValue)}`)
+      .toSorted();
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
 }
 
 async function withTimeout<T>(

@@ -1,17 +1,8 @@
-/**
- * `usage` domain — per-agent token usage accounting contract.
- *
- * Exposes accumulated status, live usage recording, and an `onDidRecord` event
- * for agent-scoped consumers that react to newly recorded usage. Bound at Agent
- * scope.
- */
-
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import type { TokenUsage } from '#/kosong/contract/usage';
 
-import { createDecorator } from '#/_base/di/instantiation';
-import type { Event } from '#/_base/event';
-import type { ErrorCode } from '#/errors';
+import { type ErrorCode } from '#/errors';
 import { Error2 } from '#/_base/errors/errors';
 
 import { UsageErrors } from './errors';
@@ -34,18 +25,9 @@ export interface UsageStatus {
 }
 
 export interface UsageRecordedContext {
+  readonly agent: AgentContext;
   readonly model: string;
   readonly usage: Readonly<TokenUsage>;
   readonly source?: AgentLLMRequestSource;
+  readonly firstRecord: boolean;
 }
-
-export interface IAgentUsageService {
-  readonly _serviceBrand: undefined;
-
-  record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void;
-  status(): UsageStatus;
-
-  readonly onDidRecord: Event<UsageRecordedContext>;
-}
-
-export const IAgentUsageService = createDecorator<IAgentUsageService>('agentUsageService');

@@ -1,12 +1,3 @@
-/**
- * Scenario: JSONL append-log ordering, durability, rewrite serialization, and decoding.
- *
- * Resolves the real `AppendLogStore` by interface over in-memory storage;
- * controlled storage promises expose write ordering without wall-clock waits.
- * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/persistence/backends/node-fs/appendLogStore.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -38,6 +29,8 @@ function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
     append: async () => {},
     list: async () => [],
     delete: async () => {},
+    size: async () => undefined,
+    pathFor: () => undefined,
     flush: async () => {},
     close: async () => {},
   };
@@ -197,6 +190,41 @@ describe('AppendLogStore', () => {
     await Promise.all([orderedFlush, currentFlush]);
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
     replacementOwner.dispose();
+  });
+
+  it('final release retirement is awaited by drainRetirements', async () => {
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      markAppendStarted();
+      await appendGate;
+      return originalAppend(...args);
+    };
+
+    const owner = record.acquire(SCOPE, KEY);
+    record.append(SCOPE, KEY, { n: 1 });
+    await appendStarted;
+    owner.dispose();
+
+    let drained = false;
+    const draining = record.drainRetirements().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    releaseAppend();
+    await draining;
+    expect(drained).toBe(true);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
   });
 
   it('keeps a sticky failure until every acquired owner releases it', async () => {

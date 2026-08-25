@@ -1,18 +1,5 @@
-/**
- * `mcpCore` domain — MCP protocol types and the minimal client contract.
- *
- * The wire-level surface: tool definitions returned by `tools/list`, the
- * `tools/call` result shape, and the small interface that lets tests inject a
- * fake transport without pulling in the MCP SDK type graph.
- */
-
 import { ErrorCodes, Error2 } from '#/errors';
 
-/**
- * Inline resource contents nested under an EmbeddedResource block.
- * Exactly one of `text` or `blob` is populated, per the MCP schema's
- * `TextResourceContents | BlobResourceContents` union.
- */
 export interface MCPEmbeddedResourceContents {
   uri: string;
   mimeType?: string;
@@ -34,6 +21,8 @@ export interface MCPContentBlock {
 export interface MCPToolResult {
   content: MCPContentBlock[];
   isError: boolean;
+  structuredContent?: unknown;
+  _meta?: Record<string, unknown>;
 }
 
 export interface MCPToolDefinition {

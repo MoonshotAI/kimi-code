@@ -1,9 +1,3 @@
-/**
- * `kosongConfig` domain — models.dev upstream: fetch the third-party
- * directory, in-memory cache, built-in snapshot fallback, and the pruned
- * item mapping behind the import service's browse methods.
- */
-
 import { CoreErrors } from '#/_base/errors/codes';
 import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
@@ -64,20 +58,20 @@ export function upstreamFetch(): typeof fetch {
   return fetchImpl;
 }
 
-export async function getModelsDevCatalog(): Promise<ModelsDevCatalog> {
+export async function getModelsDevCatalog(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   if (cache !== undefined && now - cache.fetchedAt < CACHE_TTL_MS) return cache.catalog;
-  inFlight ??= fetchAndCache().finally(() => {
+  inFlight ??= fetchAndCache(userAgent).finally(() => {
     inFlight = undefined;
   });
   return inFlight;
 }
 
-async function fetchAndCache(): Promise<ModelsDevCatalog> {
+async function fetchAndCache(userAgent: string): Promise<ModelsDevCatalog> {
   const now = nowImpl();
   try {
     const res = await fetchImpl(MODELS_DEV_URL, {
-      headers: { Accept: 'application/json', 'User-Agent': 'kimi-code-kap-server' },
+      headers: { Accept: 'application/json', 'User-Agent': userAgent },
       signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
@@ -116,7 +110,6 @@ export function modelsDevEntry(
 ): ModelsDevProviderEntry | undefined {
   return Object.prototype.hasOwnProperty.call(catalog, id) ? catalog[id] : undefined;
 }
-
 
 function capabilityToStrings(capability: ModelCapability): string[] | undefined {
   const caps: string[] = [];
@@ -185,7 +178,6 @@ export function toModelsDevProviderItem(
     `unhandled models.dev import resolution: ${JSON.stringify(resolution)}`,
   );
 }
-
 
 export function modelsDevModelToRecord(providerId: string, model: ModelsDevModel): ModelRecord {
   const caps = capabilityToStrings(model.capability);

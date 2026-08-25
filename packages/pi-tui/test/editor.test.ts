@@ -4,14 +4,15 @@ import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
 import { PasteBurst } from "../src/paste-burst.ts";
-import { TUI } from "../src/tui.ts";
+import type { TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 /** Create a TUI with a virtual terminal for testing */
 function createTestTUI(cols = 80, rows = 24): TUI {
-	return new TUI(new VirtualTerminal(cols, rows));
+	return new TuiMainScreen(new VirtualTerminal(cols, rows));
 }
 
 /** Standard applyCompletion that replaces prefix with item.value */
@@ -976,6 +977,31 @@ describe("Editor component", () => {
 
 			editor.handleInput("\x1b[1;5C"); // Ctrl+Right
 			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 15 }); // end
+		});
+	});
+
+	describe("Scroll indicators", () => {
+		it("keeps truncated scroll indicators within width and preserves their color (issue #6962)", () => {
+			const width = 10;
+			const borderColor = (text: string) => `\x1b[35m${text}\x1b[39m`;
+			const editor = new Editor(createTestTUI(width), { ...defaultEditorTheme, borderColor });
+			editor.setText(Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n"));
+
+			// Render once to initialize wrapping, then move the cursor so content remains above and below the viewport.
+			editor.render(width);
+			for (let index = 0; index < 10; index++) editor.handleInput("\x1b[A");
+
+			const lines = editor.render(width);
+			const topBorder = lines[0]!;
+			const bottomBorder = lines.at(-1)!;
+
+			assert.match(stripVTControlCharacters(topBorder), /^─── ↑/);
+			assert.match(stripVTControlCharacters(bottomBorder), /^─── ↓/);
+			assert.strictEqual(topBorder, borderColor(stripVTControlCharacters(topBorder)));
+			assert.strictEqual(bottomBorder, borderColor(stripVTControlCharacters(bottomBorder)));
+			for (const line of lines) {
+				assert.strictEqual(visibleWidth(line), width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+			}
 		});
 	});
 
@@ -3101,6 +3127,189 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("Inline slash trigger", () => {
+		const inlineProvider: AutocompleteProvider = {
+			getSuggestions: async (lines, cursorLine, cursorCol) => {
+				const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+				if (!beforeCursor.endsWith("/")) return null;
+				return {
+					items: [{ value: "skill:review", label: "skill:review" }],
+					prefix: "/",
+				};
+			},
+			applyCompletion,
+		};
+
+		it("does not trigger for `/` after whitespace mid-input by default", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		it("triggers for `/` after whitespace mid-input when inlineSlashTrigger is on", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("retriggers inline completion as token characters arrive with the slash's request in flight", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			// The slash and its first letters land back-to-back, the way one
+			// stdin chunk delivers them: the slash's request is still in flight
+			// while the letters arrive with no autocomplete state yet.
+			for (const ch of "hello /skill:r") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("retriggers inline completion on later lines as the token grows", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			for (const ch of "hello\n/skill:r") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("retriggers inline completion when a colon follows the token name", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let calls = 0;
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					calls += 1;
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					const match = /\/skill:\w*$/.exec(beforeCursor);
+					if (match === null) return null;
+					return {
+						items: [{ value: "skill:review", label: "skill:review" }],
+						prefix: match[0],
+					};
+				},
+				applyCompletion,
+			});
+
+			for (const ch of "hello /skill") editor.handleInput(ch);
+			await flushAutocomplete();
+			const beforeColon = calls;
+			editor.handleInput(":");
+			await flushAutocomplete();
+			assert.ok(calls > beforeColon, "expected the colon to retrigger completion");
+			editor.handleInput("r");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("triggers for `/` at the start of a later line when inlineSlashTrigger is on", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "first") editor.handleInput(ch);
+			editor.handleInput("\n");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("does not trigger for `/` inside a word even when inlineSlashTrigger is on", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			editor.setAutocompleteProvider(inlineProvider);
+
+			for (const ch of "and/") editor.handleInput(ch);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		function inlineProviderWith(item: { value: string; label: string; data?: Record<string, unknown> }): AutocompleteProvider {
+			return {
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const beforeCursor = (lines[cursorLine] || "").slice(0, cursorCol);
+					if (!beforeCursor.endsWith("/")) return null;
+					return { items: [item], prefix: "/" };
+				},
+				applyCompletion,
+			};
+		}
+
+		it("does not submit when confirming an inline-marked completion with Enter", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let submitted: string | undefined;
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.setAutocompleteProvider(
+				inlineProviderWith({ value: "skill:review", label: "skill:review", data: { inlineSkill: true } }),
+			);
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			await flushAutocomplete();
+
+			assert.strictEqual(submitted, undefined);
+			assert.strictEqual(editor.getText(), "hello skill:review");
+		});
+
+		it("still submits when confirming an unmarked slash completion with Enter", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let submitted: string | undefined;
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.setAutocompleteProvider(inlineProviderWith({ value: "help", label: "help" }));
+
+			for (const ch of "hello ") editor.handleInput(ch);
+			editor.handleInput("/");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\r");
+			await flushAutocomplete();
+
+			assert.strictEqual(submitted, "hello help");
+		});
+	});
+
 	describe("Character jump (Ctrl+])", () => {
 		it("jumps forward to first occurrence of character on same line", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
@@ -3833,6 +4042,11 @@ describe("Editor component", () => {
 			return editor.getText();
 		}
 
+		/** Helper: 12-line paste content with a distinguishing tag */
+		function bigPaste(tag: string): string {
+			return Array.from({ length: 12 }, (_, i) => `${tag}${i}`).join("\n");
+		}
+
 		it("creates a paste marker for large pastes", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const text = pasteWithMarker(editor);
@@ -3968,6 +4182,92 @@ describe("Editor component", () => {
 			// Undo
 			editor.handleInput("\x1b[45;5u");
 			assert.strictEqual(editor.getText(), textBefore);
+		});
+
+		it("undo after paste marker deletion restores the paste registry", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.handleInput("\x7f"); // delete the marker
+			editor.handleInput("\x1b[45;5u"); // undo: restores marker text and registry
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
+		});
+
+		it("undo after deleting the first of two paste markers restores both registry entries", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const pasteA = bigPaste("alpha");
+			const pasteB = bigPaste("beta");
+			editor.handleInput(`\x1b[200~${pasteA}\x1b[201~`); // #1 = A
+			editor.handleInput(`\x1b[200~${pasteB}\x1b[201~`); // #2 = B, cursor at end
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput("\x1b[C"); // right over marker #1
+			editor.handleInput("\x7f"); // delete marker #1, renumbers #2 -> #1
+			editor.handleInput("\x1b[45;5u"); // undo
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, pasteA + pasteB);
+		});
+
+		it("renumbers the paste registry in ascending id order when markers are out of order in text", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const pasteA = bigPaste("alpha");
+			const pasteB = bigPaste("beta");
+			const pasteC = bigPaste("gamma");
+			editor.handleInput(`\x1b[200~${pasteA}\x1b[201~`); // #1 = A
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput(`\x1b[200~${pasteB}\x1b[201~`); // #2 = B, text: [#2][#1]
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput(`\x1b[200~${pasteC}\x1b[201~`); // #3 = C, text: [#3][#2][#1]
+			editor.handleInput("\x05"); // Ctrl+E
+			editor.handleInput("\x7f"); // delete marker #1, renumber #3 -> #2 and #2 -> #1
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, pasteC + pasteB);
+		});
+
+		it("undo after setText restores paste markers and registry", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			editor.setText("replacement");
+			editor.handleInput("\x1b[45;5u"); // undo
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
+		});
+
+		it("setText with preservePasteRegistry keeps the registry for surviving markers", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (t) => {
+				submitted = t;
+			};
+
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`); // #1 = alpha
+			// A programmatic replace that still contains the marker (e.g. a subclass
+			// expanding one of several paste markers) must not orphan its entry.
+			editor.setText(editor.getText(), { preservePasteRegistry: true });
+			editor.handleInput("\r");
+			assert.strictEqual(submitted, paste);
 		});
 
 		it("handles multiple paste markers in same line", () => {
@@ -4420,7 +4720,7 @@ describe("Editor narrow width rendering", () => {
 
 	it("renders inside a TUI at 5 columns without crashing or overflowing", async () => {
 		const terminal = new VirtualTerminal(5, 12);
-		const tui = new TUI(terminal);
+		const tui = new TuiMainScreen(terminal);
 		const editor = new Editor(tui, defaultEditorTheme, { paddingX: 4 });
 		tui.addChild(editor);
 		editor.setText("你好世界");

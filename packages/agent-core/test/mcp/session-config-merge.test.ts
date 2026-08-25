@@ -33,6 +33,7 @@ describe('mergeCallerMcpServers', () => {
     const callerServers = { docs: http('https://mcp.example.com') };
     expect(mergeCallerMcpServers(undefined, callerServers)).toEqual({
       servers: { docs: http('https://mcp.example.com') },
+      sources: { docs: 'caller' },
     });
   });
 
@@ -41,6 +42,10 @@ describe('mergeCallerMcpServers', () => {
       servers: {
         shared: stdio('disk-version'),
         diskOnly: stdio('disk-only'),
+      },
+      sources: {
+        shared: 'global',
+        diskOnly: 'global',
       },
     };
     const callerServers = {
@@ -52,6 +57,11 @@ describe('mergeCallerMcpServers', () => {
         shared: stdio('caller-version'),
         diskOnly: stdio('disk-only'),
         callerOnly: http('https://caller.example.com'),
+      },
+      sources: {
+        shared: 'caller',
+        diskOnly: 'global',
+        callerOnly: 'caller',
       },
     });
   });

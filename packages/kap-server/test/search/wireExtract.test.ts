@@ -92,6 +92,52 @@ describe('extractFromWireLine', () => {
     expect(out).toEqual([]);
   });
 
+  it('indexes only the real text of an upload-carrying user message', () => {
+    const uploadRef = {
+      type: 'image_url',
+      imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+    };
+    const record = (content: unknown[]): string =>
+      line({
+        type: 'context.append_message',
+        time: 1_700_000_000_000,
+        message: { role: 'user', content, origin: { kind: 'user' } },
+      });
+
+    expect(extractFromWireLine(record([uploadRef]))).toEqual([]);
+    expect(
+      extractFromWireLine(record([{ type: 'text', text: 'what is this? ' }, uploadRef])),
+    ).toEqual([{ role: 'user', text: 'what is this?', time: 1_700_000_000_000 }]);
+  });
+
+  it('never indexes a standalone <media path> tag, paired or not', () => {
+    const legacyPair = [
+      { type: 'text', text: '<image path="/Users/alice/media/f_1.png"></image>' },
+      {
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png' },
+      },
+    ];
+    const record = (content: unknown[]): string =>
+      line({
+        type: 'context.append_message',
+        time: 1_700_000_000_000,
+        message: { role: 'user', content, origin: { kind: 'user' } },
+      });
+
+    expect(extractFromWireLine(record(legacyPair))).toEqual([]);
+    expect(
+      extractFromWireLine(userRecord('<image path="/tmp/shot.png">', 1_700_000_000_000, { kind: 'user' })),
+    ).toEqual([]);
+    expect(
+      extractFromWireLine(
+        userRecord('open <image path="/tmp/shot.png"> please', 1_700_000_000_000, { kind: 'user' }),
+      ),
+    ).toEqual([
+      { role: 'user', text: 'open <image path="/tmp/shot.png"> please', time: 1_700_000_000_000 },
+    ]);
+  });
+
   it('extracts assistant text content parts from loop events', () => {
     const out = extractFromWireLine(
       line({
@@ -263,7 +309,6 @@ describe('analyzeWireLine turn effects', () => {
         }),
       ),
     ).toEqual({ kind: 'ensure' });
-    // A tool result folds into a tool message — never opens a turn.
     expect(
       turnOf(
         line({
@@ -272,7 +317,6 @@ describe('analyzeWireLine turn effects', () => {
         }),
       ),
     ).toEqual({ kind: 'none' });
-    // Bare step markers and vacuous content: the folded assistant is dropped.
     expect(
       turnOf(line({ type: 'context.append_loop_event', event: { type: 'step.begin' } })),
     ).toEqual({ kind: 'none' });
@@ -284,8 +328,6 @@ describe('analyzeWireLine turn effects', () => {
         }),
       ),
     ).toEqual({ kind: 'none' });
-    // Thinking parts follow the same vacuous rule: empty unsigned thinking is
-    // dropped at step.end; non-empty or signed thinking survives.
     expect(
       turnOf(
         line({
@@ -327,8 +369,6 @@ describe('analyzeWireLine turn effects', () => {
   });
 
   it('compaction and clear do NOT renumber; undo carries its count; invalid undo is none', () => {
-    // The transcript's cold replay keeps full history and groupTurns numbers
-    // it continuously, so these records have no turn effect.
     expect(
       turnOf(line({ type: 'context.apply_compaction', summary: 's', compactedCount: 2 })),
     ).toEqual({ kind: 'none' });

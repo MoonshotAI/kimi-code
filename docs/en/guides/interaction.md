@@ -27,13 +27,15 @@ Anything starting with `/` is treated as a slash command. Typing `/` opens a com
 
 Active [Agent Skills](../customization/skills.md) are automatically registered as slash commands: ordinary external Skills are invoked with `/skill:<name>`, external sub-skills appear as dotted commands such as `/parent.child`, and built-in Skills appear directly as `/<name>` in the slash command panel. If an external skill name does not conflict with a system slash command, you can also drop the `skill:` prefix and type `/<name>` directly.
 
+Inside a longer prompt, typing `/` after whitespace — including at the start of a later line — opens a skill-only completion menu. You can reference several Skills in one prompt this way: Kimi Code activates them together and runs them with the prompt as a single turn (one `/undo` reverts the whole submission), and the prompt text is sent unchanged. A Skill mention in a prompt never carries arguments — activation is by name only; arguments remain a standalone `/skill:<name> args` concept. Built-in and plugin commands still only work at the very start of the input.
+
 Some commands are only available when the agent is idle — you need to press `Esc` to interrupt streaming output or context compression before using them. Mode-toggle and query commands like `/yolo`, `/plan`, `/help`, and `/btw` are always available. For the full list, see [Slash commands reference](../reference/slash-commands.md).
 
 ## File references
 
 Type `@` to trigger file-path completion. Selecting a path inserts its relative form into your message; the agent loads the file content directly when it reads the message. File references work in both git and non-git directories, and folder suggestions end with `/` so you can keep completing paths inside them. If the fast search helper is still downloading, Kimi Code falls back to a basic filesystem scan. Hidden paths are available, but `.git` is excluded from suggestions.
 
-> `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills. A `/` typed after leading whitespace is treated as normal text, not as the slash-command menu.
+> `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills. After whitespace, `/` offers Skill completions only; use a leading `/` for built-in and plugin commands.
 
 ## Approval flow
 
@@ -72,6 +74,7 @@ Shell mode lets you run terminal commands without leaving the conversation. The 
 - Exit: press `Backspace` or `Esc` in an empty input box; submitting a command also returns you to normal mode automatically.
 - Run in background: while a command is running, press `Ctrl+B` to move it to a background task.
 - Recall previous commands: with the input box empty in shell mode, press `↑` to browse earlier shell commands; recalling one keeps you in shell mode so it runs as a command again.
+- Long output: when a finished command's output is too long, the output card collapses automatically; press `Ctrl-O` to expand or collapse it together with tool output.
 
 In shell mode the input box shows a `!` prompt on the left and the border turns violet. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal, so Kimi can use `gh` afterward.
 

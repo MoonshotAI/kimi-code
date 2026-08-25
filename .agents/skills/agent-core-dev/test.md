@@ -79,8 +79,8 @@ Reach for this only when *which layer a service lives in* is itself the thing be
 
 ```ts
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -223,6 +223,14 @@ afterEach(() => disposables.dispose());
 Do **not** add the system-under-test itself to the store. `TestInstantiationService` disposes every service it creates when the container is disposed, so `ix.get(IX)` instances are cleaned up automatically via `disposables.add(ix)`. Wrapping the SUT in `disposables.add(...)` would double-dispose it. For the same reason, do not call `svc.dispose()` at the end of a test unless you are asserting something about disposal itself.
 
 Scope-host tests call `host.dispose()` in `afterEach` (or at the end of the `it`). Route teardown through the store so ordering is deterministic and nothing leaks when a test fails mid-way.
+
+## Cascade: asserting unit state
+
+The cascade engine's test vocabulary lives in two files: `test/_base/di/cascade.test.ts` (the mechanism matrix, including cross-scope orchestration) and `test/_base/di/provide.test.ts` (provide/unprovide semantics).
+
+- **Assert unit states, not internals.** Every container exposes its engine as `container.cascade`: `stateOf(IX)` → `'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed'`; `failureOf(IX)` → the sticky error of a `Failed` unit; `pendingSnapshot()` → the waiting-area contents.
+- **The waiting area parks units with unregistered dependencies** — a unit whose declared deps are missing stays `Pending` (no throw), so a test must seed the full dependency chain. Example: a root→agent chain with no session container must seed the session-scope dependency explicitly — `ix.set(ISessionStateService, new SessionStateService())` in `test/session/agentLifecycle/agentLifecycle.test.ts` — or the dependent unit never activates.
+- **Eager activation failure is sticky `Failed`, not a scope-creation throw.** Assert state + rethrow: `expect(ix.cascade.stateOf(IX)).toBe('Failed')`, then `expect(() => ix.invokeFunction((a) => a.get(IX))).toThrow(…)`. Do not expect scope/host creation itself to throw for a failing eager constructor.
 
 ## Assertions and naming
 

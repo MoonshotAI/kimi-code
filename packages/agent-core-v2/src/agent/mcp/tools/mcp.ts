@@ -1,28 +1,3 @@
-/**
- * MCP tool adapter — wraps a remote MCP tool as an `ExecutableTool`.
- *
- * Each tool exposed by a connected MCP server is adapted into an
- * `ExecutableTool` whose `resolveExecution` forwards the call to the client
- * and normalizes the result. When a call fails, the adapter picks one of
- * three recoveries based on why it failed:
- *
- * - The server answered (a JSON-RPC error, or a response that failed
- *   client-side schema validation) → the error is rethrown; reconnecting
- *   would not change the answer.
- * - The failure is ambiguous (a raw fetch/socket error) → the client is
- *   probed with a ping: alive means a transient blip and the call is
- *   retried once in place; dead means the transport is gone.
- * - The transport is provably dead (the SDK fired `onclose`, or the probe
- *   failed) → the server is reconnected once through `options.reconnect`
- *   and the call retried on the fresh client, so a dropped connection
- *   surfaces as a slow call instead of a failed turn.
- *
- * Retries are at-least-once: if the transport died after the server
- * processed the call but before the response arrived, the retry may
- * duplicate side effects. There is no protocol-level dedup across
- * reconnects, so this trade-off is accepted deliberately.
- */
-
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
@@ -42,6 +17,7 @@ interface McpToolOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
+  readonly isRemoved?: () => boolean;
 }
 
 export function createMcpTool(
@@ -59,6 +35,14 @@ export function createMcpTool(
     resolveExecution: (args) => ({
       approvalRule: qualifiedName,
       execute: async (context) => {
+        if (options.isRemoved?.() === true) {
+          return {
+            output:
+              `MCP server for tool "${qualifiedName}" has been removed ` +
+              `(plugin uninstalled or config deleted). Do not call this tool again.`,
+            isError: true,
+          };
+        }
         let result;
         try {
           result = await callTool(client, args, context.signal);

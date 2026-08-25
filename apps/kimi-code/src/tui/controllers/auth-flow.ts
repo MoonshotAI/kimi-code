@@ -5,6 +5,7 @@ import {
   type KimiHarness,
   type OAuthRef,
   type Session,
+  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeUserAgent } from '#/cli/version';
@@ -32,14 +33,15 @@ export interface AuthFlowHost {
   session: Session | undefined;
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
+  readonly engineV2: boolean;
 
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
   resetSessionRuntime(): void;
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
-  closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
+  hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
@@ -83,6 +85,20 @@ export class AuthFlowController {
       return;
     }
 
+    if (host.engineV2) {
+      // Lazy session creation (v2 engine): configure the model only; the
+      // session is created on the first message. The effort is carried as the
+      // first session's thinking override so a session-only choice (Alt+S)
+      // made before any session exists is applied on creation.
+      const patch: Partial<AppState> = { model };
+      if (effort !== undefined) {
+        patch.thinkingEffort = effort as ThinkingEffort;
+        patch.lazySessionThinking = effort as ThinkingEffort;
+      }
+      host.setAppState(patch);
+      return;
+    }
+
     const options: MutableCreateSessionOptions = {
       workDir: host.state.appState.workDir,
       model,
@@ -117,18 +133,6 @@ export class AuthFlowController {
     void host.refreshPluginCommands(host.session);
   }
 
-  async clearActiveSessionAfterLogout(): Promise<void> {
-    await this.host.closeSession('logged out');
-    this.host.resetSessionRuntime();
-    this.host.setAppState({
-      sessionId: '',
-      model: '',
-      sessionTitle: null,
-    });
-    await this.host.refreshSkillCommands();
-    await this.host.refreshPluginCommands();
-  }
-
   async refreshConfigAfterLogin(): Promise<void> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
@@ -138,11 +142,23 @@ export class AuthFlowController {
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
 
     if (defaultModel === undefined || selected === undefined) {
+      if (host.session === undefined && host.engineV2) {
+        // Session-less v2: hydrate permission/plan defaults even without a
+        // default model.
+        await host.hydrateLazyConfigDefaults();
+      }
       host.setAppState({ availableModels, availableProviders });
       return;
     }
 
     await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
+    if (host.session === undefined && host.engineV2) {
+      // Session-less v2: also hydrate permission/plan defaults from the
+      // refreshed config, same as startup.
+      await host.hydrateLazyConfigDefaults();
+      host.setAppState({ availableModels, availableProviders });
+      return;
+    }
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,
@@ -154,9 +170,17 @@ export class AuthFlowController {
 
   async refreshConfigAfterLogout(): Promise<void> {
     const config = await this.host.harness.getConfig({ reload: true });
+    const availableModels = config.models ?? {};
+    const availableProviders = config.providers ?? {};
+
+    if (this.host.session !== undefined) {
+      this.host.setAppState({ availableModels, availableProviders });
+      return;
+    }
+
     this.host.setAppState({
-      availableModels: config.models ?? {},
-      availableProviders: config.providers ?? {},
+      availableModels,
+      availableProviders,
       model: '',
       thinkingEffort: 'off',
       maxContextTokens: 0,

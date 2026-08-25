@@ -53,6 +53,25 @@ describe('secondaryModelPatch', () => {
       secondaryModelPatch({ model: 'cheap', maxContextSize: 1024, defaultEffort: 'low' }),
     ).toEqual({ maxContextSize: 1024, defaultEffort: 'low' });
   });
+
+  it('excludes the v2 pool keys (defaultModel / models / force) from the patch', () => {
+    expect(
+      secondaryModelPatch({
+        model: 'cheap',
+        defaultModel: 'fast',
+        models: { fast: 'fast and cheap' },
+        force: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      secondaryModelPatch({
+        model: 'cheap',
+        defaultModel: 'fast',
+        force: true,
+        maxOutputSize: 8192,
+      }),
+    ).toEqual({ maxOutputSize: 8192 });
+  });
 });
 
 describe('applySecondaryModelConfig', () => {
@@ -155,7 +174,7 @@ describe('stripSecondaryModelConfig', () => {
   });
 
   it('keeps a genuinely new selection that differs from the env values', () => {
-    // `/secondary_model` under KIMI_SECONDARY_MODEL: the picked recipe must
+    // `/secondary-model` under KIMI_SECONDARY_MODEL: the picked recipe must
     // reach the disk; only overlay round-trips are restored from raw.
     const onDisk = parseConfigString(
       ['[secondary_model]', 'model = "cheap"', 'default_effort = "low"'].join('\n'),

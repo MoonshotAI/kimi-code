@@ -25,6 +25,16 @@ export const taskSchema = z.object({
   completed_at: isoDateTimeSchema.optional(),
   output_preview: z.string().optional(),
   output_bytes: z.number().int().nonnegative().optional(),
+  /** Subagent tasks only: the display-normalized model alias the child agent
+   *  is bound to. */
+  model: z.string().optional(),
+  /** Subagent tasks only: the child's effective thinking effort at spawn. */
+  thinking_effort: z.string().optional(),
+  agent_id: z.string().optional(),
+  /** Whether the task runs detached from the caller's turn (background).
+   *  Optional: producers that predate the field (e.g. the agent-core v1
+   *  task service) omit it — consumers apply the foreground fallback. */
+  run_in_background: z.boolean().optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
 

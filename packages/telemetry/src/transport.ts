@@ -13,6 +13,11 @@ import { join } from 'node:path';
 import type { EnrichedTelemetryEvent, TelemetryPrimitive } from './types';
 import { isTelemetryPrimitive } from './types';
 
+// Mainland-China telemetry endpoint, mirroring
+// `KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint` in
+// `@moonshot-ai/kimi-code-oauth` (the region source of truth). This package
+// deliberately has no dependency on it — region-aware callers pass `endpoint`
+// explicitly (e.g. through `initializeTelemetry`).
 export const TELEMETRY_ENDPOINT = 'https://telemetry-logs.kimi.com/v1/event';
 export const SERVER_EVENT_PREFIX = 'kfc_';
 export const USER_ID_PREFIX = 'kfc_device_id_';
@@ -22,7 +27,9 @@ export const RETRY_BACKOFFS_MS = [1_000, 4_000, 16_000] as const;
 export interface AsyncTransportOptions {
   readonly homeDir: string;
   readonly deviceId: string;
-  readonly endpoint?: string;
+  /** Static endpoint, or a resolver invoked per flush so an in-process region
+      switch (login/logout) takes effect without rebuilding the transport. */
+  readonly endpoint?: string | (() => string);
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -41,7 +48,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 export class AsyncTransport {
   private readonly homeDir: string;
   private readonly deviceId: string;
-  private readonly endpoint: string;
+  private readonly endpoint: string | (() => string);
   private readonly getAccessToken: (() => string | null | Promise<string | null>) | null;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffsMs: readonly number[];
@@ -193,9 +200,10 @@ export class AsyncTransport {
     signal?: AbortSignal,
   ): Promise<Response> {
     try {
+      const endpoint = typeof this.endpoint === 'function' ? this.endpoint() : this.endpoint;
       return await fetchWithTimeout(
         this.fetchImpl,
-        this.endpoint,
+        endpoint,
         {
           method: 'POST',
           headers: { ...headers },
