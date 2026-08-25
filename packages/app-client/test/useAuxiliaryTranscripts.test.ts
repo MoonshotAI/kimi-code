@@ -247,7 +247,7 @@ describe('createAuxiliaryTranscriptPool — deactivate eviction (memory)', () =>
     // Re-opening rebuilds from a fresh baseline fetch, not a cached copy.
     const reactivated = pool.activate('s1', 'agent-a');
     expect(reactivated.baselineLoaded).toBe(false);
-    expect(getSessionTranscript).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(getSessionTranscript).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(reactivated.baselineLoaded).toBe(true));
   });
 

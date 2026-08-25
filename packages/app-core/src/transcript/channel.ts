@@ -65,7 +65,7 @@ export class TranscriptChannel {
   }
 
   get loadingOlder(): boolean {
-    return this.loadingOlder_;
+    return this.loadingOlder_ || this.loadOlderTask_ !== undefined;
   }
 
   get loadOlderError(): boolean {
@@ -76,22 +76,41 @@ export class TranscriptChannel {
     return this.refreshError_;
   }
 
+  /** The single serial read chain: refresh and history pagination register
+   *  onto it SYNCHRONOUSLY at call time, so the "is the other read in
+   *  flight" check can never be evaluated before the other side has
+   *  registered — the failure mode where a refresh and a pagination started
+   *  in the same tick both proceed and the older page overwrites the fresh
+   *  state. Buffered ops replay INSIDE the chain's critical section (after
+   *  the read's own page lands), never interleaved with a queued read. */
+  private readChain: Promise<void> = Promise.resolve();
+
+  private enqueueRead(work: () => Promise<void>, onSettled: () => void): Promise<void> {
+    const task = this.readChain.then(work).finally(() => {
+      onSettled();
+      const buffered = this.buffered;
+      this.buffered = [];
+      for (const batch of buffered) this.applyOps(batch.ops, batch.seq);
+      this.onChange?.();
+    });
+    this.readChain = task.catch(() => undefined);
+    return task;
+  }
+
   refresh(): Promise<void> {
     if (this.refreshPromise !== null) return this.refreshPromise;
     this.refreshError_ = false;
-    const task = this.fetchPage({ pageSize: this.pageSize })
-      .then((page) => this.applyPage(page, true))
-      .catch((error: unknown) => {
+    const task = this.enqueueRead(async () => {
+      try {
+        const page = await this.fetchPage({ pageSize: this.pageSize });
+        this.applyPage(page, true);
+      } catch (error) {
         this.refreshError_ = true;
         throw error;
-      })
-      .finally(() => {
-        this.refreshPromise = null;
-        const buffered = this.buffered;
-        this.buffered = [];
-        for (const batch of buffered) this.applyOps(batch.ops, batch.seq);
-        this.onChange?.();
-      });
+      }
+    }, () => {
+      this.refreshPromise = null;
+    });
     this.refreshPromise = task;
     this.onChange?.();
     return task;
@@ -105,7 +124,7 @@ export class TranscriptChannel {
   }
 
   applyOps(ops: readonly TranscriptOperation[], seq?: number): boolean {
-    if (this.refreshPromise !== null || this.loadingOlder_) {
+    if (this.refreshPromise !== null || this.loadingOlder) {
       this.buffered.push({ ops, ...(seq !== undefined ? { seq } : {}) });
       return false;
     }
@@ -126,8 +145,31 @@ export class TranscriptChannel {
   private loadOlderTask_: Promise<void> | undefined;
 
   async loadOlder(): Promise<void> {
-    if (!this.snapshot.hasMoreOlder || this.loadingOlder_) return;
-    const task = this.loadOlderTask();
+    if (!this.snapshot.hasMoreOlder || this.loadingOlder) return;
+    const task = this.enqueueRead(async () => {
+      // The anchor is chosen INSIDE the serial read: a refresh (or undo
+      // rewind) that beat this read's queue slot can't slip a stale anchor
+      // or a stale older page past the fresh window.
+      if (!this.snapshot.hasMoreOlder) return;
+      const firstTurn = this.snapshot.items.find((item) => item.kind === 'turn');
+      if (firstTurn?.kind !== 'turn') return;
+      this.loadingOlder_ = true;
+      this.loadOlderError_ = false;
+      this.onChange?.();
+      try {
+        const page = await this.fetchPage({
+          beforeTurn: firstTurn.turnId,
+          pageSize: this.pageSize,
+        });
+        this.applyPage(page, false);
+      } catch (error) {
+        this.loadOlderError_ = true;
+        throw error;
+      }
+    }, () => {
+      this.loadingOlder_ = false;
+      this.loadOlderTask_ = undefined;
+    });
     this.loadOlderTask_ = task;
     try {
       await task;
@@ -136,44 +178,6 @@ export class TranscriptChannel {
     }
   }
 
-  private async loadOlderTask(): Promise<void> {
-    // Set synchronously (this async body runs to its first await in the
-    // caller's tick): ops arriving from here on buffer instead of applying
-    // over the about-to-be-reanchored window.
-    this.loadingOlder_ = true;
-    this.loadOlderError_ = false;
-    this.onChange?.();
-    try {
-      // A refresh in flight must commit BEFORE this read's anchor is chosen
-      // and the page fetched: an older page landing over the fresh window
-      // would overwrite its meta/tasks/interactions/prompts with the older
-      // response's stale ones (refreshAndResumeOnce's settleOlder covers the
-      // opposite direction), and a rewind (undo) would let a pre-refresh
-      // anchor resurrect rewound items.
-      await this.refreshPromise?.catch(() => undefined);
-      if (this.snapshot.hasMoreOlder) {
-        const firstTurn = this.snapshot.items.find((item) => item.kind === 'turn');
-        if (firstTurn?.kind === 'turn') {
-          try {
-            const page = await this.fetchPage({
-              beforeTurn: firstTurn.turnId,
-              pageSize: this.pageSize,
-            });
-            this.applyPage(page, false);
-          } catch (error) {
-            this.loadOlderError_ = true;
-            throw error;
-          }
-        }
-      }
-    } finally {
-      this.loadingOlder_ = false;
-      const buffered = this.buffered;
-      this.buffered = [];
-      for (const batch of buffered) this.applyOps(batch.ops, batch.seq);
-      this.onChange?.();
-    }
-  }
 
   /** Join the in-flight older-page read: a post-undo refresh must order AFTER
    *  it — a pre-undo page merging afterwards would resurrect rewound items. */

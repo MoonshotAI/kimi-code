@@ -183,6 +183,53 @@ describe('TranscriptChannel', () => {
     await older;
     expect(queries.some((q) => q.beforeTurn !== undefined)).toBe(true);
   });
+
+  it('serializes a same-tick pagination and refresh onto one read chain', async () => {
+    // The pagination registers first and runs first; the refresh's fetch
+    // must not even START until the older page commits — and the refresh's
+    // fresh page lands last, so no stale older state can cover it.
+    const queries: string[] = [];
+    let baselineDone = false;
+    let resolveRefresh!: (value: SessionTranscriptPage) => void;
+    let resolveOlder!: (value: SessionTranscriptPage) => void;
+    const fetchPage = vi.fn((query: { beforeTurn?: string; pageSize?: number }) => {
+      if (query.beforeTurn !== undefined) {
+        queries.push('older');
+        return new Promise<SessionTranscriptPage>((resolve) => {
+          resolveOlder = resolve;
+        });
+      }
+      if (!baselineDone) {
+        baselineDone = true;
+        return Promise.resolve(page([turn('t2', 2)], true, 3, 'turn'));
+      }
+      queries.push('refresh');
+      return new Promise<SessionTranscriptPage>((resolve) => {
+        resolveRefresh = resolve;
+      });
+    });
+    const channel = new TranscriptChannel({
+      sessionId: 's1',
+      agentId: 'agent-a',
+      fetchPage,
+    });
+    await channel.refresh();
+
+    const older = channel.loadOlder();
+    const refresh = channel.refresh();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(queries).toEqual(['older']);
+
+    resolveOlder(page([turn('t1', 1)], false, 4));
+    await older;
+    expect(queries).toEqual(['older', 'refresh']);
+    resolveRefresh(page([turn('t2', 2)], true, 5, 'turn'));
+    await refresh;
+    expect(channel.snapshot.meta.activity).toBe('turn');
+    expect(channel.seq).toBe(5);
+  });
 });
 
 function turn(turnId: string, ordinal: number) {

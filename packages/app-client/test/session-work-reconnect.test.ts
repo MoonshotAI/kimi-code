@@ -4099,6 +4099,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
       // still in flight: the pool arms the empty-reset retry, the read then
       // succeeds, and the watcher must fire the recovered window's pending
       // approval even though the counter already reset in the success path.
+      await vi.waitFor(() => expect(api.getSessionTranscript).toHaveBeenCalled());
       handlers!.onTranscriptReset?.(
         target.id,
         'main',
@@ -7142,6 +7143,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
 
       // The empty reset arms the retry; the read then recovers with the
       // error notice aboard — toasted once here.
+      await vi.waitFor(() => expect(api.getSessionTranscript).toHaveBeenCalled());
       handlers!.onTranscriptReset?.(
         recover.id,
         'main',
