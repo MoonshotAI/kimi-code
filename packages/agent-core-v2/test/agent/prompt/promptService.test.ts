@@ -14,8 +14,9 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService, PromptQueued, PromptSteered } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -61,6 +62,16 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   const disposables = new DisposableStore();
   onTestFinished(() => disposables.dispose());
   const context = stubContextMemory();
+  const reminder = createReminderStub({
+    notify: (content, notification) => {
+      context.append({
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(content) }],
+        toolCalls: [],
+        origin: { kind: 'injection', ...notification },
+      });
+    },
+  });
   const loop = stubLoopWithHooks(loopOptions);
   const fullCompaction = {
     _serviceBrand: undefined,
@@ -94,7 +105,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
-      reg.define(IAgentSystemReminderService, AgentSystemReminderService);
+      reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(reminder));
       reg.define(IAgentPromptService, AgentPromptService);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
       reg.definePartialInstance(ISessionMetadata, {

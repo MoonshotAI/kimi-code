@@ -15,8 +15,8 @@ import {
   getAgentRuntimeDefinitionId,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -121,14 +121,16 @@ function makeRuntimeAgent(
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IEventBus, eventBus);
   ix.set(IWireService, stubWireJournal(journal));
-  ix.set(IAgentContextInjectorService, {
-    _serviceBrand: undefined,
-    register: (variant: string) => {
-      registeredVariants.push(variant);
-      reminders += 1;
-      return toDisposable(() => { reminders -= 1; });
-    },
-  } as unknown as IAgentContextInjectorService);
+  ix.set(
+    IAgentLifecycleService,
+    lifecycleWithReminder(createReminderStub({
+      register: (variant: string) => {
+        registeredVariants.push(variant);
+        reminders += 1;
+        return toDisposable(() => { reminders -= 1; });
+      },
+    })),
+  );
   ix.set(IAgentContextMemoryService, {
     _serviceBrand: undefined,
     get: () => [],
@@ -207,13 +209,15 @@ describe('TodoAgentRuntime', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventBus, new EventBusService());
     ix.set(IWireService, stubWireJournal([]));
-    ix.set(IAgentContextInjectorService, {
-      _serviceBrand: undefined,
-      register: () => {
-        reminders += 1;
-        return toDisposable(() => { reminders -= 1; });
-      },
-    } as unknown as IAgentContextInjectorService);
+    ix.set(
+      IAgentLifecycleService,
+      lifecycleWithReminder(createReminderStub({
+        register: () => {
+          reminders += 1;
+          return toDisposable(() => { reminders -= 1; });
+        },
+      })),
+    );
     ix.set(IAgentContextMemoryService, {
       _serviceBrand: undefined,
       get: () => [],

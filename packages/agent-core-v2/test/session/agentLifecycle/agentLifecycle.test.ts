@@ -24,8 +24,8 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { reminderAgentRuntimeProvider } from '#/features/reminder/reminderAgentRuntime';
 import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -62,7 +62,6 @@ import { interactionAgentRuntimeProvider } from '#/features/interaction/interact
 import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
-import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -384,10 +383,6 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentAgentsMdReminderService, {
       _serviceBrand: undefined,
     } as IAgentAgentsMdReminderService);
-    ix.stub(IAgentContextInjectorService, {
-      _serviceBrand: undefined,
-      register: () => ({ dispose: () => {} }),
-    } as unknown as IAgentContextInjectorService);
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -457,6 +452,12 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       compacting: null,
     } as unknown as IAgentFullCompactionService);
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-reminder',
+      new Ledger('test-reminder'),
+      reminderAgentRuntimeProvider,
+    );
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -1156,20 +1157,6 @@ describe('AgentLifecycleService', () => {
 
   it('retires agent runtimes before disposing the agent scope on remove', async () => {
     const order: string[] = [];
-    let reminders = 0;
-    ix.stub(IAgentContextInjectorService, {
-      _serviceBrand: undefined,
-      register: (variant: string) => {
-        if (variant !== TODO_LIST_REMINDER_VARIANT) return { dispose: () => {} };
-        reminders += 1;
-        return {
-          dispose: () => {
-            reminders -= 1;
-            order.push('reminder-disposed');
-          },
-        };
-      },
-    } as unknown as IAgentContextInjectorService);
     contributeTodo();
     const svc = ix.get(IAgentLifecycleService);
     const willClose: string[] = [];
@@ -1182,13 +1169,11 @@ describe('AgentLifecycleService', () => {
       originalDispose();
     };
     svc.resolve(main, AgentTodo).get();
-    expect(reminders).toBe(1);
 
     await svc.remove(main);
 
     expect(willClose).toEqual(['main']);
-    expect(reminders).toBe(0);
-    expect(order).toEqual(['reminder-disposed', 'scope-disposed']);
+    expect(order).toEqual(['scope-disposed']);
     expect(svc.handleOf('main')).toBeUndefined();
   });
 
@@ -1210,30 +1195,18 @@ describe('AgentLifecycleService', () => {
   });
 
   it('retires a withdrawn runtime definition and rejects new resolves', async () => {
-    let reminders = 0;
-    ix.stub(IAgentContextInjectorService, {
-      _serviceBrand: undefined,
-      register: (variant: string) => {
-        if (variant !== TODO_LIST_REMINDER_VARIANT) return { dispose: () => {} };
-        reminders += 1;
-        return {
-          dispose: () => {
-            reminders -= 1;
-          },
-        };
-      },
-    } as unknown as IAgentContextInjectorService);
     const withdraw = contributeTodo();
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
     svc.resolve(main, AgentTodo).get();
-    expect(reminders).toBe(1);
 
     withdraw();
 
-    await vi.waitFor(() => { expect(reminders).toBe(0); });
     expect(() => svc.resolve(main, AgentTodo)).toThrow('unavailable');
-    expect(svc.inspect(main).contributions[0]).toMatchObject({ id: 'todo', status: 'retired' });
+    expect(svc.inspect(main).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
+      id: 'todo',
+      status: 'retired',
+    });
   });
 
   it('de-dupes concurrent create calls for the same agent id', async () => {

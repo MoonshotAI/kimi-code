@@ -211,8 +211,8 @@ replaying ──(日志折叠完)──▶ ready ──(首个 live commit)─�
 各写一次**，且违规是响声（throw）不是静默。
 
 > 今天"resume 里合法地想写"的场景（goal 的 fork reminder 每次 restore 重新
-> 生成）改由 **context injector**（已存在的 `IAgentContextInjectorService`）或
-> ready 相位的一次性 Effect 承担——派生内容本来就不该伪装成回放副作用。
+> 生成）改由 **AgentReminder** Runtime 的 `register` provider 或 ready 相位的
+> 一次性 Effect 承担——派生内容本来就不该伪装成回放副作用。
 > `postRestoring` 窗口取消：task 磁盘对账、cron 启动等归入 ready 时刻的
 > 一次性 Effect。
 

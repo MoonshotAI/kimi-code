@@ -12,7 +12,8 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -150,7 +151,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
@@ -169,6 +170,10 @@ export class AgentPromptService implements IAgentPromptService {
       await this.deliverToolResult(ctx);
       await next();
     });
+  }
+
+  private reminder(): ReminderRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
   }
 
   private get launching(): boolean {
@@ -331,7 +336,7 @@ export class AgentPromptService implements IAgentPromptService {
       removed.push({ item, index });
       this.pending.splice(index, 1);
     }
-    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
+    const request = new SteerStepRequest(rerouted, captions, this.reminder(), (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.scopeContext.agentId,
@@ -380,7 +385,7 @@ export class AgentPromptService implements IAgentPromptService {
   async inject(message: ContextMessage): Promise<Turn | undefined> {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
     await this.materializeDaemonRefs(rerouted);
-    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
+    const request = new SteerStepRequest(rerouted, captions, this.reminder(), (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.scopeContext.agentId,
@@ -413,7 +418,7 @@ export class AgentPromptService implements IAgentPromptService {
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
-      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminders)).assigned).turn;
+      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminder())).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));
@@ -469,8 +474,7 @@ export class AgentPromptService implements IAgentPromptService {
   private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
     const ownerPromptId = message.id ?? newMessageId();
     for (const caption of captions) {
-      this.reminders.appendSystemReminder(caption, {
-        kind: 'injection',
+      this.reminder().notify(caption, {
         variant: 'image_compression',
         ownerPromptId,
       });

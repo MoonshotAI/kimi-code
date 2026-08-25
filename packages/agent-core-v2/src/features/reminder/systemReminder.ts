@@ -1,6 +1,4 @@
-import { createDecorator } from "#/_base/di/instantiation";
-
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 
 const SYSTEM_REMINDER_PREFIX = '<system-reminder>\n';
 const SYSTEM_REMINDER_SUFFIX = '\n</system-reminder>';
@@ -16,11 +14,3 @@ export function systemReminderContent(message: ContextMessage): string | undefin
   }
   return text.slice(SYSTEM_REMINDER_PREFIX.length, text.length - SYSTEM_REMINDER_SUFFIX.length);
 }
-
-export interface IAgentSystemReminderService {
-  readonly _serviceBrand: undefined;
-
-  appendSystemReminder(content: string, origin: PromptOrigin): ContextMessage;
-}
-
-export const IAgentSystemReminderService = createDecorator<IAgentSystemReminderService>('agentSystemReminderService');

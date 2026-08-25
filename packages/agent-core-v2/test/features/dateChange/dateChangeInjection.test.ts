@@ -4,7 +4,6 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FiberState } from '#/_base/di/fiber';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -14,9 +13,6 @@ import {
   DEFAULT_AGENT_PROFILE_NAME,
   type EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IFeatureManager } from '#/app/feature/featureManager';
-import { IAgentDateChangeService } from '#/features/dateChange/dateChange';
-import { DateChangeFeature } from '#/features/dateChange/dateChangeFeature';
 import { dateChangeSeedKey } from '#/features/dateChange/dateChangeService';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -109,12 +105,13 @@ describe('AgentDateChangeService', () => {
   let loop: IAgentLoopService;
   let profile: IAgentProfileService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent(appService(IHostClock, clock));
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
+    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {
@@ -222,6 +219,7 @@ describe('AgentDateChangeService', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
+    await ctx.restoreRuntimes();
 
     await runWillBeginStepHooks(loop);
 
@@ -255,6 +253,7 @@ describe('AgentDateChangeService', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
+    await ctx.restoreRuntimes();
 
     await runWillBeginStepHooks(loop);
     const initial = dateReminders(context);
@@ -276,6 +275,7 @@ describe('AgentDateChangeService', () => {
       context = ctx.get(IAgentContextMemoryService);
       loop = ctx.get(IAgentLoopService);
       profile = ctx.get(IAgentProfileService);
+        await ctx.restorePersisted();
 
       await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });
 
@@ -466,41 +466,19 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(0);
   });
 
-  it('withdraws and restores the eager service, provider, and seed with the Feature', async () => {
-    const manager = ctx.get(IFeatureManager);
+  it('keeps one provider registration across repeated runtime restore', async () => {
     const states = ctx.get(IAgentStateService);
     updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
 
-    expect(manager.units().find((unit) => unit.name === 'dateChange')?.state).toBe(
-      FiberState.Active,
-    );
-    expect(ctx.get(IAgentDateChangeService)).toBeDefined();
     expect(states.has(dateChangeSeedKey)).toBe(true);
-    await runWillBeginStepHooks(loop);
-    expect(states.get(dateChangeSeedKey)).toMatchObject({ localDate: '2026-07-29' });
-
-    await manager.unprovideUnit('dateChange');
-    expect(() => ctx.get(IAgentDateChangeService)).toThrow();
-    expect(states.has(dateChangeSeedKey)).toBe(false);
-
-    clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    manager.provideUnit(DateChangeFeature);
-    expect(ctx.get(IAgentDateChangeService)).toBeDefined();
-    expect(states.has(dateChangeSeedKey)).toBe(true);
-    expect(states.get(dateChangeSeedKey)).toBeUndefined();
-
+    await ctx.restoreRuntimes();
+    await ctx.restoreRuntimes();
+    clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
-    const restored = dateReminders(context);
-    expect(restored).toHaveLength(2);
-    expect(messageText(restored[1] as ContextMessage)).toContain('2026-07-30');
 
-    clock.set('2026-07-31T04:00:00.000Z');
-    await runWillBeginStepHooks(loop);
-    const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(3);
-    expect(messageText(reminders[2] as ContextMessage)).toContain('2026-07-31');
+    expect(dateReminders(context)).toHaveLength(2);
   });
 });

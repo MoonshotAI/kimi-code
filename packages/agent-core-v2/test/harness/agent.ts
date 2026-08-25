@@ -25,10 +25,11 @@ import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import '#/agent/contextInjector/contextInjectorService';
+import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentCron } from '#/features/cron/cronAgentRuntime';
+import { AgentDateChangeService } from '#/features/dateChange/dateChangeService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
@@ -1408,6 +1409,16 @@ export class AgentTestContext {
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
 
     this.initializeRestorableServices();
+    this.disposables.push(
+      new AgentDateChangeService(
+        this.session.accessor.get(IAgentLifecycleService),
+        this.get(IAgentScopeContext),
+        this.get(IAgentProfileService),
+        this.get(IAgentStateService),
+        this.get(IHostClock),
+        this.get(ISessionContext),
+      ),
+    );
     this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);

@@ -47,6 +47,7 @@ function messageText(message: { readonly content: readonly { readonly type: stri
 }
 
 async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
+  await ctx.restoreRuntimes();
   await ctx.get(IAgentLoopService).hooks.onWillBeginStep.run({
     turnId: 0,
     step: 1,
@@ -294,6 +295,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
     );
     ctx.get(IAgentPluginService);
+    await ctx.restoreRuntimes();
 
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });

@@ -13,8 +13,8 @@ import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
-import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createReminderHarness, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
   IAgentLoopService,
@@ -30,8 +30,6 @@ import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -312,6 +310,10 @@ function registerSharedServices(
   reg.defineInstance(IEventBus, eventBus);
   reg.defineInstance(IAgentLoopService, loop);
   reg.defineInstance(IAgentContextMemoryService, contextMemory);
+  reg.defineInstance(
+    IAgentScopeContext,
+    makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
+  );
   reg.definePartialInstance(IAgentProfileService, {
     getModelCapabilities: () => capabilities,
   });
@@ -330,12 +332,14 @@ function registerSharedServices(
       eventBus.publish(event);
     },
   } as unknown as IEventDispatcher);
-  reg.define(IAgentContextInjectorService, AgentContextInjectorService);
+  reg.defineInstance(
+    IAgentLifecycleService,
+    lifecycleWithReminder(createReminderHarness(loop, contextMemory, eventBus)),
+  );
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
   reg.define(IAgentToolSelectSchemasService, AgentToolSelectSchemasService);
-  reg.define(IAgentSystemReminderService, AgentSystemReminderService);
   registerLogServices(reg);
 }
 

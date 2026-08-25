@@ -6,8 +6,9 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -71,21 +72,16 @@ function createPlanFileFakes(
   };
 }
 
-type InjectableDynamicInjector = {
-  inject(boundary: undefined, isNewTurn: boolean): Promise<void>;
-};
-
 describe('Plan service', () => {
   let activeFakes: PlanFakes;
   let context: IAgentContextMemoryService;
   let ctx: TestAgentContext;
-  let injector: InjectableDynamicInjector;
   let permissionRules: IAgentPermissionRulesService;
   let plan: IAgentPlanService;
   let profile: IAgentProfileService;
   let tempDirs: string[];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     activeFakes = createPlanFakes();
     tempDirs = [];
     ctx = createTestAgent(
@@ -95,10 +91,11 @@ describe('Plan service', () => {
       }),
     );
     context = ctx.get(IAgentContextMemoryService);
-    injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
     permissionRules = ctx.get(IAgentPermissionRulesService);
     plan = ctx.get(IAgentPlanService);
     profile = ctx.get(IAgentProfileService);
+    await ctx.restorePersisted();
+    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {
@@ -919,7 +916,7 @@ describe('Plan service', () => {
   }
 
   async function injectDynamic(): Promise<void> {
-    await injector.inject(undefined, false);
+    await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
   }
 });
 

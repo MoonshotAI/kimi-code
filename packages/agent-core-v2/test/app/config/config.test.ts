@@ -292,6 +292,7 @@ describe('Agent config', () => {
   });
 
   it('keeps turn-start config for later steps and applies updates to the next turn', async () => {
+    await ctx.restoreRuntimes();
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',

@@ -45,8 +45,9 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -122,12 +123,6 @@ function createHarness(
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
-        reg.defineInstance(IAgentScopeContext, {
-          _serviceBrand: undefined,
-          agentId: 'main',
-          agentContext: stubAgentContext('main', 0),
-          scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
-        } satisfies IAgentScopeContext);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
@@ -136,6 +131,12 @@ function createHarness(
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
+      reg.defineInstance(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'main',
+        agentContext: stubAgentContext('main', 0),
+        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
+      } satisfies IAgentScopeContext);
       const dispatcher: IEventDispatcher = {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },
@@ -152,13 +153,14 @@ function createHarness(
         agentsMdPaths: options.restoredProfile?.agentsMdPaths,
       });
       reg.defineInstance(IAgentStateService, agentState);
-      reg.defineInstance(IAgentSystemReminderService, {
-        _serviceBrand: undefined,
-        appendSystemReminder: (content: string, origin: PromptOrigin) => {
-          reminders.push({ content, origin });
-          return { role: 'user', content: [], toolCalls: [], origin };
-        },
-      } satisfies IAgentSystemReminderService);
+      reg.defineInstance(
+        IAgentLifecycleService,
+        lifecycleWithReminder(createReminderStub({
+          notify: (content, notification) => {
+            reminders.push({ content, origin: { kind: 'injection', ...notification } });
+          },
+        })),
+      );
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         sessionId: 'session-1',

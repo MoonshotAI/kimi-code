@@ -1,12 +1,14 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { defineState } from '#/state/state';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionContext,
-  type ContextInjectionResult,
-} from '#/agent/contextInjector/contextInjector';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import type {
+  ContextInjectionContext,
+  ContextInjectionResult,
+} from '#/features/reminder/types';
 import { pickDisclosureBaseline } from './disclosureBaseline';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -24,7 +26,8 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IHostClock private readonly clock: IHostClock,
@@ -33,9 +36,11 @@ export class AgentDateChangeService extends Disposable implements IAgentDateChan
     super();
     this._register(this.states.contributeState(dateChangeSeedKey));
     this._register(
-      injector.register<DateInjectionDisclosure>(
-        DATE_CHANGE_INJECTION_VARIANT,
-        (ctx) => this.reminder(ctx),
+      activateReminderWhenReady(agentLifecycle, scopeContext, (reminder) =>
+        reminder.register<DateInjectionDisclosure>(
+          DATE_CHANGE_INJECTION_VARIANT,
+          (ctx) => this.reminder(ctx),
+        ),
       ),
     );
   }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import type { LogContext, LogPayload } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
@@ -10,10 +11,6 @@ import type { SkillDefinition } from '#/features/skill/catalog/types';
 import { appService, logServices, skillServices, testAgent } from '../../../harness';
 import { stubPluginService } from '../../../app/plugin/stubs';
 import { stubSkill } from './stubs';
-
-type InjectableDynamicInjector = {
-  inject(): Promise<void>;
-};
 
 interface CapturedWarn {
   readonly message: string;
@@ -87,7 +84,8 @@ function sessionStartRuntime(input: {
 }
 
 async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
-  await (ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector).inject();
+  await ctx.restoreRuntimes();
+  await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
 }
 
 function lastReminder(ctx: ReturnType<typeof testAgent>): string {
