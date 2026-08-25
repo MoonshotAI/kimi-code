@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import type { LogContext, LogPayload } from '#/_base/log/log';
@@ -78,7 +78,7 @@ function sessionStartRuntime(input: {
     logServices(recordingLogger(warnings)),
   );
   if (input.history !== undefined) {
-    ctx.context.append(...input.history);
+    void ctx.context.append(...input.history);
   }
   return { ctx, warnings };
 }

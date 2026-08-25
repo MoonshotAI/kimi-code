@@ -6,7 +6,7 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
@@ -74,7 +74,7 @@ function createPlanFileFakes(
 
 describe('Plan service', () => {
   let activeFakes: PlanFakes;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let ctx: TestAgentContext;
   let permissionRules: IAgentPermissionRulesService;
   let plan: IAgentPlanService;
@@ -90,7 +90,7 @@ describe('Plan service', () => {
         processRunner: delegatingRunner(),
       }),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     permissionRules = ctx.get(IAgentPermissionRulesService);
     plan = ctx.get(IAgentPlanService);
     profile = ctx.get(IAgentProfileService);

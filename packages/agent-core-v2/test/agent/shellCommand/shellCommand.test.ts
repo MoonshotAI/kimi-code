@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import {
-  IAgentContextMemoryService,
+  AgentContextMemory,
+  type ContextMemoryRuntime,
   IAgentShellCommandService,
   IAgentToolRegistryService,
   IEventBus,
@@ -21,12 +22,12 @@ const textOf = (message: ContextMessage): string =>
 
 describe('AgentShellCommandService', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let shell: IAgentShellCommandService;
 
   function setup(stdout: string, exitCode: number): void {
     ctx = createTestAgent(execEnvServices({ processRunner: createCommandRunner(stdout, exitCode) }));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     shell = ctx.get(IAgentShellCommandService);
   }
 
@@ -175,7 +176,7 @@ describe('AgentShellCommandService', () => {
       resolve: () => undefined,
     };
     ctx = createTestAgent(agentService(IAgentToolRegistryService, emptyRegistry));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     shell = ctx.get(IAgentShellCommandService);
 
     const result = await shell.run({ command: 'echo hi' });

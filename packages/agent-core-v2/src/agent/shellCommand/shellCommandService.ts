@@ -5,7 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -13,6 +13,7 @@ import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentEvent2 } from '#/app/event/event2';
 import { Error2, ErrorCodes } from '#/errors';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
@@ -69,15 +70,17 @@ export const shellCommandTasksKey = defineState<Map<string, string>>(
 export class AgentShellCommandService implements IAgentShellCommandService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
+  private readonly context: ContextMemoryRuntime;
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentPromptService private readonly promptService: IAgentPromptService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
+    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(shellCommandTasksKey);
   }
 
@@ -217,7 +220,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
   private appendShellInput(command: string): void {
     const text = `<bash-input>\n${escapeXml(command)}\n</bash-input>`;
-    this.context.append({
+    void this.context.append({
       role: 'user',
       content: [{ type: 'text', text }],
       toolCalls: [],
@@ -227,7 +230,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
   private appendShellOutput(stdout: string, stderr: string, isError?: boolean): void {
     const text = `<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`;
-    this.context.append({
+    void this.context.append({
       role: 'user',
       content: [{ type: 'text', text }],
       toolCalls: [],

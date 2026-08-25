@@ -4,8 +4,8 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import {
@@ -88,7 +88,7 @@ function updateSystemPromptWithoutDate(profile: IAgentProfileService, cwd: strin
   });
 }
 
-function dateReminders(context: IAgentContextMemoryService): readonly ContextMessage[] {
+function dateReminders(context: ContextMemoryRuntime): readonly ContextMessage[] {
   return context.get().filter((message) => {
     return message.origin?.kind === 'injection' && message.origin.variant === 'date_change';
   });
@@ -102,7 +102,7 @@ function messageText(message: ContextMessage): string {
 
 describe('dateChangeAgentRuntime', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let clock: TestHostClock;
   let loop: IAgentLoopService;
   let profile: IAgentProfileService;
@@ -110,7 +110,7 @@ describe('dateChangeAgentRuntime', () => {
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent(appService(IHostClock, clock));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     loop = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
     await ctx.restoreRuntimes();
@@ -218,7 +218,7 @@ describe('dateChangeAgentRuntime', () => {
       { autoConfigure: false, persistence },
       appService(IHostClock, clock),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
@@ -252,7 +252,7 @@ describe('dateChangeAgentRuntime', () => {
       { autoConfigure: false, persistence },
       appService(IHostClock, clock),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
@@ -274,7 +274,7 @@ describe('dateChangeAgentRuntime', () => {
     try {
       await ctx.dispose();
       ctx = createTestAgent(appService(IHostClock, clock), hostEnvironmentServices(homeDir));
-      context = ctx.get(IAgentContextMemoryService);
+      context = ctx.resolve(AgentContextMemory);
       loop = ctx.get(IAgentLoopService);
       profile = ctx.get(IAgentProfileService);
         await ctx.restorePersisted();
@@ -304,7 +304,7 @@ describe('dateChangeAgentRuntime', () => {
       '2026-07-28T04:00:00.000Z',
       '2026-07-28',
     );
-    context.append({
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'older date reminder' }],
       toolCalls: [],
@@ -340,7 +340,7 @@ describe('dateChangeAgentRuntime', () => {
       '2026-07-28T04:00:00.000Z',
       '2026-07-28',
     );
-    context.append({
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
       toolCalls: [],
@@ -349,9 +349,9 @@ describe('dateChangeAgentRuntime', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
+    await expect(context.undo(1)).resolves.toBe(true);
     expect(dateReminders(context)).toHaveLength(0);
-    context.append({
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
       toolCalls: [],
@@ -365,7 +365,7 @@ describe('dateChangeAgentRuntime', () => {
 
   it('re-discloses after undo removes the initial disclosure', async () => {
     updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
-    context.append({
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
       toolCalls: [],
@@ -374,9 +374,9 @@ describe('dateChangeAgentRuntime', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
+    await expect(context.undo(1)).resolves.toBe(true);
     expect(dateReminders(context)).toHaveLength(0);
-    context.append({
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
       toolCalls: [],

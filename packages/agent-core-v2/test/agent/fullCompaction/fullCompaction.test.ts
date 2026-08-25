@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DefaultCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
-import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
+import { COMPACTION_SUMMARY_PREFIX } from '#/features/contextMemory/compactionHandoff';
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
@@ -2048,7 +2048,7 @@ describe('FullCompaction', () => {
       .get(IAgentToolRegistryService)
       .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp' });
     try {
-      ctx.context.append({
+      void ctx.context.append({
         role: 'system',
         content: [],
         toolCalls: [],

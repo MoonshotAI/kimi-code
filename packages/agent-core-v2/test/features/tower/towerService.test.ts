@@ -11,8 +11,8 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -176,9 +176,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     ix.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     registerTestAgentWire(ix, testWireScope('wire', 'tower-test'), {
       log: ix.get(IAppendLogStore),
@@ -577,9 +574,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix2.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     const restoredAdded: string[] = [];
     ix2.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
@@ -677,9 +671,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix2.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     const restoredAdded: string[] = [];
     ix2.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
@@ -742,9 +733,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix2.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     const restoredAdded: string[] = [];
     ix2.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
@@ -820,9 +808,6 @@ describe('AgentTowerService', () => {
         IAgentLifecycleService,
         lifecycleWithReminder(createReminderStub()),
       );
-      ix2.stub(IAgentContextMemoryService, {
-        get: () => [],
-      } as unknown as IAgentContextMemoryService);
       const restoredAdded: string[] = [];
       ix2.stub(IAgentProfileService, {
         data: () => ({ profileName: undefined }),
@@ -902,9 +887,6 @@ describe('AgentTowerService', () => {
         IAgentLifecycleService,
         lifecycleWithReminder(createReminderStub()),
       );
-      ix2.stub(IAgentContextMemoryService, {
-        get: () => [],
-      } as unknown as IAgentContextMemoryService);
       const restoredAdded: string[] = [];
       ix2.stub(IAgentProfileService, {
         data: () => ({ profileName: undefined }),
@@ -984,9 +966,6 @@ describe('AgentTowerService', () => {
         IAgentLifecycleService,
         lifecycleWithReminder(createReminderStub()),
       );
-      ix2.stub(IAgentContextMemoryService, {
-        get: () => [],
-      } as unknown as IAgentContextMemoryService);
       const restoredAdded: string[] = [];
       ix2.stub(IAgentProfileService, {
         data: () => ({ profileName: undefined }),
@@ -1063,9 +1042,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix2.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     const restoredAdded: string[] = [];
     ix2.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
@@ -1135,9 +1111,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix2.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     const restoredAdded: string[] = [];
     ix2.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
@@ -1188,9 +1161,6 @@ describe('AgentTowerService', () => {
       IAgentLifecycleService,
       lifecycleWithReminder(createReminderStub()),
     );
-    ix2.stub(IAgentContextMemoryService, {
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     const restoredAdded: string[] = [];
     ix2.stub(IAgentProfileService, {
       data: () => ({ profileName: undefined }),
@@ -1349,19 +1319,19 @@ async function injectDynamic(ctx: TestAgentContext): Promise<void> {
 
 function appendAssistantTurn(
   ctx: TestAgentContext,
-  context: IAgentContextMemoryService,
+  context: ContextMemoryRuntime,
   text: string,
 ): void {
   ctx.appendAssistantTurn(context.get().length, text);
 }
 
-function towerReminderMessages(context: IAgentContextMemoryService): readonly ContextMessage[] {
+function towerReminderMessages(context: ContextMemoryRuntime): readonly ContextMessage[] {
   return context.get().filter((message) => {
     return message.origin?.kind === 'injection' && message.origin.variant === 'tower_mode';
   });
 }
 
-function lastTowerReminder(context: IAgentContextMemoryService): string {
+function lastTowerReminder(context: ContextMemoryRuntime): string {
   const message = towerReminderMessages(context).at(-1);
   if (message === undefined) return '';
   return message.content
@@ -1371,7 +1341,7 @@ function lastTowerReminder(context: IAgentContextMemoryService): string {
 
 describe('TowerModeInjection', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let tower: IAgentTowerService;
   let towerFlagOn: boolean;
   let cwd: string;
@@ -1383,7 +1353,7 @@ describe('TowerModeInjection', () => {
       { cwd },
       appService(IFlagService, stubFlag((id) => towerFlagOn && id === TOWER_FLAG_ID)),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     tower = ctx.get(IAgentTowerService);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();

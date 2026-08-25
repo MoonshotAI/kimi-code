@@ -6,7 +6,7 @@ import { Service } from '#/_base/di/service';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -50,7 +50,6 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   private readonly review: ExitPlanModeReview;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IBlobStore private readonly blobs: IBlobStore,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
@@ -87,7 +86,12 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
     this._register(
       activateReminderWhenReady(agentLifecycle, this.agentCtx, (reminder) =>
-        new PlanModeInjection(reminder, this, this.context, agentState),
+        new PlanModeInjection(
+          reminder,
+          this,
+          agentLifecycle.resolve(this.agentCtx.agentContext, AgentContextMemory),
+          agentState,
+        ),
       ),
     );
     this._register(this.registerPlanGuard(toolExecutor));

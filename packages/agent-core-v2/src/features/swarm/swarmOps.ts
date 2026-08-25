@@ -1,7 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import { contextMemoryKey, popSwarmModeReminder } from '#/agent/contextMemory/contextOps';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
@@ -45,5 +44,3 @@ export const swarmKey = defineState('swarm', (): SwarmModeTrigger | null => null
     ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, swarmMode: false }));
     return null;
   });
-
-contextMemoryKey.on(SwarmModeExit, (s) => popSwarmModeReminder(s));

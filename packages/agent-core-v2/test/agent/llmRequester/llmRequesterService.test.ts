@@ -5,8 +5,8 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
@@ -16,6 +16,7 @@ import { AgentContextProjectorService } from '#/agent/contextProjector/contextPr
 import { AgentLLMRequesterService, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -59,6 +60,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 
 import {
   recordingWireLog,
@@ -206,7 +208,7 @@ function createService(
   const usage = { record: () => Promise.resolve(), status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
-  };
+  } as unknown as ContextMemoryRuntime;
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
     get: (() => undefined) as IConfigService['get'],
@@ -227,7 +229,7 @@ function createService(
     subscribe: () => toDisposable(() => {}),
   };
 
-  ix.stub(IAgentContextMemoryService, context);
+  ix.stub(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), context));
   ix.stub(IAgentToolSelectService, toolSelect);
   ix.stub(IAgentMediaResolverService, options.mediaResolver ?? { resolve: async (messages) => messages });
   if (projector === undefined) {

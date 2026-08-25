@@ -5,9 +5,9 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { renderPrompt } from "#/_base/utils/render-prompt";
 import { estimateTokensForMessage } from "#/kosong/contract/tokens";
-import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { buildCompactionSummaryText, isRealUserInput } from '#/features/contextMemory/compactionHandoff';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
@@ -136,10 +136,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private readonly strategy: CompactionStrategy;
   private readonly todo: TodoRuntime;
+  private readonly context: ContextMemoryRuntime;
   private _compacting: ActiveCompaction | null = null;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -155,6 +155,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ) {
     super();
     this.todo = manager.resolve(agent.agentContext, AgentTodo);
+    this.context = manager.resolve(agent.agentContext, AgentContextMemory);
     this.states.contributeState(fullCompactionKey);
     this.states.contributeState(fullCompactionCompactionCountInTurnKey);
     this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);
@@ -738,7 +739,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }
 
       const summary = await this.postProcessSummary(attempt.summary);
-      const result = this.context.applyCompaction({
+      const result = await this.context.applyCompaction({
         summary,
         contextSummary: buildCompactionSummaryText(summary),
         compactedCount: originalHistory.length,

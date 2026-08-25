@@ -1,5 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import type { Tool } from '#/kosong/contract/tool';
 import type { ToolInfo } from '#/tool/toolContract';
 

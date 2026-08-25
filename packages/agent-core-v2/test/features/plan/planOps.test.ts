@@ -6,7 +6,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import {
   ContextAppendMessage,
   ContextUndo,
-} from '#/agent/contextMemory/contextEvents';
+} from '#/features/contextMemory/contextEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import {

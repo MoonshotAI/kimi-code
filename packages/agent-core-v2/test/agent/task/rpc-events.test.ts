@@ -17,7 +17,7 @@ import {
   type SubagentHandle,
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -206,7 +206,7 @@ function createAgentTaskService(options: {
     emittedEvents.push(event as { type: string; info?: unknown });
   });
 
-  const context = ctx.get(IAgentContextMemoryService);
+  const context = ctx.resolve(AgentContextMemory);
   const appendHistorySpy = vi.spyOn(context, 'append');
 
   const agent: FakeTaskAgent = {
@@ -702,8 +702,8 @@ describe('AgentTaskService — notification delivery', () => {
       await persistence.appendTaskOutput('agent-seen0000', 'already delivered summary');
       fixture = createAgentTaskService({ sessionDir });
       const { agent, ctx, manager } = fixture;
-      const context = ctx.get(IAgentContextMemoryService);
-      context.append(
+      const context = ctx.resolve(AgentContextMemory);
+      void context.append(
         {
           role: 'user',
           content: [{ type: 'text', text: 'already delivered' }],

@@ -6,7 +6,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
 import type {
   ContextInjectionContext,
   ContextInjectionProvider,
@@ -23,8 +23,7 @@ import { AgentTaskService, taskNotificationDeliveryKey } from '#/agent/task/task
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage, TaskOrigin } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -42,7 +41,7 @@ import { WireService } from '#/wire/wireService';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { AgentEventBusView, EventBusService } from '#/app/event/eventBusService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { ITaskService } from '#/app/task/task';
@@ -51,7 +50,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
 import { stubLog } from '../../_base/log/stubs';
-import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
+import { stubContextMemory, type StubContextMemory } from '../../features/contextMemory/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
@@ -102,11 +101,13 @@ describe('AgentTaskService', () => {
   let ix: TestInstantiationService;
   let eventBus: EventBusService;
   let injectionProviders: Map<string, ContextInjectionProvider>;
+  let contextMemory: StubContextMemory;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     injectionProviders = new Map();
+    contextMemory = stubContextMemory();
     ix.stub(ILogService, stubLog());
     ix.stub(IAgentConversationUndoParticipantRegistry, {
       register: () => toDisposable(() => {}),
@@ -122,7 +123,7 @@ describe('AgentTaskService', () => {
             injectionProviders.delete(name);
           });
         },
-      })),
+      }), contextMemory),
     );
     ix.stub(ITaskService, {
       run: () => {
@@ -132,7 +133,6 @@ describe('AgentTaskService', () => {
         throw new Error('ITaskService.defer is not used by this test');
       },
     });
-    ix.stub(IAgentContextMemoryService, stubContextMemory());
     ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
     ix.stub(IAgentToolRegistryService, {
       register: () => toDisposable(() => {}),
@@ -351,7 +351,7 @@ describe('AgentTaskService', () => {
     const loop = stubLoop();
     await waitForCondition(() => loop.hasPendingRequests());
 
-    const context = ix.get(IAgentContextMemoryService) as StubContextMemory;
+    const context = contextMemory;
     loop.drainNextBatch(context);
 
     const delivered = context.messages.filter((message) => message.origin?.kind === 'task');
@@ -703,7 +703,7 @@ describe('AgentTaskService', () => {
     ix.stub(IWireService, stubWireService());
     ix.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(createReminderStub(), stubContextMemory()),
     );
     ix.stub(ITaskService, {
       run: () => {
@@ -713,7 +713,6 @@ describe('AgentTaskService', () => {
         throw new Error('ITaskService.defer is not used by this test');
       },
     });
-    ix.stub(IAgentContextMemoryService, stubContextMemory());
     ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.stub(IConfigService, {
@@ -760,7 +759,7 @@ describe('AgentTaskService', () => {
     });
     ix.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub()),
+      lifecycleWithReminder(createReminderStub(), context),
     );
     ix.stub(ITaskService, {
       run: () => {
@@ -770,7 +769,6 @@ describe('AgentTaskService', () => {
         throw new Error('ITaskService.defer is not used by this test');
       },
     });
-    ix.stub(IAgentContextMemoryService, context);
     ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.stub(IConfigService, {

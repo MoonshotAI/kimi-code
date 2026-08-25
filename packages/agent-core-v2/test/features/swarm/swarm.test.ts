@@ -14,11 +14,10 @@ import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import type { IFlagService } from '#/app/flag/flag';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
@@ -67,6 +66,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import {
+  attachContextMemoryRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -281,6 +281,7 @@ describe('AgentSwarmService', () => {
   let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
+  let contextMemory: ContextMemoryRuntime;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -291,9 +292,9 @@ describe('AgentSwarmService', () => {
       estimateText: () => 0,
       estimateMessage: () => 0,
       estimateMessages: () => 0,
+      rebase: () => {},
       recordTruncation: () => {},
     } as unknown as ISessionTokenCountingService);
-    ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const loop = stubLoopWithHooks();
@@ -307,9 +308,17 @@ describe('AgentSwarmService', () => {
         return toDisposable(() => { provider = undefined; });
       },
     });
-    ix.stub(IAgentLifecycleService, lifecycleWithReminder(reminder));
+    registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
+      log: ix.get(IAppendLogStore),
+      eventBus: ix.get(IEventBus),
+    });
+    registerTestEventDispatcher(ix);
+    const runtimes = attachContextMemoryRuntime(ix, ix.get(IEventDispatcher));
+    disposables.add({ dispose: () => { void runtimes.close(); } });
+    contextMemory = runtimes.resolve(AgentContextMemory);
+    ix.stub(IAgentLifecycleService, lifecycleWithReminder(reminder, contextMemory));
     loop.hooks.onWillBeginStep.register('test-reminder', async ({ firstStepOfTurn }, next) => {
-      const context = ix.get(IAgentContextMemoryService);
+      const context = contextMemory;
       const history = context.get();
       const positions = history.flatMap((message, index) =>
         message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode' ? [index] : [],
@@ -331,7 +340,7 @@ describe('AgentSwarmService', () => {
             ? value
             : { content: value };
         if (typeof result.content === 'string') {
-          context.append({
+          void context.append({
             role: 'user',
             content: [{ type: 'text', text: wrapSystemReminder(result.content) }],
             toolCalls: [],
@@ -351,11 +360,6 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
-    registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
-      log: ix.get(IAppendLogStore),
-      eventBus: ix.get(IEventBus),
-    });
-    registerTestEventDispatcher(ix);
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
   afterEach(() => disposables.dispose());
@@ -396,7 +400,7 @@ describe('AgentSwarmService', () => {
 
   it('renders enter guidance when manual swarm mode becomes active', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
 
     swarm.enter('manual');
     await runInjectionBoundary(ix.get(IAgentLoopService));
@@ -412,7 +416,7 @@ describe('AgentSwarmService', () => {
 
   it('keeps one enter guidance when a later boundary sees the same active state', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
 
     swarm.enter('manual');
     await runInjectionBoundary(ix.get(IAgentLoopService));
@@ -423,7 +427,7 @@ describe('AgentSwarmService', () => {
 
   it('removes trailing enter guidance when manual swarm mode becomes inactive', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
 
     swarm.enter('manual');
     await runInjectionBoundary(ix.get(IAgentLoopService));
@@ -435,11 +439,11 @@ describe('AgentSwarmService', () => {
 
   it('keeps enter guidance when a later context message makes it non-trailing', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
 
     swarm.enter('manual');
     await runInjectionBoundary(ix.get(IAgentLoopService));
-    context.append({
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'later prompt' }],
       toolCalls: [],
@@ -457,7 +461,7 @@ describe('AgentSwarmService', () => {
 
   it('renders no reminder at all for tool-triggered swarms', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
 
     swarm.enter('tool');
     await runInjectionBoundary(ix.get(IAgentLoopService));
@@ -469,7 +473,7 @@ describe('AgentSwarmService', () => {
 
   it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
     await restoreTestEventDispatcher(
       ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
@@ -488,7 +492,7 @@ describe('AgentSwarmService', () => {
 
   it('replays exit by removing a trailing enter reminder', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
     await restoreTestEventDispatcher(
       ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),
@@ -508,7 +512,7 @@ describe('AgentSwarmService', () => {
 
   it('derives the rendered state from the disclosure, not the reminder text', async () => {
     const swarm = ix.get(IAgentSwarmService);
-    const context = ix.get(IAgentContextMemoryService);
+    const context = contextMemory;
     await restoreTestEventDispatcher(
       ix.get(IEventDispatcher),
       ix.get(IAppendLogStore),

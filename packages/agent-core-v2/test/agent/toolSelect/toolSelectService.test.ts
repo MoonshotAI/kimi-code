@@ -8,11 +8,12 @@ import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ToolCall } from '#/kosong/contract/message';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { UndoCut } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import {
+  ContextMemoryRuntime,
+  type ContextCompactionResult,
+} from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { ContextSpliced } from '#/features/contextMemory/contextEvents';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderHarness, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
@@ -242,8 +243,7 @@ class FakeLoopService implements IAgentLoopService {
   }
 }
 
-class FakeContextMemory implements IAgentContextMemoryService {
-  readonly _serviceBrand = undefined;
+class FakeContextMemory {
   readonly history: ContextMessage[] = [];
   readonly appended: ContextMessage[] = [];
 
@@ -251,28 +251,26 @@ class FakeContextMemory implements IAgentContextMemoryService {
     return this.history;
   }
 
-  append(...messages: readonly ContextMessage[]): void {
+  append(...messages: readonly ContextMessage[]): Promise<void> {
     this.appended.push(...messages);
-  }
-
-  appendLoopEvent(_event: LoopRecordedEvent): void {
-    throw new Error('unused in this suite');
+    return Promise.resolve();
   }
 
   publishTrailingRemoval(): boolean {
     return false;
   }
 
-  clear(): void {
+  clear(): Promise<void> {
     this.history.length = 0;
     this.appended.length = 0;
+    return Promise.resolve();
   }
 
-  undo(): UndoCut {
+  undo(): Promise<boolean> {
     throw new Error('unused in this suite');
   }
 
-  applyCompaction(): never {
+  applyCompaction(): Promise<ContextCompactionResult> {
     throw new Error('unused in this suite');
   }
 
@@ -309,7 +307,6 @@ function registerSharedServices(
   registerStateServices(reg);
   reg.defineInstance(IEventBus, eventBus);
   reg.defineInstance(IAgentLoopService, loop);
-  reg.defineInstance(IAgentContextMemoryService, contextMemory);
   reg.defineInstance(
     IAgentScopeContext,
     makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
@@ -334,7 +331,10 @@ function registerSharedServices(
   } as unknown as IEventDispatcher);
   reg.defineInstance(
     IAgentLifecycleService,
-    lifecycleWithReminder(createReminderHarness(loop, contextMemory, eventBus)),
+    lifecycleWithReminder(
+      createReminderHarness(loop, contextMemory as unknown as ContextMemoryRuntime, eventBus),
+      contextMemory as unknown as ContextMemoryRuntime,
+    ),
   );
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
@@ -1105,7 +1105,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     await announce(h);
     expect(await announce(h, 2)).toBeUndefined();
 
-    h.contextMemory.clear();
+    void h.contextMemory.clear();
     const reannounced = await announceAfterCompaction(h);
     expect(reannounced).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
   });

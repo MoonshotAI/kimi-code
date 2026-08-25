@@ -9,15 +9,16 @@ import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   selectCompactionUserMessages,
   type TokenEstimate,
-} from '#/agent/contextMemory/compactionHandoff';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+} from '#/features/contextMemory/compactionHandoff';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import {
   closeTrailingOpenToolExchange,
   INHERITED_IN_FLIGHT_TOOL_OUTPUT,
-} from '#/agent/contextMemory/openToolExchange';
+} from '#/features/contextMemory/openToolExchange';
 import { IWireService } from '#/wire/wire';
 import {
-  IAgentContextMemoryService,
+  AgentContextMemory,
+  type ContextMemoryRuntime,
   IAgentProfileService,
 } from '#/index';
 
@@ -25,14 +26,14 @@ import { createTestAgent, type TestAgentContext } from '../../harness';
 
 describe('Agent context', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let tokenCounting: TestAgentContext['tokenCounting'];
   let profile: IAgentProfileService;
   let wire: IWireService;
 
   beforeEach(() => {
     ctx = createTestAgent();
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);

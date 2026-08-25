@@ -1,9 +1,9 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
+import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -26,14 +26,16 @@ export class AgentInterruptionReminderService
 {
   declare readonly _serviceBrand: undefined;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
     @IEventBus eventBus: IEventBus,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
+    this.context = agentLifecycle.resolve(scopeContext.agentContext, AgentContextMemory);
     agentState.contributeState(interruptionReminderKey);
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {

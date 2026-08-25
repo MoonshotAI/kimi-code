@@ -22,12 +22,13 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
+import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
 import type {
   InteractionKind,
   InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
-import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/features/contextMemory/types';
 import type {
   PromptWithSkillsInput,
   SkillActivationInput,
@@ -111,6 +112,19 @@ function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown
     recordModelToolActivation: (origin: SkillActivationOrigin) => {
       skill().recordModelToolActivation(origin);
     },
+  };
+}
+
+/**
+ * `agentContextMemoryService` stays on the wire after the engine moved the
+ * context history into a per-agent runtime: the view forwards to the agent's
+ * resolved `AgentContextMemory` facade through the session's agent lifecycle.
+ */
+function agentContextMemoryServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const manager = agent.accessor.get(IAgentLifecycleService);
+  const memory = () => manager.resolve(agentContextOf(agent), AgentContextMemory);
+  return {
+    get: () => memory().get(),
   };
 }
 
@@ -238,6 +252,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return agentSkillServiceView(resolved.like as IAgentScopeHandle);
+    }
+    if (service === 'agentContextMemoryService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentContextMemoryServiceView(resolved.like as IAgentScopeHandle);
     }
     const token = serviceTokens[service];
     if (token === undefined) {

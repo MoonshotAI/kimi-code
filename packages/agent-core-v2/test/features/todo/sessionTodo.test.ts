@@ -15,13 +15,12 @@ import {
   getAgentRuntimeDefinitionId,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
+import { ContextAppendMessage, ContextUndo } from '#/features/contextMemory/contextEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -131,10 +130,6 @@ function makeRuntimeAgent(
       },
     })),
   );
-  ix.set(IAgentContextMemoryService, {
-    _serviceBrand: undefined,
-    get: () => [],
-  } as unknown as IAgentContextMemoryService);
   ix.set(IAgentToolPolicyService, {
     _serviceBrand: undefined,
     isToolActive: () => false,
@@ -218,10 +213,6 @@ describe('TodoAgentRuntime', () => {
         },
       })),
     );
-    ix.set(IAgentContextMemoryService, {
-      _serviceBrand: undefined,
-      get: () => [],
-    } as unknown as IAgentContextMemoryService);
     ix.set(IAgentToolPolicyService, {
       _serviceBrand: undefined,
       isToolActive: () => false,

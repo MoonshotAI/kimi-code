@@ -4,9 +4,10 @@ import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
+  AgentContextMemory,
   agentContextOf,
+  type IAgentScopeHandle,
   IAgentTitlePromptSource,
-  IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -255,7 +256,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
     const bundled = history.find((message) => message.origin?.kind === 'user');
     expect(bundled?.origin).toMatchObject({
       kind: 'user',
@@ -379,7 +380,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });
 
@@ -397,7 +398,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     expect(agent!.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
-    const history = agent!.accessor.get(IAgentContextMemoryService).get();
+    const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });
 
@@ -618,7 +619,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const memory = main.accessor.get(IAgentContextMemoryService).get();
+    const memory = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory).get();
     const reminder = memory.find((m) => m.origin?.kind === 'injection');
     const reminderText = reminder?.content[0];
     expect(reminderText?.type).toBe('text');
@@ -719,8 +720,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
     await vi.waitFor(() => {
-      const replayedMessage = main.accessor
-        .get(IAgentContextMemoryService)
+      const replayedMessage = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory)
         .get()
         .find(
           (message) =>
@@ -759,8 +759,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const session = getLiveSessionById(server!.core.accessor, id);
       const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
       await vi.waitFor(() => {
-        const message = main.accessor
-          .get(IAgentContextMemoryService)
+        const message = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory)
           .get()
           .find((m) => m.role === 'user' && m.content.some((part) => part.type === 'image_url'));
         expect(message).toBeDefined();
@@ -1089,11 +1088,10 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     const contextHasUserText = (
-      handle: { accessor: { get: typeof child.accessor.get } },
+      handle: IAgentScopeHandle,
       text: string,
     ): boolean =>
-      handle.accessor
-        .get(IAgentContextMemoryService)
+      handle.accessor.get(IAgentLifecycleService).resolve(agentContextOf(handle), AgentContextMemory)
         .get()
         .some(
           (m) =>

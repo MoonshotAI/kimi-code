@@ -17,6 +17,7 @@ export interface DomainResourceRuntime {
 export interface AgentModelBridge {
   dispatch(event: Event2<any>): Promise<void>;
   readLegacy(key: StateKey<any>): unknown;
+  readRuntime(id: string): unknown;
   initialState(): unknown;
 }
 
@@ -87,6 +88,10 @@ export abstract class AgentModel<S> implements DomainResourceRuntime {
 
   protected readLegacy<T>(key: StateKey<T>): T {
     return this.bridge.readLegacy(key) as T;
+  }
+
+  protected readRuntime<T>(id: string): T {
+    return this.bridge.readRuntime(id) as T;
   }
 
   onUndo?(count: number): void;

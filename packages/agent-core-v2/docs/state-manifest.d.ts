@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 79 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 78 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -56,7 +56,6 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     contextMemory                                   src/agent/contextMemory/contextOps.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
@@ -711,9 +710,9 @@ export interface AgentStateSnapshot {
     readonly lifecycle: /* ActivityViewLifecycle — packages/agent-core-v2/src/agent/activityView/activityView.ts */ 'ready' | 'disposed';
     readonly turn?: /* ActivityTurnState — packages/agent-core-v2/src/agent/activityView/activityView.ts */ {
       readonly turnId: number;
-      readonly origin: /* PromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly origin: /* PromptOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'user';
-        readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
           readonly activationId: string;
           readonly skillName: string;
           readonly skillArgs?: string;
@@ -721,7 +720,7 @@ export interface AgentStateSnapshot {
           readonly skillPath?: string;
           readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
         }[];
-      } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* SkillActivationOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'skill_activation';
         readonly activationId: string;
         readonly skillName: string;
@@ -730,47 +729,47 @@ export interface AgentStateSnapshot {
         readonly skillType?: string;
         readonly skillPath?: string;
         readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
-      } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* PluginCommandOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'plugin_command';
         readonly activationId: string;
         readonly pluginId: string;
         readonly commandName: string;
         readonly commandArgs?: string;
         readonly trigger: 'user-slash';
-      } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* InjectionOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
         readonly disclosure?: unknown;
-      } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* ShellCommandOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
         readonly isError?: boolean;
-      } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'compaction_summary';
-      } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* SystemTriggerOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'system_trigger';
         readonly name: string;
-      } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* TaskOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'task';
         readonly taskId: string;
         readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
         readonly notificationId: string;
-      } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* CronJobOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'cron_job';
         readonly jobId: string;
         readonly cron: string;
         readonly recurring: boolean;
         readonly coalescedCount: number;
         readonly stale: boolean;
-      } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* CronMissedOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'cron_missed';
         readonly count: number;
-      } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* HookResultOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'hook_result';
         readonly event: string;
         readonly blocked?: boolean;
-      } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* RetryOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'retry';
         readonly trigger?: string;
       };
@@ -844,9 +843,9 @@ export interface AgentStateSnapshot {
     }>;
     since: number;
     turnId: number;
-    origin: /* PromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    origin: /* PromptOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'user';
-      readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly activationId: string;
         readonly skillName: string;
         readonly skillArgs?: string;
@@ -854,7 +853,7 @@ export interface AgentStateSnapshot {
         readonly skillPath?: string;
         readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
       }[];
-    } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* SkillActivationOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly activationId: string;
       readonly skillName: string;
@@ -863,55 +862,55 @@ export interface AgentStateSnapshot {
       readonly skillType?: string;
       readonly skillPath?: string;
       readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
-    } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* PluginCommandOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'plugin_command';
       readonly activationId: string;
       readonly pluginId: string;
       readonly commandName: string;
       readonly commandArgs?: string;
       readonly trigger: 'user-slash';
-    } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* InjectionOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'injection';
       readonly variant: string;
       readonly ownerPromptId?: string;
       readonly disclosure?: unknown;
-    } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* ShellCommandOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'shell_command';
       readonly phase: 'input' | 'output';
       readonly isError?: boolean;
-    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'compaction_summary';
-    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'system_trigger';
       readonly name: string;
-    } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* TaskOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'task';
       readonly taskId: string;
       readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
       readonly notificationId: string;
-    } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* CronJobOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'cron_job';
       readonly jobId: string;
       readonly cron: string;
       readonly recurring: boolean;
       readonly coalescedCount: number;
       readonly stale: boolean;
-    } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* CronMissedOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'cron_missed';
       readonly count: number;
-    } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* HookResultOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'hook_result';
       readonly event: string;
       readonly blocked?: boolean;
-    } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+    } | /* RetryOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
       readonly kind: 'retry';
       readonly trigger?: string;
     };
     snapshot: () => /* ActivityTurnState — packages/agent-core-v2/src/agent/activityView/activityView.ts */ {
       readonly turnId: number;
-      readonly origin: /* PromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly origin: /* PromptOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ /* UserPromptOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'user';
-        readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
           readonly activationId: string;
           readonly skillName: string;
           readonly skillArgs?: string;
@@ -919,7 +918,7 @@ export interface AgentStateSnapshot {
           readonly skillPath?: string;
           readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
         }[];
-      } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* SkillActivationOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'skill_activation';
         readonly activationId: string;
         readonly skillName: string;
@@ -928,47 +927,47 @@ export interface AgentStateSnapshot {
         readonly skillType?: string;
         readonly skillPath?: string;
         readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
-      } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* PluginCommandOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'plugin_command';
         readonly activationId: string;
         readonly pluginId: string;
         readonly commandName: string;
         readonly commandArgs?: string;
         readonly trigger: 'user-slash';
-      } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* InjectionOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'injection';
         readonly variant: string;
         readonly ownerPromptId?: string;
         readonly disclosure?: unknown;
-      } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* ShellCommandOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'shell_command';
         readonly phase: 'input' | 'output';
         readonly isError?: boolean;
-      } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'compaction_summary';
-      } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* SystemTriggerOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'system_trigger';
         readonly name: string;
-      } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* TaskOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'task';
         readonly taskId: string;
         readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
         readonly notificationId: string;
-      } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* CronJobOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'cron_job';
         readonly jobId: string;
         readonly cron: string;
         readonly recurring: boolean;
         readonly coalescedCount: number;
         readonly stale: boolean;
-      } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* CronMissedOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'cron_missed';
         readonly count: number;
-      } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* HookResultOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'hook_result';
         readonly event: string;
         readonly blocked?: boolean;
-      } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      } | /* RetryOrigin — packages/agent-core-v2/src/features/contextMemory/types.ts */ {
         readonly kind: 'retry';
         readonly trigger?: string;
       };
@@ -1002,122 +1001,6 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.cwd': string | undefined;
   'agentsMdReminder.known': Set<string>;
   'agentsMdReminder.seeded': boolean;
-  // src/agent/contextMemory/contextOps.ts
-  // replayable · durable · undoable — folds: ContextAppendMessage, ContextAppendLoopEvent, ContextClear, ContextApplyCompaction
-  'contextMemory': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* Message — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-    readonly role: /* Role — packages/agent-core-v2/src/kosong/contract/message.ts */ 'user' | 'assistant' | 'system' | 'tool';
-    readonly name?: string;
-    readonly content: (/* ContentPart — packages/agent-core-v2/src/kosong/contract/message.ts */ /* TextPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'text';
-      text: string;
-    } | /* ThinkPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'think';
-      think: string;
-      encrypted?: string;
-    } | /* ImageURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'image_url';
-      imageUrl: {
-        url: string;
-        id?: string;
-      };
-    } | /* AudioURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'audio_url';
-      audioUrl: {
-        url: string;
-        id?: string;
-      };
-    } | /* VideoURLPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'video_url';
-      videoUrl: {
-        url: string;
-        id?: string;
-      };
-    })[];
-    readonly toolCalls: /* ToolCall — packages/agent-core-v2/src/kosong/contract/message.ts */ {
-      type: 'function';
-      id: string;
-      name: string;
-      arguments: string | null;
-      extras?: Record<string, unknown>;
-      _streamIndex?: string | number;
-    }[];
-    readonly toolCallId?: string;
-    readonly partial?: boolean;
-    readonly tools?: readonly /* Tool — packages/agent-core-v2/src/kosong/contract/tool.ts */ {
-      name: string;
-      description: string;
-      parameters: Record<string, unknown>;
-      deferred?: true;
-    }[];
-  } & {
-    readonly id?: string;
-    readonly providerMessageId?: string;
-    readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'user';
-      readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-        readonly activationId: string;
-        readonly skillName: string;
-        readonly skillArgs?: string;
-        readonly skillType?: string;
-        readonly skillPath?: string;
-        readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
-      }[];
-    } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'skill_activation';
-      readonly activationId: string;
-      readonly skillName: string;
-      readonly skillArgs?: string;
-      readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
-      readonly skillType?: string;
-      readonly skillPath?: string;
-      readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
-    } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'plugin_command';
-      readonly activationId: string;
-      readonly pluginId: string;
-      readonly commandName: string;
-      readonly commandArgs?: string;
-      readonly trigger: 'user-slash';
-    } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'injection';
-      readonly variant: string;
-      readonly ownerPromptId?: string;
-      readonly disclosure?: unknown;
-    } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'shell_command';
-      readonly phase: 'input' | 'output';
-      readonly isError?: boolean;
-    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'compaction_summary';
-    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'system_trigger';
-      readonly name: string;
-    } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'task';
-      readonly taskId: string;
-      readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-      readonly notificationId: string;
-    } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'cron_job';
-      readonly jobId: string;
-      readonly cron: string;
-      readonly recurring: boolean;
-      readonly coalescedCount: number;
-      readonly stale: boolean;
-    } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'cron_missed';
-      readonly count: number;
-    } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'hook_result';
-      readonly event: string;
-      readonly blocked?: boolean;
-    } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
-      readonly kind: 'retry';
-      readonly trigger?: string;
-    };
-    readonly isError?: boolean;
-    readonly note?: string;
-  })[];
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
   // src/agent/fullCompaction/compactionOps.ts
@@ -1432,7 +1315,7 @@ export interface AgentStateSnapshot {
     readonly name: string;
     readonly description: string;
     readonly parameters: Record<string, unknown>;
-    readonly disclosure?: 'deferred' | 'inline';
+    readonly disclosure?: 'inline' | 'deferred';
   }>;
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
@@ -1450,7 +1333,7 @@ export interface AgentStateSnapshot {
   'staleGuard': /* StaleGuardModelState — packages/agent-core-v2/src/features/staleGuard/staleGuardOps.ts */ Map<string, number>;
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
-  'swarm': 'task' | 'tool' | 'manual' | null;
+  'swarm': 'task' | 'manual' | 'tool' | null;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;

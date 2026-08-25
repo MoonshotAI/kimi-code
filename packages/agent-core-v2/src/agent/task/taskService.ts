@@ -20,11 +20,11 @@ import { z } from 'zod';
 import {
   ContextAppendMessage,
   ContextSpliced,
-} from '#/agent/contextMemory/contextEvents';
-import '#/agent/contextMemory/conversationTime';
-import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+} from '#/features/contextMemory/contextEvents';
+import '#/features/contextMemory/conversationTime';
+import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage, TaskOrigin } from '#/features/contextMemory/types';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -39,7 +39,7 @@ import {
 } from './types';
 import { renderNotificationXml } from './notificationXml';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IConfigService } from '#/app/config/config';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -228,9 +228,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private readonly persistence: AgentTaskPersistence;
   private notificationRestoreQueue: Promise<void> = Promise.resolve();
 
+  private readonly context: ContextMemoryRuntime;
+
+  private disposed = false;
+
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IConfigService private readonly config: IConfigService,
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
@@ -247,6 +250,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.context = agentLifecycle.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(taskKey);
     this.states.contributeState(taskNotificationDeliveryKey);
     this.states.contributeState(taskGhostsKey);
@@ -809,6 +813,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   override dispose(): void {
+    this.disposed = true;
     if (!this.keepAliveOnExit()) {
       for (const entry of this.tasks.values()) {
         if (TERMINAL_STATUSES.has(entry.status)) continue;
@@ -1143,7 +1148,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private async restoreAgentTaskNotification(info: AgentTaskInfo): Promise<void> {
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
-    this.context.append({
+    void this.context.append({
       role: 'user',
       content: [...context.content],
       toolCalls: [],
@@ -1248,6 +1253,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private hasDeliveredNotification(key: string): boolean {
+    if (this.disposed) return false;
     return this.context.get().some((message) => {
       return isTaskOrigin(message.origin) && notificationKey(message.origin) === key;
     });

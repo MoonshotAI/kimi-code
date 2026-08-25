@@ -1,6 +1,7 @@
 import {
   ErrorCodes,
-  IAgentContextMemoryService,
+  AgentContextMemory,
+  IAgentLifecycleService,
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
@@ -18,6 +19,7 @@ import {
   IWorkspaceAliases,
   ISessionManager,
   IWorkspaceService,
+  agentContextOf,
   getLiveSessionById,
   programForSession,
   resumeSessionById,
@@ -912,7 +914,10 @@ async function undoSessionAction(
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
   await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
-  const history = agent.accessor.get(IAgentContextMemoryService).get();
+  const history = agent.accessor
+    .get(IAgentLifecycleService)
+    .resolve(agentContextOf(agent), AgentContextMemory)
+    .get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const legacy = core.accessor.get(ISessionLegacyService);
   const [summary, status] = await Promise.all([

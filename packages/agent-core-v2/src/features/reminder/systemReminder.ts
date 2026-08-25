@@ -1,4 +1,4 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 
 const SYSTEM_REMINDER_PREFIX = '<system-reminder>\n';
 const SYSTEM_REMINDER_SUFFIX = '\n</system-reminder>';

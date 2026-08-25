@@ -4,8 +4,11 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
+import type { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
+import {
+  AgentContextMemory,
+  type ContextMemoryRuntime,
+} from '#/features/contextMemory/contextMemoryAgentRuntime';
 import {
   ContextAppendLoopEvent,
   ContextAppendMessage,
@@ -13,9 +16,8 @@ import {
   ContextClear,
   ContextSpliced,
   ContextUndo,
-} from '#/agent/contextMemory/contextEvents';
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+} from '#/features/contextMemory/contextEvents';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -31,6 +33,7 @@ import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  attachContextMemoryRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -146,7 +149,8 @@ interface Host {
   wire: IWireService;
   dispatcher: IEventDispatcher;
   agentState: IAgentStateService;
-  svc: IAgentContextMemoryService;
+  svc: ContextMemoryRuntime;
+  runtimes: AgentRuntimeSet;
   log: IAppendLogStore;
   eventBus: IEventBus;
 }
@@ -174,18 +178,20 @@ function buildHost(key: string): Host {
   ix.stub(IAgentBlobService, blob);
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(ISessionTokenCountingService, noopTokenCounting);
-  ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
     blob,
     eventBus: ix.get(IEventBus),
   });
   const dispatcher = registerTestEventDispatcher(ix);
+  const runtimes = attachContextMemoryRuntime(ix, dispatcher);
+  disposables.add({ dispose: () => { void runtimes.close(); } });
   return {
     wire,
     dispatcher,
     agentState: ix.get(IAgentStateService),
-    svc: ix.get(IAgentContextMemoryService),
+    svc: runtimes.resolve(AgentContextMemory),
+    runtimes,
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   };
@@ -206,10 +212,10 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-describe('AgentContextMemoryService (wire-backed)', () => {
+describe('AgentContextMemory (wire-backed)', () => {
   it('splice/append/undo/apply_compaction/clear/append_loop_event each update getState with a NEW reference and persist flat records', async () => {
     const host = buildHost(KEY);
-    const model = () => host.agentState.get(contextMemoryKey);
+    const model = () => host.svc.get();
 
     await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: userMessage('a') }));
     await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: userMessage('b') }));
@@ -255,7 +261,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     ]);
   });
 
-  it('folds v1 context.append_loop_event records into the contextMemoryKey on replay', async () => {
+  it('folds v1 context.append_loop_event records into the runtime durable state on replay', async () => {
     const records: WireRecord[] = [
       { type: 'context.append_message', message: userMessage('q') },
       { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: '0', step: 1 } },
@@ -303,7 +309,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.agentState.get(contextMemoryKey);
+    const model = replay.svc.get();
     expect(model.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
     expect(model[1]!.content).toEqual([{ type: 'text', text: 'hello' }]);
     expect(model[1]!.partial).toBeUndefined();
@@ -336,7 +342,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.agentState.get(contextMemoryKey);
+    const model = replay.svc.get();
     expect(model.map(textOf)).toEqual(['model-facing summary', 'tail']);
     expect(model[0]).toMatchObject({
       role: 'user',
@@ -375,7 +381,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.agentState.get(contextMemoryKey);
+    const model = replay.svc.get();
     expect(model.map((message) => message.role)).toEqual(['user', 'user', 'user']);
     expect(model.map(textOf)).toEqual(['old user', 'recent user', 'model-facing summary']);
     expect(model[2]).toMatchObject({
@@ -405,7 +411,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.agentState.get(contextMemoryKey);
+    const model = replay.svc.get();
     expect(model.map(textOf)).toEqual(['old user', 'recent user', 'OLD SUMMARY']);
     expect(model[2]).toMatchObject({
       role: 'user',
@@ -438,7 +444,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
 
-    const model = replay.agentState.get(contextMemoryKey);
+    const model = replay.svc.get();
     expect(model).toHaveLength(2);
     expect(model[0]).toEqual(legacySummary);
     expect(textOf(model[1]!)).toBe('tail');
@@ -452,7 +458,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     await host.dispatcher.dispatch(new ContextAppendMessage({ agentId: 'test-agent', message: imageMessage(big) }));
     await host.dispatcher.flush();
 
-    const live = host.agentState.get(contextMemoryKey);
+    const live = host.svc.get();
     expect(live).toHaveLength(1);
     expect(mediaUrl(live[0]!)).toBe(dataUri);
 
@@ -473,7 +479,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     );
     expect(blob.loadCalls).toBeGreaterThanOrEqual(1);
 
-    const rebuilt = replay.agentState.get(contextMemoryKey);
+    const rebuilt = replay.svc.get();
     expect(rebuilt).toEqual(live);
     expect(mediaUrl(rebuilt[0]!)).toBe(dataUri);
   });
@@ -529,7 +535,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       }),
     );
 
-    const rebuilt = replay.agentState.get(contextMemoryKey);
+    const rebuilt = replay.svc.get();
     expect(rebuilt.map((message) => message.role)).toEqual(['user', 'user', 'assistant']);
     expect(textOf(rebuilt[1]!)).toBe('retry');
     expect(textOf(rebuilt[2]!)).toBe('answer');
@@ -561,7 +567,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
       records,
     );
     expect(replayed).toHaveLength(0);
-    expect(replay.agentState.get(contextMemoryKey)).toHaveLength(2);
+    expect(replay.svc.get()).toHaveLength(2);
   });
 
 });

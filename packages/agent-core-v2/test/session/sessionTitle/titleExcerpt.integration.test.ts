@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
+import type { LoopRecordedEvent } from '#/features/contextMemory/loopEventFold';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -16,45 +18,49 @@ describe('title excerpts over the real context memory', () => {
     await ctx.dispose();
   });
 
+  function appendLoopEvent(event: LoopRecordedEvent): void {
+    void ctx.dispatcher.dispatch(new ContextAppendLoopEvent({ agentId: 'main', event }));
+  }
+
   it('first_turn pairs the opening prompt with the folded assistant final text', async () => {
-    const context = ctx.get(IAgentContextMemoryService);
-    context.append({
+    const context = ctx.resolve(AgentContextMemory);
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: '帮我部署这个服务' }],
       toolCalls: [],
       origin: { kind: 'user' },
     });
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    context.appendLoopEvent({
+    appendLoopEvent({ type: 'step.begin', uuid: 's1' });
+    appendLoopEvent({
       type: 'content.part',
       stepUuid: 's1',
       part: { type: 'text', text: '先看一下配置' },
     });
-    context.appendLoopEvent({
+    appendLoopEvent({
       type: 'tool.call',
       stepUuid: 's1',
       toolCallId: 'c1',
       name: 'Read',
       args: {},
     });
-    context.appendLoopEvent({
+    appendLoopEvent({
       type: 'tool.result',
       toolCallId: 'c1',
       result: { output: 'file contents', isError: false },
     });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's1' });
-    context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
-    context.appendLoopEvent({
+    appendLoopEvent({ type: 'step.end', uuid: 's1' });
+    appendLoopEvent({ type: 'step.begin', uuid: 's2' });
+    appendLoopEvent({
       type: 'content.part',
       stepUuid: 's2',
       part: { type: 'think', think: '收尾' },
     });
-    context.appendLoopEvent({
+    appendLoopEvent({
       type: 'content.part',
       stepUuid: 's2',
       part: { type: 'text', text: '部署完成，服务在 8080 端口' },
     });
-    context.appendLoopEvent({ type: 'step.end', uuid: 's2' });
+    appendLoopEvent({ type: 'step.end', uuid: 's2' });
 
     const source = ctx.get(IAgentTitlePromptSource);
     await expect(source.firstTurnExcerpt()).resolves.toEqual({
@@ -67,8 +73,8 @@ describe('title excerpts over the real context memory', () => {
   });
 
   it('first_turn reports no assistant text while the turn has not produced any', async () => {
-    const context = ctx.get(IAgentContextMemoryService);
-    context.append({
+    const context = ctx.resolve(AgentContextMemory);
+    void context.append({
       role: 'user',
       content: [{ type: 'text', text: '刚发的问题' }],
       toolCalls: [],
@@ -82,8 +88,8 @@ describe('title excerpts over the real context memory', () => {
   });
 
   it('excludes bundled skill blocks from the excerpt of a bundled prompt', async () => {
-    const context = ctx.get(IAgentContextMemoryService);
-    context.append({
+    const context = ctx.resolve(AgentContextMemory);
+    void context.append({
       role: 'user',
       content: [
         { type: 'text', text: 'User activated the skill "review". Follow the loaded skill instructions.' },

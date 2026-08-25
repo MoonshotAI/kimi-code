@@ -7,7 +7,7 @@ import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import type { ContextInjectionContext } from '#/features/reminder/types';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -65,10 +65,11 @@ export class AgentPluginService extends Service implements IAgentPluginService {
 
   private pendingMutationCatalogChanges = 0;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -77,6 +78,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
+    this.context = agentLifecycle.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(pluginSessionStartSnapshotKey);
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.states.contributeState(pluginSessionStartRefreshPendingKey);

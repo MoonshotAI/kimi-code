@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#/kosong/contract/message';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
@@ -54,12 +54,12 @@ function lookupCall(): ToolCall {
 describe('GoalInjection content', () => {
   let ctx: TestAgentContext;
   let goals: GoalServiceTestManager;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
 
   beforeEach(async () => {
     ctx = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
     goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
   });
@@ -85,9 +85,10 @@ describe('GoalInjection content', () => {
   });
 
   it('activates injection after restore and removes it on close', async () => {
-    const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
+    const persistence = new InMemoryWireRecordPersistence();
+    const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()), { persistence });
     const localGoals = local.resolve(AgentGoal) as GoalServiceTestManager;
-    const localContext = local.get(IAgentContextMemoryService);
+    const localContext = local.resolve(AgentContextMemory);
     const localLoop = local.get(IAgentLoopService) as StubLoop;
     await localGoals.createGoal({ objective: 'work' });
 
@@ -102,10 +103,10 @@ describe('GoalInjection content', () => {
       message.origin?.kind === 'injection' && message.origin.variant === 'goal'
     )).toHaveLength(1);
 
+    const recordCount = persistence.records.length;
     await local.dispose();
-    const count = localContext.get().length;
     await runWillBeginStepHooks(localLoop, true);
-    expect(localContext.get()).toHaveLength(count);
+    expect(persistence.records).toHaveLength(recordCount);
   });
 
   it('wraps the objective for a paused goal', async () => {
@@ -248,7 +249,7 @@ async function flushedGoalReminderRecords(
   return goalReminderRecords(persistence);
 }
 
-function lastGoalReminder(context: IAgentContextMemoryService): string | undefined {
+function lastGoalReminder(context: ContextMemoryRuntime): string | undefined {
   const message = context.get().findLast((item) => {
     return item.origin?.kind === 'injection' && item.origin.variant === 'goal';
   });

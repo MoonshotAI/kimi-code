@@ -9,7 +9,7 @@
  */
 
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import type { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
+import type { ContextMemoryRuntime } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
@@ -36,7 +36,7 @@ export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 export type AgentContextData = {
-  history: ReturnType<IAgentContextMemoryService['get']>;
+  history: ReturnType<ContextMemoryRuntime['get']>;
   tokenCount: ReturnType<ISessionTokenCountingService['statusSize']>;
 };
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];

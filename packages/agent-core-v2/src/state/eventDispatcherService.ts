@@ -178,6 +178,13 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     registerModel: (definition, model) => this.registerModel(definition, model),
     dispatchModelEvent: (event) => this.dispatch(event),
     readLegacyState: (key) => this.agentState.get(key),
+    readRuntimeState: (id) => {
+      const attachment = this.participantAttachments.get(id);
+      if (attachment === undefined) {
+        throw new BugIndicatingError(`Durable participant '${id}' is not attached`);
+      }
+      return attachment.getState();
+    },
   };
 
   private restorePhase: RestorePhase = 'new';

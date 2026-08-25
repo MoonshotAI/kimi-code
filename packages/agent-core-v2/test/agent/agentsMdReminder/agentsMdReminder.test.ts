@@ -45,7 +45,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
-import type { PromptOrigin } from '#/agent/contextMemory/types';
+import type { PromptOrigin } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';

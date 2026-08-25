@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ContextSize, TokenCountingStrategy } from '#/agent/tokenCounting/tokenCounting';
 import {
   anchorsEqual,
@@ -164,7 +163,7 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
   }
 
   private context(): readonly ContextMessage[] {
-    return this.readLegacy(contextMemoryKey) as readonly ContextMessage[];
+    return this.readRuntime('contextMemory') as readonly ContextMessage[];
   }
 
   private latestAnchor(contextLength: number): TokenAnchor {

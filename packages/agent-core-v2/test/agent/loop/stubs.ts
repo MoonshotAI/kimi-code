@@ -6,7 +6,7 @@ import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepReques
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { OrderedHookSlot } from '#/hooks';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 

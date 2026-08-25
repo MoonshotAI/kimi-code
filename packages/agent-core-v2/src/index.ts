@@ -621,16 +621,22 @@ export * from '#/app/web/providers/moonshot-fetch-url';
 
 export * from '#/agent/blob/agentBlobService';
 export * from '#/agent/blob/agentBlobServiceImpl';
-export * from '#/agent/contextMemory/contextMemory';
-export * from '#/agent/contextMemory/contextMemoryService';
-export * from '#/agent/contextMemory/contextOps';
-export * from '#/agent/contextMemory/compactionHandoff';
-export * from '#/agent/contextMemory/conversationUndoParticipants';
-export * from '#/agent/contextMemory/conversationTime';
-export * from '#/agent/contextMemory/loopEventFold';
-export * from '#/agent/contextMemory/messageId';
-export * from '#/agent/contextMemory/contextTranscript';
-export * from '#/agent/contextMemory/types';
+export {
+  AgentContextMemory,
+  ContextMemoryRuntime,
+  type ContextCompactionInput,
+  type ContextCompactionResult,
+  type ContextMemoryChangeEvent,
+} from '#/features/contextMemory/contextMemoryAgentRuntime';
+export * from '#/features/contextMemory/contextOps';
+export * from '#/features/contextMemory/compactionHandoff';
+export * from '#/features/contextMemory/conversationUndoParticipants';
+export * from '#/features/contextMemory/conversationTime';
+export * from '#/features/contextMemory/loopEventFold';
+export * from '#/features/contextMemory/messageId';
+export * from '#/features/contextMemory/contextTranscript';
+export * from '#/features/contextMemory/types';
+import '#/features/contextMemory/contextMemoryFeature';
 export { AgentReminder, ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 export * from '#/features/reminder/systemReminder';
 export * from '#/features/reminder/types';

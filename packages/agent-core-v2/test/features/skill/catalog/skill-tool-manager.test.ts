@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import type { ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -195,7 +195,7 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
 
 describe('ToolManager SkillTool wire behavior', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let profile: IAgentProfileService;
   let persistence: InMemoryWireRecordPersistence;
   let skills: InMemorySkillCatalog;
@@ -208,7 +208,7 @@ describe('ToolManager SkillTool wire behavior', () => {
       skillServices(skills),
       wireRecordPersistenceServices(persistence),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     profile = ctx.get(IAgentProfileService);
     profile.update({ activeToolNames: ['Skill'] });
   });
@@ -276,7 +276,7 @@ describe('ToolManager SkillTool wire behavior', () => {
 
 describe('ToolManager SkillTool restore behavior', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let skills: InMemorySkillCatalog;
   let emit: ReturnType<typeof vi.spyOn>;
   let track: ReturnType<typeof vi.spyOn>;
@@ -290,7 +290,7 @@ describe('ToolManager SkillTool restore behavior', () => {
       skillServices(skills),
       telemetryServices(telemetry),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     const events = ctx.get(IEventBus);
     emit = vi.spyOn(events, 'publish');
   });

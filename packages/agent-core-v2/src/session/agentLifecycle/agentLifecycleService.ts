@@ -33,8 +33,8 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -342,11 +342,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (override?.thinking !== undefined) childProfile.setThinking(override.thinking);
     }
 
-    const sourceMessages = source.accessor.get(IAgentContextMemoryService)?.get();
-    if (sourceMessages !== undefined && sourceMessages.length > 0) {
-      child.accessor
-        .get(IAgentContextMemoryService)
-        ?.append(...closeTrailingOpenToolExchange(sourceMessages));
+    const sourceMessages = this.resolve(sourceManaged.context, AgentContextMemory).get();
+    if (sourceMessages.length > 0) {
+      void this.resolve(childContext, AgentContextMemory).append(
+        ...closeTrailingOpenToolExchange(sourceMessages),
+      );
     }
     return childContext;
   }

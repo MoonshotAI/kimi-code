@@ -164,7 +164,7 @@ import {
   agentContextOf,
   IAgentActivityView,
   AgentReminder,
-  IAgentContextMemoryService,
+  AgentContextMemory,
   AgentCron,
   AgentGoal,
   IAgentConversationUndoService,
@@ -1832,14 +1832,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentContextMemoryService.clear`) — no klient
+   * Through the agent scope (`AgentContextMemory.clear`) — no klient
    * facade exists. v1's `context.clear` has no busy check and does not touch
-   * queued or running prompts; the memory-service clear matches that exactly
+   * queued or running prompts; the memory-runtime clear matches that exactly
    * (the prompt service's own `clear` would additionally abort prompts).
    */
   override async clearContext(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentContextMemoryService).clear();
+    void agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory).clear();
   }
 
   /**
@@ -1874,7 +1874,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       currentTokenCount,
       capability.max_input_tokens ?? capability.max_context_tokens,
     );
-    agent.accessor.get(IAgentContextMemoryService).append(message);
+    void agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory).append(message);
   }
 
   /**

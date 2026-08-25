@@ -4,7 +4,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -55,7 +55,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
   ) {
     super();
@@ -98,7 +97,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
     this._register(
       activateReminderWhenReady(agentLifecycle, this.agentCtx, (reminder) =>
-        new TowerModeInjection(reminder, this, context, this.flags),
+        new TowerModeInjection(
+          reminder,
+          this,
+          agentLifecycle.resolve(this.agentCtx.agentContext, AgentContextMemory),
+          this.flags,
+        ),
       ),
     );
     this._register(

@@ -2,10 +2,10 @@ import { fromCallback, setup } from 'xstate';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isCompactionSummaryMessage } from '#/features/contextMemory/compactionHandoff';
+import { ContextSpliced } from '#/features/contextMemory/contextEvents';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
 import {
   defineAgentRuntimeContract,
@@ -14,6 +14,7 @@ import {
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { wrapSystemReminder } from './systemReminder';
 import type {
@@ -54,12 +55,16 @@ function actorContext(runtime: AgentRuntimeContext<null>): ReminderActorContext 
   return runtime.getLogicState<ReminderActorContext>();
 }
 
+function contextMemoryOf(runtime: AgentRuntimeContext<null>) {
+  return runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentContextMemory);
+}
+
 function appendReminder(
   runtime: AgentRuntimeContext<null>,
   content: string,
   notification: ReminderNotification,
 ): void {
-  runtime.get(IAgentContextMemoryService).append({
+  void contextMemoryOf(runtime).append({
     role: 'user',
     content: [{ type: 'text', text: wrapSystemReminder(content) }],
     toolCalls: [],
@@ -76,7 +81,7 @@ function providerContext(
   entry: ReminderEntry,
   isNewTurn: boolean,
 ): ContextInjectionContext<unknown> {
-  const history = runtime.get(IAgentContextMemoryService).get();
+  const history = contextMemoryOf(runtime).get();
   const injectedPositions = findInjections(history, entry.variant);
   const lastInjectedAt = injectedPositions.at(-1) ?? null;
   const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
@@ -128,7 +133,7 @@ function appendResult(
   const resolved = result.content;
   if (typeof resolved === 'string') {
     if (resolved.trim().length === 0) return;
-    runtime.get(IAgentContextMemoryService).append({
+    void contextMemoryOf(runtime).append({
       role: 'user',
       content: [{ type: 'text', text: wrapSystemReminder(resolved) }],
       toolCalls: [],
@@ -141,7 +146,7 @@ function appendResult(
     if (message.content.length === 0 && (message.tools === undefined || message.tools.length === 0)) {
       return;
     }
-    runtime.get(IAgentContextMemoryService).append({
+    void contextMemoryOf(runtime).append({
       role: message.role,
       content: [...message.content],
       toolCalls: [],
@@ -151,7 +156,7 @@ function appendResult(
     return;
   }
   if (resolved.length === 0) return;
-  runtime.get(IAgentContextMemoryService).append({
+  void contextMemoryOf(runtime).append({
     role: 'user',
     content: [...resolved],
     toolCalls: [],

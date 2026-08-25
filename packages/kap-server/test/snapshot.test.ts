@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  AgentContextMemory,
   type Event2,
   IAgentBlobService,
-  IAgentContextMemoryService,
   IAgentScopeContext,
   IAppendLogStore,
   IEventBus,
@@ -55,7 +55,7 @@ describe('server-v2 snapshot route enrichment', () => {
     const now = Date.parse('2026-01-01T00:00:00.000Z');
     const main = {
       accessor: fakeAccessor([
-        [IAgentContextMemoryService, { get: () => [] }],
+        [IAgentLifecycleService, { resolve: () => ({ get: () => [] }) }],
         [
           IAgentPromptService,
           { list: () => ({ active: { id: promptId }, pending: [] }) },
@@ -237,7 +237,7 @@ describe('server-v2 snapshot route enrichment', () => {
     const now = Date.parse('2026-01-01T00:00:00.000Z');
     const main = {
       accessor: fakeAccessor([
-        [IAgentContextMemoryService, { get: () => [] }],
+        [IAgentLifecycleService, { resolve: () => ({ get: () => [] }) }],
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot_degraded' }],
         [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
@@ -454,7 +454,7 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
       inputCacheRead: 56,
       inputCacheCreation: 7,
     });
-    main.accessor.get(IAgentContextMemoryService).append({
+    void main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory).append({
       role: 'user',
       content: [{ type: 'text', text: 'hello' }],
       toolCalls: [],
@@ -562,9 +562,9 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     if (resumed === undefined) throw new Error(`session ${sid} failed to resume`);
     await resumed.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const main = resumed.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const context = main.accessor.get(IAgentContextMemoryService);
-    context.append({ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] });
-    context.append({ role: 'assistant', content: [{ type: 'text', text: 'hi' }], toolCalls: [] });
+    const context = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory);
+    void context.append({ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] });
+    void context.append({ role: 'assistant', content: [{ type: 'text', text: 'hi' }], toolCalls: [] });
 
     const snap = await snapshot(sid);
     expect(snap.session.id).toBe(sid);

@@ -1,5 +1,5 @@
-import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
-import { newMessageId } from '#/agent/contextMemory/messageId';
+import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/features/contextMemory/types';
+import { newMessageId } from '#/features/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';

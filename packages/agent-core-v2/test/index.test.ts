@@ -4,8 +4,9 @@ import * as AgentCore from '#/index';
 import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
-  IAgentContextMemoryService,
+  AgentContextMemory,
   AgentGoal,
+  type ContextMemoryRuntime,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -23,7 +24,7 @@ import {
   ContextApplyCompaction,
   ContextClear,
   ContextUndo,
-} from '#/agent/contextMemory/contextEvents';
+} from '#/features/contextMemory/contextEvents';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -232,7 +233,7 @@ describe('conversation-time checkpoint registration', () => {
 });
 
 describe('AgentRecords persistence metadata', () => {
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let tokenCounting: TestAgentContext['tokenCounting'];
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
@@ -242,7 +243,7 @@ describe('AgentRecords persistence metadata', () => {
     expectResumeMatches = true;
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     tokenCounting = ctx.tokenCounting;
   });
 

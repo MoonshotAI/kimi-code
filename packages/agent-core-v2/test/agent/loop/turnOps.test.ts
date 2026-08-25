@@ -1,7 +1,7 @@
 import { produce } from 'immer';
 import { describe, expect, it } from 'vitest';
 
-import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { FoldContext } from '#/state/state';
 import {

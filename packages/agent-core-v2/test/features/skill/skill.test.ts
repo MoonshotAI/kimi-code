@@ -3,7 +3,7 @@ import { createControlledPromise } from '@antfu/utils';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';

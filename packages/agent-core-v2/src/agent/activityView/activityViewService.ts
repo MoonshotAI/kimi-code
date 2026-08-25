@@ -30,8 +30,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
-import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
+import type { PromptOrigin } from '#/features/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 

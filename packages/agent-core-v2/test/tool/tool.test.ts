@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reminderAgentRuntimeProvider, AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
@@ -280,12 +280,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             scope: (subKey?: string) => subKey ?? '',
           } as never;
         }
-        if (serviceId === IAgentContextMemoryService) {
-          return {
-            _serviceBrand: undefined,
-            get: () => [],
-          } as never;
-        }
         if (serviceId === IAgentProfileService) {
           return {
             _serviceBrand: undefined,
@@ -448,6 +442,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       const adoptedHandle = adopted as IAgentScopeHandle;
       handles.set(adoptedHandle.id, adoptedHandle);
       adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
+        {
+          definition: AgentContextMemory,
+          provider: contextMemoryAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
         {
           definition: AgentReminder,
           provider: reminderAgentRuntimeProvider,
@@ -3441,7 +3441,7 @@ describe('AgentSwarm tool execution contract', () => {
 });
 
 describe('Agent tools', () => {
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let ctx: TestAgentContext;
   let profile: IAgentProfileService;
   let tools: IAgentToolRegistryService;
@@ -3492,7 +3492,7 @@ describe('Agent tools', () => {
         execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
         externalHookServices(hookEngine),
       );
-      context = ctx.get(IAgentContextMemoryService);
+      context = ctx.resolve(AgentContextMemory);
       profile = ctx.get(IAgentProfileService);
       profile.update({ activeToolNames: ['Bash'] });
     });
@@ -3876,10 +3876,10 @@ describe('Agent tools', () => {
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon" }
         [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
-        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
         [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
-        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
         [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
+        [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
+        [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
         [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
         [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -199,16 +199,16 @@ describe('progressive tool disclosure end-to-end', () => {
       additionalProperties: false,
     });
     expect(secondWire.tools).toEqual(firstWire.tools);
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.resolve(AgentContextMemory).get())).toContain(
       `Loaded: ${DASHBOARD_TOOL}`,
     );
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.resolve(AgentContextMemory).get())).toContain(
       'dashboard-created',
     );
   });
 
   it('re-injects a selected schema after undo slices the tail of the loaded exchange', async () => {
-    ctx.get(IAgentContextMemoryService).append({
+    void ctx.resolve(AgentContextMemory).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
       toolCalls: [],
@@ -221,7 +221,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.untilTurnEnd();
 
     await ctx.get(IAgentConversationUndoService).undo(1);
-    const afterUndo = ctx.get(IAgentContextMemoryService).get();
+    const afterUndo = ctx.resolve(AgentContextMemory).get();
     expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
       false,
     );
@@ -231,7 +231,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha again' }] });
     await ctx.untilTurnEnd();
 
-    const afterReload = ctx.get(IAgentContextMemoryService).get();
+    const afterReload = ctx.resolve(AgentContextMemory).get();
     expect(
       afterReload.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);

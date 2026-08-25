@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { ContextApplyCompaction, ContextSpliced } from '#/features/contextMemory/contextEvents';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
@@ -33,7 +32,7 @@ function compactionSummary(text: string): ContextMessage {
   };
 }
 
-function lastText(context: IAgentContextMemoryService): string | undefined {
+function lastText(context: ContextMemoryRuntime): string | undefined {
   const message = context.get().at(-1);
   const part = message?.content[0];
   return part?.type === 'text' ? part.text : undefined;
@@ -42,12 +41,12 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
 describe('ReminderRuntime', () => {
   let ctx: TestAgentContext;
   let reminder: ReminderRuntime;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let loop: StubLoop;
 
   beforeEach(async () => {
     ctx = createTestAgent();
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     loop = ctx.get(IAgentLoopService) as StubLoop;
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
@@ -62,20 +61,20 @@ describe('ReminderRuntime', () => {
     await runWillBeginStepHooks(loop, firstStepOfTurn);
   }
 
-  function spliceContext(
-    start: number,
-    deleteCount: number,
-    inserted: readonly ContextMessage[],
-  ): void {
-    const backing = [...ctx.agentState.get(contextMemoryKey)];
-    backing.splice(start, deleteCount, ...inserted);
-    ctx.agentState.set(contextMemoryKey, backing);
+  async function compactContext(summaryText: string, count: number): Promise<void> {
+    await ctx.dispatcher.dispatch(
+      new ContextApplyCompaction({
+        agentId: 'main',
+        summary: compactionSummary(summaryText),
+        count,
+      }),
+    );
     ctx.get(IEventBus).publish(
       new ContextSpliced({
         agentId: 'main',
-        start,
-        deleteCount,
-        messages: [...inserted],
+        start: 0,
+        deleteCount: count,
+        messages: [...context.get()],
       }),
       ctx.agentContext,
     );
@@ -209,7 +208,7 @@ describe('ReminderRuntime', () => {
     });
 
     await runInjectionStep();
-    spliceContext(1, 0, [userMessage('between reminders')]);
+    void context.append(userMessage('between reminders'));
     await runInjectionStep();
     await runInjectionStep();
 
@@ -225,9 +224,10 @@ describe('ReminderRuntime', () => {
     });
 
     await runInjectionStep();
-    spliceContext(1, 0, [userMessage('between reminders')]);
+    void context.append(userMessage('between reminders'));
     await runInjectionStep();
-    spliceContext(2, 1, []);
+    await context.undo(1);
+    void context.append(userMessage('between reminders'));
     await runInjectionStep();
 
     expect(seen).toEqual([null, 0, 0]);
@@ -251,7 +251,7 @@ describe('ReminderRuntime', () => {
     });
 
     await runInjectionStep();
-    spliceContext(0, context.get().length, []);
+    await context.clear();
     await runInjectionStep();
 
     expect(seenA).toEqual([null, null]);
@@ -265,18 +265,14 @@ describe('ReminderRuntime', () => {
   it('re-injects at the next step after compaction swallows the reminder', async () => {
     const seen: Array<number | null> = [];
 
-    context.append(userMessage('before reminder'));
+    void context.append(userMessage('before reminder'));
     reminder.register('recording_test', ({ lastInjectedAt }) => {
       seen.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder' : undefined;
     });
 
     await runInjectionStep();
-    spliceContext(
-      0,
-      2,
-      [compactionSummary('Compacted summary.')],
-    );
+    await compactContext('Compacted summary.', 2);
     await runInjectionStep();
 
     expect(seen).toEqual([null, null]);
@@ -290,7 +286,7 @@ describe('ReminderRuntime', () => {
     const seenA: Array<number | null> = [];
     const seenB: Array<number | null> = [];
 
-    context.append(
+    void context.append(
       userMessage('old request'),
       userMessage('old follow-up'),
     );
@@ -304,7 +300,7 @@ describe('ReminderRuntime', () => {
     });
 
     await runInjectionStep();
-    spliceContext(0, 2, [compactionSummary('Compacted summary.')]);
+    await compactContext('Compacted summary.', 2);
     await runInjectionStep();
 
     expect(seenA).toEqual([null, 1]);
@@ -325,7 +321,7 @@ describe('ReminderRuntime', () => {
 
     await runInjectionStep(true);
     await runInjectionStep();
-    spliceContext(0, 1, [compactionSummary('Compacted summary.')]);
+    await compactContext('Compacted summary.', 1);
     await runInjectionStep();
 
     expect(seen).toEqual([true, false, true]);
@@ -343,7 +339,7 @@ describe('ReminderRuntime', () => {
     });
 
     await runInjectionStep(true);
-    spliceContext(0, 0, [userMessage('between steps')]);
+    void context.append(userMessage('between steps'));
     await runInjectionStep();
 
     expect(seen).toEqual([true, false]);
@@ -356,7 +352,7 @@ describe('ReminderRuntime', () => {
       return isNewTurn ? 'per-turn reminder' : undefined;
     });
     loop.hooks.onWillBeginStep.register('test-compaction', async (_ctx, next) => {
-      spliceContext(0, 1, [compactionSummary('Compacted summary.')]);
+      await compactContext('Compacted summary.', 1);
       await next();
     });
 

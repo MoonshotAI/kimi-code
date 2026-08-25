@@ -1,5 +1,5 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import type { SkillSource } from '#/agent/contextMemory/types';
+import type { SkillSource } from '#/features/contextMemory/types';
 import { AgentEvent2 } from '#/app/event/event2';
 
 export interface SkillActivatedPayload {

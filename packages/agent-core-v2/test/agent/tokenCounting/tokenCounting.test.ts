@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService, IAgentProfileService } from '#/index';
+import { AgentContextMemory, type ContextMemoryRuntime, IAgentProfileService } from '#/index';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
@@ -21,14 +21,14 @@ function tokenCountingState(ctx: TestAgentContext) {
 
 describe('Agent token counting', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let tokenCounting: TestAgentContext['tokenCounting'];
   let profile: IAgentProfileService;
   let usage: TestAgentContext['usage'];
 
   beforeEach(() => {
     ctx = createTestAgent();
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     usage = ctx.usage;
@@ -123,7 +123,7 @@ describe('Agent token counting', () => {
   it('rebases the ledger on compaction and blends in the measured summary tokens', () => {
     ctx.appendTurnExchange('u1', 'a1', 1_000);
 
-    context.applyCompaction({
+    void context.applyCompaction({
       summary: 'summary of u1',
       compactedCount: 2,
       tokensBefore: 1_000,
@@ -143,7 +143,7 @@ describe('Agent token counting', () => {
     ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
     expect(tokenCounting.get().measured).toBe(1_000);
 
-    context.clear();
+    void context.clear();
 
     expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
     expect(tokenCountingState(ctx).anchors).toEqual([
@@ -160,7 +160,7 @@ describe('Agent token counting', () => {
 
       measured.appendUserMessage([{ type: 'text', text: 'hello world, not measured yet' }]);
       const tailEstimate = estimateTokensForMessages(
-        measured.get(IAgentContextMemoryService).get(),
+        measured.resolve(AgentContextMemory).get(),
       );
       expect(tailEstimate).toBeGreaterThan(0);
       expect(counting.get()).toEqual({ size: tailEstimate, measured: 0, estimated: tailEstimate });
@@ -233,7 +233,7 @@ describe('Agent token counting', () => {
     try {
       const counting = estimated.tokenCounting;
       estimated.appendTurnExchange('u1', 'a1', 1_000_000);
-      const estimate = estimateTokensForMessages(estimated.get(IAgentContextMemoryService).get());
+      const estimate = estimateTokensForMessages(estimated.resolve(AgentContextMemory).get());
       expect(counting.latestMeasured()).toBe(1_000_000);
       expect(counting.statusSize()).toBe(estimate);
     } finally {
@@ -267,7 +267,7 @@ describe('Agent token counting', () => {
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         agentId: 'main',
-        length: live.get(IAgentContextMemoryService).get().length,
+        length: live.resolve(AgentContextMemory).get().length,
         tokens: reported,
       });
       expect(tokenCountingState(live).anchors).toEqual([
@@ -301,7 +301,7 @@ describe('Agent token counting', () => {
     );
     expect(tokenCountingState(ctx).anchors).toHaveLength(1);
 
-    context.applyCompaction({
+    void context.applyCompaction({
       summary: 'summary of the tail',
       compactedCount: 1,
       tokensBefore: 100,

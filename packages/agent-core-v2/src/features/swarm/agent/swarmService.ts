@@ -1,7 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
@@ -18,20 +18,22 @@ import { SwarmModeEnter, SwarmModeExit, swarmKey } from '../swarmOps';
 export class AgentSwarmService extends Service implements IAgentSwarmService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IEventBus eventBus: IEventBus,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    this.context = manager.resolve(agentCtx.agentContext, AgentContextMemory);
     this.agentState.contributeState(swarmKey);
     this._register(
-      activateReminderWhenReady(agentLifecycle, this.agentCtx, (reminder) =>
+      activateReminderWhenReady(manager, this.agentCtx, (reminder) =>
         new SwarmInjection(
           { getTrigger: () => this.agentState.get(swarmKey) },
           reminder,

@@ -9,7 +9,6 @@ import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigService } from '#/app/config/config';
 import type { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
@@ -52,14 +51,6 @@ function createLoopStub(): IAgentLoopService {
     _serviceBrand: undefined,
     hooks: { onWillBeginStep: hookSlot(), onDidFinishStep: hookSlot() },
   } as unknown as IAgentLoopService;
-}
-
-function createContextStub(): IAgentContextMemoryService {
-  return {
-    _serviceBrand: undefined,
-    get: () => [],
-    splice: () => undefined,
-  } as unknown as IAgentContextMemoryService;
 }
 
 function createTelemetryStub(): ITelemetryService {
@@ -126,7 +117,6 @@ function buildHost(key: string): GoalHost {
   ix.stub(ISessionUsageService, {
     onDidRecord: Event.None,
   } as unknown as ISessionUsageService);
-  ix.stub(IAgentContextMemoryService, createContextStub());
   ix.stub(
     IAgentLifecycleService,
     lifecycleWithReminder(createReminderStub()),

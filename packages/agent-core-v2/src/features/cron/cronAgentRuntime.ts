@@ -2,7 +2,7 @@ import { ulid } from 'ulid';
 import { assign, fromCallback, sendTo, setup, type Snapshot } from 'xstate';
 
 import { IntervalTimer } from '#/_base/utils/timer';
-import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/agent/contextMemory/types';
+import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import {

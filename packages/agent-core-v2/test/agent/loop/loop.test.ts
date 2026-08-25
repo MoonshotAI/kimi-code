@@ -6,7 +6,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';

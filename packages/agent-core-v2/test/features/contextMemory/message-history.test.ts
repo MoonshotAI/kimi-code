@@ -3,14 +3,21 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
+import {
+  AgentContextMemory,
+  type ContextMemoryRuntime,
+} from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventBusService } from '#/app/event/eventBusService';
 
-import { registerTestAgentWire, registerTestEventDispatcher } from '../../wire/stubs';
+import {
+  attachContextMemoryRuntime,
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+} from '../../wire/stubs';
 
 function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
   return {
@@ -42,10 +49,10 @@ const noopTokenCounting: ISessionTokenCountingService = {
   estimateTools: () => 0,
 };
 
-
-describe('message history (IAgentContextMemoryService)', () => {
+describe('message history (AgentContextMemory)', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let ctx: ContextMemoryRuntime;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -54,12 +61,13 @@ describe('message history (IAgentContextMemoryService)', () => {
     registerTestAgentWire(ix, 'wire/message-history', { eventBus: ix.get(IEventBus) });
     ix.set(ISessionTokenCountingService, noopTokenCounting);
     registerTestEventDispatcher(ix);
-    ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
+    const runtimes = attachContextMemoryRuntime(ix, ix.get(IEventDispatcher));
+    disposables.add({ dispose: () => { void runtimes.close(); } });
+    ctx = runtimes.resolve(AgentContextMemory);
   });
   afterEach(() => disposables.dispose());
 
   it('round-trips user/assistant messages with their text content', () => {
-    const ctx = ix.get(IAgentContextMemoryService);
     ctx.append(textMessage('user', 'a'));
     ctx.append(textMessage('assistant', 'b'));
 
@@ -69,7 +77,6 @@ describe('message history (IAgentContextMemoryService)', () => {
   });
 
   it('returns a defensive copy from getHistory', () => {
-    const ctx = ix.get(IAgentContextMemoryService);
     ctx.append(textMessage('user', 'keep'));
 
     const view = ctx.get();
@@ -79,7 +86,6 @@ describe('message history (IAgentContextMemoryService)', () => {
   });
 
   it('does not stamp local ids on appended messages (ids are not persisted)', () => {
-    const ctx = ix.get(IAgentContextMemoryService);
     ctx.append(textMessage('user', 'hello'));
 
     const [message] = ctx.get();
@@ -87,7 +93,6 @@ describe('message history (IAgentContextMemoryService)', () => {
   });
 
   it('preserves an existing message id (idempotent)', () => {
-    const ctx = ix.get(IAgentContextMemoryService);
     const existing: ContextMessage = {
       ...textMessage('user', 'keep'),
       id: 'msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B',

@@ -4,17 +4,17 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
 import {
   computeUndoCut,
   formatUndoUnavailableMessage,
   precheckUndo,
-} from '#/agent/contextMemory/contextOps';
+} from '#/features/contextMemory/contextOps';
 import {
   isUndoAnchor,
   isValidUndoCount,
-} from '#/agent/contextMemory/conversationTime';
+} from '#/features/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -25,7 +25,7 @@ import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
@@ -51,11 +51,13 @@ export class AgentConversationUndoService
 
   private undoQueue: Promise<void> = Promise.resolve();
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentConversationUndoParticipantRegistry
     private readonly participants: IAgentConversationUndoParticipantRegistry,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -68,6 +70,7 @@ export class AgentConversationUndoService
     @ILogService private readonly log: ILogService,
   ) {
     super();
+    this.context = manager.resolve(agentCtx.agentContext, AgentContextMemory);
   }
 
   availability(): UndoAvailability {
@@ -106,7 +109,7 @@ export class AgentConversationUndoService
         throw this.busyError('compaction');
       }
       this.assertUndoAvailable(turns);
-      this.context.undo(turns);
+      void this.context.undo(turns);
       await this.flushAfterCommit('context cut');
       await this.reconcileParticipants();
       await this.flushAfterCommit('state reconciliation');

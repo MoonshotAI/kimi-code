@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentContextMemoryService,
+  AgentContextMemory,
   IAgentLifecycleService,
+  agentContextOf,
   IWireService,
   getLiveSessionById,
   IModelCatalog,
@@ -130,7 +131,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     }
     if (messages.length > 0) {
-      agent.accessor.get(IAgentContextMemoryService).append(...messages);
+      void agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory).append(...messages);
       await agent.accessor.get(IWireService).flush();
     }
   }
@@ -290,13 +291,13 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     if (session === undefined) throw new Error(`session ${id} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const ctx = agent.accessor.get(IAgentContextMemoryService);
-    ctx.append(
+    const ctx = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory);
+    void ctx.append(
       { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
       { role: 'assistant', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
       { role: 'user', content: [{ type: 'text', text: 'm2' }], toolCalls: [] },
     );
-    ctx.applyCompaction({
+    void ctx.applyCompaction({
       summary: 'summary',
       contextSummary: 'summary',
       compactedCount: 3,

@@ -19,8 +19,10 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
+import type { LoopRecordedEvent } from '#/features/contextMemory/loopEventFold';
+import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -31,6 +33,7 @@ import type {
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
@@ -100,8 +103,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private quiescenceDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
@@ -112,10 +117,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(turnKey);
     this.states.contributeState(loopNextReservedTurnIdKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
+  }
+
+  private appendLoopEvent(event: LoopRecordedEvent): void {
+    void this.dispatcher.dispatch(
+      new ContextAppendLoopEvent({ agentId: this.scopeContext.agentId, event }),
+    );
   }
 
   private get nextReservedTurnId(): number | undefined {
@@ -816,7 +828,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     request.onWillMaterialize();
     const messages = request.resolveContextMessages();
     if (messages.length > 0) {
-      this.context.append(...messages);
+      void this.context.append(...messages);
     }
     request.markMaterialized();
   }
@@ -872,7 +884,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return { stopReason: finishReason, hookStopTurn };
     } catch (error) {
       if (!stepEndAppended) {
-        this.context.appendLoopEvent({
+        this.appendLoopEvent({
           type: 'step.end',
           uuid: stepUuid,
           turnId: String(turnId),
@@ -901,7 +913,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         stepId: stepUuid,
       }),
     );
-    this.context.appendLoopEvent({
+    this.appendLoopEvent({
       type: 'step.begin',
       uuid: stepUuid,
       turnId: String(turnId),
@@ -922,7 +934,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     response: AgentLLMRequestFinish,
   ): void {
     for (const part of response.message.content) {
-      this.context.appendLoopEvent({
+      this.appendLoopEvent({
         type: 'content.part',
         uuid: randomUUID(),
         turnId: String(turnId),
@@ -942,7 +954,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     if (!turnSignal.aborted) return;
     for (const part of streamParts.drainInterruptedContent()) {
-      this.context.appendLoopEvent({
+      this.appendLoopEvent({
         type: 'content.part',
         uuid: randomUUID(),
         turnId: String(turnId),
@@ -975,7 +987,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const callUuid = randomUUID();
         toolCallUuids.set(toolCallId, callUuid);
         const extras = response.message.toolCalls.find((t) => t.id === toolCallId)?.extras;
-        this.context.appendLoopEvent({
+        this.appendLoopEvent({
           type: 'tool.call',
           uuid: callUuid,
           turnId: String(turnId),
@@ -989,7 +1001,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       },
     })) {
       const { result } = toolResult;
-      this.context.appendLoopEvent({
+      this.appendLoopEvent({
         type: 'tool.result',
         parentUuid: toolCallUuids.get(toolResult.toolCallId) ?? randomUUID(),
         toolCallId: toolResult.toolCallId,
@@ -1014,7 +1026,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     markStepStarted();
     const timing = response.timing;
     const stepFinishReason = normalizeFinishReason(finishReason);
-    this.context.appendLoopEvent({
+    this.appendLoopEvent({
       type: 'step.end',
       uuid: stepUuid,
       turnId: String(turnId),

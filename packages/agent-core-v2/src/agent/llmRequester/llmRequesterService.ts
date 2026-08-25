@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import {
   IAgentContextProjectorService,
   type MediaStripSnapshot,
@@ -48,6 +48,7 @@ import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { WarningIssued } from '#/agent/profile/profileOps';
 
 import {
@@ -150,8 +151,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private readonly toolCallIdNormalizer = new ToolCallIdNormalizer();
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentContextProjectorService private readonly projector: IAgentContextProjectorService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
@@ -169,6 +172,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
+    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterTurnConfigsKey);

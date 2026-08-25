@@ -2,8 +2,8 @@
 import { z } from 'zod';
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
-import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
-import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
+import type { PromptOrigin } from '#/features/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#/kosong/contract/message';
 import { defineState } from '#/state/state';

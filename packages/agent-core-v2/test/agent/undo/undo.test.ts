@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
-import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
-import type { TaskOrigin } from '#/agent/contextMemory/types';
+import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
+import { ContextApplyCompaction } from '#/features/contextMemory/contextEvents';
+import type { TaskOrigin } from '#/features/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
@@ -49,7 +49,7 @@ describe('AgentConversationUndoService', () => {
       telemetryServices(recordingTelemetry(records)),
       execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
     );
-    ctx.get(IAgentContextMemoryService);
+    ctx.resolve(AgentContextMemory);
     return ctx;
   }
 
@@ -174,7 +174,7 @@ describe('AgentConversationUndoService', () => {
     setup();
     const undo = ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
-    ctx.get(IAgentContextMemoryService).applyCompaction({
+    void ctx.resolve(AgentContextMemory).applyCompaction({
       summary: 'summary of u1',
       compactedCount: 2,
       tokensBefore: 100,

@@ -7,8 +7,8 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import { AgentGoal, GoalRuntime } from '#/features/goal/goalAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
@@ -308,7 +308,7 @@ function endTurn(
 
 describe('AgentGoalService', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let goals: GoalServiceTestManager;
   let records: WireRecord[];
   let events: GoalUpdated[];
@@ -322,7 +322,7 @@ describe('AgentGoalService', () => {
       wireRecordPersistenceServices(persistence),
       telemetryServices(recordingTelemetry(telemetry)),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
     records = persistence.records;
     const eventBus = ctx.get(IEventBus);
@@ -707,7 +707,7 @@ describe('AgentGoalService', () => {
         wireRecordPersistenceServices(persistence),
         telemetryServices(recordingTelemetry(telemetry)),
       );
-      context = ctx.get(IAgentContextMemoryService);
+      context = ctx.resolve(AgentContextMemory);
       goals = ctx.resolve(AgentGoal) as GoalServiceTestManager;
       records = persistence.records;
       ctx.get(IEventBus).subscribe(GoalUpdated, (event) => events.push(event));
@@ -845,7 +845,7 @@ describe('AgentGoalService goal-start review', () => {
 
 describe('AgentGoalService core workflow hooks', () => {
   let ctx: TestAgentContext | undefined;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let goals: GoalRuntime;
   let loopService: StubLoop;
   let toolExecutor: IAgentToolExecutorService;
@@ -861,7 +861,7 @@ describe('AgentGoalService core workflow hooks', () => {
       agentService(IAgentLoopService, loopService),
       permissionModeServices('auto'),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal);
     toolExecutor = ctx.get(IAgentToolExecutorService);
     usageService = ctx.usage;
@@ -2057,7 +2057,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
         }),
       );
 
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.resolve(AgentContextMemory).get();
       const toolResultIndex = history.findIndex((message) => message.role === 'tool');
       const reminderIndex = history.findIndex(
         (message) =>
@@ -2113,7 +2113,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
         }),
       );
 
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.resolve(AgentContextMemory).get();
       expect(JSON.stringify(history)).toContain('Final status: budget exhausted.');
       expect(JSON.stringify(history)).not.toContain('This step should never run.');
       expect(goals.getGoal().goal).toMatchObject({
@@ -2158,7 +2158,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
         }),
       );
 
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.resolve(AgentContextMemory).get();
       const toolResults = history.filter((message) => message.role === 'tool');
       expect(toolResults).toHaveLength(2);
       expect(JSON.stringify(toolResults.at(-1))).toContain(
@@ -2202,7 +2202,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
       await ctx.untilTurnEnd();
 
       expect(ctx.llmCalls).toHaveLength(2);
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.resolve(AgentContextMemory).get();
       expect(JSON.stringify(history)).toContain(
         'Goal budget exhausted; tool calls are rejected. Write your final message.',
       );
@@ -2285,7 +2285,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
           args: expect.objectContaining({ reason: 'completed' }),
         }),
       );
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.resolve(AgentContextMemory).get();
       expect(JSON.stringify(history)).toContain('Blocked because credentials are unavailable.');
       expect(history.at(-1)?.role).toBe('assistant');
       expect(goals.getGoal().goal?.status).toBe('blocked');
@@ -2327,7 +2327,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
         }),
       );
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.resolve(AgentContextMemory).get();
       expect(JSON.stringify(history)).toContain('Write a concise final message');
       expect(JSON.stringify(history)).not.toContain('This summary should not run.');
       expect(history.at(-1)?.role).toBe('tool');
@@ -2339,12 +2339,12 @@ describe('AgentGoalService goal outcome tool result flow', () => {
 
 describe('AgentGoalService fork boundaries', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let goals: GoalRuntime;
 
   beforeEach(() => {
     ctx = createUnrestoredTestAgent(wireRecordPersistenceServices(new InMemoryWireRecordPersistence()));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal);
   });
 

@@ -27,7 +27,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { AgentCron } from '#/features/cron/cronAgentRuntime';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
@@ -54,7 +54,7 @@ import type {
 } from '#/agent/prompt/prompt';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
-import type { AgentContextData } from '#/agent/contextMemory/types';
+import type { AgentContextData } from '#/features/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -143,7 +143,8 @@ import {
   BlobStoreService,
   IBootstrapService,
   IConfigService,
-  IAgentContextMemoryService,
+  AgentContextMemory,
+  type ContextMemoryRuntime,
   IAgentContextProjectorService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
@@ -1442,8 +1443,8 @@ export class AgentTestContext {
     return this.session.accessor.get(IModelCatalog);
   }
 
-  get context(): IAgentContextMemoryService {
-    return this.get(IAgentContextMemoryService);
+  get context(): ContextMemoryRuntime {
+    return this.resolve(AgentContextMemory);
   }
 
   get tokenCounting() {
@@ -1575,7 +1576,7 @@ export class AgentTestContext {
   }
 
   private initializeRestorableServices(): void {
-    const context = this.get(IAgentContextMemoryService);
+    const context = this.resolve(AgentContextMemory);
     const tokenCounting = this.tokenCounting;
     const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
@@ -1657,7 +1658,7 @@ export class AgentTestContext {
   }
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
-    const context = this.get(IAgentContextMemoryService);
+    const context = this.resolve(AgentContextMemory);
     const tokenCounting = this.tokenCounting;
     return {
       history: context.get(),
@@ -1666,7 +1667,7 @@ export class AgentTestContext {
   }
 
   project(messages?: readonly ContextMessage[]) {
-    const context = this.get(IAgentContextMemoryService);
+    const context = this.resolve(AgentContextMemory);
     const projector = this.get(IAgentContextProjectorService);
     return projector.project(messages ?? context.get());
   }
@@ -1939,7 +1940,7 @@ export class AgentTestContext {
   }
 
   compactHistory(): Array<{ readonly role: string; readonly text: string }> {
-    const context = this.get(IAgentContextMemoryService);
+    const context = this.resolve(AgentContextMemory);
     return context.get().map((message) => ({
       role: message.role,
       text: message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
@@ -2200,7 +2201,7 @@ export class AgentTestContext {
       listCommands: () => this.get(IAgentCommandService).list(),
       runCommand: (payload) => this.get(IAgentCommandService).run(payload.name, payload.args),
       getContext: () => ({
-        history: this.get(IAgentContextMemoryService).get(),
+        history: this.resolve(AgentContextMemory).get(),
         tokenCount: this.tokenCounting.statusSize(),
       }),
       getTools: () => this.toolsData(),
@@ -2277,8 +2278,8 @@ export class AgentTestContext {
 
   private appendMessage(...messages: ContextMessage[]): void {
     if (messages.length === 0) return;
-    const context = this.get(IAgentContextMemoryService);
-    context.append(...messages);
+    const context = this.resolve(AgentContextMemory);
+    void context.append(...messages);
   }
 
   private coverUsage(tokenTotal: number | undefined): void {
@@ -2289,7 +2290,7 @@ export class AgentTestContext {
       inputCacheRead: 0,
       inputCacheCreation: 0,
     };
-    const context = this.get(IAgentContextMemoryService);
+    const context = this.resolve(AgentContextMemory);
     const tokenCounting = this.tokenCounting;
     tokenCounting.measured(context.get(), [], usage);
     const profile = this.get(IAgentProfileService);

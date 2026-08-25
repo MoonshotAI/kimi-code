@@ -1,5 +1,5 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 

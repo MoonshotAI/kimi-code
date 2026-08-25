@@ -5,7 +5,7 @@ import {
   compileToolArgsValidator,
   validateToolArgs,
 } from '#/tool/args-validator';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { CreateGoalTool } from '#/features/goal/tools/create-goal/createGoalTool';

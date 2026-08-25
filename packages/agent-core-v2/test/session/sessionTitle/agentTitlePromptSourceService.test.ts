@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
+
+import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 
 const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
@@ -45,7 +49,17 @@ describe('AgentTitlePromptSource', () => {
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IAgentContextMemoryService, { get: () => liveMessages });
+        reg.defineInstance(
+          IAgentLifecycleService,
+          lifecycleWithReminder(
+            createReminderStub(),
+            { get: () => liveMessages } as unknown as ContextMemoryRuntime,
+          ),
+        );
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
+        );
         reg.definePartialInstance(IAgentPromptService, { list: () => queue });
         reg.define(IAgentTitlePromptSource, AgentTitlePromptSourceService);
       },

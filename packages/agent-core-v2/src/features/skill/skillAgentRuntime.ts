@@ -4,7 +4,7 @@ import type {
   BundledSkillActivation,
   ContextMessage,
   SkillActivationOrigin,
-} from '#/agent/contextMemory/types';
+} from '#/features/contextMemory/types';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';

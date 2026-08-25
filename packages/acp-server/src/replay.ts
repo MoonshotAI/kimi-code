@@ -1,6 +1,6 @@
 /**
  * `session/load` history replay — projects the main agent's persisted context
- * history (`IAgentContextMemoryService.get()`) into an ordered batch of ACP
+ * history (`AgentContextMemory.get()`) into an ordered batch of ACP
  * `session/update` notifications so a loaded session re-renders its prior
  * turns on the client.
  *

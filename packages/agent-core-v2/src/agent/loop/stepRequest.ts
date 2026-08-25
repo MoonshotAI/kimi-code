@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ContentPart } from '#/kosong/contract/message';
-import { USER_PROMPT_ORIGIN, type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN, type ContextMessage, type PromptOrigin } from '#/features/contextMemory/types';
 
 export type StepRequestState = 'pending' | 'materialized' | 'aborted';
 

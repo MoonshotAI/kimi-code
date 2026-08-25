@@ -26,11 +26,10 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, contextMemoryAgentRuntimeProvider } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { reminderAgentRuntimeProvider } from '#/features/reminder/reminderAgentRuntime';
-import '#/agent/contextMemory/contextMemoryService';
-import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/features/contextMemory/openToolExchange';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
@@ -461,6 +460,12 @@ describe('AgentLifecycleService', () => {
       'test-reminder',
       new Ledger('test-reminder'),
       reminderAgentRuntimeProvider,
+    );
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-context-memory',
+      new Ledger('test-context-memory'),
+      contextMemoryAgentRuntimeProvider,
     );
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
@@ -1221,11 +1226,11 @@ describe('AgentLifecycleService', () => {
       { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
       { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
-    sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);
+    void svc.resolve(agentContextOf(sourceHandle), AgentContextMemory).append(...history);
 
     const child = await svc.fork(agentContextOf(sourceHandle), { agentId: 'forked' });
 
-    const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get();
+    const seeded = svc.resolve(child, AgentContextMemory).get();
     expect(seeded).toHaveLength(3);
     expect(seeded[0]).toMatchObject({ role: 'user' });
     expect(seeded[1]).toMatchObject({ role: 'assistant', partial: undefined });
@@ -1243,7 +1248,7 @@ describe('AgentLifecycleService', () => {
     const child = await svc.fork(agentContextOf(svc.handleOf(source.agentId)!), { agentId: 'forked' });
 
     expect(
-      svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get(),
+      svc.resolve(child, AgentContextMemory).get(),
     ).toEqual([]);
   });
 

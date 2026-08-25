@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentContextMemoryService,
+  AgentContextMemory,
   IAgentLifecycleService,
+  agentContextOf,
   IWireService,
   IEventBus,
   ISessionQuestionService,
@@ -207,7 +208,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    agent!.accessor.get(IAgentContextMemoryService).append(...messages);
+    void agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).append(...messages);
     await agent!.accessor.get(IWireService).flush();
   }
 
@@ -444,8 +445,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    sub.accessor
-      .get(IAgentContextMemoryService)
+    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
         { role: 'assistant', content: [{ type: 'text', text: 'scanning' }], toolCalls: [] } as ContextMessage,
@@ -476,8 +476,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    sub.accessor
-      .get(IAgentContextMemoryService)
+    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
         { role: 'assistant', content: [{ type: 'text', text: 'scanning' }], toolCalls: [] } as ContextMessage,
@@ -514,8 +513,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       .get(IAgentLifecycleService)
       .create({ agentId: 'sub-1', labels: { parentAgentId: 'main' } });
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    sub.accessor
-      .get(IAgentContextMemoryService)
+    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
       );
@@ -588,8 +586,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    sub.accessor
-      .get(IAgentContextMemoryService)
+    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan' }], toolCalls: [] } as ContextMessage,
         {
@@ -925,8 +922,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    sub.accessor
-      .get(IAgentContextMemoryService)
+    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
     await sub.accessor.get(IWireService).flush();
 
@@ -980,8 +976,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    sub.accessor
-      .get(IAgentContextMemoryService)
+    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
     await sub.accessor.get(IWireService).flush();
 

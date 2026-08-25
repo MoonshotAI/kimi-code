@@ -3,12 +3,13 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
@@ -116,7 +117,9 @@ async function distillSummary(
   setTurn: (turn: Turn) => void,
   cancelTurn: (turn: Turn, reason: unknown) => void,
 ): Promise<string> {
-  const memory = target.accessor.get(IAgentContextMemoryService);
+  const memory = target.accessor
+    .get(IAgentLifecycleService)
+    .resolve(agentContextOf(target), AgentContextMemory);
   let summary = latestAssistantText(memory.get());
   if (policy === undefined) return summary;
   if (isSummaryAdequate(summary, policy)) return summary;

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
+import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/features/contextMemory/openToolExchange';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';

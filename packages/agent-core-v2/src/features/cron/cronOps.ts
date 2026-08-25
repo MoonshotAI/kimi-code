@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import type { CronJobOrigin } from '#/agent/contextMemory/types';
+import type { CronJobOrigin } from '#/features/contextMemory/types';
 import type { CronTask } from '#/features/cron/cronTask';
 import { Event2 } from '#/app/event/event2';
 

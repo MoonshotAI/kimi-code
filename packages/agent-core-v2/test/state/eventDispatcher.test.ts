@@ -12,9 +12,9 @@ import {
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import '#/agent/contextMemory/conversationTime';
+import '#/features/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
+import { ContextAppendMessage, ContextUndo } from '#/features/contextMemory/contextEvents';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,

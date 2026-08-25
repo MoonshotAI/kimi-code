@@ -1,13 +1,15 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import {
   IAgentTitlePromptSource,
@@ -19,10 +21,15 @@ import {
 export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   declare readonly _serviceBrand: undefined;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
-  ) {}
+  ) {
+    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
+  }
 
   async firstUserPrompts(limit: number): Promise<readonly string[]> {
     if (!Number.isSafeInteger(limit) || limit <= 0) return [];

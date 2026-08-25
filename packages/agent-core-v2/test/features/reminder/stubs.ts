@@ -1,7 +1,7 @@
 import { toDisposable } from '#/_base/di/lifecycle';
-import type { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { isCompactionSummaryMessage } from '#/features/contextMemory/compactionHandoff';
+import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IEventBus } from '#/app/event/eventBus';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
@@ -15,6 +15,8 @@ import type {
   ReminderNotification,
 } from '#/features/reminder/types';
 
+import { stubContextMemory } from '../contextMemory/stubs';
+
 export function createReminderStub(input: {
   register?<D>(variant: string, provider: ContextInjectionProvider<D>): { dispose(): void };
   notify?(content: string, notification: ReminderNotification): void;
@@ -27,9 +29,13 @@ export function createReminderStub(input: {
   } as ReminderRuntime;
 }
 
-export function lifecycleWithReminder(reminder: ReminderRuntime): IAgentLifecycleService {
+export function lifecycleWithReminder(
+  reminder: ReminderRuntime,
+  contextMemory: ContextMemoryRuntime = stubContextMemory(),
+): IAgentLifecycleService {
   return {
-    resolve: () => reminder,
+    resolve: (_agent: unknown, definition: unknown) =>
+      definition === AgentContextMemory ? contextMemory : reminder,
     handleOf: () => ({}),
     onDidCreateScope: () => toDisposable(() => {}),
   } as unknown as IAgentLifecycleService;
@@ -37,7 +43,7 @@ export function lifecycleWithReminder(reminder: ReminderRuntime): IAgentLifecycl
 
 export function createReminderHarness(
   loop: IAgentLoopService,
-  context: IAgentContextMemoryService,
+  context: ContextMemoryRuntime,
   eventBus?: IEventBus,
 ): ReminderRuntime {
   const entries = new Map<string, ContextInjectionProvider>();
@@ -73,7 +79,7 @@ export function createReminderHarness(
       const content = result.content;
       if (typeof content === 'string') {
         if (content.trim().length === 0) continue;
-        context.append({
+        void context.append({
           role: 'user',
           content: [{ type: 'text', text: wrapSystemReminder(content) }],
           toolCalls: [],
@@ -83,14 +89,14 @@ export function createReminderHarness(
       }
       if (Array.isArray(content)) {
         if (content.length === 0) continue;
-        context.append({ role: 'user', content: [...content], toolCalls: [], origin });
+        void context.append({ role: 'user', content: [...content], toolCalls: [], origin });
         continue;
       }
       const message = (content as { readonly message: ContextInjectionMessage }).message;
       if (message.content.length === 0 && (message.tools === undefined || message.tools.length === 0)) {
         continue;
       }
-      context.append({
+      void context.append({
         role: message.role,
         content: [...message.content],
         toolCalls: [],

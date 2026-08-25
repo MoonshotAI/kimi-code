@@ -24,6 +24,7 @@ export interface AgentSpaceHost {
   registerModel(definition: AgentModelDefinition<any, any>, model: AgentModel<any>): void;
   dispatchModelEvent(event: Event2<any>): Promise<void>;
   readLegacyState(key: StateKey<any>): unknown;
+  readRuntimeState(id: string): unknown;
 }
 
 interface ModelEntry {
@@ -96,6 +97,7 @@ export class AgentSpaceImpl implements AgentSpace {
     const bridge: AgentModelBridge = {
       dispatch: (event) => host.dispatchModelEvent(event),
       readLegacy: (key) => host.readLegacyState(key),
+      readRuntime: (id) => host.readRuntimeState(id),
       initialState: () => Object.freeze(definition.state.initial()),
     };
     const model = new definition.model({ agent: context, bridge });

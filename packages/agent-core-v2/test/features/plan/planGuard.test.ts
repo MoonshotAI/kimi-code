@@ -4,7 +4,6 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
   ApprovalResponse,
@@ -174,7 +173,6 @@ describe('AgentPlanService plan-guard listener', () => {
           sessionId: 'session-1',
           sessionDir: SESSION_DIR,
         });
-        reg.definePartialInstance(IAgentContextMemoryService, {});
         reg.defineInstance(
           IAgentLifecycleService,
           lifecycleWithReminder(createReminderStub()),

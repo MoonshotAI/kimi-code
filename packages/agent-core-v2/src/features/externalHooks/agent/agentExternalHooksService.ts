@@ -6,8 +6,8 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import {
   IAgentFullCompactionService,
   type FullCompactionTask,
@@ -34,6 +34,7 @@ import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -68,9 +69,11 @@ export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
 export class AgentExternalHooksService extends Service implements IAgentExternalHooksService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -80,6 +83,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
+    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(externalHooksStopHookContinuationUsedKey);
     void this.sessionMetadata
       .read()
@@ -246,7 +250,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         const reason = await this.runStop(ctx);
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
-          this.context.append({
+          void this.context.append({
             role: 'user',
             content: [{ type: 'text', text: reason }],
             toolCalls: [],
@@ -356,7 +360,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = renderUserPromptHookBlockResult(results);
     if (block !== undefined) {
-      this.context.append({
+      void this.context.append({
         role: 'assistant',
         content: [{ type: 'text', text: block.text }],
         toolCalls: [],
@@ -375,7 +379,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
-      this.context.append({
+      void this.context.append({
         role: 'user',
         content: [{ type: 'text', text: append.text }],
         toolCalls: [],

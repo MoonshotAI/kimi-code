@@ -8,7 +8,7 @@ import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/sco
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';

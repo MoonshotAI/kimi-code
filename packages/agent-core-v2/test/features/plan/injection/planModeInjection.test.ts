@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPlanService } from '#/features/plan/plan';
 import {
   createTestAgent,
@@ -30,19 +30,19 @@ async function injectDynamic(ctx: TestAgentContext): Promise<void> {
 
 function appendAssistantTurn(
   ctx: TestAgentContext,
-  context: IAgentContextMemoryService,
+  context: ContextMemoryRuntime,
   text: string,
 ): void {
   ctx.appendAssistantTurn(context.get().length, text);
 }
 
-function planReminderMessages(context: IAgentContextMemoryService): readonly ContextMessage[] {
+function planReminderMessages(context: ContextMemoryRuntime): readonly ContextMessage[] {
   return context.get().filter((message) => {
     return message.origin?.kind === 'injection' && message.origin.variant === 'plan_mode';
   });
 }
 
-function lastPlanReminder(context: IAgentContextMemoryService): string {
+function lastPlanReminder(context: ContextMemoryRuntime): string {
   const message = planReminderMessages(context).at(-1);
   if (message === undefined) return '';
   return message.content
@@ -52,7 +52,7 @@ function lastPlanReminder(context: IAgentContextMemoryService): string {
 
 describe('PlanModeService dynamic injection content', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let plan: IAgentPlanService;
   let readText: (path: string) => Promise<string>;
 
@@ -65,7 +65,7 @@ describe('PlanModeService dynamic injection content', () => {
         writeText: vi.fn(async () => undefined),
       }),
     }));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     plan = ctx.get(IAgentPlanService);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
@@ -132,7 +132,7 @@ describe('PlanModeService dynamic injection content', () => {
 
 describe('PlanModeService dynamic injection cadence', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: ContextMemoryRuntime;
   let plan: IAgentPlanService;
 
   beforeEach(async () => {
@@ -143,7 +143,7 @@ describe('PlanModeService dynamic injection cadence', () => {
         writeText: vi.fn(async () => undefined),
       }),
     }));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.resolve(AgentContextMemory);
     plan = ctx.get(IAgentPlanService);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();

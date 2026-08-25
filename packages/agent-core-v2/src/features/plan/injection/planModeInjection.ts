@@ -1,8 +1,8 @@
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
+import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanFilePath } from '#/features/plan/plan';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -24,7 +24,7 @@ export class PlanModeInjection extends Service {
   constructor(
     injector: ReminderRuntime,
     @IAgentPlanService private readonly plan: IAgentPlanService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    private readonly context: ContextMemoryRuntime,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();

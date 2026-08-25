@@ -5,16 +5,18 @@ import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { ContextSpliced } from '#/features/contextMemory/contextEvents';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import {
   collectLoadedDynamicToolNames,
@@ -38,17 +40,21 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
 export class AgentToolSelectService extends Service implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(
       toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),

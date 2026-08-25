@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService, type ILogger } from '#/_base/log/log';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';

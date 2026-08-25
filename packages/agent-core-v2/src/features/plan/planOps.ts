@@ -5,7 +5,7 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
-import '#/agent/contextMemory/conversationTime';
+import '#/features/contextMemory/conversationTime';
 
 export interface PlanState {
   readonly active: boolean;

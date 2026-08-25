@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { castDraft } from 'immer';
 
+import { getAgentRuntimeDescriptor } from '#/agent/runtime/agentRuntime';
+import { contextMemoryAgentRuntimeProvider } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import {
   computeUndoCut,
-  contextMemoryKey,
   isFullyUndoable,
-} from '#/agent/contextMemory/contextOps';
-import { ContextUndo } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { expandedStateFolds, type FoldContext } from '#/state/state';
+} from '#/features/contextMemory/contextOps';
+import { ContextUndo } from '#/features/contextMemory/contextEvents';
+import type { ContextMessage } from '#/features/contextMemory/types';
+import type { Event2Class } from '#/app/event/event2';
+import { expandedRuntimeFolds, type FoldContext, type StateFold } from '#/state/state';
 
 function text(value: string): { type: 'text'; text: string } {
   return { type: 'text', text: value };
@@ -111,7 +113,11 @@ describe('contextUndo op', () => {
   };
 
   function applyContextUndo(state: ContextMessage[], count: number): ContextMessage[] {
-    const fold = expandedStateFolds(contextMemoryKey).get(ContextUndo)!;
+    const durable = getAgentRuntimeDescriptor(contextMemoryAgentRuntimeProvider).durable!;
+    const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
+    for (const cls of durable.events) base.set(cls, durable.transition);
+    const folds = expandedRuntimeFolds('contextMemory', durable.undoable, base, durable.onUndo);
+    const fold = folds.get(ContextUndo)!;
     const result = fold(castDraft(state), new ContextUndo({ agentId: 'main', count }), foldContext);
     return result === undefined ? state : result;
   }

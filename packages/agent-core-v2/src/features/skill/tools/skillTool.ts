@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
+import type { SkillActivationOrigin } from '#/features/contextMemory/types';
 import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
 import { AgentSkill, type SkillRuntime } from '#/features/skill/skillAgentRuntime';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';

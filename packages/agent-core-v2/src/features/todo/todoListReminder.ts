@@ -1,4 +1,4 @@
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';
 

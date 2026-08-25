@@ -4,18 +4,18 @@ import {
   applyContextCompactionRecord,
   computeUndoCut,
   isFullyUndoable,
-} from '#/agent/contextMemory/contextOps';
+} from '#/features/contextMemory/contextOps';
 import {
   reduceContextTranscript,
   type ContextTranscript,
-} from '#/agent/contextMemory/contextTranscript';
+} from '#/features/contextMemory/contextTranscript';
 import {
   foldAppendMessage,
   foldLoopEvent,
   resetFold,
   type LoopRecordedEvent,
-} from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+} from '#/features/contextMemory/loopEventFold';
+import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
 
 function userMessage(text: string, origin?: PromptOrigin): ContextMessage {

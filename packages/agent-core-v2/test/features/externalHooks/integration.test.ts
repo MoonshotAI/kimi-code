@@ -14,14 +14,7 @@ import {
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { emptyUsage } from '#/kosong/contract/usage';
-import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
-import {
-  IAgentContextMemoryService,
-  type ContextCompactionInput,
-  type ContextCompactionResult,
-} from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import {
   HookDefSchema,
   HOOKS_SECTION,
@@ -51,6 +44,8 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import { makeHookRunner } from './runner-stub';
+import { stubContextMemory } from '../contextMemory/stubs';
+import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -67,6 +62,7 @@ import {
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { createHooks, OrderedHookSlot } from '#/hooks';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
@@ -111,39 +107,6 @@ function makeAfterStep(signal: AbortSignal): AfterStepContext {
     usage: emptyUsage(),
     finishReason: 'completed',
     stopTurn: false,
-  };
-}
-
-function stubContextMemory(): IAgentContextMemoryService & {
-  readonly messages: readonly ContextMessage[];
-} {
-  const messages: ContextMessage[] = [];
-  return {
-    _serviceBrand: undefined,
-    get: () => [...messages],
-    append: (...inserted) => {
-      messages.push(...inserted);
-    },
-    appendLoopEvent: () => {},
-    publishTrailingRemoval: () => false,
-    clear: () => {
-      messages.splice(0);
-    },
-    undo: (count) => {
-      const cut = computeUndoCut(messages, count);
-      if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-        messages.splice(cut.cutIndex);
-      }
-      return cut;
-    },
-    applyCompaction: (input: ContextCompactionInput): ContextCompactionResult => {
-      const shape = buildContextCompactionShape(messages, input);
-      messages.splice(0, messages.length, ...shape.messages);
-      const { messages: _messages, ...result } = shape;
-      void _messages;
-      return result;
-    },
-    messages,
   };
 }
 
@@ -357,7 +320,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), context));
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
@@ -465,7 +428,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), stubContextMemory()));
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
@@ -672,7 +635,7 @@ describe('IExternalHooksRunnerService integration', () => {
             enabledHooks: async () => [],
             onDidReload: Event.None as IPluginService['onDidReload'],
           });
-          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), context));
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
@@ -1208,7 +1171,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), stubContextMemory()));
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {

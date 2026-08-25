@@ -4,8 +4,8 @@ import {
   foldAppendMessage,
   foldLoopEvent,
   type LoopRecordedEvent,
-} from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+} from '#/features/contextMemory/loopEventFold';
+import type { ContextMessage } from '#/features/contextMemory/types';
 
 describe('loop-event fold parity', () => {
   function appendAll(

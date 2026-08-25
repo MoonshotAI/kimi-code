@@ -6,8 +6,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -33,7 +32,7 @@ import { IWireService } from '#/wire/wire';
 import { IFileService } from '#/app/file/fileService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
-import { stubContextMemory } from '../contextMemory/stubs';
+import { stubContextMemory } from '../../features/contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire, type StubLoopOptions } from '../loop/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { SteerStepRequest } from '#/agent/prompt/promptStepRequests';
@@ -64,7 +63,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   const context = stubContextMemory();
   const reminder = createReminderStub({
     notify: (content, notification) => {
-      context.append({
+      void context.append({
         role: 'user',
         content: [{ type: 'text', text: wrapSystemReminder(content) }],
         toolCalls: [],
@@ -96,7 +95,6 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
-      reg.defineInstance(IAgentContextMemoryService, context);
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentBlobService, noopBlob);
@@ -105,7 +103,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
-      reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(reminder));
+      reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(reminder, context));
       reg.define(IAgentPromptService, AgentPromptService);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
       reg.definePartialInstance(ISessionMetadata, {

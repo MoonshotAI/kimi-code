@@ -5,9 +5,9 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { newMessageId } from '#/agent/contextMemory/messageId';
-import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { newMessageId } from '#/features/contextMemory/messageId';
+import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/features/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
@@ -149,8 +149,9 @@ export class AgentPromptService implements IAgentPromptService {
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
+  private readonly context: ContextMemoryRuntime;
+
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
@@ -164,6 +165,7 @@ export class AgentPromptService implements IAgentPromptService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
+    this.context = agentLifecycle.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
@@ -402,7 +404,7 @@ export class AgentPromptService implements IAgentPromptService {
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
     if (this.active !== undefined) this.abort(this.active.id);
-    this.context.clear();
+    void this.context.clear();
   }
 
   private async startNext(): Promise<void> {
@@ -479,7 +481,7 @@ export class AgentPromptService implements IAgentPromptService {
         ownerPromptId,
       });
     }
-    if (message.content.length > 0) this.context.append({ ...message, id: ownerPromptId });
+    if (message.content.length > 0) void this.context.append({ ...message, id: ownerPromptId });
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {
     const delivery = ctx.result.delivery; if (delivery === undefined) return;

@@ -1,4 +1,4 @@
-import type { CronJobOrigin } from '#/agent/contextMemory/types';
+import type { CronJobOrigin } from '#/features/contextMemory/types';
 
 export function formatLocalIsoWithOffset(ms: number): string {
   const date = new Date(ms);

@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { AsyncEmitter, Emitter } from '#/_base/event';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { AgentPluginService } from '#/agent/plugin/agentPluginService';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
