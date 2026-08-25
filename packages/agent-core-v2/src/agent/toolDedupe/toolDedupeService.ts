@@ -105,9 +105,13 @@ function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDed
     }
     newOutput = arr;
   }
+  const untruncatedOutputSuffix =
+    result.untruncatedOutput !== undefined
+      ? (result.untruncatedOutputSuffix ?? '') + reminderText
+      : undefined;
   return result.isError === true
-    ? { ...result, output: newOutput, isError: true }
-    : { ...result, output: newOutput };
+    ? { ...result, output: newOutput, isError: true, untruncatedOutputSuffix }
+    : { ...result, output: newOutput, untruncatedOutputSuffix };
 }
 
 function forceStopResult(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {

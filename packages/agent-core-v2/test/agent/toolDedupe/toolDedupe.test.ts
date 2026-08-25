@@ -501,6 +501,39 @@ describe('AgentToolDedupeService', () => {
       expect(final!.result.isError).toBe(true);
       expect(final!.result.output as string).toContain('<system-reminder>');
     });
+
+    it('mirrors the reminder into untruncatedOutputSuffix for retained results', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        untruncatedOutput: 'full output',
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.untruncatedOutputSuffix).toBe(REMINDER_TEXT_1);
+    });
+
+    it('appends the reminder after an existing untruncatedOutputSuffix', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        untruncatedOutput: 'full output',
+        untruncatedOutputSuffix: 'Command failed with exit code: 1.',
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.untruncatedOutputSuffix).toBe(
+        'Command failed with exit code: 1.' + REMINDER_TEXT_1,
+      );
+    });
   });
 
   describe('key canonicalization', () => {

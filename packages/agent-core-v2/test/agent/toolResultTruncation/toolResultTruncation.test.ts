@@ -123,6 +123,10 @@ describe('ToolResultTruncationService', () => {
     expect(typeof rendered).toBe('string');
     if (typeof rendered !== 'string') throw new Error('expected string output');
     expect(rendered).toContain(
+      'the first 60000 characters (of 25000000) were saved to a file.',
+    );
+    expect(rendered).not.toContain('the full output was saved');
+    expect(rendered).toContain(
       'output_size_chars: 25000000 (only the first 60000 characters were preserved)',
     );
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(preserved);

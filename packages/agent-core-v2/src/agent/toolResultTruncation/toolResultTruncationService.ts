@@ -122,7 +122,9 @@ function renderPersistedToolResult(
   const tailStart = Math.max(head.length, text.length - TOOL_RESULT_PREVIEW_TAIL_CHARS);
   const tail = text.slice(tailStart);
   const lines = [
-    `Tool output exceeded ${String(TOOL_RESULT_MAX_CHARS)} characters; the full output was saved to a file.`,
+    totalChars > text.length
+      ? `Tool output exceeded ${String(TOOL_RESULT_MAX_CHARS)} characters; the first ${String(text.length)} characters (of ${String(totalChars)}) were saved to a file.`
+      : `Tool output exceeded ${String(TOOL_RESULT_MAX_CHARS)} characters; the full output was saved to a file.`,
     `tool_name: ${toolName}`,
     `tool_call_id: ${toolCallId}`,
     totalChars > text.length
@@ -130,7 +132,7 @@ function renderPersistedToolResult(
       : `output_size_chars: ${String(text.length)}`,
     `output_size_bytes: ${String(Buffer.byteLength(text, 'utf8'))}`,
     `output_path: ${outputPath}`,
-    'next_step: Use Read with output_path to page through the full output, or Grep to search it.',
+    'next_step: Use Read with output_path to page through the saved output, or Grep to search it.',
     '',
     `[preview: chars [0, ${String(head.length)})]`,
     head,

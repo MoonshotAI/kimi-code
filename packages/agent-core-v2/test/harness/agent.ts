@@ -2971,7 +2971,7 @@ function createStreamedMessage(
     usage: meta.usage,
     finishReason: meta.finishReason ?? null,
     rawFinishReason: meta.rawFinishReason ?? null,
-    ...(meta.traceId !== undefined ? { traceId: meta.traceId } : {}),
+    traceId: meta.traceId,
     async *[Symbol.asyncIterator]() {
       for (const part of parts) {
         yield structuredClone(part);

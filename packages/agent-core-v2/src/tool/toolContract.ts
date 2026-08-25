@@ -29,7 +29,7 @@ export interface ExecutableToolSuccessResult {
   readonly untruncatedOutput?: string;
   readonly untruncatedOutputTotalChars?: number;
   readonly untruncatedOutputSuffix?: string;
-  readonly spillExempt?: true | undefined;
+  readonly spillExempt?: true;
 }
 
 export interface ExecutableToolErrorResult {
@@ -42,7 +42,7 @@ export interface ExecutableToolErrorResult {
   readonly untruncatedOutput?: string;
   readonly untruncatedOutputTotalChars?: number;
   readonly untruncatedOutputSuffix?: string;
-  readonly spillExempt?: true | undefined;
+  readonly spillExempt?: true;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;
