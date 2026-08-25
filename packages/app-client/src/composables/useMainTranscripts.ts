@@ -35,6 +35,12 @@ export interface MainTranscriptEntry {
    *  re-anchor — leaving the client stuck on a pre-reset snapshot when the
    *  reset carried the final turn-end and no further ops ever come. */
   pendingReset: { snapshot: AgentTranscriptSnapshot; seq?: number } | null;
+  /** Ops that arrived while a reset was buffered (pendingReset). They must
+   *  land AFTER the reset, in WS order: letting the channel replay them
+   *  first and then writing the older reset back would cover the fresh
+   *  deltas (and a delta-triggered gap refresh would press the stale reset
+   *  over the new REST page). */
+  opsAfterReset: Array<{ ops: readonly TranscriptOperation[]; seq?: number }>;
   /** Items-empty resets already triggered this many REST retries — the reset
    *  is NEVER accepted as the baseline (it can't carry history); the backoff
    *  interval just caps at 15s. */
@@ -175,12 +181,29 @@ export function createMainTranscriptPool(deps: {
       resumePromise: null,
       gapRetryPending: false,
       pendingReset: null,
+      opsAfterReset: [],
       emptyResetRetries: 0,
       recoveredViaEmptyReset: false,
       lastTouchedSeq: 0,
     };
     entries.set(sessionId, entry);
     return entry;
+  }
+
+  /** Land a buffered reset AFTER the in-flight read commits, then flush the
+   *  ops that queued behind it in WS order (see opsAfterReset). Both landing
+   *  sites (the refresh's finally and the pagination settle) share this. */
+  function landPendingReset(entry: MainTranscriptEntry): void {
+    const pending = entry.pendingReset;
+    entry.pendingReset = null;
+    if (pending === null || entries.get(entry.channel.sessionId) !== entry) return;
+    entry.channel.receiveReset(pending.snapshot, pending.seq);
+    entry.baselineLoaded = true;
+    cancelFirstReadRetry(entry.channel.sessionId);
+    subscribeCurrent(entry.channel.sessionId, entry.channel.seq);
+    const queued = entry.opsAfterReset;
+    entry.opsAfterReset = [];
+    for (const batch of queued) entry.channel.applyOps(batch.ops, batch.seq);
   }
 
   async function refreshAndResume(entry: MainTranscriptEntry): Promise<void> {
@@ -192,14 +215,7 @@ export function createMainTranscriptPool(deps: {
         // (older) REST page commits — never underneath it (see the field's
         // comment). Skipped when the entry died mid-read: its replacement
         // owns the session now.
-        const pending = entry.pendingReset;
-        entry.pendingReset = null;
-        if (pending !== null && entries.get(entry.channel.sessionId) === entry) {
-          entry.channel.receiveReset(pending.snapshot, pending.seq);
-          entry.baselineLoaded = true;
-          cancelFirstReadRetry(entry.channel.sessionId);
-          subscribeCurrent(entry.channel.sessionId, entry.channel.seq);
-        }
+        landPendingReset(entry);
         if (entry.gapRetryPending) {
           entry.gapRetryPending = false;
           void refreshAndResume(entry);
@@ -425,6 +441,11 @@ export function createMainTranscriptPool(deps: {
     // older REST page commits (see pendingReset) — applying it now would let
     // the stale page overwrite the server's newer re-anchor a moment later.
     if (entry.resumePromise !== null) {
+      // A NEWER reset supersedes the buffered one: ops queued behind the old
+      // reset predate it and would resurrect state the new one cleared (seq
+      // is optional on this contract, so the channel's seq filter can't
+      // catch them).
+      if (entry.pendingReset !== null) entry.opsAfterReset = [];
       entry.pendingReset = { snapshot, seq };
       return;
     }
@@ -433,6 +454,8 @@ export function createMainTranscriptPool(deps: {
     // while the socket cursor already advanced to the reset's seq. Buffer it
     // and land it once the pagination settles.
     if (entry.channel.loadingOlder) {
+      // Same supersede as the resumePromise branch above.
+      if (entry.pendingReset !== null) entry.opsAfterReset = [];
       entry.pendingReset = { snapshot, seq };
       void entry.channel
         .settleOlder()
@@ -440,14 +463,7 @@ export function createMainTranscriptPool(deps: {
         .then(() => {
           // A pool refresh starting meanwhile owns the landing itself.
           if (entry.resumePromise !== null) return;
-          const pending = entry.pendingReset;
-          entry.pendingReset = null;
-          if (pending !== null && entries.get(sessionId) === entry) {
-            entry.channel.receiveReset(pending.snapshot, pending.seq);
-            entry.baselineLoaded = true;
-            cancelFirstReadRetry(sessionId);
-            subscribeCurrent(sessionId, entry.channel.seq);
-          }
+          landPendingReset(entry);
         });
       return;
     }
@@ -459,6 +475,13 @@ export function createMainTranscriptPool(deps: {
   function applyOps(sessionId: string, ops: readonly TranscriptOperation[], seq?: number): boolean {
     const entry = entries.get(sessionId);
     if (entry === undefined) return true;
+    // A buffered reset orders ALL later traffic behind it: these ops land
+    // only after the reset commits, in WS order (see opsAfterReset) — the
+    // channel's own buffer would replay them BEFORE the older reset.
+    if (entry.pendingReset !== null) {
+      entry.opsAfterReset.push({ ops, ...(seq !== undefined ? { seq } : {}) });
+      return true;
+    }
     return entry.channel.applyOps(ops, seq);
   }
 

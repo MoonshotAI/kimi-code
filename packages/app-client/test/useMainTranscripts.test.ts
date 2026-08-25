@@ -515,4 +515,118 @@ describe('createMainTranscriptPool', () => {
     await refresh;
     expect(seen).toEqual(['refresh', 'older', 'refresh']);
   });
+
+  it('lands ops queued behind a pagination-held reset AFTER the reset, in WS order', async () => {
+    // During history pagination a non-empty reset is buffered; ops arriving
+    // behind it must land AFTER the reset commits — replaying them first
+    // (the channel's own buffer) and then writing the older reset back
+    // would cover the fresh deltas.
+    const subscribeTranscript = vi.fn();
+    const unsubscribeTranscript = vi.fn();
+    const baselineTurn = {
+      kind: 'turn', turnId: 't_old', ordinal: 1, state: 'completed',
+      origin: { kind: 'user' }, prompt: 'old', steps: [],
+    };
+    let resolveOlder!: (page: unknown) => void;
+    const getSessionTranscript = vi.fn(async (sessionId: string, query?: { beforeTurn?: string }) => {
+      if (query?.beforeTurn !== undefined) {
+        return new Promise((resolve) => { resolveOlder = resolve; });
+      }
+      return { ...page('main', 3), items: [baselineTurn], hasMoreOlder: true };
+    });
+    const pool = createMainTranscriptPool({
+      api: { getSessionTranscript } as unknown as KimiWebApi,
+      connectEventsIfNeeded: vi.fn(),
+      getEventConnection: () =>
+        ({ subscribeTranscript, unsubscribeTranscript }) as unknown as KimiEventConnection,
+    });
+
+    pool.activate('s1');
+    await vi.waitFor(() => expect(pool.getEntry('s1')?.baselineLoaded).toBe(true));
+    const entry = pool.getEntry('s1')!;
+    void entry.channel.loadOlder();
+    await vi.waitFor(() => expect(entry.channel.loadingOlder).toBe(true));
+
+    // The reset lands mid-pagination (buffered); a newer op arrives behind it.
+    const resetTurn = {
+      kind: 'turn', turnId: 't_reset', ordinal: 1, state: 'completed',
+      origin: { kind: 'user' }, prompt: 'reset', steps: [],
+    };
+    pool.receiveReset('s1', { ...page('main', 10), items: [resetTurn], hasMoreOlder: false } as never, 10);
+    pool.applyOps('s1', [{
+      op: 'turn.upsert',
+      turn: {
+        kind: 'turn', turnId: 't_new', ordinal: 2, state: 'running',
+        origin: { kind: 'user' }, steps: [],
+      },
+    }] as never, 11);
+    // Not applied yet — the op waits behind the buffered reset.
+    expect(
+      entry.channel.snapshot.items.some((item) => item.kind === 'turn' && item.turnId === 't_new'),
+    ).toBe(false);
+
+    resolveOlder({ ...page('main', 4), items: [], hasMoreOlder: false });
+    await vi.waitFor(() => {
+      const ids = entry.channel.snapshot.items
+        .filter((item) => item.kind === 'turn')
+        .map((item) => item.turnId);
+      // The reset committed FIRST, then the queued op landed on top of it.
+      expect(ids).toEqual(['t_reset', 't_new']);
+    });
+    expect(entry.channel.seq).toBe(11);
+  });
+
+  it('drops ops queued behind a SUPERSEDED pending reset', async () => {
+    // reset A, ops A1, reset B arrive while a read is in flight: B supersedes
+    // A, and A1 (which predates B) must NOT land after B — it would
+    // resurrect transcript state the newer reset just cleared. seq is
+    // optional on this contract, so no seq filter can save this.
+    const subscribeTranscript = vi.fn();
+    const unsubscribeTranscript = vi.fn();
+    const baselineTurn = {
+      kind: 'turn', turnId: 't_old', ordinal: 1, state: 'completed',
+      origin: { kind: 'user' }, prompt: 'old', steps: [],
+    };
+    let resolveOlder!: (page: unknown) => void;
+    const getSessionTranscript = vi.fn(async (sessionId: string, query?: { beforeTurn?: string }) => {
+      if (query?.beforeTurn !== undefined) {
+        return new Promise((resolve) => { resolveOlder = resolve; });
+      }
+      return { ...page('main', 3), items: [baselineTurn], hasMoreOlder: true };
+    });
+    const pool = createMainTranscriptPool({
+      api: { getSessionTranscript } as unknown as KimiWebApi,
+      connectEventsIfNeeded: vi.fn(),
+      getEventConnection: () =>
+        ({ subscribeTranscript, unsubscribeTranscript }) as unknown as KimiEventConnection,
+    });
+
+    pool.activate('s1');
+    await vi.waitFor(() => expect(pool.getEntry('s1')?.baselineLoaded).toBe(true));
+    const entry = pool.getEntry('s1')!;
+    void entry.channel.loadOlder();
+    await vi.waitFor(() => expect(entry.channel.loadingOlder).toBe(true));
+
+    const turnOf = (turnId: string, ordinal: number) => ({
+      kind: 'turn', turnId, ordinal, state: 'completed',
+      origin: { kind: 'user' }, prompt: turnId, steps: [],
+    });
+    const opsOf = (turnId: string, ordinal: number) => [{
+      op: 'turn.upsert',
+      turn: { kind: 'turn', turnId, ordinal, state: 'running', origin: { kind: 'user' }, steps: [] },
+    }];
+    pool.receiveReset('s1', { ...page('main'), items: [turnOf('t_A', 1)] } as never);
+    pool.applyOps('s1', opsOf('t_A1', 2) as never);
+    pool.receiveReset('s1', { ...page('main'), items: [turnOf('t_B', 1)] } as never);
+    pool.applyOps('s1', opsOf('t_B1', 2) as never);
+
+    resolveOlder({ ...page('main', 4), items: [], hasMoreOlder: false });
+    await vi.waitFor(() => {
+      const ids = entry.channel.snapshot.items
+        .filter((item) => item.kind === 'turn')
+        .map((item) => item.turnId);
+      // B landed, then only the ops queued BEHIND B — A1 stays buried.
+      expect(ids).toEqual(['t_B', 't_B1']);
+    });
+  });
 });

@@ -5084,6 +5084,168 @@ describe('useKimiWebClient session work reconnect baseline', () => {
     }
   });
 
+  it('lifts the resume floor when the replay reaches exactly the at-resume watermark', async () => {
+    // The replay can finish EXACTLY at the resume-time aggregate (the session
+    // stays quiet afterwards): seqs are unique, so only the replay can
+    // deliver precisely that watermark — reaching it must lift the floor too,
+    // or a quiet session's next eviction re-freezes the stale watermark and
+    // replays already-consumed frames (duplicated side-chat text).
+    vi.stubGlobal('WebSocket', class {});
+    vi.resetModules();
+
+    const ids = ['lruq_s1', 'lruq_s2', 'lruq_s3', 'lruq_s4', 'lruq_s5'];
+    const fixtures = ids.map((id) => session(id, false, false));
+    let handlers: KimiEventHandlers | undefined;
+    const connection: KimiEventConnection = {
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      subscribeTranscript: vi.fn(),
+      unsubscribeTranscript: vi.fn(),
+      bindNextPromptId: vi.fn(),
+      abort: vi.fn(),
+      terminalAttach: vi.fn(),
+      terminalInput: vi.fn(),
+      terminalResize: vi.fn(),
+      terminalDetach: vi.fn(),
+      terminalClose: vi.fn(),
+      markSideChannelAgent: vi.fn(),
+      health: () => ({ connected: true, open: true, stale: false }),
+      reconnect: vi.fn(),
+      close: vi.fn(),
+    };
+    const api: Partial<KimiWebApi> = {
+      getAuth: vi.fn(async () => ({ ready: true, defaultModel: 'model-1', managedProvider: null })),
+      getHealth: vi.fn(async () => ({ status: 'ok', uptimeSec: 1 })),
+      getMeta: vi.fn(async () => ({
+        serverVersion: '0.0.0',
+        serverId: 'server-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        capabilities: {},
+        openInApps: [],
+        dangerousBypassAuth: false,
+        backend: 'v2',
+      })),
+      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' })),
+      listModels: vi.fn(async () => []),
+      listProviders: vi.fn(async () => []),
+      listWorkspaces: vi.fn(async () => [
+        { id: 'workspace-1', root: '/workspace', name: 'Workspace', sessionCount: 5 },
+      ]),
+      getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
+      listSessions: vi.fn(async () => ({ items: fixtures, hasMore: false })),
+      listSessionGroupsV2: vi.fn(async () => ({
+        groups: [
+          {
+            workspace: { id: 'workspace-1', cwd: '/workspace' },
+            sessions: fixtures.map(v2Of),
+            total: fixtures.length,
+          },
+        ],
+        hasMore: false,
+        nextPageToken: null,
+        total: fixtures.length,
+      })),
+      getSession: vi.fn(async (id: string) => ({ id, archived: false, workspaceId: 'workspace-1' })),
+      submitPrompt: vi.fn(async () => ({ promptId: 'pr_1', userMessageId: 'msg_1' })),
+      getSessionStatus: vi.fn(async () => ({
+        model: 'model-1',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: false,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      })),
+      getSessionGoal: vi.fn(async () => null),
+      getSessionWarnings: vi.fn(async () => []),
+      getGitStatus: vi.fn(async () => ({
+        branch: '',
+        ahead: 0,
+        behind: 0,
+        entries: {},
+        additions: 0,
+        deletions: 0,
+        pullRequest: null,
+      })),
+      listTasks: vi.fn(async () => []),
+      listSkills: vi.fn(async () => []),
+      listSkillsForWorkspace: vi.fn(async () => []),
+      getSessionTranscript: vi.fn(async () => ({
+        agentId: 'main',
+        items: [],
+        tasks: [],
+        interactions: [],
+        attachments: [],
+        todos: [],
+        prompts: [],
+        agents: [],
+        pendingInteractions: [],
+        meta: { activity: 'idle' },
+        hasMoreOlder: false,
+      })),
+      getFileUrl: (fileId: string) => `file:${fileId}`,
+      connectEvents: vi.fn((nextHandlers) => {
+        handlers = nextHandlers;
+        return connection;
+      }),
+    };
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, api);
+
+    const workChanged = (sessionId: string, seq: number) =>
+      handlers!.onEvent(
+        { type: 'sessionWorkChanged', sessionId, busy: false, mainTurnActive: false },
+        { sessionId, seq },
+      );
+    const cursorOfLastSubscribe = (sessionId: string) =>
+      (connection.subscribe as ReturnType<typeof vi.fn>).mock.calls
+        .filter((call) => call[0] === sessionId)
+        .at(-1)?.[1] as { seq?: number } | undefined;
+    const beat = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+    try {
+      const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+      const client = useKimiWebClient();
+      await client.load();
+      expect(handlers).toBeDefined();
+
+      await client.selectSession('lruq_s1');
+      await beat();
+      workChanged('lruq_s1', 10);
+      await beat();
+
+      // Evict s1 (frozen at 10), inflate the aggregate to 50 via broadcast.
+      for (const id of ['lruq_s2', 'lruq_s3', 'lruq_s4', 'lruq_s5']) {
+        await client.selectSession(id);
+        await beat();
+      }
+      workChanged('lruq_s1', 50);
+      await beat();
+
+      // Resume s1 (cursor 10), then a REPLAYED frame lands at exactly the
+      // at-resume watermark (50): the window is provably flushed.
+      await client.selectSession('lruq_s1');
+      await beat();
+      expect(cursorOfLastSubscribe('lruq_s1')?.seq).toBe(10);
+      workChanged('lruq_s1', 50);
+      await beat();
+
+      // Re-evict and resume: the floor lifted, so the freeze used the honest
+      // aggregate — the next resume starts at 50, not the stale 10.
+      for (const id of ['lruq_s2', 'lruq_s3', 'lruq_s4', 'lruq_s5']) {
+        await client.selectSession(id);
+        await beat();
+      }
+      await client.selectSession('lruq_s1');
+      await beat();
+      expect(cursorOfLastSubscribe('lruq_s1')?.seq).toBe(50);
+    } finally {
+      connection.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('settles the current skill submit without waiting on an older uncertain bubble', async () => {
     // An old uncertain text bubble (lost response) must not gate the CURRENT
     // skill submission's settle — its retirement is the sweep's business.
@@ -5253,6 +5415,180 @@ describe('useKimiWebClient session work reconnect baseline', () => {
       expect(
         client.turns.value.some((turn) => (turn.text ?? '').includes('old lost text')),
       ).toBe(true);
+    } finally {
+      connection.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not settle a skill activation on its RUNNING echo turn when the response lands', async () => {
+    // The activation's running echo turn beats the HTTP response: the
+    // response's settle must require the echo turn TERMINAL — settling on a
+    // running one would clear in-flight and drain the queue while the skill
+    // is still executing.
+    vi.stubGlobal('WebSocket', class {});
+    vi.resetModules();
+
+    const target = session('skill-running-echo', false, false);
+    let handlers: KimiEventHandlers | undefined;
+    const subscribeTranscript = vi.fn();
+    let answerActivation: ((value: Record<string, never>) => void) | undefined;
+    const connection: KimiEventConnection = {
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      subscribeTranscript,
+      unsubscribeTranscript: vi.fn(),
+      bindNextPromptId: vi.fn(),
+      abort: vi.fn(),
+      terminalAttach: vi.fn(),
+      terminalInput: vi.fn(),
+      terminalResize: vi.fn(),
+      terminalDetach: vi.fn(),
+      terminalClose: vi.fn(),
+      markSideChannelAgent: vi.fn(),
+      health: () => ({ connected: true, open: true, stale: false }),
+      reconnect: vi.fn(),
+      close: vi.fn(),
+    };
+    const api: Partial<KimiWebApi> = {
+      getAuth: vi.fn(async () => ({ ready: true, defaultModel: 'model-1', managedProvider: null })),
+      getHealth: vi.fn(async () => ({ status: 'ok', uptimeSec: 1 })),
+      getMeta: vi.fn(async () => ({
+        serverVersion: '0.0.0',
+        serverId: 'server-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        capabilities: {},
+        openInApps: [],
+        dangerousBypassAuth: false,
+        backend: 'v2',
+      })),
+      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' })),
+      listModels: vi.fn(async () => []),
+      listProviders: vi.fn(async () => []),
+      listWorkspaces: vi.fn(async () => [
+        { id: 'workspace-1', root: '/workspace', name: 'Workspace', sessionCount: 1 },
+      ]),
+      getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
+      listSessions: vi.fn(async () => ({ items: [target], hasMore: false })),
+      listSessionGroupsV2: vi.fn(async () => ({
+        groups: [
+          {
+            workspace: { id: 'workspace-1', cwd: '/workspace' },
+            sessions: [v2Of(target)],
+            total: 1,
+          },
+        ],
+        hasMore: false,
+        nextPageToken: null,
+        total: 1,
+      })),
+      getSession: vi.fn(async () => ({ id: target.id, archived: false, workspaceId: 'workspace-1' })),
+      submitPrompt: vi.fn(async () => ({ promptId: 'pr_1', userMessageId: 'msg_1' })),
+      // The activation's answer is held back until the test releases it.
+      activateSkill: vi.fn(
+        () =>
+          new Promise<Record<string, never>>((resolve) => {
+            answerActivation = resolve;
+          }),
+      ),
+      getSessionStatus: vi.fn(async () => ({
+        model: 'model-1',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: false,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      })),
+      getSessionGoal: vi.fn(async () => null),
+      getSessionWarnings: vi.fn(async () => []),
+      getGitStatus: vi.fn(async () => ({
+        branch: '',
+        ahead: 0,
+        behind: 0,
+        entries: {},
+        additions: 0,
+        deletions: 0,
+        pullRequest: null,
+      })),
+      listTasks: vi.fn(async () => []),
+      listSkills: vi.fn(async () => []),
+      listSkillsForWorkspace: vi.fn(async () => []),
+      getSessionTranscript: vi.fn(async () => ({
+        agentId: 'main',
+        items: [],
+        tasks: [],
+        interactions: [],
+        attachments: [],
+        todos: [],
+        prompts: [],
+        agents: [],
+        pendingInteractions: [],
+        meta: { activity: 'idle' },
+        hasMoreOlder: false,
+      })),
+      getFileUrl: (fileId: string) => `file:${fileId}`,
+      connectEvents: vi.fn((nextHandlers) => {
+        handlers = nextHandlers;
+        return connection;
+      }),
+    };
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, api);
+
+    const skillTurn = (state: 'running' | 'completed') => ({
+      op: 'turn.upsert' as const,
+      turn: {
+        kind: 'turn' as const,
+        turnId: 't_skill',
+        ordinal: 1,
+        state,
+        origin: { kind: 'skill_activation' as const, skillName: 'review', skillArgs: 'src' },
+        startedAt: '2026-08-24T10:00:00.000Z',
+        ...(state === 'completed' ? { endedAt: '2026-08-24T10:00:01.000Z' } : {}),
+      },
+    });
+
+    try {
+      const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
+      const client = useKimiWebClient();
+      await client.load();
+      await client.selectSession(target.id);
+      expect(handlers).toBeDefined();
+      await vi.waitFor(() => expect(subscribeTranscript).toHaveBeenCalled());
+
+      void client.activateSkill('review', 'src', undefined, undefined, {
+        skipThinkingPersist: true,
+      });
+      await vi.waitFor(() => expect(client.activity.value).toBe('running'));
+      void client.sendPrompt('queued behind');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // The RUNNING echo turn beats the HTTP response.
+      handlers!.onTranscriptOps?.(
+        target.id,
+        'main',
+        [skillTurn('running'), { op: 'meta.merge', meta: { activity: 'turn' } }],
+        2,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // The response lands — the echo turn is still running, so the settle
+      // must NOT fire (a running turn proves only the start): the queue
+      // stays parked behind the in-flight activation.
+      answerActivation!({});
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(api.submitPrompt).not.toHaveBeenCalled();
+
+      // The echo turn ends: NOW the skill settles and the queue drains.
+      handlers!.onTranscriptOps?.(
+        target.id,
+        'main',
+        [skillTurn('completed'), { op: 'meta.merge', meta: { activity: 'idle' } }],
+        3,
+      );
+      await vi.waitFor(() => expect(api.submitPrompt).toHaveBeenCalledTimes(1));
     } finally {
       connection.close();
       vi.unstubAllGlobals();

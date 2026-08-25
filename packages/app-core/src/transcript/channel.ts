@@ -127,9 +127,7 @@ export class TranscriptChannel {
 
   async loadOlder(): Promise<void> {
     if (!this.snapshot.hasMoreOlder || this.loadingOlder_) return;
-    const firstTurn = this.snapshot.items.find((item) => item.kind === 'turn');
-    if (firstTurn?.kind !== 'turn') return;
-    const task = this.loadOlderOnce(firstTurn.turnId);
+    const task = this.loadOlderTask();
     this.loadOlderTask_ = task;
     try {
       await task;
@@ -138,25 +136,36 @@ export class TranscriptChannel {
     }
   }
 
-  /** Join the in-flight older-page read: a post-undo refresh must order AFTER
-   *  it — a pre-undo page merging afterwards would resurrect rewound items. */
-  settleOlder(): Promise<void> {
-    return this.loadOlderTask_ ?? Promise.resolve();
-  }
-
-  private async loadOlderOnce(turnId: string): Promise<void> {
+  private async loadOlderTask(): Promise<void> {
+    // Set synchronously (this async body runs to its first await in the
+    // caller's tick): ops arriving from here on buffer instead of applying
+    // over the about-to-be-reanchored window.
     this.loadingOlder_ = true;
     this.loadOlderError_ = false;
     this.onChange?.();
     try {
-      const page = await this.fetchPage({
-        beforeTurn: turnId,
-        pageSize: this.pageSize,
-      });
-      this.applyPage(page, false);
-    } catch (error) {
-      this.loadOlderError_ = true;
-      throw error;
+      // A refresh in flight must commit BEFORE this read's anchor is chosen
+      // and the page fetched: an older page landing over the fresh window
+      // would overwrite its meta/tasks/interactions/prompts with the older
+      // response's stale ones (refreshAndResumeOnce's settleOlder covers the
+      // opposite direction), and a rewind (undo) would let a pre-refresh
+      // anchor resurrect rewound items.
+      await this.refreshPromise?.catch(() => undefined);
+      if (this.snapshot.hasMoreOlder) {
+        const firstTurn = this.snapshot.items.find((item) => item.kind === 'turn');
+        if (firstTurn?.kind === 'turn') {
+          try {
+            const page = await this.fetchPage({
+              beforeTurn: firstTurn.turnId,
+              pageSize: this.pageSize,
+            });
+            this.applyPage(page, false);
+          } catch (error) {
+            this.loadOlderError_ = true;
+            throw error;
+          }
+        }
+      }
     } finally {
       this.loadingOlder_ = false;
       const buffered = this.buffered;
@@ -164,6 +173,12 @@ export class TranscriptChannel {
       for (const batch of buffered) this.applyOps(batch.ops, batch.seq);
       this.onChange?.();
     }
+  }
+
+  /** Join the in-flight older-page read: a post-undo refresh must order AFTER
+   *  it — a pre-undo page merging afterwards would resurrect rewound items. */
+  settleOlder(): Promise<void> {
+    return this.loadOlderTask_ ?? Promise.resolve();
   }
 
   private applyPage(page: SessionTranscriptPage, replace: boolean): void {

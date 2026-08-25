@@ -1352,13 +1352,6 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // forward. A late duplicate idle (e.g. replayed after a snapshot already
   // advanced past it) must not drain a second queued message.
   const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
-  // A frame past the at-resume watermark proves the resumed session's replay
-  // flushed (single FIFO: replay frames precede any seq-newer one) — the
-  // aggregate cursor is honest about consumption again from here on.
-  const resumeFloor = resumeFloorBySession.get(meta.sessionId);
-  if (resumeFloor !== undefined && meta.seq > resumeFloor.throughSeq) {
-    resumeFloorBySession.delete(meta.sessionId);
-  }
   const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
   const settledPlanToolCallId =
     appEvent.type === 'approvalResolved' || appEvent.type === 'approvalExpired'
@@ -1715,6 +1708,18 @@ export function connectEventsIfNeeded(): void {
 
   eventConn = api.connectEvents({
     onEvent(appEvent, meta) {
+      // A frame reaching the at-resume watermark proves the resumed session's
+      // replay flushed (single FIFO: replay frames precede any seq-newer one —
+      // seqs are unique, so only the replay can deliver exactly throughSeq).
+      // This runs BEFORE every freshness gate below: the frame proving the
+      // flush is by definition stale to the seq watermark, and dropping it
+      // there would leak the floor for a session that stays quiet after
+      // catching up — its next eviction would re-freeze the stale watermark
+      // and replay already-consumed frames.
+      const resumeFloor = resumeFloorBySession.get(meta.sessionId);
+      if (resumeFloor !== undefined && meta.seq >= resumeFloor.throughSeq) {
+        resumeFloorBySession.delete(meta.sessionId);
+      }
       // A remote archive (another client, or the server's cold archive path)
       // is reconciled exactly like a local one — handled upstream of the
       // reducer like the workspace lifecycle events.
@@ -3070,6 +3075,7 @@ export function skillEchoTurnExists(
   anchorTurnId: string | undefined,
   skillName: unknown,
   skillArgs: unknown,
+  opts?: { terminalOnly?: boolean },
 ): boolean {
   const anchorIdx =
     anchorTurnId === undefined
@@ -3078,6 +3084,10 @@ export function skillEchoTurnExists(
   if (anchorTurnId !== undefined && anchorIdx === -1) return false;
   return items.slice(anchorIdx + 1).some((item) => {
     if (item.kind !== 'turn') return false;
+    // Settling a local fate needs the work ENDED: a running echo turn proves
+    // only that it started (fine for hiding the bubble at render time). The
+    // blocked MARKER alone may prove ending without a turn.
+    if (opts?.terminalOnly === true && item.state === 'running') return false;
     const payload = ((item.origin as { payload?: unknown }).payload ?? item.origin) as {
       kind?: unknown;
       skillName?: unknown;
@@ -5584,9 +5594,11 @@ function clearWorkingFlags(sid: string): void {
  *  local submit). The blocked/aborted instant deaths settle through the
  *  prompt-transition path instead, which is identity-attributed. */
 /** Is a bubble's own work PROVEN ended by the transcript? A skill bubble by
- *  its anchored echo turn (or floored blocked marker); a text bubble by a
- *  non-running transcript turn after its anchor carrying the same prompt
- *  (the overlay's cover rule), or by its floored terminal prompt echo. */
+ *  its anchored echo turn IN A TERMINAL STATE (a running one proves only the
+ *  start — settling then would drain the queue mid-activation), or by its
+ *  floored blocked marker; a text bubble by a non-running transcript turn
+ *  after its anchor carrying the same prompt (the overlay's cover rule), or
+ *  by its floored terminal prompt echo. */
 function bubbleFateProven(
   m: { content: readonly { type: string; text?: string }[]; metadata?: Record<string, unknown> },
   snapshot: AgentTranscriptSnapshot,
@@ -5597,7 +5609,9 @@ function bubbleFateProven(
   if (mOrigin?.kind === 'skill_activation') {
     const anchorId = m.metadata?.['kimiWeb.anchorTurnId'] as string | undefined;
     return (
-      skillEchoTurnExists(snapshot.items, anchorId, mOrigin.skillName, mOrigin.skillArgs) ||
+      skillEchoTurnExists(snapshot.items, anchorId, mOrigin.skillName, mOrigin.skillArgs, {
+        terminalOnly: true,
+      }) ||
       skillMarkerExists(
         snapshot.items,
         anchorId,

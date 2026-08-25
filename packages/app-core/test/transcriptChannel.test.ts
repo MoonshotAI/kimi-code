@@ -145,6 +145,44 @@ describe('TranscriptChannel', () => {
     });
     expect(channel.seq).toBe(4);
   });
+
+  it('waits for an in-flight refresh before starting history pagination', async () => {
+    // A refresh commits the fresh window first: an older page fetched DURING
+    // it would land its stale meta/tasks/prompts over the fresh state.
+    const queries: Array<{ beforeTurn?: string }> = [];
+    let resolveRefresh!: (value: SessionTranscriptPage) => void;
+    const fetchPage = vi.fn((query: { beforeTurn?: string; pageSize?: number }) => {
+      queries.push(query);
+      if (query.beforeTurn !== undefined) {
+        return Promise.resolve(page([turn('t1', 1)], false, 4, 'turn'));
+      }
+      if (queries.filter((q) => q.beforeTurn === undefined).length === 1) {
+        // The baseline answers at once; the SECOND refresh is held.
+        return Promise.resolve(page([turn('t2', 2)], true, 3, 'turn'));
+      }
+      return new Promise<SessionTranscriptPage>((resolve) => {
+        resolveRefresh = resolve;
+      });
+    });
+    const channel = new TranscriptChannel({
+      sessionId: 's1',
+      agentId: 'agent-a',
+      fetchPage,
+    });
+
+    await channel.refresh();
+    // A second refresh is now held in flight; pagination must queue behind it.
+    const refresh = channel.refresh();
+    const older = channel.loadOlder();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(queries.some((q) => q.beforeTurn !== undefined)).toBe(false);
+
+    resolveRefresh(page([turn('t2', 2)], true, 5, 'turn'));
+    await refresh;
+    await older;
+    expect(queries.some((q) => q.beforeTurn !== undefined)).toBe(true);
+  });
 });
 
 function turn(turnId: string, ordinal: number) {

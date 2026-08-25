@@ -9,7 +9,7 @@
 
 import { computed, ref, shallowReactive } from 'vue';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
-import type { AppApprovalRequest, AppMessage, KimiEventConnection, KimiWebApi, ThinkingLevel } from '@moonshot-ai/app-core/api';
+import type { AppApprovalRequest, AppMessage, AppMessageContent, KimiEventConnection, KimiWebApi, ThinkingLevel } from '@moonshot-ai/app-core/api';
 import { createTurnsProjector, turnToMessages } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending } from '@moonshot-ai/app-core/lib';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
@@ -264,6 +264,13 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   // outputPreview) ride the same buffer — the task is done, no more chunks
   // will come, and the replace would drop the only copy.
   const resyncBufferByAgent = new Map<string, { text: string; terminal?: boolean }[]>();
+  // The current round's submit-POST window per agent, COUNTED: concurrent
+  // sends share the agent (openSideChatOn lets each caller send its own
+  // initial prompt), and one call's settle must not clear the window while
+  // another POST is still out — an unanswered POST means a missing promptId
+  // is "not stamped yet", NOT "lost" (see arbitrateUnmarkedTaskCompleted).
+  const pendingSubmitCountByAgent = new Map<string, number>();
+  const parkedTaskCompletedByAgent = new Map<string, { outputPreview?: string }>();
 
   // Per-agent in-flight resync marks: a second resync_required while the
   // first rebuild is still reading would REPLACE the shared buffer (and each
@@ -473,8 +480,13 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     }
     const messages = rawState.sideChatMessagesByAgent[agentId] ?? [];
     const last = messages.at(-1);
-    const lastText = last?.role === 'assistant' && last.content[0]?.type === 'text'
-      ? last.content[0].text
+    // Text may live at ANY part index now (a resync-window delta can append
+    // after thinking/tool parts) — dedupe against the actual trailing text
+    // part, not content[0], or the output would duplicate the visible reply.
+    const lastText = last?.role === 'assistant'
+      ? (last.content.findLast(
+          (part): part is Extract<AppMessageContent, { type: 'text' }> => part.type === 'text',
+        )?.text ?? '')
       : '';
     if (lastText.trim().length > 0) return;
     appendSideChatAssistantText(agentId, sessionId, outputPreview);
@@ -491,16 +503,38 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     sessionId: string,
     outputPreview?: string,
   ): Promise<void> {
-    const currentPid = (rawState.sideChatMessagesByAgent[agentId] ?? []).findLast(
+    if ((pendingSubmitCountByAgent.get(agentId) ?? 0) > 0) {
+      // ANY unanswered POST on this agent: the judgement can't see the full
+      // round picture yet — the newest bubble carrying an id (or not) says
+      // nothing about the outstanding one. Park until every identity is
+      // known, then arbitrate.
+      parkedTaskCompletedByAgent.set(agentId, { outputPreview });
+      return;
+    }
+    const optimisticNow = rawState.sideChatMessagesByAgent[agentId] ?? [];
+    const stampedPids = optimisticNow
+      .filter((msg) => msg.metadata?.['kimiWeb.optimisticUserMessage'] === true)
+      .map((msg) => msg.promptId)
+      .filter((pid): pid is string => pid !== undefined);
+    const currentPid = optimisticNow.findLast(
       (msg) => msg.metadata?.['kimiWeb.optimisticUserMessage'] === true,
     )?.promptId;
     let currentRoundEnded: boolean;
     try {
       const snapshot = await api.getSessionTranscript(sessionId, { agentId });
-      if (currentPid !== undefined) {
-        const own = snapshot.prompts.find((prompt) => prompt.promptId === currentPid);
-        currentRoundEnded =
-          own !== undefined && own.status !== 'queued' && own.status !== 'running';
+      const isLive = (pid: string): boolean => {
+        const own = snapshot.prompts.find((prompt) => prompt.promptId === pid);
+        // A missing entity means the transcript hasn't caught up — unproven,
+        // so treat the round as live rather than guess.
+        return own === undefined || own.status === 'queued' || own.status === 'running';
+      };
+      if (stampedPids.length > 0) {
+        // Concurrent rounds exist: accepting is only sound when NONE of them
+        // is live — the newest bubble's fate alone says nothing about the
+        // others.
+        currentRoundEnded = !stampedPids.some(isLive);
+      } else if (currentPid !== undefined) {
+        currentRoundEnded = !isLive(currentPid);
       } else {
         // No local prompt identity (the POST's fate was uncertain): the
         // transcript's activity is the only arbiter.
@@ -738,6 +772,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       const thinking = (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking;
       thinkingToken = rawState.pendingThinkingBySession[sid];
       submitAttempted = true;
+      pendingSubmitCountByAgent.set(agentId, (pendingSubmitCountByAgent.get(agentId) ?? 0) + 1);
       const result = await api.submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,
@@ -790,6 +825,19 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       // Only a provably-unsent failure — or a definitive daemon refusal,
       // which provably accepted nothing — lets the panel restore the draft.
       return provablyNoTurn ? false : true;
+    } finally {
+      // Counted settle: a CONCURRENT send's POST may still be out — only the
+      // last outstanding answer runs the parked arbitration.
+      const left = (pendingSubmitCountByAgent.get(agentId) ?? 1) - 1;
+      if (left > 0) pendingSubmitCountByAgent.set(agentId, left);
+      else pendingSubmitCountByAgent.delete(agentId);
+      const parked = parkedTaskCompletedByAgent.get(agentId);
+      if (left === 0 && parked !== undefined) {
+        parkedTaskCompletedByAgent.delete(agentId);
+        // The answer stamped (or definitively denied) the identity the
+        // arbitration was parked for.
+        void arbitrateUnmarkedTaskCompleted(agentId, sid, parked.outputPreview);
+      }
     }
   }
 
@@ -862,6 +910,8 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     for (const agentId of agentIds) {
       knownSideChatAgentIds.delete(agentId);
       terminatedSideChatAgentIds.delete(agentId);
+      pendingSubmitCountByAgent.delete(agentId);
+      parkedTaskCompletedByAgent.delete(agentId);
       if (Object.prototype.hasOwnProperty.call(rawState.sideChatMessagesByAgent, agentId)) {
         const { [agentId]: _messages, ...restMessages } = rawState.sideChatMessagesByAgent;
         void _messages;

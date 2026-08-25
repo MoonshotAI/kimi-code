@@ -582,6 +582,13 @@ describe('useSideChat — session dies mid-submit', () => {
     };
   }
 
+  /** Multi-bubble tests need UNIQUE optimistic ids: confirmSideChatUserMessage
+   *  matches by message id, so the shared constant stamps the FIRST bubble. */
+  function makeUniqueIdDeps() {
+    let optimisticId = 0;
+    return { ...makeDeps(), nextOptimisticMsgId: () => `msg_opt_btw_${++optimisticId}` };
+  }
+
   it('does not resurrect buckets when the submit succeeds after the session died', async () => {
     apiMock.startBtw.mockReset();
     apiMock.submitPrompt.mockReset();
@@ -718,7 +725,7 @@ describe('useSideChat — session dies mid-submit', () => {
     });
 
     const state = createState();
-    const sideChat = useSideChat(state, makeDeps());
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
     await sideChat.openSideChatOn('sess_1', 'round one');
     expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
 
@@ -773,6 +780,229 @@ describe('useSideChat — session dies mid-submit', () => {
         msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
       ),
     ).toBe(false);
+  });
+
+  it('parks a straggler taskCompleted while the current round’s POST is unanswered', async () => {
+    // Round 2's POST is still out: the new bubble has no promptId yet, and a
+    // pre-POST snapshot would call round 1's late taskCompleted the current
+    // round's terminal. The arbitration must wait for the answer — then a
+    // LIVE current prompt still drops the straggler.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    let answerSubmit!: (value: { promptId: string; userMessageId: string }) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
+          answerSubmit = resolve;
+        }),
+    );
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [{ promptId: 'pr_btw_2', status: 'running', createdAt: '2026-08-24T10:00:00.000Z' }],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
+    // Round 1 (its turn-end was swallowed — the agent is NOT terminated).
+    apiMock.submitPrompt.mockResolvedValueOnce({ promptId: 'pr_btw_1', userMessageId: 'msg_1' });
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // Round 2's POST is held; round 1's taskCompleted arrives in the window.
+    const pendingRound2 = sideChat.sendSideChatPrompt('round two');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(2));
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+
+    // Parked: NO arbitration read yet, nothing settled, nothing appended.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(apiMock.getSessionTranscript).not.toHaveBeenCalled();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // The answer stamps round 2's identity — the arbitration now runs and
+    // drops the straggler (round 2's prompt reads RUNNING).
+    answerSubmit({ promptId: 'pr_btw_2', userMessageId: 'msg_2' });
+    await pendingRound2;
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps the unanswered window until ALL concurrent submits settle', async () => {
+    // Two concurrent sends share the agent: the FIRST answer must not close
+    // the window while the second POST is still out — a straggler
+    // taskCompleted stays parked until every outstanding identity is known.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    const answers: Array<(value: { promptId: string; userMessageId: string }) => void> = [];
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({ promptId: 'pr_btw_1', userMessageId: 'msg_1' })
+      .mockImplementation(
+        () =>
+          new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
+            answers.push(resolve);
+          }),
+      );
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [{ promptId: 'pr_btw_3', status: 'running', createdAt: '2026-08-24T10:00:00.000Z' }],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
+    // Round 1 (its turn-end was swallowed — the agent is NOT terminated).
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    // Two CONCURRENT sends, both POSTs held.
+    void sideChat.sendSideChatPrompt('round two');
+    void sideChat.sendSideChatPrompt('round three');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3));
+
+    // The straggler arrives: parked while the window is open.
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(apiMock.getSessionTranscript).not.toHaveBeenCalled();
+
+    // The FIRST answer lands — one POST is still out: STILL parked.
+    answers[0]!({ promptId: 'pr_btw_2', userMessageId: 'msg_2' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(apiMock.getSessionTranscript).not.toHaveBeenCalled();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // The SECOND answer closes the window — the arbitration runs and drops
+    // the straggler (the current round's prompt reads RUNNING).
+    answers[1]!({ promptId: 'pr_btw_3', userMessageId: 'msg_3' });
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('parks the arbitration while ANY submit is out, even once the newest bubble is stamped', async () => {
+    // The LATER POST answers first and stamps the newest bubble while the
+    // EARLIER POST is still out: a straggler arriving now must still park —
+    // the stamped id's terminal read says nothing about the outstanding
+    // round.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.getSessionTranscript.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    const answers: Array<(value: { promptId: string; userMessageId: string }) => void> = [];
+    apiMock.submitPrompt
+      .mockResolvedValueOnce({ promptId: 'pr_btw_1', userMessageId: 'msg_1' })
+      .mockImplementation(
+        () =>
+          new Promise<{ promptId: string; userMessageId: string }>((resolve) => {
+            answers.push(resolve);
+          }),
+      );
+    apiMock.getSessionTranscript.mockResolvedValue({
+      agentId: 'agent_btw_1',
+      items: [],
+      tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
+      prompts: [
+        { promptId: 'pr_btw_2', status: 'running', createdAt: '2026-08-24T10:00:00.000Z' },
+        { promptId: 'pr_btw_3', status: 'completed', createdAt: '2026-08-24T10:00:01.000Z' },
+      ],
+      agents: [],
+      pendingInteractions: [],
+      meta: { activity: 'turn' },
+      hasMoreOlder: false,
+    });
+
+    const state = createState();
+    const sideChat = useSideChat(state, makeUniqueIdDeps());
+    // Round 1 (its turn-end was swallowed — the agent is NOT terminated).
+    await sideChat.openSideChatOn('sess_1', 'round one');
+    // Two CONCURRENT sends, both POSTs held.
+    void sideChat.sendSideChatPrompt('round two');
+    void sideChat.sendSideChatPrompt('round three');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3));
+
+    // The LATER POST answers first: the newest bubble is stamped, but round
+    // two's POST is still out.
+    answers[1]!({ promptId: 'pr_btw_3', userMessageId: 'msg_3' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // The straggler arrives: STILL parked (round two's identity unknown).
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'stale old output', true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(apiMock.getSessionTranscript).not.toHaveBeenCalled();
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+
+    // Round two's POST answers — the window closes; the arbitration runs and
+    // drops the straggler (round two reads RUNNING even though round three
+    // already completed).
+    answers[0]!({ promptId: 'pr_btw_2', userMessageId: 'msg_2' });
+    await vi.waitFor(() => expect(apiMock.getSessionTranscript).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(state.sideChatSendingByAgent.agent_btw_1).toBe(true);
+    expect(
+      (state.sideChatMessagesByAgent.agent_btw_1 ?? []).some((msg) =>
+        msg.content.some((part) => part.type === 'text' && part.text.includes('stale old output')),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not duplicate the terminal output when the reply text lives past content[0]', () => {
+    // A rebuilt/continued assistant message can carry text at a non-zero part
+    // index: the terminal dedup must find that trailing text part, or the
+    // output gets appended AGAIN after the visible reply.
+    const state = createState();
+    const sideChat = useSideChat(state, makeDeps());
+    state.sideChatMessagesByAgent = {
+      agent_btw_1: [
+        {
+          id: 'm1',
+          sessionId: 'sess_1',
+          role: 'assistant',
+          content: [
+            { type: 'toolUse', toolCallId: 'c1', toolName: 'Bash', input: {} },
+            { type: 'text', text: 'partial answer' },
+          ],
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    };
+
+    sideChat.finishSideChatAgent('agent_btw_1', 'sess_1', 'partial answer tail');
+
+    expect(state.sideChatMessagesByAgent.agent_btw_1!.at(-1)!.content).toEqual([
+      { type: 'toolUse', toolCallId: 'c1', toolName: 'Bash', input: {} },
+      { type: 'text', text: 'partial answer' },
+    ]);
   });
 
   it('appends a resync-window text chunk without wiping rebuilt thinking/tool parts', () => {
