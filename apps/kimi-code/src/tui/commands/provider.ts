@@ -309,7 +309,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   host.mountEditorReplacement(selector);
 }
 
-async function setDefaultModel(
+export async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
@@ -319,14 +319,21 @@ async function setDefaultModel(
   // e.g. Anthropic models declare no support_efforts on the alias, and without
   // the inference an above-default pick would slip through as a persisted effort.
   const model = host.state.appState.availableModels[alias];
+  const thinking = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model),
+  );
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(
-      effort,
-      model === undefined ? undefined : effectiveModelForHost(host, model),
-    ),
+    thinking,
   });
   await host.authFlow.refreshConfigAfterLogin();
+  // refreshConfigAfterLogin reactivates from the persisted config, so a pick
+  // the gate keeps session-only never reaches the runtime — apply it after
+  // the refresh, or the persisted value would clobber it.
+  if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
+    await host.authFlow.activateModelAfterLogin(alias, effort);
+  }
   host.track('model_switch', { model: alias });
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
