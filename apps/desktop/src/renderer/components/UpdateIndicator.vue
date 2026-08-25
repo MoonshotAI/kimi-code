@@ -12,39 +12,27 @@
      a "更新内容 / What's new" section renders it under the meta line — the
      current locale's text, falling back to the other language, hidden when
      neither exists (older versions simply have no notes).
-
-     Canary mode (Kimi Code Canary 内测版, canary.ts / useCanaryChannel): the
-     same pill + dialog skeleton is driven by the gh-based canary channel
-     instead of electron-updater — the stable updater is disabled on canary
-     builds, so the two sources never conflict. Canary actions differ:
-     download pulls the dmg and mounts it (install stays manual: drag into
-     Applications), there is no auto-download checkbox and no restart action;
-     `downloaded` offers「打开安装包」to re-mount the dmg. The two modes are
-     mutually exclusive by construction (canary.enabled only on canary/dev).
-
-     Renders only when the active source reports a state the user has not
-     skipped; with no desktop bridge (plain web) both trackers stay idle and
-     nothing renders. Telemetry goes through lib/track.ts (a bridge-probed
-     no-op without the preload bridge) — sync that file along with this one
-     (docs/native-todos.md). -->
+     Renders only when the main process reports an update state the user has
+     not skipped; with no desktop bridge (plain web) useUpdateStatus stays
+     idle and nothing renders. Telemetry goes through lib/track.ts (a
+     bridge-probed no-op without the preload bridge) — sync that file along
+     with this one (docs/native-todos.md). -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Checkbox, Dialog, Icon } from '@moonshot-ai/app-ui';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import type { IconName } from '@moonshot-ai/app-client/icons';
-import { useUpdateStatus, useCanaryChannel } from '@moonshot-ai/app-client/composables';
+import { useUpdateStatus } from '@moonshot-ai/app-client/composables';
 import { track } from '../lib/track';
 
 const { t, locale } = useI18n();
 const update = useUpdateStatus();
-const canary = useCanaryChannel();
 
-// Canary builds disable the stable updater (main-side), so an enabled canary
-// tracker is the single source there; stable builds never see canary enabled.
-const canaryMode = computed(() => canary.enabled.value);
-const status = computed(() => (canaryMode.value ? canary.status.value : update.status.value));
-const visible = computed(() => (canaryMode.value ? canary.visible.value : update.visible.value));
+// 单一数据源：canary 构建的更新也走 update tracker（main 侧 canary 用
+// GitHub provider 驱动同一 electron-updater 状态机，canary-updater.ts）。
+const status = update.status;
+const visible = update.visible;
 
 const open = ref(false);
 
@@ -54,19 +42,20 @@ const currentVersion =
     ? __KIMI_CLIENT_VERSION__
     : '';
 
+// Telemetry channel split (stable CDN vs canary GitHub) derives from the
+// running build's version, no bridge needed.
+const trackChannel = currentVersion.includes('-canary.') ? 'canary' : 'stable';
+
 const pillText = computed(() => {
   switch (status.value.state) {
     case 'available':
       return t('sidebar.update');
     case 'downloading':
-      if (canaryMode.value) {
-        return t('sidebar.canaryDownloading');
-      }
       // Compact + locale-neutral: a bare percent keeps the pill's width from
       // shifting on every tick (the full "下载中… 42%" lives in the dialog).
-      return `${update.status.value.percent ?? 0}%`;
+      return `${status.value.percent ?? 0}%`;
     case 'downloaded':
-      return canaryMode.value ? t('sidebar.canaryDownloaded') : t('sidebar.updateDone');
+      return t('sidebar.updateDone');
     case 'error':
       return t('sidebar.updateFailed');
     default:
@@ -80,13 +69,9 @@ const dialogTitle = computed(() => {
     // the disabled foot button instead (no title churn, no progress bar).
     case 'available':
     case 'downloading':
-      return canaryMode.value
-        ? t('sidebar.canaryAvailable', { version: status.value.version ?? '' })
-        : t('sidebar.updateAvailable', { version: status.value.version ?? '' });
+      return t('sidebar.updateAvailable', { version: status.value.version ?? '' });
     case 'downloaded':
-      return canaryMode.value
-        ? t('sidebar.canaryReady', { version: status.value.version ?? '' })
-        : t('sidebar.updateReady', { version: status.value.version ?? '' });
+      return t('sidebar.updateReady', { version: status.value.version ?? '' });
     case 'error':
       return t('sidebar.updateFailed');
     default:
@@ -116,13 +101,13 @@ const metaText = computed(() => {
   return parts.join(' · ');
 });
 
-const percent = computed(() => (canaryMode.value ? 0 : (update.status.value.percent ?? 0)));
+const percent = computed(() => status.value.percent ?? 0);
 
 // Bilingual changelog (main-side fetch, best-effort; stable updates only —
 // canary prereleases carry no notes): the current locale's text, falling back
 // to the other language; empty hides the section.
 const changelogText = computed(() => {
-  const notes = canaryMode.value ? undefined : update.status.value.releaseNotes;
+  const notes = status.value.releaseNotes;
   if (notes === undefined) {
     return '';
   }
@@ -150,11 +135,11 @@ function versionProps(): { version?: string } {
 type UpdatePromptAction = 'skip' | 'download' | 'restart' | 'retry' | 'open-installer';
 
 function trackShown(properties: { version?: string }): void {
-  track('update_prompt_shown', { ...properties, channel: canaryMode.value ? 'canary' : 'stable' });
+  track('update_prompt_shown', { ...properties, channel: trackChannel });
 }
 
 function trackAction(action: UpdatePromptAction, properties: { version?: string }): void {
-  track('update_prompt_action', { ...properties, action, channel: canaryMode.value ? 'canary' : 'stable' });
+  track('update_prompt_action', { ...properties, action, channel: trackChannel });
 }
 
 // Shown = pill exposure: the update funnel's reach rate counts devices that
@@ -172,20 +157,12 @@ function onDownload(): void {
   // The error state's retry button shares this entry with the download.
   trackAction(status.value.state === 'error' ? 'retry' : 'download', versionProps());
   // The dialog stays open and flips to the live progress view.
-  if (canaryMode.value) {
-    canary.download();
-  } else {
-    update.download();
-  }
+  update.download();
 }
 
 function onSkip(): void {
   trackAction('skip', versionProps());
-  if (canaryMode.value) {
-    canary.skipVersion();
-  } else {
-    update.skipVersion();
-  }
+  update.skipVersion();
   open.value = false;
 }
 
@@ -193,11 +170,6 @@ function onRestartNow(): void {
   trackAction('restart', versionProps());
   update.install();
   open.value = false;
-}
-
-function onOpenInstaller(): void {
-  trackAction('open-installer', versionProps());
-  canary.openDownload();
 }
 </script>
 
@@ -219,54 +191,32 @@ function onOpenInstaller(): void {
         <h4 class="upd-notes-title">{{ t('sidebar.updateWhatsNew') }}</h4>
         <Markdown :text="changelogText" />
       </section>
-      <p v-if="status.state === 'downloaded' && canaryMode" class="upd-message">{{ t('sidebar.canaryDownloadedHint') }}</p>
       <p v-if="status.state === 'error' && status.message" class="upd-message">{{ status.message }}</p>
 
       <template #foot>
         <div class="upd-foot">
           <div class="upd-foot-actions">
-            <!-- Canary actions: download → mount → manual drag-install. -->
-            <template v-if="canaryMode">
-              <template v-if="status.state === 'available'">
-                <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
-                <Button @click="onDownload">{{ t('sidebar.canaryDownload') }}</Button>
-              </template>
-              <template v-else-if="status.state === 'downloading'">
-                <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
-                <Button disabled>{{ t('sidebar.canaryDownloading') }}</Button>
-              </template>
-              <template v-else-if="status.state === 'downloaded'">
-                <Button variant="ghost" @click="open = false">{{ t('sidebar.canaryClose') }}</Button>
-                <Button @click="onOpenInstaller">{{ t('sidebar.canaryOpenInstaller') }}</Button>
-              </template>
-              <template v-else-if="status.state === 'error'">
-                <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
-              </template>
+            <template v-if="status.state === 'available'">
+              <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
+              <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
             </template>
-            <!-- Stable (electron-updater) actions. -->
-            <template v-else>
-              <template v-if="status.state === 'available'">
-                <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
-                <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
-              </template>
-              <template v-else-if="status.state === 'downloading'">
-                <!-- The download continues on its own: "background" just dismisses
-                     the dialog (the pill keeps showing live percent); the disabled
-                     button carries the live percent in place of a progress bar. -->
-                <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
-                <Button disabled>{{ t('sidebar.updateDownloadingButton', { percent }) }}</Button>
-              </template>
-              <template v-else-if="status.state === 'downloaded'">
-                <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
-                <Button @click="onRestartNow">{{ t('sidebar.updateRestartNow') }}</Button>
-              </template>
-              <template v-else-if="status.state === 'error'">
-                <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
-              </template>
+            <template v-else-if="status.state === 'downloading'">
+              <!-- The download continues on its own: "background" just dismisses
+                   the dialog (the pill keeps showing live percent); the disabled
+                   button carries the live percent in place of a progress bar. -->
+              <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
+              <Button disabled>{{ t('sidebar.updateDownloadingButton', { percent }) }}</Button>
+            </template>
+            <template v-else-if="status.state === 'downloaded'">
+              <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
+              <Button @click="onRestartNow">{{ t('sidebar.updateRestartNow') }}</Button>
+            </template>
+            <template v-else-if="status.state === 'error'">
+              <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
             </template>
           </div>
           <Checkbox
-            v-if="!canaryMode && update.canToggleAutoDownload"
+            v-if="update.canToggleAutoDownload"
             class="upd-auto"
             :model-value="update.autoDownload.value"
             @update:model-value="update.setAutoDownload($event, 'update_prompt')"

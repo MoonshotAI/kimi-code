@@ -68,7 +68,8 @@ vi.mock('../../src/main/shortcuts', () => ({
 vi.mock('../../src/main/shell-env', () => ({ stopShellEnvProbe: mocks.stopShellEnvProbe }));
 vi.mock('../../src/main/terminal', () => ({ killAllTerminals: mocks.killAllTerminals }));
 vi.mock('../../src/main/ipc', () => ({ registerIpcHandlers: vi.fn() }));
-vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn() }));
+vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn(), setUpdateController: vi.fn() }));
+vi.mock('../../src/main/canary-updater', () => ({ initCanaryGithubUpdater: vi.fn() }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));
 vi.mock('../../src/main/window-lifecycle', () => ({
   finalizeWindowLifecycle: mocks.finalizeWindowLifecycle,

@@ -61,7 +61,6 @@ async function embedTahoeIconCatalog(context) {
   if (canary) return;
   const iconPkg = path.join(__dirname, 'build', 'AppIcon.icon');
   if (!fs.existsSync(iconPkg)) return;
-
   // Artifact present but no toolchain: fail loudly, never silently ship a
   // build that ignores the intended icon.
   const actool = execFileSync('xcrun', ['-f', 'actool'], { encoding: 'utf8' }).trim();
@@ -96,12 +95,35 @@ async function embedTahoeIconCatalog(context) {
   console.log('[afterPack] embedded Assets.car (CFBundleIconName=AppIcon; .icns kept as pre-Tahoe fallback)');
 }
 
+// Canary 的更新缓存目录与 stable 分离：updaterCacheDirName 默认从 package.json
+// 的 name（kimi-code-app）派生，两个身份会共享 ~/Library/Caches/kimi-code-app-
+// updater——stable 写下的 current.blockmap/update.zip 会污染 canary 的差分
+// 基底（被迫回退全量）。这里把 canary 自己的目录名写进 app-update.yml
+//（electron-updater 读这个字段）。
+function patchCanaryUpdateConfig(context) {
+  if (!canary || context.electronPlatformName !== 'darwin') return;
+  const appDir = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  const yml = path.join(appDir, 'Contents', 'Resources', 'app-update.yml');
+  const src = fs.readFileSync(yml, 'utf8');
+  // electron-builder 已写入 kimi-code-app-updater（按 package.json name 派生），
+  // 替换它而不是追加重复键。
+  const lineRe = /^updaterCacheDirName: .+$/m;
+  const next = lineRe.test(src)
+    ? src.replace(lineRe, 'updaterCacheDirName: kimi-code-canary-updater')
+    : `${src}updaterCacheDirName: kimi-code-canary-updater\n`;
+  fs.writeFileSync(yml, next);
+  console.log('[afterPack] canary updaterCacheDirName=kimi-code-canary-updater written into app-update.yml');
+}
+
 module.exports = {
   appId: canary ? 'com.kimi.code.desktop.canary' : 'com.kimi.code.desktop',
   productName: canary ? 'Kimi Code Canary' : 'Kimi Code',
   copyright: 'Copyright © Moonshot AI',
 
-  afterPack: embedTahoeIconCatalog,
+  afterPack: async (context) => {
+    await embedTahoeIconCatalog(context);
+    patchCanaryUpdateConfig(context);
+  },
 
   // OS-level deep link scheme (`kimi-code://auth/success`) for the OAuth
   // device-flow completion page to surface the app after browser

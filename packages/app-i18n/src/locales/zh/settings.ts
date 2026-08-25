@@ -142,15 +142,11 @@ export default {
   updateCheckDownloaded: '新版本 {version} 已就绪，可从侧边栏的更新入口重启安装',
   autoDownloadUpdate: '自动下载更新',
   autoDownloadUpdateHint: '发现新版本时在后台自动下载，重启后完成安装',
-  // Kimi Code Canary（内测版）行：检查 / 触发构建。仅在 canary 构建或 dev
-  // 显示（桥探测），web 不可见。
+  // Kimi Code Canary（内测版）行：触发构建 + gh 提示。仅在 canary 构建或
+  // dev 显示（桥探测），web 不可见。更新检查复用 settings.updateCheck*。
   canaryUpdate: '更新 Canary',
-  canaryUpdateHint: '检查 GitHub 上的最新内测版（使用本机 gh 身份）',
   canaryGhMissing: '未检测到 GitHub CLI，请先安装（brew install gh）并登录',
   canaryGhUnauthenticated: 'GitHub CLI 未登录，请先在终端运行 gh auth login',
-  canaryLatest: '已是最新内测版',
-  canaryAvailable: '发现新内测版 {version}，可从侧边栏的更新入口下载',
-  canaryFailed: '检查失败，请稍后重试',
   canaryTrigger: '重新打包 Canary',
   canaryTriggerHint: '触发 macOS arm64 构建流水线，产出新的 Canary 内测版',
   canaryTriggerBtn: '重新打包 Canary',

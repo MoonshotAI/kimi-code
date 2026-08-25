@@ -35,19 +35,6 @@ export type UpdateCheckResult =
 
 const UPDATE_CHECK_OUTCOMES = new Set(['available', 'latest', 'unsupported', 'error']);
 
-// Mirror of the main-process CanaryStatus (canary.ts). Structurally
-// duplicated like UpdateStatus above.
-export type CanaryStatus = {
-  state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
-  version?: string;
-  tag?: string;
-  releaseDate?: string;
-  path?: string;
-  message?: string;
-};
-
-const CANARY_STATES = new Set(['idle', 'available', 'downloading', 'downloaded', 'error']);
-
 export type CanaryGhState = 'ok' | 'missing' | 'unauthenticated' | 'error';
 
 const CANARY_GH_STATES = new Set(['ok', 'missing', 'unauthenticated', 'error']);
@@ -55,41 +42,7 @@ const CANARY_GH_STATES = new Set(['ok', 'missing', 'unauthenticated', 'error']);
 /** Canary channel environment info (canary.ts CanaryInfo). */
 export type CanaryInfo = { enabled: boolean; isCanaryBuild: boolean; gh: CanaryGhState; actionsUrl: string };
 
-/** Outcome of a settings-row manual canary check (canary.ts CanaryCheckResult). */
-export type CanaryCheckResult =
-  | { outcome: 'available'; version?: string }
-  | { outcome: 'latest' }
-  | { outcome: 'gh-missing' }
-  | { outcome: 'gh-unauthenticated' }
-  | { outcome: 'error'; message: string };
-
-const CANARY_CHECK_OUTCOMES = new Set(['available', 'latest', 'gh-missing', 'gh-unauthenticated', 'error']);
-
 export type CanaryTriggerResult = { ok: boolean; error?: string };
-
-function asCanaryStatus(value: unknown): CanaryStatus | null {
-  if (typeof value !== 'object' || value === null) {
-    return null;
-  }
-  const candidate = value as {
-    state?: unknown;
-    version?: unknown;
-    tag?: unknown;
-    releaseDate?: unknown;
-    path?: unknown;
-    message?: unknown;
-  };
-  if (typeof candidate.state !== 'string' || !CANARY_STATES.has(candidate.state)) {
-    return null;
-  }
-  const status: CanaryStatus = { state: candidate.state as CanaryStatus['state'] };
-  if (typeof candidate.version === 'string') status.version = candidate.version;
-  if (typeof candidate.tag === 'string') status.tag = candidate.tag;
-  if (typeof candidate.releaseDate === 'string') status.releaseDate = candidate.releaseDate;
-  if (typeof candidate.path === 'string') status.path = candidate.path;
-  if (typeof candidate.message === 'string') status.message = candidate.message;
-  return status;
-}
 
 function asCanaryInfo(value: unknown): CanaryInfo | null {
   if (typeof value !== 'object' || value === null) {
@@ -111,29 +64,6 @@ function asCanaryInfo(value: unknown): CanaryInfo | null {
     gh: candidate.gh as CanaryGhState,
     actionsUrl: candidate.actionsUrl,
   };
-}
-
-function asCanaryCheckResult(value: unknown): CanaryCheckResult | null {
-  if (typeof value !== 'object' || value === null) {
-    return null;
-  }
-  const candidate = value as { outcome?: unknown; version?: unknown; message?: unknown };
-  if (typeof candidate.outcome !== 'string' || !CANARY_CHECK_OUTCOMES.has(candidate.outcome)) {
-    return null;
-  }
-  switch (candidate.outcome) {
-    case 'available':
-      return typeof candidate.version === 'string'
-        ? { outcome: 'available', version: candidate.version }
-        : { outcome: 'available' };
-    case 'error':
-      return {
-        outcome: 'error',
-        message: typeof candidate.message === 'string' ? candidate.message : 'unknown error',
-      };
-    default:
-      return { outcome: candidate.outcome as 'latest' | 'gh-missing' | 'gh-unauthenticated' };
-  }
 }
 
 function asCanaryTriggerResult(value: unknown): CanaryTriggerResult | null {
@@ -474,19 +404,12 @@ export type KimiDesktopApi = {
    *  ui-state.json; default false — opt-in). */
   getUpdateAutoDownload: () => Promise<boolean>;
   setUpdateAutoDownload: (enabled: boolean) => Promise<void>;
-  /** Kimi Code Canary channel (desktop-only): gh-driven prerelease checks.
-   *  Status pushes come through `onCanaryStatus`; the section hides entirely
-   *  when `CanaryInfo.enabled` is false (stable build) or the bridge is
-   *  missing (plain web). */
-  getCanaryStatus: () => Promise<CanaryStatus>;
-  onCanaryStatus: (cb: (status: CanaryStatus) => void) => () => void;
+  /** Kimi Code Canary (desktop-only): channel identity + gh readiness for
+   *  the debug menu, and the trigger-build action. Auto-update itself runs
+   *  through the standard update bridge above (GitHub provider on canary
+   *  builds). The menu hides entirely when `CanaryInfo.enabled` is false
+   *  (stable build) or the bridge is missing (plain web). */
   getCanaryInfo: () => Promise<CanaryInfo>;
-  /** Settings-row manual check; resolves with the outcome. */
-  checkCanaryUpdate: () => Promise<CanaryCheckResult>;
-  /** Download the available canary dmg into ~/Downloads and mount it. */
-  downloadCanaryUpdate: () => Promise<void>;
-  /** Re-open the already-downloaded dmg. */
-  openCanaryDownload: () => Promise<void>;
   /** Fire the canary build workflow (`gh workflow run … -f canary=true`). */
   triggerCanaryBuild: () => Promise<CanaryTriggerResult>;
   /** Push the pending-attention totals (unread sessions + awaiting approvals +
@@ -649,30 +572,10 @@ export const api: KimiDesktopApi = {
     }
     await ipcRenderer.invoke('kimi:update-set-auto-download', enabled);
   },
-  getCanaryStatus: async () => {
-    const status = asCanaryStatus(await ipcRenderer.invoke('kimi:canary-get-status'));
-    return status ?? { state: 'idle' };
-  },
-  onCanaryStatus: (cb) => {
-    const listener = (_event: unknown, payload: unknown) => {
-      const status = asCanaryStatus(payload);
-      if (status !== null) {
-        cb(status);
-      }
-    };
-    ipcRenderer.on('kimi:canary-status', listener);
-    return () => ipcRenderer.removeListener('kimi:canary-status', listener);
-  },
   getCanaryInfo: async () => {
     const info = asCanaryInfo(await ipcRenderer.invoke('kimi:canary-get-info'));
     return info ?? { enabled: false, isCanaryBuild: false, gh: 'error', actionsUrl: '' };
   },
-  checkCanaryUpdate: async () => {
-    const result = asCanaryCheckResult(await ipcRenderer.invoke('kimi:canary-check'));
-    return result ?? { outcome: 'error', message: 'invalid canary-check response' };
-  },
-  downloadCanaryUpdate: () => ipcRenderer.invoke('kimi:canary-download'),
-  openCanaryDownload: () => ipcRenderer.invoke('kimi:canary-open'),
   triggerCanaryBuild: async () => {
     const result = asCanaryTriggerResult(await ipcRenderer.invoke('kimi:canary-trigger'));
     return result ?? { ok: false, error: 'invalid canary-trigger response' };

@@ -17,14 +17,7 @@ import {
   requestUpdateInstall,
   setUpdateAutoDownload,
 } from './updater';
-import {
-  getCanaryInfo,
-  getCanaryStatus,
-  requestCanaryCheck,
-  requestCanaryDownload,
-  requestCanaryOpen,
-  requestCanaryTrigger,
-} from './canary';
+import { getCanaryInfo, requestCanaryTrigger } from './canary';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setContextMenuLocale } from './context-menu';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
@@ -190,14 +183,9 @@ export function registerIpcHandlers(): void {
       setUpdateAutoDownload(enabled);
     }
   });
-  // Kimi Code Canary 内测通道（canary.ts）：gh 驱动的检查/下载/触发。
-  // 状态推送走 IPC.canaryStatus（app.ts 装配）；这里只接 renderer 的动作。
-  // 正式版构建 controller 为 null，全部降级为 idle / disabled 结果。
-  ipcMain.handle(IPC.canaryGetStatus, () => getCanaryStatus());
+  // Kimi Code Canary（canary.ts）：身份/gh 状态查询 + 触发构建。更新本身
+  // 走 electron-updater 的 GitHub 通道（canary-updater.ts，复用 update IPC）。
   ipcMain.handle(IPC.canaryGetInfo, () => getCanaryInfo());
-  ipcMain.handle(IPC.canaryCheck, () => requestCanaryCheck());
-  ipcMain.handle(IPC.canaryDownload, () => requestCanaryDownload());
-  ipcMain.handle(IPC.canaryOpen, () => requestCanaryOpen());
   ipcMain.handle(IPC.canaryTrigger, () => requestCanaryTrigger());
   // Tray attention badge: the renderer pushes {unread, approvals, questions}
   // totals whenever they change (useTrayAttention.ts); tray.ts renders them as

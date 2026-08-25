@@ -249,6 +249,16 @@ jobs:
           path: dist-desktop-canary
           merge-multiple: true
 
+      - name: Rename canary update metadata to the channel name
+        # electron-builder 按 arch 产出 canary-mac-arm64.yml，electron-updater
+        # 查的是无 arch 后缀的 canary-mac.yml（差分下载的入口元数据）。
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-desktop-canary
+          [ -f canary-mac-arm64.yml ] && mv canary-mac-arm64.yml canary-mac.yml
+          ls -la
+
       - name: Create GitHub prerelease and upload installers
         shell: bash
         env:

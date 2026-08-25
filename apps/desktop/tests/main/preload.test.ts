@@ -20,14 +20,11 @@ vi.mock('electron', () => ({
 }));
 
 const WHITELIST = [
-  'checkCanaryUpdate',
   'checkForUpdates',
   'closeNativeTerminal',
   'createNativeTerminal',
-  'downloadCanaryUpdate',
   'downloadUpdate',
   'getCanaryInfo',
-  'getCanaryStatus',
   'getPathForFile',
   'getUpdateAutoDownload',
   'getUpdateStatus',
@@ -39,14 +36,12 @@ const WHITELIST = [
   'log',
   'nativeTerminalInput',
   'nativeTerminalResize',
-  'onCanaryStatus',
   'onDeepLinkAuth',
   'onFullscreenChanged',
   'onLaunchAction',
   'onMenuAction',
   'onNativeTerminalExit',
   'onNativeTerminalOutput',
-  'openCanaryDownload',
   'onPrPreviewEvent',
   'popupWindowsMenu',
   'onShortcut',
@@ -286,29 +281,12 @@ describe('kimiDesktop preload bridge', () => {
     await exposed.getUpdateAutoDownload();
     expect(invoke).toHaveBeenCalledWith('kimi:update-get-auto-download');
 
-    // Canary channel: every action maps to its kimi:canary-* channel.
-    await exposed.getCanaryStatus();
-    expect(invoke).toHaveBeenCalledWith('kimi:canary-get-status');
-
+    // Canary: identity and trigger map to their kimi:canary-* channels.
     await exposed.getCanaryInfo();
     expect(invoke).toHaveBeenCalledWith('kimi:canary-get-info');
 
-    await exposed.checkCanaryUpdate();
-    expect(invoke).toHaveBeenCalledWith('kimi:canary-check');
-
-    await exposed.downloadCanaryUpdate();
-    expect(invoke).toHaveBeenCalledWith('kimi:canary-download');
-
-    await exposed.openCanaryDownload();
-    expect(invoke).toHaveBeenCalledWith('kimi:canary-open');
-
     await exposed.triggerCanaryBuild();
     expect(invoke).toHaveBeenCalledWith('kimi:canary-trigger');
-
-    const offCanary = exposed.onCanaryStatus(() => {});
-    expect(on).toHaveBeenCalledWith('kimi:canary-status', expect.any(Function));
-    offCanary();
-    expect(removeListener).toHaveBeenCalledWith('kimi:canary-status', expect.any(Function));
 
     await exposed.setUpdateAutoDownload(false);
     expect(invoke).toHaveBeenCalledWith('kimi:update-set-auto-download', false);
@@ -453,35 +431,15 @@ describe('kimiDesktop preload bridge', () => {
     });
   });
 
-  it('validates canary payloads both directions and falls back safely', async () => {
+  it('validates canary info / trigger payloads and falls back safely', async () => {
     await import('../../src/main/preload');
     const [, exposed] = expose.mock.calls[0]!;
 
-    // Status pushes pass through after structural validation; junk drops.
-    const cb = vi.fn();
-    exposed.onCanaryStatus(cb);
-    listeners.get('kimi:canary-status')?.({}, { state: 'available', version: '1.2.3-canary.4', tag: 'v1.2.3-canary.4' });
-    expect(cb).toHaveBeenCalledWith({ state: 'available', version: '1.2.3-canary.4', tag: 'v1.2.3-canary.4' });
-    listeners.get('kimi:canary-status')?.({}, { state: 'bogus' });
-    listeners.get('kimi:canary-status')?.({}, 'available');
-    expect(cb).toHaveBeenCalledTimes(1);
-
-    // getStatus / getInfo junk responses fall back to safe defaults.
-    invoke.mockResolvedValueOnce(undefined);
-    await expect(exposed.getCanaryStatus()).resolves.toEqual({ state: 'idle' });
+    // getInfo junk responses fall back to safe defaults.
     invoke.mockResolvedValueOnce(undefined);
     await expect(exposed.getCanaryInfo()).resolves.toEqual({ enabled: false, isCanaryBuild: false, gh: 'error', actionsUrl: '' });
 
-    // Check / trigger responses validate; junk falls back to error outcomes.
-    invoke.mockResolvedValueOnce({ outcome: 'available', version: '1.2.3-canary.4' });
-    await expect(exposed.checkCanaryUpdate()).resolves.toEqual({ outcome: 'available', version: '1.2.3-canary.4' });
-    invoke.mockResolvedValueOnce({ outcome: 'gh-missing' });
-    await expect(exposed.checkCanaryUpdate()).resolves.toEqual({ outcome: 'gh-missing' });
-    invoke.mockResolvedValueOnce({ outcome: 'bogus' });
-    await expect(exposed.checkCanaryUpdate()).resolves.toEqual({
-      outcome: 'error',
-      message: 'invalid canary-check response',
-    });
+    // Trigger responses validate; junk falls back to error outcomes.
     invoke.mockResolvedValueOnce({ ok: true });
     await expect(exposed.triggerCanaryBuild()).resolves.toEqual({ ok: true });
     invoke.mockResolvedValueOnce({ ok: false });

@@ -116,16 +116,6 @@ export default {
   updateWhatsNew: '更新内容',
   updateBackground: '后台下载',
   updateAutoDownload: '以后自动下载并安装更新',
-  // Kimi Code Canary（内测版）更新弹窗：复用同一 pill/弹窗骨架，动作不同
-  //（下载后手动拖装，无自动安装）。
-  canaryAvailable: '发现新内测版 v{version}',
-  canaryReady: '内测版 v{version} 已就绪',
-  canaryDownload: '下载',
-  canaryDownloading: '下载中…',
-  canaryDownloaded: '已下载',
-  canaryOpenInstaller: '打开安装包',
-  canaryClose: '关闭',
-  canaryDownloadedHint: '安装包已下载并挂载，将 Kimi Code Canary 拖入「应用程序」覆盖即可完成更新',
   // rc（远程控制）侧栏顶部设备选择器。
   rcSelectDevice: '选择设备',
   rcCurrentDevice: '当前设备：{name}',

@@ -142,15 +142,12 @@ export default {
   updateCheckDownloaded: 'Version {version} is ready — restart from the update entry in the sidebar',
   autoDownloadUpdate: 'Auto-download updates',
   autoDownloadUpdateHint: 'Download new versions in the background and install them on the next restart',
-  // Kimi Code Canary rows: check / trigger build. Only visible on canary
-  // builds or dev (bridge-probed); never on web.
+  // Kimi Code Canary rows: trigger build + gh hints. Only visible on canary
+  // builds or dev (bridge-probed); never on web. The update check itself
+  // reuses settings.updateCheck*.
   canaryUpdate: 'Update Canary',
-  canaryUpdateHint: 'Check GitHub for the latest canary build (uses your local gh identity)',
   canaryGhMissing: 'GitHub CLI not found — install it first (brew install gh) and sign in',
   canaryGhUnauthenticated: 'GitHub CLI is not signed in — run gh auth login in a terminal first',
-  canaryLatest: 'You’re on the latest canary build',
-  canaryAvailable: 'Canary {version} is available — download it from the update entry in the sidebar',
-  canaryFailed: 'Check failed. Please try again later.',
   canaryTrigger: 'Repackage Canary',
   canaryTriggerHint: 'Trigger the macOS arm64 build pipeline to produce a new canary build',
   canaryTriggerBtn: 'Repackage Canary',

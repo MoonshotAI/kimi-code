@@ -14,8 +14,9 @@ import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { killAllTerminals } from './terminal';
 import { killActiveBuild, sweepStalePreviews } from './pr-preview';
-import { initAutoUpdater } from './updater';
-import { initCanaryChannel } from './canary';
+import { initAutoUpdater, setUpdateController } from './updater';
+import { initCanaryGithubUpdater } from './canary-updater';
+import { isCanaryVersion } from './release-channel';
 import { parseLaunchArgs } from './jump-list';
 import { handleDeepLink, extractDeepLink, registerDeepLinkScheme } from './deep-link';
 import { trackDesktopEvent } from './track';
@@ -205,12 +206,15 @@ export function main(): void {
       },
       quit: () => app.quit(),
     });
-    // After the window exists: update statuses push to the renderer. No-op in
-    // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
-    initAutoUpdater();
-    // Canary 内测通道（canary 构建 / dev 启用，正式版构建内部自判 no-op）：
-    // gh 驱动的检查循环，状态同样推送 renderer（侧栏黄 pill + 设置页）。
-    initCanaryChannel((status) => sendToRenderer(IPC.canaryStatus, status));
+    // After the window exists: update statuses push to the renderer（同一
+    // `kimi:update-status` 通道）。分流：canary 构建走 GitHub 通道
+    //（canary-updater.ts，controller 经 setUpdateController 注入 updater
+    // 模块的共享实例），stable 走 CDN；dev/unpackaged 两边都是 no-op。
+    if (isCanaryVersion(app.getVersion())) {
+      initCanaryGithubUpdater(setUpdateController);
+    } else {
+      initAutoUpdater();
+    }
     // Launch flags from the very first invocation (Jump List item click).
     forwardLaunchArgs(process.argv);
     for (const argv of pendingSecondInstanceArgv.splice(0)) {

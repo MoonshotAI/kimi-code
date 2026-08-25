@@ -86,9 +86,11 @@ export interface UpdaterLike {
   off(event: 'update-not-available', listener: () => void): void;
   off(event: 'update-downloaded', listener: (info: { version: string; releaseDate?: string }) => void): void;
   off(event: 'error', listener: (error: Error) => void): void;
-  /** Repoint the generic feed (region switching); absent on minimal fakes.
-      channel must be carried along on every call — see updateChannelFromVersion. */
-  setFeedURL?(options: { provider: 'generic'; url: string; channel?: string }): void;
+  /** Repoint the feed (region switching: generic CDN; canary: private GitHub
+      repo). Absent on minimal fakes. */
+  setFeedURL?(options: unknown): void;
+  /** Whether prerelease versions are considered (canary builds). */
+  allowPrerelease?: boolean;
   checkForUpdates(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
@@ -561,9 +563,9 @@ export async function fetchReleaseNotes(version: string): Promise<ReleaseNotes> 
 let controller: UpdateController | null = null;
 
 export function initAutoUpdater(): void {
-  // Canary 构建禁用 CDN 自动更新：stable 的 latest*.yml 指针版本在 semver
-  // 上大于 x.y.z-canary.n，不禁用会把 canary「更新」回正式版（甚至退出时
-  // 静默替换）。canary 的更新走 canary.ts 的 gh 通道。
+  // Canary 构建不走这里（会撞上 stable 指针被「更新」回正式版）：走
+  // canary-updater.ts 的 GitHub 通道，由 app.ts 按构建身份分流并注入
+  // controller（setUpdateController）。
   if (isCanaryVersion(app.getVersion())) {
     return;
   }
@@ -590,6 +592,12 @@ export function initAutoUpdater(): void {
 // or in dev (controller === null): they degrade to idle / no-ops.
 export function getUpdateStatus(): UpdateStatus {
   return controller?.getStatus() ?? { state: 'idle' };
+}
+
+/** app.ts 按构建身份注入 canary 通道的 controller（canary-updater.ts 与
+    updater.ts 互不相依，避免循环 import）。 */
+export function setUpdateController(next: UpdateController | null): void {
+  controller = next;
 }
 
 export function requestUpdateCheck(): Promise<UpdateCheckResult> {

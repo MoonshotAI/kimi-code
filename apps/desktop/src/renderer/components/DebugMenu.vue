@@ -11,7 +11,7 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
-import { useCanaryChannel, useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { useCanaryChannel, useUpdateStatus, useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import PrPreviewIndicator from './PrPreviewIndicator.vue';
 import type { PrPreviewState } from '../lib/prPreview';
 
@@ -63,6 +63,8 @@ function openPrPreview(): void {
 const checking = ref(false);
 const triggering = ref(false);
 
+const updateTracker = useUpdateStatus();
+
 /** Result feedback is a one-button dialog (no inline area in a menu). */
 async function showResult(title: string, message: string): Promise<void> {
   await confirm({ title, message, confirmLabel: t('common.close'), variant: 'primary' });
@@ -73,22 +75,28 @@ async function onCheck(): Promise<void> {
   closeMenu();
   checking.value = true;
   try {
-    const result = await canary.check();
+    // 更新检查走统一的 update tracker（canary 构建由 GitHub provider 驱动
+    // 同一状态机，canary-updater.ts）；有新版时侧栏黄 pill 自己亮。
+    const result = await updateTracker.check();
     switch (result.outcome) {
       case 'available':
-        // The sidebar update pill lights up by itself — nothing to add.
         break;
       case 'latest':
-        await showResult(t('settings.canaryUpdate'), t('settings.canaryLatest'));
+        await showResult(t('settings.canaryUpdate'), t('settings.updateCheckLatest'));
         break;
-      case 'gh-missing':
-        await showResult(t('settings.canaryUpdate'), t('settings.canaryGhMissing'));
-        break;
-      case 'gh-unauthenticated':
-        await showResult(t('settings.canaryUpdate'), t('settings.canaryGhUnauthenticated'));
+      case 'unsupported':
+        // 更新器没起来——dev 构建，或 gh token 缺失（用 canary 的 gh 探测给出
+        // 可操作的提示）。
+        if (canary.gh.value === 'missing') {
+          await showResult(t('settings.canaryUpdate'), t('settings.canaryGhMissing'));
+        } else if (canary.gh.value === 'unauthenticated') {
+          await showResult(t('settings.canaryUpdate'), t('settings.canaryGhUnauthenticated'));
+        } else {
+          await showResult(t('settings.canaryUpdate'), t('settings.updateCheckUnsupported'));
+        }
         break;
       case 'error':
-        await showResult(t('settings.canaryUpdate'), t('settings.canaryFailed'));
+        await showResult(t('settings.canaryUpdate'), t('settings.updateCheckFailed'));
         break;
     }
   } finally {
