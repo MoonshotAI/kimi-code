@@ -653,22 +653,28 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(apiMock.setConfig).not.toHaveBeenCalled();
   });
 
-  it('persists the thinking pick as the global default on setThinking', async () => {
-    const state = createState({ defaultModel: effortAppModel.id });
+  it('keeps a setThinking pick session-scoped — no global config write', () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+    });
     const provider = createModelProvider(state);
 
     provider.setThinking('max');
 
-    expect(apiMock.setConfig).toHaveBeenCalledWith({ thinking: { enabled: true } });
+    // The pick goes to the session profile only — the daemon-wide [thinking]
+    // config is never touched, matching the TUI's session-only path.
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
+    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'max' });
   });
 
-  it('persists the thinking pick as the global default on a model switch', async () => {
+  it('does not write the global thinking config on a model switch', async () => {
     const state = createState({ defaultModel: booleanAppModel.id });
     const provider = createModelProvider(state);
 
     await provider.setModel(effortAppModel.id);
 
-    expect(apiMock.setConfig).toHaveBeenCalledWith({ thinking: { enabled: true, effort: 'high' } });
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
   });
 
   it('does not write the global thinking config when re-selecting the current model', async () => {

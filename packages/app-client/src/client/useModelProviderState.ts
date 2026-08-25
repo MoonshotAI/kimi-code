@@ -17,7 +17,6 @@ import {
   levelDeclaredBy,
   markThinkingPending,
   thinkingLevelForModelSwitch,
-  thinkingLevelToConfig,
 } from '@moonshot-ai/app-core/lib';
 import type { ActivityState } from '@moonshot-ai/app-core/client/types';
 import type { ExtendedState, PromptAttachment } from './types';
@@ -189,8 +188,8 @@ export function useModelProviderState(
   function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
     // The explicit-picker path (setThinking). Model switches (setModel) and
     // passive resolution update rawState.thinking in-memory the same way, but
-    // only an explicit pick is pushed to the session profile and the daemon
-    // config — a derived catalog default must not masquerade as a user choice.
+    // only an explicit pick is pushed to the session profile — a derived
+    // catalog default must not masquerade as a user choice.
     rawState.thinking = level;
     // Mirror the pick into the session's own entry, marked pending until the
     // daemon acks the profile write (persistSessionProfile).
@@ -227,19 +226,6 @@ export function useModelProviderState(
     },
   );
 
-  /** Persist an explicit thinking pick as the daemon-wide default ([thinking]
-   *  in config.toml), mirroring the TUI's persistModelSelection, so sessions
-   *  created by other clients inherit it. Fire-and-forget: the session-level
-   *  and local values have already been applied. Never called for derived
-   *  values (e.g. the loadModels default pin) — only for user actions. */
-  function persistGlobalThinking(level: ThinkingLevel): void {
-    void api
-      .setConfig({
-        thinking: thinkingLevelToConfig(level, modelById(currentModelId())?.supportEfforts),
-      })
-      .catch((error: unknown) => pushOperationFailure('setConfig', error));
-  }
-
   /** Load models (cached — call again to force refresh) */
   async function loadModels(): Promise<void> {
     try {
@@ -274,8 +260,8 @@ export function useModelProviderState(
    * the chosen id meanwhile. Never crashes.
    *
    * Returns whether the switch was accepted (true for the draft path too), so
-   * callers can gate follow-up persistence (e.g. bumping the global default) on
-   * a confirmed switch — errors are surfaced here, not thrown.
+   * callers can gate follow-up persistence on a confirmed switch — errors are
+   * surfaced here, not thrown.
    */
   async function setModel(modelId: string): Promise<boolean> {
     const sid = rawState.activeSessionId;
@@ -296,9 +282,6 @@ export function useModelProviderState(
       // masquerade as an explicit choice later).
       store.setDraftModel(modelId);
       rawState.thinking = nextThinking;
-      if (nextThinking !== prevThinking && nextThinking !== undefined) {
-        persistGlobalThinking(nextThinking);
-      }
       return true;
     }
     // Optimistic: show the chosen model immediately, but remember the previous
@@ -338,11 +321,6 @@ export function useModelProviderState(
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;
-    }
-    // The switch reached the daemon: also persist the thinking pick as the
-    // daemon-wide default (mirrors the TUI). Skipped on rollback above.
-    if (nextThinking !== prevThinking && nextThinking !== undefined) {
-      persistGlobalThinking(nextThinking);
     }
     // Ack this write, then echo /status back in (best-effort — a failure here
     // does not mean the switch failed): the fold only lands once the shield is
@@ -676,11 +654,14 @@ export function useModelProviderState(
   }
 
   /** Persist and apply a new extended-thinking level (also pushed to the active
-   *  session profile so the daemon's /status reflects it; still sent per-prompt). */
+   *  session profile so the daemon's /status reflects it; still sent per-prompt).
+   *  Session-scoped only — never written to the daemon-wide [thinking] config,
+   *  matching the TUI's session-only path (persist=false): a pick made for one
+   *  session/model must not change the default every other session and client
+   *  starts at. */
   function setThinking(level: ThinkingLevel): void {
     const next = applyThinkingLevel(level);
     void persistSessionProfile({ thinking: next });
-    if (next !== undefined) persistGlobalThinking(next);
   }
 
   return {
