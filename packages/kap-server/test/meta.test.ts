@@ -108,6 +108,38 @@ describe('/api/v1/meta experimental_flags', () => {
   });
 });
 
+describe('/api/v1/meta capabilities', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      home = undefined;
+    }
+  });
+
+  it('advertises transcript prompt entities', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-meta-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    const res = await authedFetch(server, `http://127.0.0.1:${server.port}`, '/api/v1/meta');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: number; data: { capabilities?: Record<string, boolean> } };
+    expect(body.code).toBe(0);
+    expect(body.data.capabilities?.['transcript_prompts']).toBe(true);
+  });
+});
+
 describe('/api/v1/meta web_title', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
