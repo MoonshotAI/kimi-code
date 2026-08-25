@@ -724,6 +724,40 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
   });
 
+  it('folds origin file attachments on the opening user message into path-sourced entities', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'Attached file "report.pdf" (application/pdf, 128 bytes): /data/report.pdf — open it with the Read tool',
+          },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          attachments: [
+            { name: 'report.pdf', mediaType: 'application/pdf', size: 128, path: '/data/report.pdf' },
+          ],
+        } as { kind: string },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'application/pdf',
+        name: 'report.pdf',
+        size: 128,
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
   it('maps persisted kimi-file media refs to attachments', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

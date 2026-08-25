@@ -16,12 +16,24 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
+export interface TurnPromptAttachmentFile {
+  readonly kind: 'file';
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+export type TurnPromptAttachment =
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string }
+  | TurnPromptAttachmentFile;
+
 export interface TurnStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
-  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
 export class TurnStarted extends AgentEvent2<TurnStartedPayload> {
@@ -45,8 +57,9 @@ export function turnPromptText(
 
 export function turnPromptAttachments(
   input: readonly ContentPart[],
+  origin?: PromptOrigin,
 ): TurnStartedPayload['promptAttachments'] {
-  const attachments: { kind: 'image' | 'video' | 'audio'; fileId: string }[] = [];
+  const attachments: TurnPromptAttachment[] = [];
   const sessionMediaFileId = (url: string, id: string | undefined): string | undefined => {
     if (id === undefined) return undefined;
     return parseDaemonFileUrl(url)?.fileId === id ? id : undefined;
@@ -61,6 +74,11 @@ export function turnPromptAttachments(
     } else if (part.type === 'audio_url') {
       const fileId = sessionMediaFileId(part.audioUrl.url, part.audioUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
+    }
+  }
+  if (origin?.kind === 'user') {
+    for (const attachment of origin.attachments ?? []) {
+      attachments.push({ kind: 'file', ...attachment });
     }
   }
   return attachments.length > 0 ? attachments : undefined;

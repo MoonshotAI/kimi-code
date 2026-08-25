@@ -789,6 +789,50 @@ describe('Agent loop', () => {
 
     expect(prompts).toEqual([undefined, 'hi']);
   });
+
+  it('carries origin file attachments on turn.started promptAttachments', async () => {
+    const payloads: Array<TurnStarted['promptAttachments']> = [];
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      payloads.push(event.promptAttachments);
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'seen' });
+
+    const turn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1' } },
+              { type: 'text', text: 'summarize' },
+            ],
+            toolCalls: [],
+            origin: {
+              kind: 'user',
+              attachments: [
+                {
+                  name: 'report.pdf',
+                  mediaType: 'application/pdf',
+                  size: 42,
+                  path: '/data/report.pdf',
+                },
+              ],
+            },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await turn.result;
+    subscription.dispose();
+
+    expect(payloads).toEqual([
+      [
+        { kind: 'image', fileId: 'file_1' },
+        { kind: 'file', name: 'report.pdf', mediaType: 'application/pdf', size: 42, path: '/data/report.pdf' },
+      ],
+    ]);
+  });
 });
 
 describe('turn telemetry', () => {

@@ -128,6 +128,16 @@ export function groupMessagesIntoSnapshot(
         ids.push(entity.attachmentId);
       }
     }
+    for (const attachment of originFileAttachments(message)) {
+      const entity: TranscriptAttachment = {
+        attachmentId: `att_${attachments.length + 1}`,
+        mediaType: attachment.mediaType,
+        name: attachment.name,
+        size: attachment.size,
+      };
+      attachments.push(entity);
+      ids.push(entity.attachmentId);
+    }
     return { text: texts.join(''), attachmentIds: ids.length > 0 ? ids : undefined };
   };
 
@@ -374,6 +384,28 @@ function bundledSkillActivations(message: HistoryMessage): readonly BundledSkill
       activation !== null &&
       typeof (activation as { activationId?: unknown }).activationId === 'string' &&
       typeof (activation as { skillName?: unknown }).skillName === 'string',
+  );
+}
+
+interface OriginFileAttachment {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+function originFileAttachments(message: HistoryMessage): readonly OriginFileAttachment[] {
+  if (message.origin?.kind !== 'user') return [];
+  const attachments = (message.origin as { readonly attachments?: unknown }).attachments;
+  if (!Array.isArray(attachments)) return [];
+  return attachments.filter(
+    (attachment): attachment is OriginFileAttachment =>
+      typeof attachment === 'object' &&
+      attachment !== null &&
+      typeof (attachment as { name?: unknown }).name === 'string' &&
+      typeof (attachment as { mediaType?: unknown }).mediaType === 'string' &&
+      typeof (attachment as { size?: unknown }).size === 'number' &&
+      typeof (attachment as { path?: unknown }).path === 'string',
   );
 }
 

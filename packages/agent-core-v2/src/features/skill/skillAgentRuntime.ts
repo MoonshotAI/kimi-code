@@ -134,6 +134,7 @@ export class SkillRuntime {
         origin: {
           kind: 'user',
           skillActivations: prepared.map((activation) => activation.entry),
+          attachments: input.attachments,
         },
       });
       if (handle.state === 'pending') {

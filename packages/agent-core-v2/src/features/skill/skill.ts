@@ -1,4 +1,5 @@
 import type { ContentPart } from '#/kosong/contract/message';
+import type { PromptFileAttachment } from '#/agent/contextMemory/types';
 
 export interface SkillActivationInput {
   readonly name: string;
@@ -14,6 +15,7 @@ export interface PromptSkillActivation {
 export interface PromptWithSkillsInput {
   readonly input: readonly ContentPart[];
   readonly skills: readonly PromptSkillActivation[];
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export interface PromptWithSkillsResult {
