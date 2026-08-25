@@ -5,7 +5,9 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanData } from '#/features/plan/plan';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { AgentPermissionMode, type PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import DESCRIPTION from './exit-plan-mode.md?raw';
 import {
@@ -25,11 +27,16 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ExitPlanModeInputSchema);
 
+  private readonly permissionMode: PermissionModeRuntime;
+
   constructor(
     @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-  ) {}
+  ) {
+    this.permissionMode = manager.resolve(scopeContext.agentContext, AgentPermissionMode);
+  }
 
   async resolveExecution(args: ExitPlanModeInput): Promise<ToolExecution> {
     return {
@@ -85,7 +92,7 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     const failed = this.exitPlanMode();
     if (failed !== undefined) return failed;
 
-    if (this.permissionMode.mode === 'auto') {
+    if (this.permissionMode.mode() === 'auto') {
       this.telemetry.track2('plan_resolved', {
         outcome: 'auto_approved',
       });

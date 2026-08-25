@@ -13,7 +13,7 @@
  */
 
 import type { SessionMode } from '@agentclientprotocol/sdk';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2';
+import type { WirePermissionMode } from '@moonshot-ai/agent-core-v2';
 
 /**
  * Canonical 4-mode taxonomy. Order matters: the array is rendered as-is by the
@@ -56,11 +56,11 @@ export function isAcpModeId(value: unknown): value is AcpModeId {
 /**
  * The two underlying engine toggles each ACP mode maps to. `plan` drives
  * `IAgentPlanService` (enter/exit plan mode) and `permission` drives
- * `IAgentPermissionModeService.setMode`.
+ * the agent facade's `setPermission`.
  */
 export interface AcpModeToggles {
   readonly plan: boolean;
-  readonly permission: PermissionMode;
+  readonly permission: WirePermissionMode;
 }
 
 /**

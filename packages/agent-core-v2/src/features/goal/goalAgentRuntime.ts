@@ -21,7 +21,8 @@ import {
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import {
   defineAgentRuntimeContract,
@@ -1179,10 +1180,12 @@ function createGoalEffectHandlers(runtime: AgentRuntimeContext<GoalRuntimeState>
     beforeStep: (step: BeforeStepContext) => handleBeforeStep(context, step),
     afterStep: (step: AfterStepContext) => { handleAfterStep(context, step); },
     approval: (event: BeforeToolExecuteEvent) => {
-      const permissionMode = runtime.get(IAgentPermissionModeService);
+      const permissionMode = runtime
+        .get(IAgentLifecycleService)
+        .resolve(runtime.agent, AgentPermissionMode);
       if (
         event.toolCall.name !== 'CreateGoal' ||
-        permissionMode.mode === 'auto' ||
+        permissionMode.mode() === 'auto' ||
         event.execution.display?.kind !== 'goal_start'
       ) return;
       event.waitUntil(async () => runtime.get(IAgentToolApprovalService).requestToolApproval(
@@ -1192,7 +1195,9 @@ function createGoalEffectHandlers(runtime: AgentRuntimeContext<GoalRuntimeState>
           resolveApproval: (approval) => {
             if (approval.decision !== 'approved') return undefined;
             const mode = toGoalStartReviewPermissionMode(approval.selectedLabel);
-            if (mode !== undefined && mode !== permissionMode.mode) permissionMode.setMode(mode);
+            if (mode === undefined) return undefined;
+            const contractMode = toContractMode(mode);
+            if (contractMode !== permissionMode.mode()) void permissionMode.changeMode(contractMode);
             return undefined;
           },
         },

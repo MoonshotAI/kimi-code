@@ -9,7 +9,6 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode, PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
@@ -17,14 +16,15 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import type { PermissionRule } from '#/features/permissionRules/types';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
-import { stubPermissionModeService } from '../permissionMode/stubs';
 import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
 import { stubPermissionRulesRuntime } from '../../features/permissionRules/stubs';
+import { stubPermissionModeRuntime } from '../../features/permissionMode/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 
@@ -85,15 +85,17 @@ describe('AgentPermissionGate', () => {
     };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
-            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
-            return stubPermissionRulesRuntime({ rules: () => rules });
+            if (definition === AgentPermissionRules) {
+              return stubPermissionRulesRuntime({ rules: () => rules });
+            }
+            if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => mode);
+            throw new Error('unexpected resolve');
           },
         } as unknown as IAgentLifecycleService);
         reg.defineInstance(

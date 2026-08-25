@@ -1,9 +1,10 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { WirePermissionMode } from '#/features/permissionMode/permissionModeOps';
 import type { PermissionRule } from '#/features/permissionRules/types';
 
-export type PermissionMode = 'manual' | 'yolo' | 'auto';
+export type PermissionMode = WirePermissionMode;
 
 
 export interface ApprovalRequest {

@@ -6,11 +6,14 @@ import {
   type ExitPlanModeInput,
 } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
-import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+
+import { stubPermissionModeRuntime } from '../../permissionMode/stubs';
 
 const signal = new AbortController().signal;
 
@@ -53,14 +56,11 @@ function recordingTelemetry(): ITelemetryService {
   };
 }
 
-function permissionMode(mode: PermissionMode = 'auto'): IAgentPermissionModeService {
-  return {
-    _serviceBrand: undefined,
-    mode,
-    setMode: () => {},
-    setModeAndBroadcast: () => {},
-    onDidChangeMode: () => ({ dispose: () => {} }),
-  };
+function permissionModeArgs(mode: PermissionMode = 'auto'): [IAgentLifecycleService, IAgentScopeContext] {
+  const manager = {
+    resolve: () => stubPermissionModeRuntime(() => mode),
+  } as unknown as IAgentLifecycleService;
+  return [manager, makeAgentScopeContext({ agentId: 'main', agentScope: '' })];
 }
 
 describe('ExitPlanMode options schema', () => {
@@ -146,7 +146,7 @@ describe('ExitPlanMode option output', () => {
     const result = await executeTool(
       new ExitPlanModeTool(
         { ...planService(), exit },
-        permissionMode(),
+        ...permissionModeArgs(),
         telemetry,
       ),
       {
@@ -166,7 +166,7 @@ describe('ExitPlanMode option output', () => {
     const telemetry = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService(), permissionMode('auto'), telemetry),
+      new ExitPlanModeTool(planService(), ...permissionModeArgs('auto'), telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan_auto',
@@ -186,7 +186,7 @@ describe('ExitPlanMode option output', () => {
     const telemetry = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService(), permissionMode('manual'), telemetry),
+      new ExitPlanModeTool(planService(), ...permissionModeArgs('manual'), telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan_rule',
@@ -207,7 +207,7 @@ describe('ExitPlanMode option output', () => {
     const telemetry = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService(), permissionMode(), telemetry),
+      new ExitPlanModeTool(planService(), ...permissionModeArgs(), telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan',
@@ -225,7 +225,7 @@ describe('ExitPlanMode option output', () => {
     const service: IAgentPlanService = { ...planService(), recordRevision };
 
     const result = await executeTool(
-      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      new ExitPlanModeTool(service, ...permissionModeArgs(), recordingTelemetry()),
       {
         turnId: 7,
         toolCallId: 'call_exit_record',
@@ -245,7 +245,7 @@ describe('ExitPlanMode option output', () => {
     const service: IAgentPlanService = { ...planService(), recordRevision };
 
     const result = await executeTool(
-      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      new ExitPlanModeTool(service, ...permissionModeArgs(), recordingTelemetry()),
       {
         turnId: 7,
         toolCallId: 'call_exit_record_failure',
@@ -268,7 +268,7 @@ describe('ExitPlanMode option output', () => {
     };
 
     const result = await executeTool(
-      new ExitPlanModeTool(service, permissionMode(), recordingTelemetry()),
+      new ExitPlanModeTool(service, ...permissionModeArgs(), recordingTelemetry()),
       {
         turnId: 7,
         toolCallId: 'call_exit_empty',

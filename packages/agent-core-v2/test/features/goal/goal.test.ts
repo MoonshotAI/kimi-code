@@ -10,6 +10,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import { AgentGoal, GoalRuntime } from '#/features/goal/goalAgentRuntime';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
 import { GoalUpdated } from '#/features/goal/goalOps';
@@ -29,7 +30,6 @@ import {
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import {
@@ -53,7 +53,7 @@ import {
   agentService,
   createTestAgent as createHarnessTestAgent,
   execEnvServices,
-  permissionModeServices,
+  applyPermissionMode,
   sessionService,
   telemetryServices,
   wireRecordPersistenceServices,
@@ -768,10 +768,10 @@ describe('AgentGoalService goal-start review', () => {
     approvalCalls = [];
     executorEvents = stubToolExecutorEvents();
     ctx = createTestAgent(
-      permissionModeServices(mode),
       agentService(IAgentToolApprovalService, approvalStub()),
       agentService(IAgentToolExecutorService, executorEvents.executor),
     );
+    applyPermissionMode(ctx, mode);
     ctx.resolve(AgentGoal);
   }
 
@@ -818,7 +818,7 @@ describe('AgentGoalService goal-start review', () => {
       selectedLabel: 'yolo',
     });
     expect(resolved).toBeUndefined();
-    expect(ctx!.get(IAgentPermissionModeService).mode).toBe('yolo');
+    expect(ctx!.resolve(AgentPermissionMode).mode()).toBe('dangerous');
   });
 
   it('does not review CreateGoal in auto mode', async () => {
@@ -859,8 +859,8 @@ describe('AgentGoalService core workflow hooks', () => {
     ctx = createTestAgent(
       appService(IGoalDeadlineScheduler, clock),
       agentService(IAgentLoopService, loopService),
-      permissionModeServices('auto'),
     );
+    applyPermissionMode(ctx, 'auto');
     context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal);
     toolExecutor = ctx.get(IAgentToolExecutorService);
@@ -1954,8 +1954,8 @@ describe('AgentGoalService hard wall-clock deadline', () => {
     };
     const ctx = createTestAgent(
       appService(IGoalDeadlineScheduler, clock),
-      permissionModeServices('yolo'),
     );
+    applyPermissionMode(ctx, 'yolo');
     try {
       ctx.get(IAgentToolRegistryService).register(tool);
       ctx.configure({ tools: ['SlowWork'] });
@@ -2543,8 +2543,8 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
-      permissionModeServices('yolo'),
     );
+    applyPermissionMode(ctx, 'yolo');
     try {
       ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
@@ -2649,8 +2649,8 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
-      permissionModeServices('yolo'),
     );
+    applyPermissionMode(ctx, 'yolo');
     try {
       ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
@@ -2709,8 +2709,8 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     const sh = controllableSpawn();
     const ctx = createTestAgent(
       execEnvServices({ processRunner: { spawn: sh.spawn } }),
-      permissionModeServices('yolo'),
     );
+    applyPermissionMode(ctx, 'yolo');
     try {
       ctx.configure();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });

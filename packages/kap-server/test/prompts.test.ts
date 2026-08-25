@@ -9,7 +9,7 @@ import {
   type IAgentScopeHandle,
   IAgentTitlePromptSource,
   IAgentLifecycleService,
-  IAgentPermissionModeService,
+  ISessionPermissionModeService,
   IAgentProfileService,
   IAgentToolPolicyService,
   IBootstrapService,
@@ -397,7 +397,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    expect(agent!.accessor.get(IAgentPermissionModeService).mode).toBe('manual');
+    expect(agent!.accessor.get(ISessionPermissionModeService).mode(agentContextOf(agent!))).toBe('manual');
     const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });

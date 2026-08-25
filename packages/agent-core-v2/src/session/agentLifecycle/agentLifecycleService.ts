@@ -16,8 +16,10 @@ import {
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
-import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
+import { DEFAULT_PERMISSION_MODE_SECTION } from '#/features/permissionMode/configSection';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { profileKey } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
@@ -32,7 +34,6 @@ import {
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
@@ -295,11 +296,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
-    const hasRestoredPermissionMode = handle.accessor
-      .get(IAgentStateService)
-      .get(permissionModeConfiguredKey);
-    if (permissionMode !== undefined && !hasRestoredPermissionMode) {
-      handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
+    const bridge = handle.accessor.get(ISessionPermissionModeService);
+    const context = agentContextOf(handle);
+    if (permissionMode !== undefined && !bridge.configured(context)) {
+      bridge.setMode(context, permissionMode);
     }
   }
 
@@ -394,7 +394,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       ) {
         continue;
       }
-      handle.accessor.get(IAgentPermissionModeService).setMode(mode);
+      void this.resolve(managed.context, AgentPermissionMode).changeMode(toContractMode(mode));
     }
   }
 

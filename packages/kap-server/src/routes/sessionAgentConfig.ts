@@ -9,7 +9,7 @@ import {
   IAgentTowerService,
   agentContextOf,
   resumeSessionById,
-  type PermissionMode,
+  type WirePermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -37,7 +37,7 @@ export async function applySessionAgentConfig(
   if (agentConfig.permission_mode !== undefined) {
     agent.accessor
       .get(IAgentLifecycleService)
-      .broadcastPermissionMode(agentConfig.permission_mode as PermissionMode);
+      .broadcastPermissionMode(agentConfig.permission_mode as WirePermissionMode);
   }
   if (agentConfig.plan_mode !== undefined) {
     const plan = agent.accessor.get(IAgentPlanService);

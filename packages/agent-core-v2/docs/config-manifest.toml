@@ -12,7 +12,7 @@
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
-#   defaultPermissionMode    src/agent/permissionMode/configSection.ts
+#   defaultPermissionMode    src/features/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
@@ -94,7 +94,7 @@ manual_tick = false
 
 # ##########################################################################
 # defaultPermissionMode (config.toml: default_permission_mode)
-#   owner: src/agent/permissionMode/configSection.ts
+#   owner: src/features/permissionMode/configSection.ts
 #   scope: core
 # ##########################################################################
 

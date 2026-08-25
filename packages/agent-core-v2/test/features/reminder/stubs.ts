@@ -4,6 +4,8 @@ import { isCompactionSummaryMessage } from '#/features/contextMemory/compactionH
 import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IEventBus } from '#/app/event/eventBus';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
+import type { PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
@@ -17,6 +19,7 @@ import type {
 } from '#/features/reminder/types';
 
 import { stubContextMemory } from '../contextMemory/stubs';
+import { stubPermissionModeRuntime } from '../permissionMode/stubs';
 import { stubUsage } from '../usage/stubs';
 
 export function createReminderStub(input: {
@@ -35,11 +38,13 @@ export function lifecycleWithReminder(
   reminder: ReminderRuntime,
   contextMemory: ContextMemoryRuntime = stubContextMemory(),
   usage: UsageRuntime = stubUsage(),
+  permissionMode: PermissionModeRuntime = stubPermissionModeRuntime(() => 'manual'),
 ): IAgentLifecycleService {
   return {
     resolve: (_agent: unknown, definition: unknown) => {
       if (definition === AgentContextMemory) return contextMemory;
       if (definition === AgentUsage) return usage;
+      if (definition === AgentPermissionMode) return permissionMode;
       return reminder;
     },
     handleOf: () => ({}),

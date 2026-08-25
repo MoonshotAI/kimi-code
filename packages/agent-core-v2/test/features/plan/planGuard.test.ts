@@ -4,7 +4,9 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { stubContextMemory } from '../contextMemory/stubs';
+import { stubPermissionModeRuntime } from '../permissionMode/stubs';
+import { stubUsage } from '../usage/stubs';
 import type {
   ApprovalResponse,
   PermissionMode,
@@ -32,7 +34,6 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { registerTestAgentWireServices } from '../../wire/stubs';
-import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 
 const signal = new AbortController().signal;
@@ -175,12 +176,16 @@ describe('AgentPlanService plan-guard listener', () => {
         });
         reg.defineInstance(
           IAgentLifecycleService,
-          lifecycleWithReminder(createReminderStub()),
+          lifecycleWithReminder(
+            createReminderStub(),
+            stubContextMemory(),
+            stubUsage(),
+            stubPermissionModeRuntime(() => mode),
+          ),
         );
         reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentPlanService, AgentPlanService);

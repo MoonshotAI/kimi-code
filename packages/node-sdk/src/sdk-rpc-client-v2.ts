@@ -172,7 +172,7 @@ import {
   IAgentPluginService,
   IAgentLifecycleService,
   IAgentLoopService,
-  IAgentPermissionModeService,
+  ISessionPermissionModeService,
   AgentPermissionRules,
   IAgentPluginCommandService,
   IAgentProfileService,
@@ -1110,7 +1110,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       context: context as AgentContextData,
       replay: limitAgentReplayByTurns(folded.replay, replayTurnLimit),
       permission: {
-        mode: agent.accessor.get(IAgentPermissionModeService).mode,
+        mode: agent.accessor.get(ISessionPermissionModeService).mode(agentContextOf(agent)),
         rules: [
           ...agent.accessor
             .get(IAgentLifecycleService)
@@ -1284,7 +1284,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         thinking: input.thinking,
       });
       if (input.permission !== undefined) {
-        agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
+        agent.accessor.get(ISessionPermissionModeService).setMode(agentContextOf(agent), input.permission);
       }
     }
     if (input.metadata !== undefined) {
@@ -1764,7 +1764,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return {
       model: profile.modelAlias,
       thinkingEffort: profile.thinkingLevel,
-      permission: agent.accessor.get(IAgentPermissionModeService).mode,
+      permission: agent.accessor.get(ISessionPermissionModeService).mode(agentContextOf(agent)),
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       towerMode: agent.accessor.get(IAgentTowerService).isActive,

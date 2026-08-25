@@ -22,7 +22,7 @@ import {
   AgentCron,
   AgentGoal,
   IAgentLifecycleService,
-  IAgentPermissionModeService,
+  ISessionPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
   IAgentTaskService,
@@ -334,12 +334,13 @@ async function resolveNativeSession(
   const forceAuto = (
     agent: IAgentScopeHandle,
   ): { readonly restorePermission: () => Promise<void> } => {
-    const permissionMode = agent.accessor.get(IAgentPermissionModeService);
-    const previous = permissionMode.mode;
-    permissionMode.setMode('auto');
+    const permissionMode = agent.accessor.get(ISessionPermissionModeService);
+    const context = agentContextOf(agent);
+    const previous = permissionMode.mode(context);
+    permissionMode.setMode(context, 'auto');
     return {
       restorePermission: async () => {
-        permissionMode.setMode(previous);
+        permissionMode.setMode(context, previous);
       },
     };
   };
@@ -405,7 +406,7 @@ async function resolveNativeSession(
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-  agent.accessor.get(IAgentPermissionModeService).setMode('auto');
+  agent.accessor.get(ISessionPermissionModeService).setMode(agentContext, 'auto');
   return {
     session,
     agent,

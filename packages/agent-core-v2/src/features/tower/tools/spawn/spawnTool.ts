@@ -3,8 +3,8 @@ import { join } from 'node:path';
 
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
 import {
   GitError,
@@ -295,7 +295,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         : wrapSubagentModelError(error, binding.model, this.profile.data().modelAlias);
     }
     const created = this.agentLifecycle.handleOf(createdContext.agentId)!;
-    created.accessor.get(IAgentPermissionModeService).setMode('auto');
+    created.accessor.get(ISessionPermissionModeService).setMode(agentContextOf(created), 'auto');
     const agentId = createdContext.agentId;
 
     emitAgentRunSpawned(requester, agentId, {

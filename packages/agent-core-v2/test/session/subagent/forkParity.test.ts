@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/features/contextMemory/openToolExchange';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -147,7 +147,7 @@ describe('fork subagent first-request parity', () => {
       thinkingLevel: 'off',
     });
     profile.update({ activeToolNames: [...ACTIVE_TOOL_NAMES] });
-    parent.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    parent.accessor.get(ISessionPermissionModeService).setMode(parentContext, 'yolo');
 
     ctx.mockNextResponse({
       type: 'function',

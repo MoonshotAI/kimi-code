@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 77 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -79,9 +79,6 @@
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                                  src/agent/media/mediaResolverService.ts
-//     permissionMode                                  src/agent/permissionMode/permissionModeOps.ts
-//     permissionMode.configured                       src/agent/permissionMode/permissionModeOps.ts
-//     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
 //     plan                                            src/features/plan/planOps.ts
 //     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     pluginSessionStartSnapshot                      src/agent/plugin/agentPluginOps.ts
@@ -1114,13 +1111,6 @@ export interface AgentStateSnapshot {
   }>;
   // src/agent/media/mediaToolsRegistrar.ts
   'media.registeredKey': string | undefined;
-  // src/agent/permissionMode/injection/permissionModeInjection.ts
-  'permissionMode.lastMode': 'manual' | 'auto' | 'yolo' | undefined;
-  // src/agent/permissionMode/permissionModeOps.ts
-  // replayable · durable — folds: PermissionSetMode
-  'permissionMode': /* PermissionMode — packages/agent-core-v2/src/agent/permissionPolicy/types.ts */ 'manual' | 'auto' | 'yolo';
-  // replayable · durable — folds: PermissionSetMode
-  'permissionMode.configured': boolean;
   // src/agent/plugin/agentPluginOps.ts
   // replayable · durable — folds: PluginSessionStartEvent
   'pluginSessionStartSnapshot': /* PluginSessionStartSnapshotState — packages/agent-core-v2/src/agent/plugin/agentPluginOps.ts */ {

@@ -18,7 +18,6 @@
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
-import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
@@ -63,8 +62,6 @@ export interface ServicePanelDef {
   readonly fetch?: (svc: AnyService) => Promise<unknown>;
   readonly actions?: readonly PanelAction[];
 }
-
-const setModeModes = ['manual', 'auto', 'yolo'];
 
 export const CORE_PANELS: readonly ServicePanelDef[] = [
   {
@@ -158,16 +155,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     actions: [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
     ],
-  },
-  {
-    id: String(IAgentPermissionModeService),
-    label: 'AgentPermissionModeService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'mode'),
-    actions: setModeModes.map((mode) => ({
-      label: `setMode('${mode}')`,
-      run: (svc) => call(svc, 'setMode', mode),
-    })),
   },
   {
     id: String(IAgentPlanService),

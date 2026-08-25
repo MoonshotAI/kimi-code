@@ -6,7 +6,6 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,
@@ -20,6 +19,8 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { toWireMode } from '#/features/permissionMode/internal/modeMapping';
 import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionApprovalService } from '#/session/approval/approval';
@@ -66,7 +67,6 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ISessionContext private readonly session: ISessionContext,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -74,6 +74,12 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
+  }
+
+  private mode() {
+    return toWireMode(
+      this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentPermissionMode).mode(),
+    );
   }
 
   async resolvePermissionResolution(
@@ -150,7 +156,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
           tool_call_id: context.toolCall.id,
           policy_name: origin,
           tool_name: name,
-          permission_mode: this.modeService.mode,
+          permission_mode: this.mode(),
           result: 'error',
           approval_surface: display.kind,
           duration_ms: Date.now() - startedAt,
@@ -200,7 +206,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       tool_call_id: context.toolCall.id,
       policy_name: origin,
       tool_name: name,
-      permission_mode: this.modeService.mode,
+      permission_mode: this.mode(),
       result:
         response.decision === 'approved' && response.scope === 'session'
           ? 'approved_for_session'

@@ -42,6 +42,7 @@ import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCa
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
+import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -149,7 +150,8 @@ import {
   IAgentLLMRequesterService,
   ILogService,
   IAgentPermissionGate,
-  IAgentPermissionModeService,
+  ISessionPermissionModeService,
+  AgentPermissionMode,
   IHostFileSystem,
   IHostFsWatchService,
   IHostProcessService,
@@ -736,8 +738,8 @@ const noopHookRunner: IExternalHooksRunnerService = {
   hasHooksFor: () => false,
 };
 
-export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
-  return agentService(IAgentPermissionModeService, createPermissionModeService(mode));
+export function applyPermissionMode(ctx: AgentTestContext, mode: PermissionMode): void {
+  void ctx.resolve(AgentPermissionMode).changeMode(toContractMode(mode));
 }
 
 export function taskServices(): TestAgentServiceOverride {
@@ -1558,7 +1560,7 @@ export class AgentTestContext {
     const context = this.resolve(AgentContextMemory);
     const tokenCounting = this.tokenCounting;
     const usage = this.usage;
-    const permissionMode = this.get(IAgentPermissionModeService);
+    const permissionMode = this.resolve(AgentPermissionMode);
     const permissionRules = this.resolve(AgentPermissionRules);
     const cron = this.resolve(AgentCron);
     const plan = this.get(IAgentPlanService);
@@ -1577,7 +1579,7 @@ export class AgentTestContext {
     usage.status();
     tasks.list(false);
     permission.data();
-    void permissionMode.mode;
+    void permissionMode.mode();
     void permissionRules.rules();
     cron.list();
     void plan.status();
@@ -2172,7 +2174,7 @@ export class AgentTestContext {
       cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
-        this.get(IAgentPermissionModeService).setModeAndBroadcast(payload.mode),
+        this.get(ISessionPermissionModeService).setModeAndBroadcast(this.agentContext, payload.mode),
       cancelCompaction: () => this.get(IAgentFullCompactionService).cancel(),
       activateSkill: (payload) => this.resolve(AgentSkill).activate(payload),
       activatePluginCommand: (payload) =>
@@ -2310,24 +2312,6 @@ function createWorkspaceContextStub(
       return target;
     },
   };
-}
-
-function createPermissionModeService(initialMode: PermissionMode): IAgentPermissionModeService {
-  let mode = initialMode;
-  const service: IAgentPermissionModeService = {
-    _serviceBrand: undefined,
-    get mode() {
-      return mode;
-    },
-    setMode: (nextMode) => {
-      mode = nextMode;
-    },
-    setModeAndBroadcast: (nextMode) => {
-      service.setMode(nextMode);
-    },
-    onDidChangeMode: Event.None as IAgentPermissionModeService['onDidChangeMode'],
-  };
-  return service;
 }
 
 function createHostTerminalService(): IHostTerminalService {

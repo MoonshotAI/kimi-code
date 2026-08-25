@@ -27,7 +27,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import {
   agentService,
   createTestAgent,
-  permissionModeServices,
+  applyPermissionMode,
   type TestAgentContext,
 } from '../../../harness';
 import { stubLoopWithHooks } from '../../../agent/loop/stubs';
@@ -50,8 +50,8 @@ describe('goal tools', () => {
     ctx = createTestAgent(
       agentService(IAgentLoopService, loopService),
       agentService(IAgentSwarmService, stubAgentSwarm()),
-      permissionModeServices('auto'),
     );
+    applyPermissionMode(ctx, 'auto');
     goals = ctx.resolve(AgentGoal);
     void ctx.restoreRuntimes();
     eventBus = ctx.get(IEventBus);

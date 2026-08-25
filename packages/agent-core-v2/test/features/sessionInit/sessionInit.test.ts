@@ -9,7 +9,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -76,7 +76,7 @@ describe('SessionInitService', () => {
     const profile = {
       data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off' }),
     };
-    const permissionMode = { mode: 'auto', setMode: vi.fn() };
+    const permissionMode = { mode: vi.fn(() => 'auto' as const), setMode: vi.fn() };
 
     handles['main'] = {
       id: 'main',
@@ -88,7 +88,7 @@ describe('SessionInitService', () => {
             return { agentContext: stubAgentContext('main', 1) };
           }
           if (id === IAgentProfileService) return profile;
-          if (id === IAgentPermissionModeService) return permissionMode;
+          if (id === ISessionPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IEventDispatcher) {
             return {
@@ -114,7 +114,7 @@ describe('SessionInitService', () => {
               agentContext: stubAgentContext('agent-0', 1),
             };
           }
-          if (id === IAgentPermissionModeService) return permissionMode;
+          if (id === ISessionPermissionModeService) return permissionMode;
           if (id === IAgentProfileService)
             return { republishStatus, getEffectiveThinkingLevel: () => 'off' };
           return undefined;

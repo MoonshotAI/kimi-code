@@ -1,13 +1,18 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentEvent2 } from '#/app/event/event2';
-import { defineState } from '#/state/state';
+
+export type WirePermissionMode = 'manual' | 'yolo' | 'auto';
+
+export interface PermissionModeState {
+  readonly mode: WirePermissionMode;
+  readonly configured: boolean;
+}
 
 const permissionSetModeSchema = z.object({
   agentId: z.string(),
-  mode: z.custom<PermissionMode>(),
+  mode: z.custom<WirePermissionMode>(),
 });
 
 export class PermissionSetMode extends AgentEvent2<z.infer<typeof permissionSetModeSchema>> {
@@ -17,16 +22,5 @@ export class PermissionSetMode extends AgentEvent2<z.infer<typeof permissionSetM
 }
 export interface PermissionSetMode {
   readonly agentId: string;
-  readonly mode: PermissionMode;
+  readonly mode: WirePermissionMode;
 }
-
-export const permissionModeKey = defineState('permissionMode', (): PermissionMode => 'manual')
-  .replayable({ schema: z.custom<PermissionMode>() })
-  .on(PermissionSetMode, (_s, e) => e.mode);
-
-export const permissionModeConfiguredKey = defineState(
-  'permissionMode.configured',
-  (): boolean => false,
-)
-  .replayable({ schema: z.custom<boolean>() })
-  .on(PermissionSetMode, () => true);

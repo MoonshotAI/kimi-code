@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import {
   IBootstrapService,
   IAgentLifecycleService,
-  IAgentPermissionModeService,
+  ISessionPermissionModeService,
   IAgentProfileService,
   IAgentToolPolicyService,
   IAgentPromptService,
@@ -44,6 +44,7 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
+  type PromptPermissionMode,
   type PromptSkillActivation,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
@@ -115,7 +116,13 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
-    permissionMode: agent.accessor.get(IAgentPermissionModeService),
+    permissionMode: {
+      setMode: (mode: PromptPermissionMode) => {
+        agent
+          .accessor.get(ISessionPermissionModeService)
+          .setMode(agentContextOf(agent), mode);
+      },
+    },
   };
 }
 

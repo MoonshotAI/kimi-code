@@ -1,12 +1,13 @@
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
+import { AgentPermissionMode, type PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { toWireMode } from '#/features/permissionMode/internal/modeMapping';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { goalForModel } from '#/features/goal/tools/serialize';
 
@@ -24,13 +25,14 @@ export class CreateGoalTool implements ICreateGoalTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(CreateGoalToolInputSchema);
 
   private readonly goal: GoalRuntime;
+  private readonly permissionMode: PermissionModeRuntime;
 
   constructor(
     @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
   ) {
     this.goal = manager.resolve(scopeContext.agentContext, AgentGoal);
+    this.permissionMode = manager.resolve(scopeContext.agentContext, AgentPermissionMode);
   }
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
@@ -63,7 +65,7 @@ export class CreateGoalTool implements ICreateGoalTool {
   }
 
   private resolveGoalStartDisplay(args: CreateGoalToolInput): ToolInputDisplay | undefined {
-    const mode = this.permissionMode.mode;
+    const mode = toWireMode(this.permissionMode.mode());
     if (mode === 'auto') return undefined;
     return {
       kind: 'goal_start',

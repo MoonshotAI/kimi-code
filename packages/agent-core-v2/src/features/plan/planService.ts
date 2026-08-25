@@ -7,9 +7,9 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -52,7 +52,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   constructor(
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IBlobStore private readonly blobs: IBlobStore,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -60,7 +60,6 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ITelemetryService telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -106,7 +105,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     const plan = await this.status();
 
     if (toolName === 'ExitPlanMode') {
-      if (plan !== null && this.modeService.mode !== 'auto') {
+      if (plan !== null && this.mode() !== 'auto') {
         event.waitUntil(() => this.review.requestApproval(event));
       }
       return;
@@ -152,6 +151,10 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
   private get isActive(): boolean {
     return this.agentState.get(planKey).active;
+  }
+
+  private mode() {
+    return this.agentLifecycle.resolve(this.agentCtx.agentContext, AgentPermissionMode).mode();
   }
 
   private currentPlanFilePath(): PlanFilePath {

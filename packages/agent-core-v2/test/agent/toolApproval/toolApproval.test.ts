@@ -5,7 +5,6 @@ import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
 import { UserCancellationError } from '#/_base/utils/abort';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
   PermissionMode,
   PermissionPolicyResult,
@@ -21,6 +20,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { OrderedHookSlot } from '#/hooks';
@@ -34,7 +34,7 @@ import { ISessionContext, makeSessionContext } from '#/session/sessionContext/se
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionModeRuntime } from '../../features/permissionMode/stubs';
 import { stubPermissionRulesRuntime } from '../../features/permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -102,11 +102,13 @@ describe('AgentToolApprovalService', () => {
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }),
         );
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
-            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
-            return stubPermissionRulesRuntime({ dispatched: recorded });
+            if (definition === AgentPermissionRules) {
+              return stubPermissionRulesRuntime({ dispatched: recorded });
+            }
+            if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => mode);
+            throw new Error('unexpected resolve');
           },
         } as unknown as IAgentLifecycleService);
         reg.defineInstance(ISessionContext, makeSessionContext({

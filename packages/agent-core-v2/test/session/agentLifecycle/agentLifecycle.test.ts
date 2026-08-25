@@ -15,12 +15,12 @@ import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import '#/agent/permissionMode/permissionModeService';
 import {
-  permissionModeConfiguredKey,
-  permissionModeKey,
-} from '#/agent/permissionMode/permissionModeOps';
+  AgentPermissionMode,
+  permissionModeAgentRuntimeProvider,
+} from '#/features/permissionMode/permissionModeAgentRuntime';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
+import { SessionPermissionModeService } from '#/session/permissionMode/sessionPermissionModeService';
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -193,7 +193,6 @@ describe('AgentLifecycleService', () => {
   let ix: TestInstantiationService;
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
-  let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
   let loopPendingTurnIds: number[];
@@ -210,8 +209,7 @@ describe('AgentLifecycleService', () => {
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(ISessionEventBus, new SyncDescriptor(EventBusService));
-    ix.get(IAgentStateService).contributeState(permissionModeKey);
-    ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
+    ix.set(ISessionPermissionModeService, new SyncDescriptor(SessionPermissionModeService));
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
@@ -418,13 +416,6 @@ describe('AgentLifecycleService', () => {
       disabledTools: [],
       onDidChange: Event.None as Event<void>,
     } satisfies ISessionToolPolicyGate);
-    permissionModeSetMode = vi.fn();
-    ix.stub(IAgentPermissionModeService, {
-      _serviceBrand: undefined,
-      mode: 'manual',
-      setMode: permissionModeSetMode,
-      onDidChangeMode: Event.None,
-    } as unknown as IAgentPermissionModeService);
     ix.stub(ISessionInstructionsProvider, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -466,6 +457,12 @@ describe('AgentLifecycleService', () => {
       'test-context-memory',
       new Ledger('test-context-memory'),
       contextMemoryAgentRuntimeProvider,
+    );
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-permission-mode',
+      new Ledger('test-permission-mode'),
+      permissionModeAgentRuntimeProvider,
     );
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
@@ -890,8 +887,9 @@ describe('AgentLifecycleService', () => {
   it('leaves permission mode at the default when permissionMode is omitted', async () => {
     const svc = ix.get(IAgentLifecycleService);
 
-    await svc.create({ agentId: 'child' });
-    expect(permissionModeSetMode).not.toHaveBeenCalled();
+    const child = await svc.create({ agentId: 'child' });
+    expect(svc.resolve(child, AgentPermissionMode).configured()).toBe(false);
+    expect(svc.resolve(child, AgentPermissionMode).mode()).toBe('default');
   });
 
   it('applies the configured permission mode when the Agent has no persisted mode', async () => {
@@ -902,9 +900,9 @@ describe('AgentLifecycleService', () => {
     } as unknown as IConfigService);
 
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
+    const main = await svc.create({ agentId: 'main' });
 
-    expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
+    expect(svc.resolve(main, AgentPermissionMode).mode()).toBe('auto');
   });
 
   it('keeps the restored permission mode instead of overwriting it with the default', async () => {
@@ -918,9 +916,10 @@ describe('AgentLifecycleService', () => {
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
 
-    await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const main = await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
 
-    expect(permissionModeSetMode).not.toHaveBeenCalled();
+    const svc = ix.get(IAgentLifecycleService);
+    expect(svc.resolve(main, AgentPermissionMode).mode()).toBe('default');
   });
 
   it('restores the runtime binding without persisting a generation', async () => {
@@ -1019,30 +1018,30 @@ describe('AgentLifecycleService', () => {
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    await svc.create({ agentId: 'child' });
+    const main = await svc.create({ agentId: 'main' });
+    const child = await svc.create({ agentId: 'child' });
 
     svc.broadcastPermissionMode('yolo');
 
-    expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
-    expect(svc.handleOf('child')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(svc.resolve(main, AgentPermissionMode).mode()).toBe('dangerous');
+    expect(svc.resolve(child, AgentPermissionMode).mode()).toBe('dangerous');
   });
 
   it('broadcastPermissionMode skips agents that have been removed', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
+    const main = await svc.create({ agentId: 'main' });
     const child = await svc.create({ agentId: 'child' });
     await svc.remove(child);
 
     svc.broadcastPermissionMode('auto');
 
-    expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
+    expect(svc.resolve(main, AgentPermissionMode).mode()).toBe('auto');
   });
 
   it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    await svc.create({ agentId: 'worker-1' });
+    const main = await svc.create({ agentId: 'main' });
+    const worker = await svc.create({ agentId: 'worker-1' });
     void svc.handleOf('worker-1')!.accessor.get(IEventDispatcher).dispatch(
       new ProfileBind({
         agentId: 'worker-1',
@@ -1055,8 +1054,8 @@ describe('AgentLifecycleService', () => {
 
     svc.broadcastPermissionMode('yolo');
 
-    expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
-    expect(svc.handleOf('worker-1')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('manual');
+    expect(svc.resolve(main, AgentPermissionMode).mode()).toBe('dangerous');
+    expect(svc.resolve(worker, AgentPermissionMode).mode()).toBe('default');
   });
 
   it('wires MCP OAuth credentials through the session atomic document store', async () => {

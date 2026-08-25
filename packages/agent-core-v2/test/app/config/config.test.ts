@@ -42,8 +42,8 @@ import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/features/skill/catalog/configSection';
-import '#/agent/permissionMode/configSection';
-import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
+import '#/features/permissionMode/configSection';
+import { DEFAULT_PERMISSION_MODE_SECTION } from '#/features/permissionMode/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import '#/features/tokenCounting/configSection';

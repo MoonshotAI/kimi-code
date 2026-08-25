@@ -5,7 +5,8 @@ import type { IAgentPlanService, PlanData } from '#/features/plan/plan';
 import { EnterPlanModeTool } from '#/features/plan/tools/enter-plan-mode/enterPlanModeTool';
 import { type ExitPlanModeInput } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
-import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -15,7 +16,7 @@ import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import {
   createTestAgent,
   execEnvServices,
-  permissionModeServices,
+  applyPermissionMode,
   telemetryServices,
   type TestAgentContext,
 } from '../../../harness/agent';
@@ -23,6 +24,8 @@ import {
   recordingTelemetry as captureTelemetry,
   type TelemetryRecord,
 } from '../../../app/telemetry/stubs';
+
+import { stubPermissionModeRuntime } from '../../permissionMode/stubs';
 
 const ACTIVE_PLAN: NonNullable<PlanData> = {
   id: 'test-plan',
@@ -59,14 +62,11 @@ function recordingTelemetry(): {
   };
 }
 
-function permissionMode(): IAgentPermissionModeService {
-  return {
-    _serviceBrand: undefined,
-    mode: 'auto',
-    setMode: () => {},
-    setModeAndBroadcast: () => {},
-    onDidChangeMode: () => ({ dispose: () => {} }),
-  };
+function permissionModeArgs(): [IAgentLifecycleService, IAgentScopeContext] {
+  const manager = {
+    resolve: () => stubPermissionModeRuntime(() => 'auto'),
+  } as unknown as IAgentLifecycleService;
+  return [manager, makeAgentScopeContext({ agentId: 'main', agentScope: '' })];
 }
 
 function planService({
@@ -217,9 +217,9 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
               readText: vi.fn().mockResolvedValue(''),
             }),
           }),
-          permissionModeServices(mode),
           telemetryServices(captureTelemetry(records)),
         );
+        applyPermissionMode(ctx, mode);
         toolExecutor = ctx.get(IAgentToolExecutorService);
       });
 
@@ -266,7 +266,7 @@ describe('ExitPlanModeTool telemetry', () => {
     const { telemetry } = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService({ status: null }), permissionMode(), telemetry),
+      new ExitPlanModeTool(planService({ status: null }), ...permissionModeArgs(), telemetry),
       {
       turnId: 7,
       toolCallId: 'call_exit_plan',
@@ -290,7 +290,7 @@ describe('ExitPlanModeTool telemetry', () => {
     } as unknown as NonNullable<PlanData>;
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService({ status }), permissionMode(), telemetry),
+      new ExitPlanModeTool(planService({ status }), ...permissionModeArgs(), telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan',
@@ -308,7 +308,7 @@ describe('ExitPlanModeTool telemetry', () => {
 
   it('exposes options[].description as optional with a default of empty string', () => {
     const { telemetry } = recordingTelemetry();
-    const parameters = new ExitPlanModeTool(planService(), permissionMode(), telemetry).parameters as {
+    const parameters = new ExitPlanModeTool(planService(), ...permissionModeArgs(), telemetry).parameters as {
       properties: {
         options: {
           items: {
@@ -329,7 +329,7 @@ describe('ExitPlanModeTool telemetry', () => {
     const exit = vi.fn();
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), permissionMode(), telemetry), {
+    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), ...permissionModeArgs(), telemetry), {
       turnId: 7,
       toolCallId: 'call_exit_plan',
       args: {},
@@ -349,7 +349,7 @@ describe('ExitPlanModeTool telemetry', () => {
   it('tracks submitted with options only when multiple options are present', async () => {
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService(), permissionMode(), telemetry), {
+    const result = await executeTool(new ExitPlanModeTool(planService(), ...permissionModeArgs(), telemetry), {
       turnId: 7,
       toolCallId: 'call_exit_plan_options',
       args: { options },
@@ -371,7 +371,7 @@ describe('ExitPlanModeTool telemetry', () => {
     });
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), permissionMode(), telemetry), {
+    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), ...permissionModeArgs(), telemetry), {
       turnId: 7,
       toolCallId: 'call_exit_plan_fail',
       args: {},

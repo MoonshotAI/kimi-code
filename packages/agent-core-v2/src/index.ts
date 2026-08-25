@@ -704,9 +704,17 @@ export * from '#/agent/media/mediaResolver';
 export * from '#/agent/media/mediaResolverService';
 import '#/agent/media/configSection';
 export * from '#/agent/media/imageConfigBridge';
-import '#/agent/permissionMode/configSection';
-export * from '#/agent/permissionMode/permissionMode';
-export * from '#/agent/permissionMode/permissionModeService';
+import '#/features/permissionMode/configSection';
+export * from '#/features/permissionMode/permissionModeOps';
+export {
+  AgentPermissionMode,
+  PermissionModeRuntime,
+  type PermissionMode,
+  type PermissionModeChangeEvent,
+} from '#/features/permissionMode/permissionModeAgentRuntime';
+export * from '#/session/permissionMode/sessionPermissionMode';
+export * from '#/session/permissionMode/sessionPermissionModeService';
+import '#/features/permissionMode/permissionModeFeature';
 export * from '#/agent/permissionPolicy/permissionPolicy';
 export * from '#/agent/permissionPolicy/permissionPolicyService';
 export * from '#/agent/permissionPolicy/types';

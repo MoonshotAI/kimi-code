@@ -10,7 +10,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -137,7 +137,7 @@ describe('TowerSpawnTool', () => {
       id: 'agent-7',
       accessor: {
         get: (id: unknown) => {
-          if (id === (IAgentPermissionModeService as unknown)) {
+          if (id === (ISessionPermissionModeService as unknown)) {
             return { setMode: createdSetMode };
           }
           if (id === (IAgentScopeContext as unknown)) {
@@ -313,7 +313,7 @@ describe('TowerSpawnTool', () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
-    expect(createdSetMode).toHaveBeenCalledWith('auto');
+    expect(createdSetMode).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'agent-7' }), 'auto');
   });
 
   it('binds the configured secondary model and reports it in the output and activity log', async () => {

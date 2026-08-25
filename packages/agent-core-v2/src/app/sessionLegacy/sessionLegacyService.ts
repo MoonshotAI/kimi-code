@@ -14,7 +14,7 @@ import {
 } from '#/_base/di/instantiation';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -72,7 +72,7 @@ export class SessionLegacyService implements ISessionLegacyService {
   ): Promise<SessionStatusResponse> {
     const profile = agent.accessor.get(IAgentProfileService);
     const tokenCounting = agent.accessor.get(ISessionTokenCountingService);
-    const permission = agent.accessor.get(IAgentPermissionModeService);
+    const permission = agent.accessor.get(ISessionPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
     const tower = agent.accessor.get(IAgentTowerService);
@@ -90,7 +90,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
       thinking_level: model === '' ? '' : profile.getEffectiveThinkingLevel(),
-      permission: permission.mode,
+      permission: permission.mode(agentContextOf(agent)),
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,
       tower_mode: tower.isActive,

@@ -9,7 +9,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -1335,11 +1335,11 @@ function agentHandle(
   });
   const permissionMode = {
     _serviceBrand: undefined,
-    mode: 'auto',
+    mode: () => 'auto',
+    configured: () => true,
     setMode: () => {},
     setModeAndBroadcast: () => {},
-    onDidChangeMode: Event.None,
-  } as IAgentPermissionModeService;
+  } as unknown as ISessionPermissionModeService;
   const dispatcher = {
     _serviceBrand: undefined,
     dispatch: async (event: Event2) => {
@@ -1362,7 +1362,7 @@ function agentHandle(
             onDidChange: Event.None,
           } as unknown as IAgentRuntimeBindingService;
         }
-        if (serviceId === IAgentPermissionModeService) return permissionMode;
+        if (serviceId === ISessionPermissionModeService) return permissionMode;
         if (serviceId === IAgentLoopService) {
           return {
             _serviceBrand: undefined,

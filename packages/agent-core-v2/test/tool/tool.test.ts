@@ -20,7 +20,7 @@ import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemo
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -48,6 +48,10 @@ import { Error2, ErrorCodes } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import {
+  AgentPermissionMode,
+  permissionModeAgentRuntimeProvider,
+} from '#/features/permissionMode/permissionModeAgentRuntime';
 import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
@@ -98,6 +102,7 @@ import {
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
+import { stubPermissionModeRuntime } from '../features/permissionMode/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
@@ -306,12 +311,13 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
           } as never;
         }
-        if (serviceId === IAgentPermissionModeService) {
+        if (serviceId === ISessionPermissionModeService) {
           return {
             _serviceBrand: undefined,
-            mode: 'manual',
+            mode: () => 'manual',
+            configured: () => true,
             setMode: () => {},
-            onDidChangeMode: Event.None,
+            setModeAndBroadcast: () => {},
           } as never;
         }
         if (serviceId === IAgentToolRegistryService) {
@@ -436,6 +442,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
         return adoptedManaged.runtimeSet.resolve(definition);
       }
+      if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => 'manual');
       throw new Error('unexpected resolve');
     }) as IAgentLifecycleService['resolve']),
     inspect: vi.fn((agent) => {
@@ -496,6 +503,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentTokenCounting,
           provider: tokenCountingAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentPermissionMode,
+          provider: permissionModeAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

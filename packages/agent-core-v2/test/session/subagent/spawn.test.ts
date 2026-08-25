@@ -14,7 +14,7 @@ import {
   type AgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
@@ -57,8 +57,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let createAgent: ReturnType<typeof vi.fn>;
   let forkAgent: ReturnType<typeof vi.fn>;
   let acquireRuntime: ReturnType<typeof vi.fn>;
-  let callerPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
-  let createdPermissionMode: { mode: string; setMode: ReturnType<typeof vi.fn> };
+  let sessionPermissionModes: {
+    mode: ReturnType<typeof vi.fn>;
+    setMode: ReturnType<typeof vi.fn>;
+  };
   let callerUserTools: IAgentUserToolService;
   let createdUserTools: IAgentUserToolService;
   let lease: RuntimeLease;
@@ -90,7 +92,9 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           if (serviceId === IAgentProfileService) {
             return profileServiceStub({ ...callerData, modelCapabilities: {} as never });
           }
-          if (serviceId === IAgentPermissionModeService) return createdPermissionMode;
+          if (serviceId === IAgentScopeContext) {
+            return { agentContext: stubAgentContext(agentId, 1) };
+          }
           if (serviceId === IAgentUserToolService) return createdUserTools;
           return undefined;
         },
@@ -123,8 +127,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     ];
     modelIds = new Set(['main-model']);
     modelMeta = new Map();
-    callerPermissionMode = { mode: 'auto', setMode: vi.fn() };
-    createdPermissionMode = { mode: 'manual', setMode: vi.fn() };
+    sessionPermissionModes = { mode: vi.fn(() => 'auto' as const), setMode: vi.fn() };
     callerUserTools = userToolsStub();
     createdUserTools = userToolsStub();
     lease = {
@@ -139,7 +142,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       accessor: {
         get: (serviceId: unknown) => {
           if (serviceId === IAgentProfileService) return profileServiceStub(callerData);
-          if (serviceId === IAgentPermissionModeService) return callerPermissionMode;
+          if (serviceId === ISessionPermissionModeService) return sessionPermissionModes;
           if (serviceId === IAgentUserToolService) return callerUserTools;
           if (serviceId === IAgentRuntimeService) {
             return {
@@ -545,7 +548,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
 
     await spawnNonForkChild(svc);
 
-    expect(createdPermissionMode.setMode).toHaveBeenCalledWith('auto');
+    expect(sessionPermissionModes.setMode).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-child' }),
+      'auto',
+    );
     expect(createdUserTools.inheritUserTools).toHaveBeenCalledWith(callerUserTools);
   });
 

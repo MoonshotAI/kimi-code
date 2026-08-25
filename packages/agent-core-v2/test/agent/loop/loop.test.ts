@@ -27,7 +27,7 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import {
   agentService,
   createTestAgent,
-  permissionModeServices,
+  applyPermissionMode,
   type TestAgentContext,
   type TestAgentOptions,
 } from '../../harness';
@@ -1342,7 +1342,8 @@ describe('interruption reminder', () => {
   });
 
   it('does not duplicate recorded content when cancelled during tool execution', async () => {
-    const local = createTestAgent(permissionModeServices('yolo'));
+    const local = createTestAgent();
+    applyPermissionMode(local, 'yolo');
     try {
       const slowToolStarted = registerAbortableWorkTool(local);
       const localLoop = local.get(IAgentLoopService);
@@ -1410,8 +1411,8 @@ describe('aborted step tool execution', () => {
   it('accounts model usage when the step is aborted during tool execution', async () => {
     const ctx = createTestAgent(
       { generate: createAbortedStepGenerate() },
-      permissionModeServices('yolo'),
     );
+    applyPermissionMode(ctx, 'yolo');
     void ctx.restoreRuntimes();
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
@@ -1458,8 +1459,8 @@ describe('aborted step tool execution', () => {
   it('includes the programmatic abort reason when a tool execution is interrupted', async () => {
     const ctx = createTestAgent(
       { generate: createAbortedStepGenerate() },
-      permissionModeServices('yolo'),
     );
+    applyPermissionMode(ctx, 'yolo');
     let interrupted: { readonly reason: string; readonly message?: string } | undefined;
     const subscription = ctx
       .get(IEventBus)

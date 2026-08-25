@@ -8,7 +8,7 @@ import {
   AgentCron,
   AgentGoal,
   IAgentLifecycleService,
-  IAgentPermissionModeService,
+  ISessionPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
   IAgentScopeContext,
@@ -138,7 +138,7 @@ function makeFakeHarness() {
         data: () => ({ profileName: profileState.profileName }),
       },
     ],
-    [IAgentPermissionModeService, { mode: 'auto', setMode: vi.fn() }],
+    [ISessionPermissionModeService, { mode: () => 'auto', setMode: vi.fn() }],
     [IAuthSummaryService, { ensureReady: vi.fn(async () => {}) }],
     [
       IEventBus,

@@ -18,7 +18,7 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
@@ -184,9 +184,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
           caller.accessor.get(IAgentProfileService).data().modelAlias,
         );
       }
-      created.accessor
-        .get(IAgentPermissionModeService)
-        .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
+      const permissionModes = caller.accessor.get(ISessionPermissionModeService);
+      permissionModes.setMode(
+        agentContextOf(created),
+        permissionModes.mode(agentContextOf(caller)),
+      );
       const createdUserTools = created.accessor.get(IAgentUserToolService);
       const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {

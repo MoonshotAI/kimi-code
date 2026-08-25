@@ -159,6 +159,7 @@ const MCP_MANAGEMENT_SERVICE = 'mcpManagementService';
 const AGENT_CONTEXT_SERVICES: ReadonlySet<string> = new Set([
   'agentTokenCountingService',
   'agentUsageService',
+  'agentPermissionModeService',
 ]);
 
 /**

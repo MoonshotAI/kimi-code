@@ -15,7 +15,7 @@ import {
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
@@ -31,7 +31,7 @@ import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolCo
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
-import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionModeRuntime } from '../../features/permissionMode/stubs';
 import { stubPermissionRulesRuntime } from '../../features/permissionRules/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 
@@ -55,18 +55,18 @@ describe('AgentPermissionPolicyService chain', () => {
     workspace = workspaceStub('/workspace');
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
-            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
-            return stubPermissionRulesRuntime({
+            if (definition === AgentPermissionRules) return stubPermissionRulesRuntime({
               rules: () => rules,
               approvalPatterns: () => sessionApprovalRulePatterns,
             });
+            if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => mode);
+            throw new Error('unexpected resolve');
           },
         } as unknown as IAgentLifecycleService);
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
@@ -230,15 +230,15 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     workspace = workspaceStub(workspaceDir);
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
-            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
-            return stubPermissionRulesRuntime({});
+            if (definition === AgentPermissionRules) return stubPermissionRulesRuntime({});
+            if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => mode);
+            throw new Error('unexpected resolve');
           },
         } as unknown as IAgentLifecycleService);
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
