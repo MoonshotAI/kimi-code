@@ -19,6 +19,7 @@ import {
   updateTableWideToggle,
   type TableWideToggleLabels,
 } from './lib/tableWide';
+import { streamingLinkAction } from './lib/streamingLinkGuard';
 
 // Shape of the `openFile` prop payload. Declared locally so the package has no
 // reverse dependency on the host app's types; structurally compatible with the
@@ -388,6 +389,43 @@ function processMarkdownLinks(): void {
   }
 }
 
+// Streaming-link click guard. processMarkdownLinks above is skipped while a
+// turn streams (markstream keeps rebuilding the DOM), so a streaming message's
+// links stay plain <a href> elements and a click becomes a DEFAULT navigation
+// — a relative workspace path resolves against the page URL and 404s on the
+// server (kap-server's webAssets route and the desktop app:// protocol both
+// only SPA-fallback EXTENSIONLESS paths), replacing the whole app with a
+// "not found" page that even a reload can't escape. A delegated listener on
+// the markdown root survives the DOM rebuilds precisely because it never
+// touches the anchors themselves; routing lives in lib/streamingLinkGuard.ts.
+// Settled turns are untouched: the pills own their clicks by then.
+function onStreamingLinkClick(event: MouseEvent): void {
+  if (!props.streaming) return;
+  // click fires for the primary button only, but auxclick fires for EVERY
+  // non-primary button — a right-click is the user reaching for the context
+  // menu, not activating the link, so only the middle button counts here.
+  if (event.type === 'auxclick' && event.button !== 1) return;
+  const link = (event.target as Element | null)?.closest?.('a[href]');
+  if (!link || !mdRef.value?.contains(link)) return;
+  // Mermaid SVG links are diagram semantics, not workspace paths — the
+  // settled path skips them (processMarkdownLinks), so the guard does too.
+  if (link.closest('svg')) return;
+  const action = streamingLinkAction(
+    link.getAttribute('href') ?? '',
+    props.openFile !== undefined,
+  );
+  if (action.type === 'passthrough') return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (action.type === 'open-file') {
+    props.openFile?.({ path: action.path });
+  } else if (action.type === 'open-external') {
+    // Desktop's windowOpenHandler reroutes http(s) popups to the system
+    // browser; on web this keeps the app tab alive and opens a new one.
+    window.open(action.url, '_blank', 'noopener');
+  }
+}
+
 // Widen-table toggles — injected into each `.table-node-wrapper` (only inside
 // the ChatPane assistant-message host, see tableWide.ts). Same lifecycle as
 // the file-link processing above: skip while streaming (markstream keeps
@@ -502,11 +540,17 @@ onMounted(() => {
     observer.observe(mdRef.value, { childList: true, subtree: true });
     tableWideResizeObserver = new ResizeObserver(updateTableWideToggles);
     tableWideResizeObserver.observe(mdRef.value);
+    // auxclick covers the middle mouse button (open-in-new-tab default);
+    // click covers left-click and keyboard Enter on a focused anchor.
+    mdRef.value.addEventListener('click', onStreamingLinkClick);
+    mdRef.value.addEventListener('auxclick', onStreamingLinkClick);
   }
 });
 onBeforeUnmount(() => {
   observer?.disconnect();
   tableWideResizeObserver?.disconnect();
+  mdRef.value?.removeEventListener('click', onStreamingLinkClick);
+  mdRef.value?.removeEventListener('auxclick', onStreamingLinkClick);
   // Close the shared tooltip if its anchor lived in THIS instance. Must run
   // BEFORE unmount: onUnmounted would already find mdRef nulled (the subtree
   // is gone first), while a page switch removes the root without a mouseout.
