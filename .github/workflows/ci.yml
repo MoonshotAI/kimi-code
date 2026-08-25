@@ -86,3 +86,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Windows runner 更慢，默认 5s 的测试超时容易抖动（kimi-code 仓同款处理）。
       - run: pnpm test -- --testTimeout=30000
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      # 只 build 不打包，且只覆盖本仓的 apps/packages：kimi-code/ 的包按源码消费
+      # 不需要它们的 dist（node-sdk 的 build:dts 依赖 kimi-code 根 manifest 里
+      # 的 api-extractor，workspace 安装覆盖不到，放过它要等 kimi-code 仓自己装）。
+      - run: pnpm -r --filter './apps/*' --filter './packages/*' run build
