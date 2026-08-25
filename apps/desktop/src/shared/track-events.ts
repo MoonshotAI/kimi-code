@@ -54,13 +54,18 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
   }),
   z.object({
     event: z.literal('update_prompt_shown'),
-    properties: z.object({ version: optionalCappedStringSchema }),
+    // channel: stable = CDN/electron-updater；canary = Kimi Code Canary 的 gh 通道。
+    properties: z.object({
+      version: optionalCappedStringSchema,
+      channel: z.enum(['stable', 'canary']).optional().catch(undefined),
+    }),
   }),
   z.object({
     event: z.literal('update_prompt_action'),
     properties: z.object({
-      action: z.enum(['skip', 'download', 'restart', 'retry']),
+      action: z.enum(['skip', 'download', 'restart', 'retry', 'open-installer']),
       version: optionalCappedStringSchema,
+      channel: z.enum(['stable', 'canary']).optional().catch(undefined),
     }),
   }),
   z.object({

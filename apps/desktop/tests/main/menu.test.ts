@@ -223,14 +223,14 @@ describe('menuTemplate', () => {
       );
     }
     // Active preview → bilingual entry with the PR number, wired click.
-    const zhView = menuTemplate(true, 'zh', {}, false, false, 306).find((item) => item.label === '视图');
+    const zhView = menuTemplate(true, 'zh', {}, false, false, '#306').find((item) => item.label === '视图');
     const zhEntry = submenuItems(zhView as MenuItemConstructorOptions).find(
       (item) => item.id === 'exit-pr-preview',
     );
     expect(zhEntry).toMatchObject({ label: '退出 PR 预览（#306）', accelerator: 'CommandOrControl+Alt+Shift+P' });
     expect(typeof zhEntry?.click).toBe('function');
 
-    const enView = windowsMenuTemplate('en', {}, false, true, false, 306).find((item) => item.id === 'view-menu');
+    const enView = windowsMenuTemplate('en', {}, false, true, false, '#306').find((item) => item.id === 'view-menu');
     const enEntry = submenuItems(enView as MenuItemConstructorOptions).find(
       (item) => item.id === 'exit-pr-preview',
     );
@@ -242,8 +242,8 @@ describe('menuTemplate', () => {
     // Every other non-role accelerator goes silent under terminal focus; the
     // exit entry is exempt in both template paths.
     for (const template of [
-      menuTemplate(false, 'en', {}, 'terminal', false, 306),
-      windowsMenuTemplate('en', {}, 'terminal', true, false, 306),
+      menuTemplate(false, 'en', {}, 'terminal', false, '#306'),
+      windowsMenuTemplate('en', {}, 'terminal', true, false, '#306'),
     ]) {
       const view = template.find((item) => item.id === 'view-menu' || item.label === 'View');
       const entry = submenuItems(view as MenuItemConstructorOptions).find(
@@ -255,8 +255,8 @@ describe('menuTemplate', () => {
 
   it('keeps the PR-preview exit fully wired under recording suspension', () => {
     for (const template of [
-      menuTemplate(false, 'en', {}, 'recording', false, 306),
-      windowsMenuTemplate('en', {}, 'recording', true, false, 306),
+      menuTemplate(false, 'en', {}, 'recording', false, '#306'),
+      windowsMenuTemplate('en', {}, 'recording', true, false, '#306'),
     ]) {
       const view = template.find((item) => item.id === 'view-menu' || item.label === 'View');
       const entry = submenuItems(view as MenuItemConstructorOptions).find(

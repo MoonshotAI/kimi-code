@@ -4,6 +4,7 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
 import {
+  isPrPreviewAvailable,
   onStateChange as onPrPreviewStateChange,
   stopPreview,
   whenBuildSettled,
@@ -84,7 +85,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     settings: '设置…',
     checkForUpdates: '检查更新…',
     retryConnection: '重试连接',
-    exitPrPreview: '退出 PR 预览（#{pr}）',
+    exitPrPreview: '退出 PR 预览（{pr}）',
     updateCheckTitle: '检查更新',
     updateAvailable: '发现新版本 {version},可立即下载更新。',
     updateAutoDownloading: '发现新版本 {version},正在后台下载,完成后重启即可更新。',
@@ -124,7 +125,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     settings: 'Settings…',
     checkForUpdates: 'Check for Updates…',
     retryConnection: 'Retry Connection',
-    exitPrPreview: 'Exit PR Preview (#{pr})',
+    exitPrPreview: 'Exit PR Preview ({pr})',
     updateCheckTitle: 'Check for Updates',
     updateAvailable: 'Version {version} is available.',
     updateAutoDownloading: 'Version {version} is downloading in the background; restart to update once it finishes.',
@@ -430,25 +431,25 @@ async function runTraceToggle(): Promise<void> {
 // the preview replaces the whole renderer with the PR's build, whose sidebar
 // may not carry the in-app exit button at all (any PR branched before that
 // entry existed) — without a native escape hatch the only way back to the
-// normal dev renderer would be restarting the app. Dev-only in practice: the
-// preview can never become active in packaged builds (startPreview throws),
-// and buildMenu additionally gates inclusion on !app.isPackaged.
-let previewMenuPr: number | undefined;
+// normal renderer would be restarting the app. Gated on isPrPreviewAvailable
+// (dev / Kimi Code Canary — the preview can never become active on stable
+// packaged builds).
+let previewMenuLabel: string | undefined;
 onPrPreviewStateChange((state) => {
-  // servingPr, not phase: a failed rebuild publishes `error` while the
+  // serving marker, not phase: a failed rebuild publishes `error` while the
   // previous preview keeps serving — the exit entry must stay put for as
   // long as the window is actually on a preview build. Log-tail pushes ride
-  // the same channel, so rebuild only when the served PR actually changes.
-  const pr = state.servingPr;
-  if (pr === previewMenuPr) return;
-  previewMenuPr = pr;
+  // the same channel, so rebuild only when the served target actually changes.
+  const label = state.servingLabel ?? (state.servingPr !== undefined ? `#${state.servingPr}` : undefined);
+  if (label === previewMenuLabel) return;
+  previewMenuLabel = label;
   buildMenu();
 });
 
-/** Currently previewed PR number while a preview is being served; undefined
-    otherwise (and always in packaged builds — the preview can't start there). */
-function currentPreviewPr(): number | undefined {
-  return app.isPackaged ? undefined : previewMenuPr;
+/** Display label of the preview being served (`#306` or a branch/sha);
+    undefined when no preview is live (and always on stable packaged builds). */
+function currentPreviewLabel(): string | undefined {
+  return isPrPreviewAvailable() ? previewMenuLabel : undefined;
 }
 
 // Pure template builder, so tests can cover it without Electron. macOS spells
@@ -458,15 +459,15 @@ function currentPreviewPr(): number | undefined {
 // Other platforms keep the role, whose expansion already ends with Close.
 // `shortcutOverrides` carries the renderer's customizable bindings (canonical
 // keymap format, keyed by action id); convertible ones show as accelerators
-// on the matching menu items. `previewPr` carries the active PR-preview
-// number (undefined = no preview → no exit entry).
+// on the matching menu items. `previewLabel` carries the active preview's
+// display label (`#306` or a branch/sha; undefined = no preview → no exit entry).
 export function menuTemplate(
   isMac: boolean,
   locale: TrayLocale,
   shortcutOverrides: Record<string, string | null> = {},
   suspension: MenuSuspension = false,
   tracing = false,
-  previewPr?: number,
+  previewLabel?: string,
 ): MenuItemConstructorOptions[] {
   const strings = MENU_STRINGS[locale];
   const appMenu: MenuItemConstructorOptions = {
@@ -560,12 +561,12 @@ export function menuTemplate(
     submenu: [
       // See the "PR preview exit entry" section above: this is the one exit
       // hatch the preview build can't swap away.
-      ...(previewPr === undefined
+      ...(previewLabel === undefined
         ? []
         : [
             {
               id: 'exit-pr-preview',
-              label: strings.exitPrPreview.replace('{pr}', String(previewPr)),
+              label: strings.exitPrPreview.replace('{pr}', previewLabel),
               // Works with the menu bar hidden (Windows keeps it hidden and
               // the preview build's own titlebar may not offer the native
               // menu buttons) — the accelerator is processed app-wide
@@ -816,9 +817,9 @@ export function windowsMenuTemplate(
   suspension: MenuSuspension = false,
   isDev = !app.isPackaged,
   tracing = false,
-  previewPr?: number,
+  previewLabel?: string,
 ): MenuItemConstructorOptions[] {
-  const base = menuTemplate(false, locale, shortcutOverrides, false, tracing, previewPr);
+  const base = menuTemplate(false, locale, shortcutOverrides, false, tracing, previewLabel);
   const appItems = (base[0]?.submenu ?? []) as MenuItemConstructorOptions[];
   const fileItems = (base[1]?.submenu ?? []) as MenuItemConstructorOptions[];
   const edit = base[2] as MenuItemConstructorOptions;
@@ -974,7 +975,7 @@ export function popupWindowsMenu(
 
 export function buildMenu(): void {
   const suspension = currentSuspension();
-  const previewPr = currentPreviewPr();
+  const previewLabel = currentPreviewLabel();
   applicationMenu = Menu.buildFromTemplate(
     process.platform === 'win32'
       ? windowsMenuTemplate(
@@ -983,7 +984,7 @@ export function buildMenu(): void {
           suspension,
           !app.isPackaged,
           getTraceRecorder().isRecording(),
-          previewPr,
+          previewLabel,
         )
       : menuTemplate(
           process.platform === 'darwin',
@@ -991,7 +992,7 @@ export function buildMenu(): void {
           menuShortcutOverrides,
           suspension,
           getTraceRecorder().isRecording(),
-          previewPr,
+          previewLabel,
         ),
   );
   Menu.setApplicationMenu(applicationMenu);

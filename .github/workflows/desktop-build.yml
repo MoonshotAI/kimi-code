@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: true
+      canary:
+        description: 'Kimi Code Canary 内测构建：只打 macOS arm64，版本号改为 <base>-canary.<run_number>，发布 GitHub prerelease'
+        required: false
+        type: boolean
+        default: false
       retention-days:
         description: 'Artifact 保留天数'
         required: false
@@ -67,21 +72,35 @@ env:
   SIGN_MACOS: ${{ inputs.sign-macos }}
 
 jobs:
+  # 动态矩阵：jobs.<id>.if 在 matrix 展开前求值、拿不到 matrix 上下文
+  #（之前 job 级 if 引用 matrix.target 把整个文件判了无效，push 全是 0s
+  # 幻影失败），所以平台过滤改走 fromJSON 动态矩阵。
+  # canary 内测构建只打 macOS arm64（Apple Silicon；Kimi Code Canary 不支持
+  # win/linux，内部也没有 Intel 机器）。
+  matrix-source:
+    name: matrix source
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+    steps:
+      - id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.canary }}" = "true" ]; then
+            echo 'targets=[{"os":"macos-15","target":"darwin-arm64"}]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'targets=[{"os":"macos-15","target":"darwin-arm64"},{"os":"macos-15-intel","target":"darwin-x64"},{"os":"windows-2025","target":"win32-x64"},{"os":"ubuntu-24.04","target":"linux-x64"}]' >> "$GITHUB_OUTPUT"
+          fi
+
   package:
     name: package (${{ matrix.target }})
+    needs: matrix-source
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-15
-            target: darwin-arm64
-          - os: macos-15-intel
-            target: darwin-x64
-          - os: windows-2025
-            target: win32-x64
-          - os: ubuntu-24.04
-            target: linux-x64
+        include: ${{ fromJSON(needs.matrix-source.outputs.targets) }}
 
     steps:
       - name: Checkout (with kimi-code submodule)
@@ -132,6 +151,24 @@ jobs:
           printf '%s' "$APPLE_NOTARIZATION_KEY_P8" | base64 -d > "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
+      - name: Stamp canary version (canary builds)
+        # Kimi Code Canary 内测构建：把版本号临时改为 <base>-canary.<run_number>
+        #（不回填仓库），产物文件名与 app.getVersion() 都带 canary 后缀，
+        # 用户能直接认出内测版；运行时也据此判定 canary 身份
+        #（apps/desktop/src/main/canary.ts 的 isCanaryVersion）。
+        if: inputs.canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "
+            const fs = require('fs');
+            const p = 'apps/desktop/package.json';
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            pkg.version = pkg.version.split('-')[0] + '-canary.${{ github.run_number }}';
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+            console.log('canary version:', pkg.version);
+          "
+
       - name: Build & package desktop app
         shell: bash
         env:
@@ -142,6 +179,9 @@ jobs:
           KIMI_DESKTOP_NOTARIZE: ${{ (runner.os == 'macOS' && env.SIGN_MACOS == 'true') && 'true' || 'false' }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+          # canary=true 时 electron-builder 切到 Kimi Code Canary 身份
+          #（独立 appId/productName/黄图标，electron-builder.config.cjs）。
+          KIMI_DESKTOP_CANARY: ${{ inputs.canary && 'true' || 'false' }}
         run: pnpm --filter kimi-code-app run dist
 
       - name: Rename mac updater metadata per arch (macOS)
@@ -181,3 +221,48 @@ jobs:
             apps/desktop/dist-app/*.yml
             apps/desktop/dist-app/*.blockmap
           if-no-files-found: ignore
+
+  # Kimi Code Canary 内测发布：canary=true 时把 macOS 产物以 GitHub prerelease
+  # 形式发布（tag v<base>-canary.<run_number>）。canary 通道不走 CDN /
+  # latest*.yml 指针，客户端经本地 gh CLI 查 prerelease 并手动下载
+  #（见 apps/desktop/docs/canary.md）。
+  publish-canary:
+    name: Publish canary prerelease
+    needs: package
+    if: inputs.canary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create / upload
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-app-*
+          path: dist-desktop-canary
+          merge-multiple: true
+
+      - name: Create GitHub prerelease and upload installers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base="$(node -p "require('./apps/desktop/package.json').version.split('-')[0]")"
+          version="${base}-canary.${{ github.run_number }}"
+          tag="v${version}"
+          echo "==> canary tag: ${tag}"
+          ls -la dist-desktop-canary
+          gh release create "$tag" \
+            --target "${GITHUB_SHA}" \
+            --title "Kimi Code Canary ${version}" \
+            --notes "Kimi Code Canary 内部内测构建，使用说明见 apps/desktop/docs/canary.md。" \
+            --prerelease
+          gh release upload "$tag" dist-desktop-canary/* --clobber

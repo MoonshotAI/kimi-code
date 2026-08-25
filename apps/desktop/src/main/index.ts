@@ -8,6 +8,16 @@ import { app } from 'electron';
 import { initMainLogging } from './log';
 import { registerRendererScheme } from './protocol';
 import { startShellEnvProbe } from './shell-env';
+import { isCanaryVersion } from './release-channel';
+
+// Kimi Code Canary：canary 构建在启动最早期改名。改名让 userData 随之分离
+//（~/Library/Application Support/Kimi Code Canary）——canary 由此获得与正式版
+// 并存的独立单实例锁与 app 级状态（窗口/onboarding），可双开。必须在
+// initMainLogging（解析日志目录）与单实例锁（锁按 userData 生效）之前。
+// 正式版刻意不改名（menu.ts：保住存量用户的 name 派生 userData 目录）。
+if (isCanaryVersion(app.getVersion())) {
+  app.setName('Kimi Code Canary');
+}
 
 initMainLogging();
 // registerSchemesAsPrivileged is a no-op once Electron is ready, so this

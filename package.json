@@ -11,6 +11,7 @@
     "build": "pnpm -r run build",
     "dev:desktop": "pnpm --filter kimi-code-app run dev",
     "dev:desktop:debug": "pnpm --filter kimi-code-app run dev -- --remote-debugging-port=9222",
+    "dev:desktop:canary": "KIMI_DESKTOP_CANARY=true pnpm --filter kimi-code-app run dev",
     "dev:web": "pnpm --filter kimi-code-web run dev",
     "sync:web": "node scripts/sync-web-to-kimi-code.mjs",
     "package:macos": "bash apps/desktop/scripts/package-local-macos.sh",

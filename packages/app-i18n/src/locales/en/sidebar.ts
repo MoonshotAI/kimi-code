@@ -118,6 +118,16 @@ export default {
   updateWhatsNew: 'What’s new',
   updateBackground: 'Download in Background',
   updateAutoDownload: 'Automatically download and install updates',
+  // Kimi Code Canary update dialog: same pill/dialog skeleton, different
+  // actions (manual drag-install after download; no auto-install).
+  canaryAvailable: 'Canary v{version} available',
+  canaryReady: 'Canary v{version} ready',
+  canaryDownload: 'Download',
+  canaryDownloading: 'Downloading…',
+  canaryDownloaded: 'Downloaded',
+  canaryOpenInstaller: 'Open Installer',
+  canaryClose: 'Close',
+  canaryDownloadedHint: 'The installer has been downloaded and mounted. Drag Kimi Code Canary into Applications to finish the update.',
   // rc (remote control) device switcher at the top of the sidebar.
   rcSelectDevice: 'Select device',
   rcCurrentDevice: 'Current device: {name}',

@@ -14,6 +14,11 @@
 //   apps/desktop/build/icon-dark.png  512² dark-tile Dock variant (runtime theme swap)
 //   apps/desktop/build/icon.ico   7 frames (16–256), Windows
 //   apps/desktop/build/icon.icns  10-entry iconset via iconutil (macOS only)
+//   apps/desktop/build/icon-canary.png / icon-canary-dark.png / icon-canary.icns
+//                                 Kimi Code Canary 内测版图标：小蓝 → 小黄
+//                                （机器人标蓝色系映射为金丝雀黄色系，tile 与
+//                                 终端条原色不变）。electron-builder 在
+//                                 KIMI_DESKTOP_CANARY=true 时选用（electron-builder.config.cjs）
 //   apps/desktop/build/tray.png, tray@2x.png         Linux tray (white silhouette)
 //   apps/desktop/build/trayTemplate.png, trayTemplate@2x.png  macOS menu-bar template
 //   apps/desktop/build/tray.ico   4 frames (16–48), Windows tray (white tile)
@@ -221,6 +226,62 @@ async function buildAppIcons() {
 }
 
 // ---------------------------------------------------------------------------
+// Canary icons (Kimi Code Canary 内测版)
+// ---------------------------------------------------------------------------
+
+/** 小蓝 → 小黄：机器人标的蓝色系全部映射为金丝雀黄色系（亮度递进与原
+    渐变一致），tile 与终端条保持原色。 */
+const CANARY_RECOLORS = [
+  ['#117DFB', '#F0A500'], // 面部渐变（中心）
+  ['#449BFF', '#FFC61A'], // 面部渐变（中段）
+  ['#77B6FF', '#FFD964'], // 面部渐变（边缘）
+  ['#2389FF', '#FFC61A'], // 头部底色
+  ['#1783FF', '#F0A500'], // 头顶圆点
+  ['#007CFF', '#FFC61A'], // 终端条内光标
+];
+
+function canaryRecolor(svg, srcName) {
+  let out = svg;
+  for (const [from, to] of CANARY_RECOLORS) {
+    if (!out.includes(from)) throw new Error(`${srcName}: canary recolor source ${from} not found`);
+    out = out.split(from).join(to);
+  }
+  return out;
+}
+
+async function buildCanaryIcons() {
+  // Same tile composition as the stable icon — white/black tile untouched,
+  // only the robot mark is recolored (小蓝 → 小黄).
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brand-canary-'));
+  const recolor = (srcName) => {
+    const srcPath = path.join(KIT, srcName);
+    const out = path.join(tmpDir, `canary-${srcName}`);
+    fs.writeFileSync(out, canaryRecolor(fs.readFileSync(srcPath, 'utf8'), srcName));
+    return out;
+  };
+  const lightCanvas = await composeIconCanvas(recolor('White Background.svg'), '#ffffff');
+  const darkCanvas = await composeIconCanvas(recolor('Black Background.svg'), '#000000');
+  const resize = (canvas) => (s) => sharp(canvas).resize(s, s, { kernel: 'lanczos3' }).png().toBuffer();
+
+  // Dock runtime-swap pair (dock-icon.ts): 黄机器人白砖（light）/ 黑砖（dark），
+  // 与正式版同构图、仅以机器人标颜色区分。
+  save(path.join(BUILD, 'icon-canary.png'), await resize(lightCanvas)(512));
+  save(path.join(BUILD, 'icon-canary-dark.png'), await resize(darkCanvas)(512));
+
+  const iconset = path.join(tmpDir, 'icon.iconset');
+  fs.mkdirSync(iconset, { recursive: true });
+  const resizeLight = resize(lightCanvas);
+  for (const base of [16, 32, 128, 256, 512]) {
+    fs.writeFileSync(`${iconset}/icon_${base}x${base}.png`, await resizeLight(base));
+    fs.writeFileSync(`${iconset}/icon_${base}x${base}@2x.png`, await resizeLight(base * 2));
+  }
+  const icnsOut = path.join(BUILD, 'icon-canary.icns');
+  const res = spawnSync('iconutil', ['-c', 'icns', iconset, '-o', icnsOut], { stdio: 'inherit' });
+  if (res.status !== 0) throw new Error('iconutil (canary) failed');
+  written.push(path.relative(ROOT, icnsOut));
+}
+
+// ---------------------------------------------------------------------------
 // Tray icons
 // ---------------------------------------------------------------------------
 
@@ -416,6 +477,7 @@ function buildComponentMarks() {
 // ---------------------------------------------------------------------------
 
 await buildAppIcons();
+await buildCanaryIcons();
 await buildTrayIcons();
 buildComponentMarks();
 console.log('Regenerated brand resources:');

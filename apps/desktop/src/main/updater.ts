@@ -35,6 +35,7 @@ import { autoUpdater } from 'electron-updater';
 
 import { IPC } from './ipc-channels';
 import { log } from './log';
+import { isCanaryVersion } from './release-channel';
 import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from './region';
 import { isUpdateAutoDownloadEnabled, setUpdateAutoDownloadEnabled } from './ui-state';
 import { markQuitting, sendToRenderer } from './window';
@@ -560,6 +561,12 @@ export async function fetchReleaseNotes(version: string): Promise<ReleaseNotes> 
 let controller: UpdateController | null = null;
 
 export function initAutoUpdater(): void {
+  // Canary 构建禁用 CDN 自动更新：stable 的 latest*.yml 指针版本在 semver
+  // 上大于 x.y.z-canary.n，不禁用会把 canary「更新」回正式版（甚至退出时
+  // 静默替换）。canary 的更新走 canary.ts 的 gh 通道。
+  if (isCanaryVersion(app.getVersion())) {
+    return;
+  }
   controller = startAutoUpdater({
     updater: autoUpdater,
     send: (status) => sendToRenderer(IPC.updateStatus, status),

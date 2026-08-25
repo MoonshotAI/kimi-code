@@ -61,6 +61,8 @@ export const STORAGE_KEYS = {
   dockIconChoice: 'kimi-web.dock-icon-choice',
   // Desktop auto-update: version the user chose to skip (renderer-local).
   updateSkippedVersion: 'kimi-web.update-skipped-version',
+  // Kimi Code Canary: canary version the user chose to skip (renderer-local).
+  canarySkippedVersion: 'kimi-web.canary-skipped-version',
   // deprecated cleanups (kept so the removals still fire for old users)
   // planMode mirrored the daemon FACT pre-intent; the armed intent now lives
   // in planArmed and the fact re-folds from /status — never load the old map.

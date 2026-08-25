@@ -24,6 +24,10 @@ declare global {
   // Injected by Vite `define` (from @moonshot-ai/vite-preset): the bundle's
   // build time (ISO), shown in settings → advanced.
   const __KIMI_BUILD_TIME__: string;
+
+  // Injected by Vite `define` (from @moonshot-ai/vite-preset): the bundle's
+  // source commit (full sha; '' when git is unavailable).
+  const __KIMI_COMMIT_SHA__: string;
 }
 
 declare module '*.vue' {

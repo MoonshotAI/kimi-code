@@ -35,6 +35,120 @@ export type UpdateCheckResult =
 
 const UPDATE_CHECK_OUTCOMES = new Set(['available', 'latest', 'unsupported', 'error']);
 
+// Mirror of the main-process CanaryStatus (canary.ts). Structurally
+// duplicated like UpdateStatus above.
+export type CanaryStatus = {
+  state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
+  version?: string;
+  tag?: string;
+  releaseDate?: string;
+  path?: string;
+  message?: string;
+};
+
+const CANARY_STATES = new Set(['idle', 'available', 'downloading', 'downloaded', 'error']);
+
+export type CanaryGhState = 'ok' | 'missing' | 'unauthenticated' | 'error';
+
+const CANARY_GH_STATES = new Set(['ok', 'missing', 'unauthenticated', 'error']);
+
+/** Canary channel environment info (canary.ts CanaryInfo). */
+export type CanaryInfo = { enabled: boolean; isCanaryBuild: boolean; gh: CanaryGhState; actionsUrl: string };
+
+/** Outcome of a settings-row manual canary check (canary.ts CanaryCheckResult). */
+export type CanaryCheckResult =
+  | { outcome: 'available'; version?: string }
+  | { outcome: 'latest' }
+  | { outcome: 'gh-missing' }
+  | { outcome: 'gh-unauthenticated' }
+  | { outcome: 'error'; message: string };
+
+const CANARY_CHECK_OUTCOMES = new Set(['available', 'latest', 'gh-missing', 'gh-unauthenticated', 'error']);
+
+export type CanaryTriggerResult = { ok: boolean; error?: string };
+
+function asCanaryStatus(value: unknown): CanaryStatus | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as {
+    state?: unknown;
+    version?: unknown;
+    tag?: unknown;
+    releaseDate?: unknown;
+    path?: unknown;
+    message?: unknown;
+  };
+  if (typeof candidate.state !== 'string' || !CANARY_STATES.has(candidate.state)) {
+    return null;
+  }
+  const status: CanaryStatus = { state: candidate.state as CanaryStatus['state'] };
+  if (typeof candidate.version === 'string') status.version = candidate.version;
+  if (typeof candidate.tag === 'string') status.tag = candidate.tag;
+  if (typeof candidate.releaseDate === 'string') status.releaseDate = candidate.releaseDate;
+  if (typeof candidate.path === 'string') status.path = candidate.path;
+  if (typeof candidate.message === 'string') status.message = candidate.message;
+  return status;
+}
+
+function asCanaryInfo(value: unknown): CanaryInfo | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { enabled?: unknown; isCanaryBuild?: unknown; gh?: unknown; actionsUrl?: unknown };
+  if (
+    typeof candidate.enabled !== 'boolean' ||
+    typeof candidate.isCanaryBuild !== 'boolean' ||
+    typeof candidate.gh !== 'string' ||
+    !CANARY_GH_STATES.has(candidate.gh) ||
+    typeof candidate.actionsUrl !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    enabled: candidate.enabled,
+    isCanaryBuild: candidate.isCanaryBuild,
+    gh: candidate.gh as CanaryGhState,
+    actionsUrl: candidate.actionsUrl,
+  };
+}
+
+function asCanaryCheckResult(value: unknown): CanaryCheckResult | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { outcome?: unknown; version?: unknown; message?: unknown };
+  if (typeof candidate.outcome !== 'string' || !CANARY_CHECK_OUTCOMES.has(candidate.outcome)) {
+    return null;
+  }
+  switch (candidate.outcome) {
+    case 'available':
+      return typeof candidate.version === 'string'
+        ? { outcome: 'available', version: candidate.version }
+        : { outcome: 'available' };
+    case 'error':
+      return {
+        outcome: 'error',
+        message: typeof candidate.message === 'string' ? candidate.message : 'unknown error',
+      };
+    default:
+      return { outcome: candidate.outcome as 'latest' | 'gh-missing' | 'gh-unauthenticated' };
+  }
+}
+
+function asCanaryTriggerResult(value: unknown): CanaryTriggerResult | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { ok?: unknown; error?: unknown };
+  if (typeof candidate.ok !== 'boolean') {
+    return null;
+  }
+  return candidate.ok
+    ? { ok: true }
+    : { ok: false, error: typeof candidate.error === 'string' ? candidate.error : 'unknown error' };
+}
+
 /** Pending-attention totals for the tray badge (main/tray.ts TrayAttention,
     structurally duplicated — preload keeps its own literal surface). */
 export type TrayAttentionItem = {
@@ -205,16 +319,30 @@ export type NativeTerminalCreateOptions = { cwd?: string; cols?: number; rows?: 
 export type PrPreviewState = {
   phase: 'idle' | 'fetching' | 'installing' | 'building' | 'active' | 'error';
   pr?: number;
+  /** Raw ref of the current/last ref operation (branch/tag/sha), for retry. */
+  refTarget?: string;
+  /** Display label of the current/last operation (`#306` or the ref). */
+  label?: string;
   message?: string;
   /** Live output tail of the in-flight stage (throttled pushes). */
   logTail?: string;
   /** PR whose build the window is actually serving right now, independent of
    *  the display phase (a failed rebuild keeps the previous preview serving). */
   servingPr?: number;
+  /** servingPr 的 ref 版：正在服务的是一次 ref 预览时的展示标签。 */
+  servingLabel?: string;
   /** Stage a stage failure came from, for the dialog's localized stage line. */
   errorStage?: 'fetch' | 'install' | 'build';
   /** The stage was killed by the no-output watchdog (not a plain failure). */
   errorHung?: boolean;
+};
+
+/** Preview target for prPreviewStart: a PR number or a free-form ref. */
+export type PrPreviewTarget = { kind: 'pr'; pr: number } | { kind: 'ref'; ref: string };
+
+export type PrPreviewRefList = {
+  prs: Array<{ number: number; title: string }>;
+  branches: string[];
 };
 
 function asPrPreviewState(value: unknown): PrPreviewState | null {
@@ -222,9 +350,12 @@ function asPrPreviewState(value: unknown): PrPreviewState | null {
   const candidate = value as {
     phase?: unknown;
     pr?: unknown;
+    refTarget?: unknown;
+    label?: unknown;
     message?: unknown;
     logTail?: unknown;
     servingPr?: unknown;
+    servingLabel?: unknown;
     errorStage?: unknown;
     errorHung?: unknown;
   };
@@ -241,11 +372,14 @@ function asPrPreviewState(value: unknown): PrPreviewState | null {
   }
   const state: PrPreviewState = { phase: candidate.phase };
   if (typeof candidate.pr === 'number' && Number.isInteger(candidate.pr)) state.pr = candidate.pr;
+  if (typeof candidate.refTarget === 'string') state.refTarget = candidate.refTarget;
+  if (typeof candidate.label === 'string') state.label = candidate.label;
   if (typeof candidate.message === 'string') state.message = candidate.message;
   if (typeof candidate.logTail === 'string') state.logTail = candidate.logTail;
   if (typeof candidate.servingPr === 'number' && Number.isInteger(candidate.servingPr)) {
     state.servingPr = candidate.servingPr;
   }
+  if (typeof candidate.servingLabel === 'string') state.servingLabel = candidate.servingLabel;
   if (
     candidate.errorStage === 'fetch' ||
     candidate.errorStage === 'install' ||
@@ -255,6 +389,22 @@ function asPrPreviewState(value: unknown): PrPreviewState | null {
   }
   if (candidate.errorHung === true) state.errorHung = true;
   return state;
+}
+
+function asPrPreviewRefList(value: unknown): PrPreviewRefList | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as { prs?: unknown; branches?: unknown };
+  if (!Array.isArray(candidate.prs) || !Array.isArray(candidate.branches)) return null;
+  const prs: PrPreviewRefList['prs'] = [];
+  for (const entry of candidate.prs) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { number, title } = entry as { number?: unknown; title?: unknown };
+    if (typeof number === 'number' && Number.isInteger(number) && typeof title === 'string') {
+      prs.push({ number, title });
+    }
+  }
+  const branches = candidate.branches.filter((b): b is string => typeof b === 'string');
+  return { prs, branches };
 }
 
 function asNativeTerminalInfo(value: unknown): NativeTerminalInfo | null {
@@ -324,6 +474,21 @@ export type KimiDesktopApi = {
    *  ui-state.json; default false — opt-in). */
   getUpdateAutoDownload: () => Promise<boolean>;
   setUpdateAutoDownload: (enabled: boolean) => Promise<void>;
+  /** Kimi Code Canary channel (desktop-only): gh-driven prerelease checks.
+   *  Status pushes come through `onCanaryStatus`; the section hides entirely
+   *  when `CanaryInfo.enabled` is false (stable build) or the bridge is
+   *  missing (plain web). */
+  getCanaryStatus: () => Promise<CanaryStatus>;
+  onCanaryStatus: (cb: (status: CanaryStatus) => void) => () => void;
+  getCanaryInfo: () => Promise<CanaryInfo>;
+  /** Settings-row manual check; resolves with the outcome. */
+  checkCanaryUpdate: () => Promise<CanaryCheckResult>;
+  /** Download the available canary dmg into ~/Downloads and mount it. */
+  downloadCanaryUpdate: () => Promise<void>;
+  /** Re-open the already-downloaded dmg. */
+  openCanaryDownload: () => Promise<void>;
+  /** Fire the canary build workflow (`gh workflow run … -f canary=true`). */
+  triggerCanaryBuild: () => Promise<CanaryTriggerResult>;
   /** Push the pending-attention totals (unread sessions + awaiting approvals +
    *  awaiting questions) and the per-session attention list so the tray can
    *  render the macOS menu-bar count and the clickable session menu
@@ -393,14 +558,17 @@ export type KimiDesktopApi = {
   closeNativeTerminal: (id: string) => void;
   onNativeTerminalOutput: (cb: (id: string, data: string) => void) => () => void;
   onNativeTerminalExit: (cb: (id: string, exitCode: number | null) => void) => () => void;
-  /** PR preview (dev-only): build a code-app PR's renderer in an isolated
-   *  worktree and swap the window onto it. getPrPreviewState resolves null in
-   *  packaged builds — the renderer hides the entry point on that signal.
-   *  Transitions stream via onPrPreviewEvent. */
+  /** PR preview (dev / Kimi Code Canary): build a code-app PR/branch/sha's
+   *  renderer in an isolated worktree and swap the window onto it.
+   *  getPrPreviewState resolves null on stable packaged builds — the renderer
+   *  hides the entry point on that signal. Transitions stream via
+   *  onPrPreviewEvent. */
   getPrPreviewState: () => Promise<PrPreviewState | null>;
-  prPreviewStart: (pr: number) => Promise<PrPreviewState>;
+  prPreviewStart: (target: number | PrPreviewTarget) => Promise<PrPreviewState>;
   prPreviewStop: () => Promise<PrPreviewState>;
   prPreviewCancel: () => Promise<PrPreviewState>;
+  /** Open PRs + remote branches for the picker (each half best-effort). */
+  listPrPreviewRefs: () => Promise<PrPreviewRefList>;
   /** Manual cache reclaim: removes every preview worktree except the
    *  served/in-flight ones. Resolves with the number of removed dirs. */
   prPreviewCleanup: () => Promise<number>;
@@ -480,6 +648,34 @@ export const api: KimiDesktopApi = {
       return;
     }
     await ipcRenderer.invoke('kimi:update-set-auto-download', enabled);
+  },
+  getCanaryStatus: async () => {
+    const status = asCanaryStatus(await ipcRenderer.invoke('kimi:canary-get-status'));
+    return status ?? { state: 'idle' };
+  },
+  onCanaryStatus: (cb) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      const status = asCanaryStatus(payload);
+      if (status !== null) {
+        cb(status);
+      }
+    };
+    ipcRenderer.on('kimi:canary-status', listener);
+    return () => ipcRenderer.removeListener('kimi:canary-status', listener);
+  },
+  getCanaryInfo: async () => {
+    const info = asCanaryInfo(await ipcRenderer.invoke('kimi:canary-get-info'));
+    return info ?? { enabled: false, isCanaryBuild: false, gh: 'error', actionsUrl: '' };
+  },
+  checkCanaryUpdate: async () => {
+    const result = asCanaryCheckResult(await ipcRenderer.invoke('kimi:canary-check'));
+    return result ?? { outcome: 'error', message: 'invalid canary-check response' };
+  },
+  downloadCanaryUpdate: () => ipcRenderer.invoke('kimi:canary-download'),
+  openCanaryDownload: () => ipcRenderer.invoke('kimi:canary-open'),
+  triggerCanaryBuild: async () => {
+    const result = asCanaryTriggerResult(await ipcRenderer.invoke('kimi:canary-trigger'));
+    return result ?? { ok: false, error: 'invalid canary-trigger response' };
   },
   setTrayAttention: (attention) => {
     if (asTrayAttention(attention)) {
@@ -624,11 +820,27 @@ export const api: KimiDesktopApi = {
     return () => ipcRenderer.removeListener('kimi:terminal-exit', listener);
   },
   getPrPreviewState: async () => asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-get-state')),
-  prPreviewStart: async (pr) => {
-    if (typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1 || pr > 999999) {
-      throw new Error('pr-preview-start: invalid PR number');
+  prPreviewStart: async (target) => {
+    let payload: number | PrPreviewTarget;
+    if (typeof target === 'number') {
+      if (!Number.isInteger(target) || target < 1 || target > 999999) {
+        throw new Error('pr-preview-start: invalid PR number');
+      }
+      payload = target;
+    } else if (target !== null && typeof target === 'object' && target.kind === 'pr') {
+      if (typeof target.pr !== 'number' || !Number.isInteger(target.pr) || target.pr < 1 || target.pr > 999999) {
+        throw new Error('pr-preview-start: invalid PR number');
+      }
+      payload = { kind: 'pr', pr: target.pr };
+    } else if (target !== null && typeof target === 'object' && target.kind === 'ref') {
+      if (typeof target.ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/.test(target.ref) || target.ref.includes('..')) {
+        throw new Error('pr-preview-start: invalid ref');
+      }
+      payload = { kind: 'ref', ref: target.ref };
+    } else {
+      throw new Error('pr-preview-start: invalid target');
     }
-    const state = asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-start', pr));
+    const state = asPrPreviewState(await ipcRenderer.invoke('kimi:pr-preview-start', payload));
     if (state === null) {
       throw new Error('pr-preview-start: invalid response from main process');
     }
@@ -647,6 +859,10 @@ export const api: KimiDesktopApi = {
       throw new Error('pr-preview-cancel: invalid response from main process');
     }
     return state;
+  },
+  listPrPreviewRefs: async () => {
+    const list = asPrPreviewRefList(await ipcRenderer.invoke('kimi:pr-preview-list-refs'));
+    return list ?? { prs: [], branches: [] };
   },
   prPreviewCleanup: async () => {
     const removed: unknown = await ipcRenderer.invoke('kimi:pr-preview-cleanup');

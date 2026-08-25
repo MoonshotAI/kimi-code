@@ -36,8 +36,9 @@ import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } fro
 import { ErrorBoundary } from '@moonshot-ai/app-components';
 import { SearchSessionsDialog } from '@moonshot-ai/app-components';
 import UpdateIndicator from './UpdateIndicator.vue';
-// Desktop-only (not synced to web — docs/native-todos.md): PR preview pill.
-import PrPreviewIndicator from './PrPreviewIndicator.vue';
+// Desktop-only（docs/native-todos.md 的分叉块）：统一 debug 入口（合并原
+// Canary 徽章与 PR 预览 pill）。
+import DebugMenu from './DebugMenu.vue';
 import UserMenu from './UserMenu.vue';
 import { WorkspaceGroup } from '@moonshot-ai/app-components';
 import { PinnedSessionList } from '@moonshot-ai/app-components';
@@ -1346,6 +1347,10 @@ onBeforeUnmount(() => {
           </template>
         </div>
         <div class="ch-tail">
+          <!-- Desktop-only 分叉块（与 UpdateIndicator 同块，docs/native-todos.md）：
+               统一的 debug 入口（合并了原 Canary 徽章与 PR 预览 pill），
+               dev / canary 构建才渲染。 -->
+          <DebugMenu />
           <IconButton
             v-if="!isMacosDesktop"
             class="ch-collapse"
@@ -1357,9 +1362,6 @@ onBeforeUnmount(() => {
             <Icon name="panel-collapse" />
           </IconButton>
           <UpdateIndicator />
-          <!-- Desktop-only (not synced to web — docs/native-todos.md): PR
-               preview pill; renders only in dev builds with the bridge. -->
-          <PrPreviewIndicator />
         </div>
       </div>
 

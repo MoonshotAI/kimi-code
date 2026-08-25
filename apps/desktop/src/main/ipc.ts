@@ -17,6 +17,14 @@ import {
   requestUpdateInstall,
   setUpdateAutoDownload,
 } from './updater';
+import {
+  getCanaryInfo,
+  getCanaryStatus,
+  requestCanaryCheck,
+  requestCanaryDownload,
+  requestCanaryOpen,
+  requestCanaryTrigger,
+} from './canary';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setContextMenuLocale } from './context-menu';
 import { asJumpListWorkspaces, setJumpListLocale, updateJumpList } from './jump-list';
@@ -30,10 +38,14 @@ import {
   cleanupPreviews,
   getActiveDistRoot as getPrPreviewDistRoot,
   getState as getPrPreviewState,
+  isPrPreviewAvailable,
+  isValidPreviewRef,
+  listPreviewRefs,
   onStateChange as onPrPreviewStateChange,
   startPreview,
   stopPreview,
   whenBuildSettled,
+  type PreviewTarget,
 } from './pr-preview';
 import { log, redactUrlForLog } from './log';
 import { updateServerRegionToken } from './region';
@@ -178,6 +190,15 @@ export function registerIpcHandlers(): void {
       setUpdateAutoDownload(enabled);
     }
   });
+  // Kimi Code Canary 内测通道（canary.ts）：gh 驱动的检查/下载/触发。
+  // 状态推送走 IPC.canaryStatus（app.ts 装配）；这里只接 renderer 的动作。
+  // 正式版构建 controller 为 null，全部降级为 idle / disabled 结果。
+  ipcMain.handle(IPC.canaryGetStatus, () => getCanaryStatus());
+  ipcMain.handle(IPC.canaryGetInfo, () => getCanaryInfo());
+  ipcMain.handle(IPC.canaryCheck, () => requestCanaryCheck());
+  ipcMain.handle(IPC.canaryDownload, () => requestCanaryDownload());
+  ipcMain.handle(IPC.canaryOpen, () => requestCanaryOpen());
+  ipcMain.handle(IPC.canaryTrigger, () => requestCanaryTrigger());
   // Tray attention badge: the renderer pushes {unread, approvals, questions}
   // totals whenever they change (useTrayAttention.ts); tray.ts renders them as
   // the macOS menu-bar count + tooltip/menu breakdown. Malformed payloads drop.
@@ -371,19 +392,38 @@ export function registerIpcHandlers(): void {
     if (typeof id !== 'string' || id === '') return;
     getTerminalManager().close(id);
   });
-  // PR preview (dev-only, main/pr-preview.ts): build a code-app PR's renderer
-  // in an isolated worktree and swap the window onto it. The feature reports
-  // itself unavailable in packaged builds by answering get-state with null —
-  // the renderer hides the entry point on that signal (and on a missing
-  // bridge, i.e. plain web).
+  // PR preview (dev / Kimi Code Canary, main/pr-preview.ts): build a code-app
+  // PR/branch/sha's renderer in an isolated worktree and swap the window onto
+  // it. The feature reports itself unavailable on stable packaged builds by
+  // answering get-state with null — the renderer hides the entry point on
+  // that signal (and on a missing bridge, i.e. plain web).
   onPrPreviewStateChange((state) => sendToRenderer(IPC.prPreviewEvent, state));
-  ipcMain.handle(IPC.prPreviewGetState, () => (app.isPackaged ? null : getPrPreviewState()));
-  ipcMain.handle(IPC.prPreviewStart, async (_event, pr: unknown) => {
-    if (typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1 || pr > 999999) {
-      throw new Error('pr-preview-start: invalid PR number');
+  ipcMain.handle(IPC.prPreviewGetState, () => (isPrPreviewAvailable() ? getPrPreviewState() : null));
+  ipcMain.handle(IPC.prPreviewStart, async (_event, payload: unknown) => {
+    let target: PreviewTarget;
+    if (typeof payload === 'number' && Number.isInteger(payload) && payload >= 1 && payload <= 999999) {
+      // Legacy shape: a bare PR number.
+      target = { kind: 'pr', pr: payload };
+    } else if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
+      const raw = payload as { kind?: unknown; pr?: unknown; ref?: unknown };
+      if (
+        raw.kind === 'pr' &&
+        typeof raw.pr === 'number' &&
+        Number.isInteger(raw.pr) &&
+        raw.pr >= 1 &&
+        raw.pr <= 999999
+      ) {
+        target = { kind: 'pr', pr: raw.pr };
+      } else if (raw.kind === 'ref' && typeof raw.ref === 'string' && isValidPreviewRef(raw.ref)) {
+        target = { kind: 'ref', ref: raw.ref };
+      } else {
+        throw new Error('pr-preview-start: invalid target');
+      }
+    } else {
+      throw new Error('pr-preview-start: invalid target');
     }
     const distRootBefore = getPrPreviewDistRoot();
-    const state = await startPreview(pr);
+    const state = await startPreview(target);
     // Reload only when a NEW build actually swapped the served dist: a cancel
     // restores phase 'active' with the old root, and reloading then would
     // needlessly nuke the preview renderer's transient UI state.
@@ -393,6 +433,7 @@ export function registerIpcHandlers(): void {
     }
     return state;
   });
+  ipcMain.handle(IPC.prPreviewListRefs, () => listPreviewRefs());
   ipcMain.handle(IPC.prPreviewStop, async () => {
     stopPreview();
     // The state flips at signal time, but `running` clears only when the
@@ -411,5 +452,5 @@ export function registerIpcHandlers(): void {
   // Manual cache reclaim (the dialog's cleanup button): removes every preview
   // worktree of this clone bucket except the served/in-flight ones. Resolves
   // with the number of removed dirs.
-  ipcMain.handle(IPC.prPreviewCleanup, () => (app.isPackaged ? 0 : cleanupPreviews()));
+  ipcMain.handle(IPC.prPreviewCleanup, () => (isPrPreviewAvailable() ? cleanupPreviews() : 0));
 }

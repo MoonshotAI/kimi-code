@@ -2,8 +2,20 @@ import type { Plugin, UserConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import Icons from 'unplugin-icons/vite';
 import { FileSystemIconLoader } from 'unplugin-icons/loaders';
+import { execFileSync } from 'node:child_process';
 
 const RAW_ICON_PREFIX = '\0kimi-raw-icon:';
+
+/** The repo commit the bundle is built from (full sha; '' when git is
+    unavailable — e.g. an exported source tree). Used by the debug menu's
+    build info. */
+function resolveCommitSha(): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
 
 function rawIconPlugin(icons: Plugin): Plugin {
   return {
@@ -58,6 +70,9 @@ export function kimiRendererViteConfig(opts: KimiRendererViteOptions): UserConfi
       // start). Provided by the preset so the web and desktop renderers —
       // which share the components referencing it — stay in lockstep.
       __KIMI_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+      // Bundle source commit (full sha, '' when unavailable) — the debug
+      // menu's build info.
+      __KIMI_COMMIT_SHA__: JSON.stringify(resolveCommitSha()),
       ...defines,
     },
     build: {

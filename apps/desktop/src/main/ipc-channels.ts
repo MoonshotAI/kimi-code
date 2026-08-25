@@ -22,6 +22,13 @@ export const IPC = {
   updateInstall: 'kimi:update-install',
   updateGetAutoDownload: 'kimi:update-get-auto-download',
   updateSetAutoDownload: 'kimi:update-set-auto-download',
+  canaryStatus: 'kimi:canary-status',
+  canaryGetStatus: 'kimi:canary-get-status',
+  canaryGetInfo: 'kimi:canary-get-info',
+  canaryCheck: 'kimi:canary-check',
+  canaryDownload: 'kimi:canary-download',
+  canaryOpen: 'kimi:canary-open',
+  canaryTrigger: 'kimi:canary-trigger',
   trayAttention: 'kimi:tray-attention',
   traySelectSession: 'kimi:tray-select-session',
   dockIconChoice: 'kimi:dock-icon-choice',
@@ -50,6 +57,7 @@ export const IPC = {
   prPreviewStop: 'kimi:pr-preview-stop',
   prPreviewCancel: 'kimi:pr-preview-cancel',
   prPreviewGetState: 'kimi:pr-preview-get-state',
+  prPreviewListRefs: 'kimi:pr-preview-list-refs',
   prPreviewCleanup: 'kimi:pr-preview-cleanup',
   prPreviewEvent: 'kimi:pr-preview-event',
 } as const;
@@ -74,6 +82,7 @@ export type RendererEventChannel =
   | typeof IPC.shortcut
   | typeof IPC.fullscreenChanged
   | typeof IPC.updateStatus
+  | typeof IPC.canaryStatus
   | typeof IPC.traySelectSession
   | typeof IPC.launchAction
   | typeof IPC.deepLinkAuth

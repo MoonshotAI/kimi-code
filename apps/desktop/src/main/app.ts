@@ -15,6 +15,7 @@ import { registerIpcHandlers } from './ipc';
 import { killAllTerminals } from './terminal';
 import { killActiveBuild, sweepStalePreviews } from './pr-preview';
 import { initAutoUpdater } from './updater';
+import { initCanaryChannel } from './canary';
 import { parseLaunchArgs } from './jump-list';
 import { handleDeepLink, extractDeepLink, registerDeepLinkScheme } from './deep-link';
 import { trackDesktopEvent } from './track';
@@ -207,6 +208,9 @@ export function main(): void {
     // After the window exists: update statuses push to the renderer. No-op in
     // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
     initAutoUpdater();
+    // Canary 内测通道（canary 构建 / dev 启用，正式版构建内部自判 no-op）：
+    // gh 驱动的检查循环，状态同样推送 renderer（侧栏黄 pill + 设置页）。
+    initCanaryChannel((status) => sendToRenderer(IPC.canaryStatus, status));
     // Launch flags from the very first invocation (Jump List item click).
     forwardLaunchArgs(process.argv);
     for (const argv of pendingSecondInstanceArgv.splice(0)) {

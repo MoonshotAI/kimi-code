@@ -23,12 +23,24 @@ const { execFileSync } = require('node:child_process');
 
 const notarize = process.env.KIMI_DESKTOP_NOTARIZE === 'true';
 
+// Kimi Code Canary（内测版）：KIMI_DESKTOP_CANARY=true 时同一份代码打出
+// 独立身份的 app —— 独立 appId / productName / 黄色机器人图标（小蓝→小黄，
+// scripts/build-brand-icons.mjs），与正式版并存安装、可双开（userData 由
+// index.ts 的 app.setName 分离）。canary 不注册 kimi-code://
+// 深链（protocols 置空，避免抢正式版的 OAuth 回调），不嵌 Tahoe 图标目录
+//（静态 canary icns 全版本通用），运行时自动更新也被禁用（src/main/canary.ts）。
+// 发布走 GitHub prerelease（desktop-build.yml 的 canary 输入），不走 CDN。
+const canary = process.env.KIMI_DESKTOP_CANARY === 'true';
+
 // Release artifact name:
-//   KimiCode-<version>-<os>-<arch>.<ext>
+//   KimiCode-<version>-<os>-<arch>.<ext>          （正式版）
+//   KimiCodeCanary-<version>-<os>-<arch>.<ext>    （canary，与正式版 dmg 不撞名）
 // The version number must be in the file name: electron-updater resolves the
 // download URL from the file names recorded in latest*.yml, and the CDN keeps
 // every version's artifacts side by side under desktop/<version>/.
-const artifactName = 'KimiCode-${version}-${os}-${arch}.${ext}';
+const artifactName = canary
+  ? 'KimiCodeCanary-${version}-${os}-${arch}.${ext}'
+  : 'KimiCode-${version}-${os}-${arch}.${ext}';
 
 // macOS 26 Tahoe Liquid Glass icon (dark/tinted/clear appearances), embedded
 // only when the design artifact exists: `build/AppIcon.icon`, authored ONCE in
@@ -45,6 +57,8 @@ const artifactName = 'KimiCode-${version}-${os}-${arch}.${ext}';
 // CFBundleIconName below and --app-icon both reference that stem.
 async function embedTahoeIconCatalog(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  // Canary 用静态黄 icns（全 macOS 版本通用），不嵌 Tahoe 玻璃图标目录。
+  if (canary) return;
   const iconPkg = path.join(__dirname, 'build', 'AppIcon.icon');
   if (!fs.existsSync(iconPkg)) return;
 
@@ -83,8 +97,8 @@ async function embedTahoeIconCatalog(context) {
 }
 
 module.exports = {
-  appId: 'com.kimi.code.desktop',
-  productName: 'Kimi Code',
+  appId: canary ? 'com.kimi.code.desktop.canary' : 'com.kimi.code.desktop',
+  productName: canary ? 'Kimi Code Canary' : 'Kimi Code',
   copyright: 'Copyright © Moonshot AI',
 
   afterPack: embedTahoeIconCatalog,
@@ -93,7 +107,8 @@ module.exports = {
   // device-flow completion page to surface the app after browser
   // authorization — macOS Info.plist CFBundleURLTypes, Windows registry,
   // Linux x-scheme-handler in the desktop file. Runtime side: src/main/deep-link.ts.
-  protocols: [{ name: 'Kimi Code', role: 'Viewer', schemes: ['kimi-code'] }],
+  // Canary 置空：kimi-code:// 永远归正式版，canary 不抢 OAuth 回调。
+  protocols: canary ? [] : [{ name: 'Kimi Code', role: 'Viewer', schemes: ['kimi-code'] }],
 
   directories: {
     output: 'dist-app',
@@ -144,12 +159,21 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
+    // canary 用黄机器人 icns（scripts/build-brand-icons.mjs 产物）。
+    ...(canary ? { icon: 'build/icon-canary.icns' } : {}),
     // `build/icon*.png` are the theme-following Dock icons (src/main/dock-icon.ts)
     // — macOS-only feature, shipped only in mac packages (merged with the
-    // top-level extraResources).
-    extraResources: [
-      { from: 'build/', to: 'build/', filter: ['icon*.png'] },
-    ],
+    // top-level extraResources). Canary 把黄机器人图标映射到同名目标
+    //（dock-icon.ts 无感知；light=白砖、dark=黑砖，与正式版同构图仅标色不同），
+    // 正式版只带自己的两张（filter 'icon*.png' 会误带 canary 产物）。
+    extraResources: canary
+      ? [
+          { from: 'build/icon-canary.png', to: 'build/icon.png' },
+          { from: 'build/icon-canary-dark.png', to: 'build/icon-dark.png' },
+        ]
+      : [
+          { from: 'build/', to: 'build/', filter: ['icon.png', 'icon-dark.png'] },
+        ],
     // dmg for first-install distribution, zip for electron-updater (macOS
     // auto-update only works from the zip archive).
     target: ['dmg', 'zip'],

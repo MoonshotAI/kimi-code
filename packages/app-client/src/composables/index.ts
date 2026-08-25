@@ -19,6 +19,7 @@ export * from './useNotification';
 export * from './useAttachmentUpload';
 export * from './useOAuthLoginFlow';
 export * from './useUpdateStatus';
+export * from './useCanaryChannel';
 export * from './useAuxiliaryTranscripts';
 export * from './useMainTranscripts';
 export * from './useMainTranscriptHost';

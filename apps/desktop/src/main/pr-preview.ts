@@ -1,5 +1,5 @@
-// PR preview (dev-only): load the renderer build of a code-app pull request
-// into the running window.
+// PR preview (dev / Kimi Code Canary): load the renderer build of a code-app
+// pull request — or any branch/tag/sha — into the running window.
 //
 // Flow: fetch `refs/pull/<n>/head` from the canonical repo (into FETCH_HEAD
 // only — no refs accumulate in the developer's own checkout), materialize it
@@ -14,7 +14,14 @@
 // from `app://renderer` (which now serves the preview build) instead of the
 // Vite dev server. The embedded server is not involved — only the renderer
 // bundle swaps. stopPreview() drops the override and the same connect() pass
-// returns the window to normal dev.
+// returns the window to normal.
+//
+// Where the git objects come from: in dev the fetch/worktree runs against the
+// developer's own checkout (app.getAppPath()); Canary builds are packaged and
+// have no repo, so a bare mirror is maintained at
+// `<userData>/pr-previews/repo-cache.git` (created on first use, reused
+// after). The kimi-code submodule always clones from the network (public
+// repo; in dev the developer's submodule clone is borrowed via --reference).
 //
 // Isolation is BY CONSTRUCTION, not by locking: the worktree path is bucketed
 // per clone AND per process, so two dev instances never share mutable state
@@ -31,10 +38,11 @@
 // with its files intact. The state goes `error` with the failing stage's
 // output tail for the dialog; retry is just another startPreview().
 //
-// Everything errors out in packaged builds (startPreview throws); the
-// renderer hides the entry point there by probing the bridge. State changes
-// are pushed through injected listeners (ipc.ts forwards them over
-// `kimi:pr-preview-event`) so this module never imports window.ts.
+// Stable packaged builds are excluded (isPrPreviewAvailable): the renderer
+// hides the entry point by probing get-state (null there), same as the
+// missing-bridge web case. State changes are pushed through injected
+// listeners (ipc.ts forwards them over `kimi:pr-preview-event`) so this
+// module never imports window.ts.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -46,13 +54,20 @@ import { app } from 'electron';
 import { setPreviewDistRoot } from './connect';
 import { startShellEnvProbe } from './shell-env';
 import { log } from './log';
+import { isCanaryVersion } from './release-channel';
 
 export type PrPreviewPhase = 'idle' | 'fetching' | 'installing' | 'building' | 'active' | 'error';
 
 export interface PrPreviewState {
   phase: PrPreviewPhase;
-  /** PR number of the current/last operation (busy, active, error). */
+  /** PR number of the current/last operation (busy, active, error) — PR
+      targets only; ref targets fill `refTarget` instead. */
   pr?: number;
+  /** Raw ref of the current/last ref operation (branch/tag/sha) — kept for
+      the dialog's retry. */
+  refTarget?: string;
+  /** Display label of the current/last operation (`#306` or the ref). */
+  label?: string;
   /** Failure summary: stage name + the child output tail (last ~200 lines). */
   message?: string;
   /** Live output tail of the in-flight stage (throttled pushes), so the
@@ -66,6 +81,8 @@ export interface PrPreviewState {
       explicit stop. The native exit entry and the dialog's error-state exit
       button key off THIS, never off `phase`. */
   servingPr?: number;
+  /** servingPr 的 ref 版：正在服务的是一次 ref 预览时的展示标签。 */
+  servingLabel?: string;
   /** Stage a StageError came from, for the dialog's localized stage line. */
   errorStage?: Stage;
   /** The stage was killed by the no-output watchdog (not a plain failure). */
@@ -102,6 +119,7 @@ let state: PrPreviewState = { phase: 'idle' };
 // are keep-guards for cache cleanup.
 let activeDistRoot: string | null = null;
 let activePr: number | undefined;
+let activeLabel: string | undefined;
 let activeWorktree: string | null = null;
 let buildingWorktree: string | null = null;
 
@@ -124,7 +142,13 @@ export function onStateChange(listener: StateListener): () => void {
 }
 
 function setState(next: PrPreviewState): void {
-  const withServing = activePr === undefined ? next : { ...next, servingPr: activePr };
+  let withServing = next;
+  if (activePr !== undefined) {
+    withServing = { ...withServing, servingPr: activePr };
+  }
+  if (activeLabel !== undefined) {
+    withServing = { ...withServing, servingLabel: activeLabel };
+  }
   state = progressTail === '' ? withServing : { ...withServing, logTail: progressTail };
   for (const listener of listeners) {
     try {
@@ -207,6 +231,49 @@ function pnpmCommand(): string {
     Credentials still go through the usual github.com credential helper. */
 const CANONICAL_REPO = 'https://github.com/MoonshotAI/kimi-code-app.git';
 
+/** Where the preview feature is available: dev (unpackaged, any channel) and
+    Kimi Code Canary builds. Stable packaged builds hide the entry (ipc
+    answers get-state with null) — previewing swaps the renderer out from
+    under a production install, which nobody wants. */
+export function isPrPreviewAvailable(): boolean {
+  return !app.isPackaged || isCanaryVersion(app.getVersion());
+}
+
+/** What to preview: a pull request, or a free-form git ref (branch / tag /
+    sha) — the "switch branches to preview" half of the feature. */
+export type PreviewTarget = { kind: 'pr'; pr: number } | { kind: 'ref'; ref: string };
+
+/** Free-form ref validation (branch / tag / sha): single token, no leading
+    dash, no `..` — it lands verbatim in a git argv (never a shell string),
+    so this is about git-level junk, not injection. */
+export function isValidPreviewRef(ref: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/.test(ref) && !ref.includes('..');
+}
+
+/** Display label for the dialog (`#306` for PRs, the ref itself otherwise). */
+export function previewTargetLabel(target: PreviewTarget): string {
+  return target.kind === 'pr' ? `#${target.pr}` : target.ref;
+}
+
+/** git-fetch refspec for the target (lands in FETCH_HEAD). A bare ref works
+    for branches, tags and (reachable) SHAs alike. */
+function previewFetchSpec(target: PreviewTarget): string {
+  return target.kind === 'pr' ? `refs/pull/${target.pr}/head` : target.ref;
+}
+
+/** Repo dir the fetch/worktree runs against. Dev: the developer's own
+    checkout (app.getAppPath()). Canary (packaged, no repo): a bare mirror
+    under userData, cloned on first use and `fetch`-updated every run. */
+function repoCacheDir(): string {
+  return join(app.getPath('userData'), 'pr-previews', 'repo-cache.git');
+}
+
+/** The repo dir the worktree bucket / sweep logic keys on. The cache itself
+    is ensured lazily inside startPreview (see ensureRepoCache). */
+function previewRepoDir(): string {
+  return app.isPackaged ? repoCacheDir() : app.getAppPath();
+}
+
 function cloneBucket(repoDir: string): string {
   return createHash('sha256').update(repoDir).digest('hex').slice(0, 8);
 }
@@ -286,8 +353,8 @@ function sweepPreviewDirs(repoDir: string, keepDirs: ReadonlySet<string>, includ
     run left behind — dead-pid worktrees of every PR in this clone bucket and
     legacy layouts. Keeps any OTHER live instance's dirs via the pid probe. */
 export function sweepStalePreviews(): void {
-  if (app.isPackaged) return;
-  const removed = sweepPreviewDirs(app.getAppPath(), new Set(), false);
+  if (!isPrPreviewAvailable()) return;
+  const removed = sweepPreviewDirs(previewRepoDir(), new Set(), false);
   if (removed > 0) log.info(`[kimi-desktop] swept ${removed} stale PR preview dir(s) on boot`);
 }
 
@@ -296,11 +363,11 @@ export function sweepStalePreviews(): void {
     in-flight build is writing into. Own-pid dirs from earlier previews in
     THIS run go too (they're cache, rebuildable at any time). */
 export function cleanupPreviews(): number {
-  if (app.isPackaged) return 0;
+  if (!isPrPreviewAvailable()) return 0;
   const keep = new Set<string>();
   if (activeWorktree !== null) keep.add(activeWorktree);
   if (buildingWorktree !== null) keep.add(buildingWorktree);
-  const removed = sweepPreviewDirs(app.getAppPath(), keep, true);
+  const removed = sweepPreviewDirs(previewRepoDir(), keep, true);
   if (removed > 0) log.info(`[kimi-desktop] cleaned ${removed} PR preview dir(s) on request`);
   return removed;
 }
@@ -491,15 +558,30 @@ async function ensureWorktree(repoDir: string, worktreeDir: string, headSha: str
   await runStage('fetch', 'git', args, worktreeDir);
 }
 
+/** Ensure the bare mirror Canary builds fetch/worktree from (dev uses the
+    developer's own checkout instead — see previewRepoDir). A mirror of a
+    mirror is fine for worktree add; `--filter=blob:none` keeps the clone
+    small (blobs hydrate on demand during checkout). */
+async function ensureRepoCache(): Promise<void> {
+  if (!app.isPackaged) return;
+  const cacheDir = repoCacheDir();
+  if (existsSync(cacheDir)) return;
+  await runStage('fetch', 'git', ['clone', '--bare', '--filter=blob:none', '--progress', CANONICAL_REPO, cacheDir], app.getPath('userData'));
+}
+
 /**
- * Fetch PR <pr>, build its renderer in an isolated worktree, and activate the
- * preview. Resolves with the resulting state ('active' or 'error' — build
- * failures are reported in the state, not thrown). Throws only for
- * precondition violations: packaged build, or a build already in flight.
+ * Fetch the target (PR / branch / tag / sha), build its renderer in an
+ * isolated worktree, and activate the preview. Resolves with the resulting
+ * state ('active' or 'error' — build failures are reported in the state, not
+ * thrown). Throws only for precondition violations: unavailable build
+ * (stable packaged), invalid target, or a build already in flight.
  */
-export async function startPreview(pr: number): Promise<PrPreviewState> {
-  if (app.isPackaged) {
-    throw new Error('pr-preview: only available in dev (unpackaged) builds');
+export async function startPreview(target: PreviewTarget): Promise<PrPreviewState> {
+  if (!isPrPreviewAvailable()) {
+    throw new Error('pr-preview: only available in dev or Kimi Code Canary builds');
+  }
+  if (target.kind === 'ref' && !isValidPreviewRef(target.ref)) {
+    throw new Error('pr-preview: invalid ref');
   }
   if (running) {
     throw new Error('pr-preview: a preview build is already in flight');
@@ -507,6 +589,10 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
   running = true;
   cancelRequested = false;
   progressTail = '';
+  const label = previewTargetLabel(target);
+  const pr = target.kind === 'pr' ? target.pr : undefined;
+  const refTarget = target.kind === 'ref' ? target.ref : undefined;
+  const op = pr === undefined ? { label, refTarget } : { label, pr };
   // Every state transition below is guarded by this: a cancel/stop that
   // landed during the PREVIOUS await (e.g. the shell-env probe, which spawns
   // no killable child) must not be overwritten by the next phase publish —
@@ -516,14 +602,16 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
   };
   // For the log line in catch: which stage the run died in.
   let currentStage: Stage = 'fetch';
-  const repoDir = app.getAppPath();
+  const repoDir = previewRepoDir();
   const worktreeDir = worktreeDirFor(repoDir);
   try {
     // Wait out the memoized shell-env probe so the children inherit the user's
     // PATH (GUI launches get launchd's minimal env).
     await startShellEnvProbe();
     throwIfCancelled();
-    setState({ phase: 'fetching', pr });
+    await ensureRepoCache();
+    throwIfCancelled();
+    setState({ phase: 'fetching', ...op });
     // Fetch by URL (CANONICAL_REPO), never by the origin remote — see the
     // constant's comment. --progress: a piped fetch is otherwise silent for
     // the entire download. --no-tags: git's default tag-following would
@@ -531,7 +619,7 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
     // (and fail the whole fetch on a clobbering local tag). No destination
     // ref: the head lands in FETCH_HEAD only, so refs/pr-preview/* never
     // accumulate in the developer's own repo either.
-    await runStage('fetch', 'git', ['-C', repoDir, 'fetch', '--progress', '--no-tags', CANONICAL_REPO, `refs/pull/${pr}/head`], repoDir);
+    await runStage('fetch', 'git', ['-C', repoDir, 'fetch', '--progress', '--no-tags', CANONICAL_REPO, previewFetchSpec(target)], repoDir);
     const headSha = (
       await runStage('fetch', 'git', ['-C', repoDir, 'rev-parse', 'FETCH_HEAD'], repoDir)
     ).trim();
@@ -540,7 +628,7 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
     await ensureWorktree(repoDir, worktreeDir, headSha);
     throwIfCancelled();
     currentStage = 'install';
-    setState({ phase: 'installing', pr });
+    setState({ phase: 'installing', ...op });
     // --ignore-scripts: an arbitrary remote PR must not get to run its
     // install-time lifecycle scripts (the classic supply-chain vector) under
     // the developer's full user account. Fonts are still prepared by the
@@ -549,7 +637,7 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
     await runStage('install', pnpmCommand(), ['install', '--prefer-offline', '--ignore-scripts'], worktreeDir);
     throwIfCancelled();
     currentStage = 'build';
-    setState({ phase: 'building', pr });
+    setState({ phase: 'building', ...op });
     // Two alternating dist dirs: the build always targets the one NOT being
     // served by this process, and the override flips only after a successful
     // build. Vite's emptyOutDir therefore never wipes the live preview out
@@ -564,10 +652,11 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
     throwIfCancelled();
     activeDistRoot = stagingDist;
     activePr = pr;
+    activeLabel = label;
     activeWorktree = worktreeDir;
     setPreviewDistRoot(activeDistRoot);
-    setState({ phase: 'active', pr });
-    log.info(`[kimi-desktop] PR preview active for #${pr}: ${activeDistRoot}`);
+    setState({ phase: 'active', ...op });
+    log.info(`[kimi-desktop] PR preview active for ${label}: ${activeDistRoot}`);
   } catch (error) {
     // A killed run (cancel / stop / stall watchdog) can leave the font
     // preparation lock behind — a signal-terminated prepare-fonts.mjs never
@@ -585,17 +674,17 @@ export async function startPreview(pr: number): Promise<PrPreviewState> {
     if (!(error instanceof PreviewCancelled)) {
       // The previous override (if any) stays live — see the header comment.
       const message = error instanceof Error ? error.message : String(error);
-      log.error(`[kimi-desktop] PR preview #${pr} failed at ${currentStage}: ${message}`);
+      log.error(`[kimi-desktop] PR preview ${label} failed at ${currentStage}: ${message}`);
       if (error instanceof StageError) {
         setState({
           phase: 'error',
-          pr,
+          ...op,
           errorStage: error.stage,
           ...(error.hung ? { errorHung: true } : {}),
           message,
         });
       } else {
-        setState({ phase: 'error', pr, message });
+        setState({ phase: 'error', ...op, message });
       }
     }
   } finally {
@@ -617,6 +706,7 @@ export function stopPreview(): void {
   }
   activeDistRoot = null;
   activePr = undefined;
+  activeLabel = undefined;
   activeWorktree = null;
   progressTail = '';
   setPreviewDistRoot(null);
@@ -631,5 +721,97 @@ export function cancelPreview(): void {
   cancelRequested = true;
   killCurrentChild();
   progressTail = '';
-  setState(activeDistRoot !== null ? { phase: 'active', pr: activePr } : { phase: 'idle' });
+  const back: PrPreviewState =
+    activeDistRoot !== null
+      ? {
+          phase: 'active',
+          ...(activePr !== undefined ? { pr: activePr } : {}),
+          ...(activeLabel !== undefined ? { label: activeLabel } : {}),
+        }
+      : { phase: 'idle' };
+  setState(back);
+}
+
+// --- ref listing (the branch picker) ------------------------------------------
+
+const CANONICAL_REPO_SLUG = 'MoonshotAI/kimi-code-app';
+
+export interface PreviewRefList {
+  prs: Array<{ number: number; title: string }>;
+  branches: string[];
+}
+
+function execText(file: string, args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      out += chunk;
+    });
+    child.stderr?.on('data', (chunk: string) => {
+      err += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(out);
+      } else {
+        reject(new Error(err.trim() || `${file} exited with code ${code ?? 'unknown'}`));
+      }
+    });
+  });
+}
+
+/** List open PRs and remote branches for the dialog's picker. Each half is
+    best-effort — a gh/git failure degrades that half to an empty list (the
+    dialog still offers free-form input). The shell-env probe runs first so
+    GUI launches find gh/git. */
+export async function listPreviewRefs(): Promise<PreviewRefList> {
+  await startShellEnvProbe();
+  const [prs, branches] = await Promise.all([
+    (async (): Promise<PreviewRefList['prs']> => {
+      try {
+        const stdout = await execText(
+          'gh',
+          ['pr', 'list', '--repo', CANONICAL_REPO_SLUG, '--state', 'open', '--limit', '30', '--json', 'number,title'],
+          app.getPath('home'),
+        );
+        const parsed: unknown = JSON.parse(stdout);
+        if (!Array.isArray(parsed)) return [];
+        const out: PreviewRefList['prs'] = [];
+        for (const entry of parsed) {
+          if (typeof entry !== 'object' || entry === null) continue;
+          const { number, title } = entry as { number?: unknown; title?: unknown };
+          if (typeof number === 'number' && Number.isInteger(number) && typeof title === 'string') {
+            out.push({ number, title });
+          }
+        }
+        return out;
+      } catch {
+        return [];
+      }
+    })(),
+    (async (): Promise<string[]> => {
+      try {
+        const stdout = await execText('git', ['ls-remote', '--heads', CANONICAL_REPO], app.getPath('home'));
+        const names = stdout
+          .split('\n')
+          .map((line) => /refs\/heads\/(.+)$/.exec(line)?.[1])
+          .filter((name): name is string => typeof name === 'string');
+        // main/alpha lead, the rest alphabetical; cap the list so a long-
+        // lived repo can't flood the picker.
+        names.sort((a, b) => {
+          const rank = (name: string): number => (name === 'main' ? 0 : name === 'alpha' ? 1 : 2);
+          return rank(a) - rank(b) || a.localeCompare(b);
+        });
+        return names.slice(0, 100);
+      } catch {
+        return [];
+      }
+    })(),
+  ]);
+  return { prs, branches };
 }
