@@ -50,9 +50,9 @@ describe('taskSchema', () => {
     expect(taskSchema.parse(full)).toEqual(full);
   });
 
-  it('requires run_in_background', () => {
+  it('accepts run_in_background when present and omits it freely (optional)', () => {
     const { run_in_background: _omitted, ...withoutFlag } = full;
-    expect(taskSchema.safeParse(withoutFlag).success).toBe(false);
+    expect(taskSchema.safeParse(withoutFlag).success).toBe(true);
     expect(taskSchema.safeParse({ ...full, run_in_background: false }).success).toBe(true);
   });
 
