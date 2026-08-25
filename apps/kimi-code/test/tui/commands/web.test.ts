@@ -47,6 +47,9 @@ vi.mock('#/utils/paths', async (importOriginal) => {
   return { ...actual, getDataDir: mocks.getDataDir };
 });
 
+const indentedQr = (url: string): string =>
+  renderTerminalQr(url).trimEnd().replaceAll(/^/gm, '    ');
+
 function makeHost() {
   const host = {
     session: { id: 'ses-1' },
@@ -233,8 +236,8 @@ describe('handleRemoteControlCommand', () => {
       expect(mocks.openUrl).toHaveBeenCalledWith(sessionUrl);
       const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
       expect(written).toContain('Kimi Remote Control ready');
-      expect(written).toContain(renderTerminalQr(sessionUrl));
-      expect(written).not.toContain(renderTerminalQr(entryUrl));
+      expect(written).toContain(indentedQr(sessionUrl));
+      expect(written).not.toContain(indentedQr(entryUrl));
       expect(isAbsolute(pngPath)).toBe(true);
       expect(written).toContain(`QR code PNG: ${pngPath}`);
       const png = readFileSync(pngPath);
@@ -298,7 +301,7 @@ describe('handleRemoteControlCommand', () => {
 
       expect(mocks.openUrl).toHaveBeenCalledWith(entryUrl);
       const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
-      expect(written).toContain(renderTerminalQr(entryUrl));
+      expect(written).toContain(indentedQr(entryUrl));
       expect(written).not.toContain('/sessions/');
       expect(readFileSync(join(dataDir, 'rc-qrcode.png'))).toEqual(
         await QRCode.toBuffer(entryUrl),

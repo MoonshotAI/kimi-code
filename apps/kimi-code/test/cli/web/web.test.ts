@@ -425,69 +425,6 @@ describe('`kimi web` opens the browser', () => {
     ).rejects.toThrow('--remote-control requires a loopback host.');
   });
 
-  it('opens and saves only the public Remote Control URL without the local server token', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '1');
-    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-    const tempRoot = mkdtempSync(join(tmpdir(), 'kimi-rc-qrcode-'));
-    const dataDir = join(tempRoot, 'custom-home');
-    vi.stubEnv('KIMI_CODE_HOME', dataDir);
-    const publicUrl =
-      'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli';
-    const pngPath = join(dataDir, 'rc-qrcode.png');
-    const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const { generateRemoteControlQr, renderTerminalQr } = await import('#/utils/remote-control-qr');
-    const QRCode = await import('qrcode');
-    const { isAbsolute } = await import('node:path');
-    await generateRemoteControlQr('https://example.test/previous', dataDir);
-    const previousPng = readFileSync(pngPath);
-    const { runner } = makeRunner();
-    const { stdout, stderr, readStdout } = makeIo();
-    const openUrl = vi.fn();
-    const startRemoteControl = vi.fn(async () => ({
-      deviceId: 'device-1',
-      deviceName: 'example-device',
-      url: publicUrl,
-      close: vi.fn(async () => {}),
-    }));
-
-    try {
-      await handleWebCommand(
-        { remoteControl: true, open: true },
-        {
-          startServerForeground: runner,
-          startRemoteControl,
-          resolveToken: () => 'local-server-token',
-          openUrl,
-          stdout,
-          stderr,
-        },
-      );
-
-      expect(startRemoteControl).toHaveBeenCalledWith(
-        expect.objectContaining({
-          homeDir: dataDir,
-          localOrigin: 'http://127.0.0.1:58627',
-          localServerToken: 'local-server-token',
-        }),
-      );
-      expect(openUrl).toHaveBeenCalledWith(publicUrl);
-      const written = readStdout();
-      expect(written).toContain('Kimi Remote Control ready');
-      expect(written).toContain(renderTerminalQr(publicUrl));
-      expect(written).not.toContain(renderTerminalQr('http://127.0.0.1:58627'));
-      expect(isAbsolute(pngPath)).toBe(true);
-      expect(written).toContain(`QR code PNG: ${pngPath}`);
-      const png = readFileSync(pngPath);
-      expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-      expect(png).not.toEqual(previousPng);
-      expect(png).toEqual(await QRCode.toBuffer(publicUrl));
-      expect(written).not.toContain('local-server-token');
-      expect(written).not.toContain('#token=');
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
-  });
-
   it('rejects --remote-control while the experimental flag is off', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL', '0');

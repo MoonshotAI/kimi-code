@@ -14,7 +14,7 @@ import chalk from 'chalk';
 
 import { getVersion } from '../../version';
 import { darkColors } from '../../../tui/theme/colors';
-import { toTerminalHyperlink } from '../../../utils/terminal-hyperlink';
+import { supportsHyperlinks, toTerminalHyperlink } from '../../../utils/terminal-hyperlink';
 import { acquireRemoteControlLock } from './remote-control-lock';
 
 export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://code-rc.kimi.com';
@@ -126,7 +126,9 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const status = (text: string): string => chalk.hex(darkColors.success)(text);
   const link = (url: string): string =>
-    toTerminalHyperlink(accent(shortRemoteControlUrl(url)), url);
+    supportsHyperlinks()
+      ? toTerminalHyperlink(accent(shortRemoteControlUrl(url)), url)
+      : accent(url);
   const docs = toTerminalHyperlink('docs', 'https://kimi.com/code/docs/remote-control');
   const feedback = toTerminalHyperlink('feedback', 'https://kimi.com/code/feedback');
   return [
@@ -139,10 +141,10 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
     `  ${label('3.')} Start chatting — sessions run on this machine`,
     '',
     `  ${status('✓')} ${muted(`Connected to ${new URL(options.url).host}, waiting for remote devices…`)}`,
-    `  ${label('This device: ')}${muted(options.deviceName)}  ${label('· Manage devices (max 5): ')}${link(new URL('/devices', new URL(options.url).origin).toString())}`,
+    `  ${label('This device: ')}${muted(options.deviceName)}`,
     `  ${status('⚠')} ${muted('This link grants control of this machine. Do not share it.')}`,
     '',
-    options.qrCode.trimEnd(),
+    options.qrCode.trimEnd().replaceAll(/^/gm, '    '),
     `  ${label('QR code PNG: ')}${options.pngPath} ${muted('(open this if the QR above does not scan)')}`,
     `  ${label('Local UI: ')}${muted(options.localOrigin)} ${muted('(LAN: --host)')}`,
     '',

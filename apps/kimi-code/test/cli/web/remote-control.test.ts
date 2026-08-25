@@ -11,7 +11,7 @@ import {
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import {
@@ -39,6 +39,7 @@ const TOKEN: TokenInfo = {
 const cleanups: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   while (cleanups.length > 0) await cleanups.pop()!();
 });
 
@@ -74,15 +75,18 @@ describe('Remote Control URLs', () => {
 });
 
 describe('Remote Control output', () => {
+  const outputOptions = {
+    url: 'https://example.test/devices/example-device/?rc=1&from=kimi_code_cli',
+    localOrigin: 'http://127.0.0.1:1234',
+    deviceName: 'example-device',
+    qrCode: 'QR\n',
+    pngPath: '/tmp/example-qr.png',
+  };
+
   it('keeps the full URL clickable while showing a short link and the setup contract', () => {
-    const url = 'https://example.test/devices/example-device/?rc=1&from=kimi_code_cli';
-    const output = formatRemoteControlOutput({
-      url,
-      localOrigin: 'http://127.0.0.1:1234',
-      deviceName: 'example-device',
-      qrCode: 'QR\n',
-      pngPath: '/tmp/example-qr.png',
-    });
+    vi.stubEnv('FORCE_HYPERLINK', '1');
+    const output = formatRemoteControlOutput(outputOptions);
+    const url = outputOptions.url;
     expect(output).toContain('Use Kimi Code on this machine');
     expect(output).toContain('1.');
     expect(output).toContain('2.');
@@ -91,13 +95,22 @@ describe('Remote Control output', () => {
     expect(output).toContain(`\u001B]8;;${url}`);
     expect(output).toContain('Connected to example.test');
     expect(output).toContain('This device:');
-    expect(output).toContain('max 5');
+    expect(output).not.toContain('Manage devices');
     expect(output).toContain('PNG:');
+    expect(output).toContain('\n    QR');
     expect(output).toContain('grants control of this machine');
     expect(output).toContain('docs');
     expect(output).toContain('feedback');
     expect(output).toContain('Logs: off');
     expect(output).not.toContain('stream-1');
+  });
+
+  it('prints the full URL as plain text when the terminal cannot render hyperlinks', () => {
+    vi.stubEnv('FORCE_HYPERLINK', '0');
+    const output = formatRemoteControlOutput(outputOptions);
+    expect(output).toContain(`open ${outputOptions.url}`);
+    expect(output).not.toContain('exampl…vice');
+    expect(output).not.toContain('Manage devices');
   });
 
   it('formats relay and device lifecycle states', () => {
