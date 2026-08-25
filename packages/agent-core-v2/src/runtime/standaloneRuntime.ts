@@ -10,10 +10,6 @@ import { IHostTerminalService } from '#/os/interface/terminal';
 import { LocalRuntime } from './localRuntime';
 import type { Runtime } from './runtime';
 
-/**
- * Builds fully detached local runtimes that belong to no workspace instance,
- * for entry points that must touch the filesystem without materializing one.
- */
 export interface IStandaloneRuntimeFactory {
   readonly _serviceBrand: undefined;
   createLocalRuntime(workspaceId: string): Runtime;

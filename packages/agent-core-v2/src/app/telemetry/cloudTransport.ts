@@ -37,11 +37,7 @@ export interface CloudTransportOptions {
   readonly storage: IFileSystemStorageService;
   readonly deviceId: string;
   readonly endpoint?: string;
-  /** Bootstrapped home for the default endpoint's region resolution (the
-      install marker lives there, not necessarily under KIMI_CODE_HOME). */
   readonly homeDir?: string;
-  /** Pre-resolved marker opt-out from the host's bootstrap env (defaults to
-      reading KIMI_CODE_REGION_MARKER from the process env). */
   readonly readMarker?: boolean;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;

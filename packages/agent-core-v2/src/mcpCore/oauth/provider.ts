@@ -21,7 +21,6 @@ import { canonicalMcpOAuthResource, mcpOAuthStoreKey, type McpOAuthStore } from 
 const TOKENS_SUFFIX = '-tokens.json';
 const CLIENT_SUFFIX = '-client.json';
 const DISCOVERY_SUFFIX = '-discovery.json';
-/** Sidecar `<key>-meta.json` suffix; the service scans these on startup. */
 export const META_SUFFIX = '-meta.json';
 const PASSIVE_REDIRECT_URI = 'http://127.0.0.1:3118/callback';
 
@@ -29,7 +28,6 @@ export interface StoredMcpOAuthTokens extends OAuthTokens {
   readonly obtained_at?: number;
 }
 
-/** Sidecar `<key>-meta.json` record mapping a store key back to its server. */
 export interface McpOAuthStoreMeta {
   readonly serverName: string;
   readonly serverUrl: string;
@@ -42,13 +40,10 @@ export interface McpOAuthProviderOptions {
   readonly clientLabel?: string;
   readonly clientName?: string;
   readonly now?: () => number;
-  /** Called after tokens are persisted (login, exchange, or refresh). */
   readonly onTokensSaved?: (tokens: StoredMcpOAuthTokens) => void;
-  /** Called after any credential invalidation, including SDK-driven ones. */
   readonly onCredentialsInvalidated?: (
     scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
   ) => void;
-  /** Receives every in-flight token-grant promise so shutdown can drain it. */
   readonly track?: (operation: Promise<unknown>) => void;
 }
 
@@ -184,11 +179,6 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     await this.tokenTransaction.save(tokens);
   }
 
-  /**
-   * Wrap the fetch used by the SDK's OAuth flow. Refresh-token grants for the
-   * same MCP identity are serialized, re-read from durable storage inside the
-   * lock, and committed before the lock is released.
-   */
   createOAuthFetch(fetchFn: typeof fetch = globalThis.fetch): typeof fetch {
     return this.tokenTransaction.createFetch(fetchFn);
   }
@@ -246,7 +236,6 @@ export class McpOAuthClientProvider implements OAuthClientProvider {
     this.onCredentialsInvalidated?.(scope);
   }
 
-  /** Explicit user-driven reset; unlike the SDK invalidation hook, never preserves tokens. */
   async clearCredentials(
     scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
   ): Promise<void> {
@@ -287,10 +276,6 @@ function registeredRedirectUri(info: OAuthClientInformationMixed | undefined): s
   return redirectUri;
 }
 
-/**
- * Route a transport's fetch through the provider's token transaction when one
- * is attached, so refresh grants racing on the same credential serialize.
- */
 export function createMcpOAuthFetch(
   provider: OAuthClientProvider | undefined,
   fetchFn: typeof fetch | undefined,

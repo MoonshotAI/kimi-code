@@ -325,7 +325,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     };
   }
 
-  /** Briefings are code-assembled — the tower LLM only supplies `instructions`. */
   private async buildPrompt(
     args: TowerSpawnToolInput,
     store: TowerStore,

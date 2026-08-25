@@ -26,9 +26,7 @@ export interface McpOAuthServiceOptions {
   readonly resolveClientName?: () => string | undefined;
   readonly log?: Logger;
   readonly scheduler?: McpOAuthScheduler;
-  /** Per-request bound for OAuth-flow HTTP (discovery, registration, grants). */
   readonly authRequestTimeoutMs?: number;
-  /** Upper bound for awaiting in-flight flows and refreshes during shutdown. */
   readonly shutdownDrainTimeoutMs?: number;
 }
 
@@ -47,23 +45,7 @@ export interface BeginAuthorizationOptions {
 
 export interface BeginAuthorizationResult {
   readonly authorizationUrl: URL;
-  /**
-   * Awaits the OAuth callback, validates `state`, exchanges the code for
-   * tokens, and persists them via the provider. Resolves on success;
-   * rejects on abort, timeout, or auth-server error.
-   *
-   * Handles sharing one underlying flow (concurrent `beginAuthorization`
-   * calls for the same credential) run the wait and the exchange exactly
-   * once: the first `complete()` call's `signal`/`timeoutMs` apply and the
-   * rest await the same outcome.
-   */
   complete(opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<void>;
-  /**
-   * Detaches this caller without finishing the flow. The callback listener
-   * stays active while another handle is attached and closes when the final
-   * handle detaches. Safe to call repeatedly; called automatically by
-   * `complete()`.
-   */
   cancel(): Promise<void>;
 }
 
@@ -99,11 +81,9 @@ export type McpOAuthEvent =
 
 export type McpOAuthEventListener = (event: McpOAuthEvent) => void;
 
-/** Offline credential snapshot for one server/resource identity. */
 export interface McpOAuthTokenState {
   readonly hasTokens: boolean;
   readonly hasRefreshToken: boolean;
-  /** Absolute expiry in epoch ms, when the stored grant carries enough data. */
   readonly expiresAt?: number;
   readonly expired: boolean;
 }
@@ -153,7 +133,6 @@ export class McpOAuthService {
     return this.shutdown();
   }
 
-  /** Returns the cached provider for `serverName` + `serverUrl`, constructing it on first use. */
   getProvider(serverName: string, serverUrl: string | URL): McpOAuthClientProvider {
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     let provider = this.providers.get(storeKey);
@@ -164,16 +143,10 @@ export class McpOAuthService {
     return provider;
   }
 
-  /** True once the provider has persisted tokens for this server/resource identity. */
   async hasTokens(serverName: string, serverUrl: string | URL): Promise<boolean> {
     return (await this.getProvider(serverName, serverUrl).tokens()) !== undefined;
   }
 
-  /**
-   * Offline view of the stored grant. `expired` is only computable when the
-   * tokens were written with an `obtained_at` stamp and carry `expires_in`;
-   * older or foreign writes without both are treated as non-expiring.
-   */
   async tokenState(serverName: string, serverUrl: string | URL): Promise<McpOAuthTokenState> {
     const tokens = (await this.getProvider(serverName, serverUrl).tokens()) as
       | StoredMcpOAuthTokens
@@ -208,13 +181,6 @@ export class McpOAuthService {
     );
   }
 
-  /**
-   * Single-flight token refresh per credential: concurrent callers share one
-   * in-flight SDK `auth()` run, so two sessions expiring together cannot race
-   * a rotating refresh token. Resolves when the grant is usable again;
-   * rejects when the refresh token was rejected (or never existed) and an
-   * interactive login is required.
-   */
   async refresh(serverName: string, serverUrl: string | URL): Promise<void> {
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
     const existing = this.refreshes.get(storeKey);
@@ -229,13 +195,6 @@ export class McpOAuthService {
     return task;
   }
 
-  /**
-   * Arm the proactive refresh timer for every stored credential that carries
-   * enough data to expire. Called once at engine start; subsequent token
-   * writes re-arm through the provider save hook. A malformed meta sidecar
-   * (or any per-credential failure) is skipped with a warning rather than
-   * aborting the whole sweep.
-   */
   async sweepProactiveRefresh(): Promise<void> {
     if (this.shuttingDown) return;
     const keys = await this.store.list();
@@ -257,17 +216,11 @@ export class McpOAuthService {
     }
   }
 
-  /** Clear every pending proactive-refresh timer (engine shutdown, tests). */
   stopProactiveRefresh(): void {
     for (const timer of this.refreshTimers.values()) timer.cancel();
     this.refreshTimers.clear();
   }
 
-  /**
-   * Release everything the service owns: pending proactive-refresh timers,
-   * in-flight refreshes and interactive flows (closing their callback
-   * listeners), event listeners, and cached providers. Idempotent.
-   */
   shutdown(): Promise<void> {
     if (this.shutdownPromise !== undefined) return this.shutdownPromise;
     this.shuttingDown = true;
@@ -336,17 +289,6 @@ export class McpOAuthService {
     }) as typeof fetch;
   }
 
-  /**
-   * Drive the SDK `auth()` orchestrator far enough to surface an
-   * authorization URL. The caller is responsible for displaying the URL
-   * (typically via the synthetic authenticate tool) and then awaiting
-   * `complete()` to finish the code exchange.
-   *
-   * Interactive flows are serialized per credential: while one flow for a
-   * store key is in flight, further calls join it — same URL, shared
-   * `complete()`, and a `cancel()` that only detaches the caller — instead
-   * of resetting the shared provider's PKCE/state mid-flow.
-   */
   async beginAuthorization(
     serverName: string,
     serverUrl: string | URL,
@@ -550,11 +492,6 @@ export class McpOAuthService {
     };
   }
 
-  /**
-   * Clear stored credentials for a server. Use `'all'` after the user
-   * explicitly signs out; use `'tokens'` to force a re-auth while keeping
-   * the registered DCR client.
-   */
   invalidate(
     serverName: string,
     serverUrl: string | URL,
@@ -563,11 +500,6 @@ export class McpOAuthService {
     return this.getProvider(serverName, serverUrl).clearCredentials(scope);
   }
 
-  /**
-   * Drop the cached provider for a credential. After an invalidation this
-   * guarantees the next `beginAuthorization` starts from a clean in-memory
-   * flow state (files are always re-read, so this is defensive).
-   */
   forgetProvider(serverName: string, serverUrl: string | URL): void {
     this.providers.delete(mcpOAuthStoreKey(serverName, serverUrl));
   }
@@ -689,7 +621,6 @@ export class McpOAuthService {
   }
 }
 
-/** Thrown by `beginAuthorization` when stored tokens already satisfy the server. */
 export class AlreadyAuthorizedError extends Error2 {
   constructor(serverName: string) {
     super(

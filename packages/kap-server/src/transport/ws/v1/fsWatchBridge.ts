@@ -38,7 +38,6 @@ export interface FsChangedFrame {
   readonly payload: FsChangeEvent;
 }
 
-/** Minimal connection surface the bridge needs (satisfied by `WsConnectionV1`). */
 export interface FsWatchConnection {
   readonly id: string;
   send(envelope: EventEnvelope): void;
@@ -164,7 +163,6 @@ export class FsWatchBridge {
     return this.ok(sw, conn);
   }
 
-  /** Drop every subscription held by `conn` (called on socket close). */
   detachConnection(conn: FsWatchConnection): void {
     for (const sw of Array.from(this.bySession.values())) {
       const entry = sw.conns.get(conn.id);
@@ -298,7 +296,6 @@ export class FsWatchBridge {
     }
   }
 
-  /** Lexical confinement + workspace-relative normalization (no `stat`). */
   private normalize(sw: SessionWatch, raw: string): string | undefined {
     if (raw === '' || raw === '/') return undefined;
     if (isAbsolute(raw)) return undefined;

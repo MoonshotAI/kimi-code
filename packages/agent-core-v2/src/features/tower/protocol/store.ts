@@ -60,26 +60,9 @@ export class TowerProtocolError extends Error {
 export interface TowerInitResult {
   readonly base: string;
   readonly created: boolean;
-  /**
-   * Roster names retired while adopting a workspace last driven by a
-   * different session. Empty on creation and on same-session re-init.
-   */
   readonly retiredAgents: readonly string[];
-  /**
-   * The branch checked out in the main worktree at init time ('HEAD' when
-   * detached). Merges stay blocked while this differs from `base`.
-   */
   readonly checkout: string;
-  /**
-   * The base argument dropped because the existing workspace already records
-   * a different base — re-init never resets recorded state.
-   */
   readonly ignoredBase?: string;
-  /**
-   * Ids of missions still holding their scope (not merged, not abandoned) —
-   * on re-init these are the carried-over missions a new plan must either
-   * continue or abandon. Empty on creation.
-   */
   readonly openMissions: readonly string[];
 }
 
@@ -88,7 +71,6 @@ export interface TowerPlanInput {
   readonly scope: readonly string[];
   readonly tasks?: readonly string[];
   readonly deps?: readonly string[];
-  /** Defaults to `build`. `survey` missions are read-only and reserve no scope. */
   readonly kind?: TowerMissionKind;
 }
 
@@ -126,9 +108,7 @@ export interface TowerMissionPatch {
   readonly blocker?: string;
   readonly clearBlockers?: boolean;
   readonly taskDone?: string;
-  /** Tower-only: assign the roster agent that owns this mission. */
   readonly owner?: string;
-  /** Tower-only: replace the mission's scope globs (logged; widens the merge gate). */
   readonly scope?: readonly string[];
 }
 
@@ -148,7 +128,6 @@ function isOpenMission(mission: Pick<TowerMission, 'status'>): boolean {
 }
 
 export class TowerStore {
-  /** Absolute path of the main checkout (the session working directory). */
   constructor(readonly repoRoot: string) {}
 
   async isInitialized(): Promise<boolean> {
@@ -160,15 +139,6 @@ export class TowerStore {
     }
   }
 
-  /**
-   * Create the `.tower/` skeleton. Safe to call twice — an existing
-   * workspace is reported, never reset. When the existing workspace was last
-   * driven by a *different* session it is adopted instead: roster entries the
-   * current session did not spawn are retired (engine agent ids are
-   * session-scoped, so after a restart the dead entries would alias this
-   * session's freshly issued `agent-N` ids), missions/worktrees survive, and
-   * an `adopt` line marks the session boundary in the activity log.
-   */
   async init(sessionId?: string, base?: string): Promise<TowerInitResult> {
     if (!(await isInsideRepo(this.repoRoot))) {
       throw new TowerProtocolError(
@@ -232,17 +202,10 @@ export class TowerStore {
     return { base: resolvedBase, created: true, retiredAgents: [], checkout, openMissions: [] };
   }
 
-  /** Branch checked out in the main worktree, or 'HEAD' when detached. */
   private async checkedOutBranch(): Promise<string> {
     return (await tryGit(this.repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])) ?? 'HEAD';
   }
 
-  /**
-   * Retire roster entries spawned by other sessions and restamp the state
-   * with the current session id. The `adopt` log line is written on every
-   * session change — even with nothing to retire — so id collisions across
-   * the boundary stay attributable when reading the activity log.
-   */
   private async adoptForeignRoster(
     state: TowerState,
     sessionId: string | undefined,
@@ -265,7 +228,6 @@ export class TowerStore {
     return stale.map((agent) => agent.name);
   }
 
-  /** Add `.tower/` to `.git/info/exclude` (repo-local; tracked .gitignore stays untouched). */
   private async ensureGitExclude(): Promise<void> {
     const gitDir = (await readGitDir(this.repoRoot)) ?? join(this.repoRoot, '.git');
     const excludePath = join(gitDir, 'info', 'exclude');
@@ -344,10 +306,6 @@ export class TowerStore {
     return state.roster.agents.find((agent) => agent.name === name);
   }
 
-  /**
-   * Register a spawned agent. Returns the existing entry when the name is
-   * already taken — callers implement "resume instead of duplicate spawn".
-   */
   findByName(state: TowerState, name: string): TowerRosterEntry | undefined {
     return this.findAgent(state, name);
   }
@@ -415,12 +373,6 @@ export class TowerStore {
     return missions;
   }
 
-  /**
-   * Conservative overlap check over the scopes that reserve write access —
-   * i.e. `build` missions only. Survey scopes are informational and reserve
-   * nothing, so they never conflict. Two build scopes conflict when one is a
-   * path prefix of the other after stripping trailing `**` / `*` wildcards.
-   */
   private assertScopesDisjoint(missions: readonly TowerMission[]): void {
     const scopes: Array<{ readonly id: string; readonly raw: string; readonly stem: string }> = [];
     for (const mission of missions) {
@@ -582,7 +534,6 @@ export class TowerStore {
     return rel;
   }
 
-  /** Newest-first messages addressed to `callerName` or broadcast. The tower sees everything. */
   async readInbox(callerName: string, limit: number): Promise<readonly TowerInboxItem[]> {
     let files: string[];
     try {
@@ -998,7 +949,6 @@ export class TowerStore {
     return join(this.repoRoot, rel);
   }
 
-  /** Exclusive-create write; on a name clash appends `-2`, `-3`, … before the extension. */
   private async writeUnique(rel: string, content: string): Promise<string> {
     const dot = rel.lastIndexOf('.');
     const stem = dot === -1 ? rel : rel.slice(0, dot);
