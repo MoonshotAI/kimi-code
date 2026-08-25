@@ -26,6 +26,8 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IBashParserService } from '#/app/bashParser/bashParser';
+import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -98,6 +100,7 @@ describe('AgentPermissionPolicyService chain', () => {
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
+        reg.define(IBashParserService, BashParserService);
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -198,6 +201,131 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it.each(['manual', 'auto', 'yolo'] as const)(
+    'asks for shutdown in %s mode',
+    async (currentMode) => {
+      mode = currentMode;
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command: 'shutdown -h now', timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'ask', reason: { dangerous_command: 'shutdown' } },
+      });
+    },
+  );
+
+  it.each([
+    ['sudo reboot', 'reboot'],
+    ['sudo -u root reboot', 'reboot'],
+    ['/sbin/poweroff', 'poweroff'],
+    ['echo ok && shutdown now', 'shutdown'],
+    ['if halt; then echo x; fi', 'halt'],
+    ['echo $(reboot)', 'reboot'],
+    ['init 0', 'init'],
+    ['telinit 6', 'telinit'],
+    ['mkfs.ext4 /dev/sda1', 'mkfs.ext4'],
+    ['wipefs -a /dev/sda', 'wipefs'],
+    ['dd if=/dev/zero of=/dev/sda bs=1M', 'dd'],
+    ['Restart-Computer -Force', 'restart-computer'],
+    ['Stop-Computer', 'stop-computer'],
+    ['bcdedit /set x y', 'bcdedit'],
+    ['diskpart /s script.txt', 'diskpart'],
+    ['format C:', 'format'],
+    ['SHUTDOWN /s /t 0', 'shutdown'],
+    ['shut\\down -h now', 'shutdown'],
+    ['systemctl poweroff', 'systemctl poweroff'],
+    ['systemctl --user reboot', 'systemctl reboot'],
+    ['bash -c "shutdown now"', 'shutdown'],
+    ['rm -rf /tmp/build', 'rm -rf'],
+    ['rm -fr dir', 'rm -rf'],
+    ['rm -r -f dir', 'rm -rf'],
+    ['rm -R --force dir', 'rm -rf'],
+    ['rm --recursive --force dir', 'rm -rf'],
+    ['rm -rfv dir', 'rm -rf'],
+    ['sudo rm -rf dir', 'rm -rf'],
+    ['sudo -u root rm --recursive --force dir', 'rm -rf'],
+    ['echo ok && rm -rf dir', 'rm -rf'],
+  ] as const)('asks for `%s` in auto mode', async (command, matched) => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command, timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask', reason: { dangerous_command: matched } },
+    });
+  });
+
+  it.each([
+    'init 3',
+    'dd if=/dev/zero of=/dev/null bs=1M count=1',
+    'echo shutdown',
+    'systemctl status sshd',
+    'bash -c "echo ok"',
+    'rm -r dir',
+    'rm -f file',
+    'rm -i file',
+    'rm --recursive dir',
+    'rm --force file',
+    'rm dir',
+  ])('does not flag `%s` in auto mode', async (command) => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command, timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it.each(['$CMD --force', 'bash -c "echo $HOME"', 'echo "unterminated'])(
+    'asks for unanalyzable command `%s` in yolo mode',
+    async (command) => {
+      mode = 'yolo';
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'ask', reason: { unanalyzable_command: true } },
+      });
+    },
+  );
+
+  it('does not let session approval history exempt dangerous commands', async () => {
+    sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    });
+  });
+
+  it('keeps deny rules above dangerous command ask', async () => {
+    rules.push({
+      decision: 'deny',
+      scope: 'user',
+      pattern: 'Bash(shutdown *)',
+    });
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'user-configured-deny',
+      result: { kind: 'deny' },
+    });
+  });
+
   it.each(['AgentSwarm', 'EnterPlanMode', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
@@ -267,6 +395,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.definePartialInstance(IGitService, {
           findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
         });
+        reg.define(IBashParserService, BashParserService);
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
