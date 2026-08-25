@@ -14,7 +14,6 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IFileService } from '#/app/file/fileService';
 import { ILogService } from '#/_base/log/log';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
@@ -41,7 +40,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IFileService private readonly files: IFileService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
     @ILogService private readonly log: ILogService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
@@ -136,7 +134,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       }),
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       telemetry: this.telemetry,
-      sessionMedia: { files: this.files, mediaStore: this.mediaStore, log: this.log },
+      sessionMedia: { mediaStore: this.mediaStore, log: this.log },
     });
   }
 }

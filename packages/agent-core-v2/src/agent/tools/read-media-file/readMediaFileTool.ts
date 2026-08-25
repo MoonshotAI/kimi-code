@@ -9,7 +9,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { inspectAgentRuntime, type IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { IFileService } from '#/app/file/fileService';
+import { newFileId } from '#/app/file/fileService';
 import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ILogService } from '#/_base/log/log';
@@ -178,7 +178,6 @@ function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boo
 }
 
 export interface ReadMediaSessionMediaDeps {
-  readonly files: IFileService;
   readonly mediaStore: ISessionMediaStore;
   readonly log?: ILogService;
 }
@@ -234,12 +233,10 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     const deps = this.sessionMedia;
     if (deps === undefined) return undefined;
     const name = safePath.split(/[\\/]/).at(-1) ?? 'video';
-    let savedId: string | undefined;
+    const fileId = newFileId();
     try {
-      const meta = await deps.files.save(Readable.from(data), name, { mimeType });
-      savedId = meta.id;
       const materializedPath = await deps.mediaStore.materialize({
-        fileId: meta.id,
+        fileId,
         size: data.length,
         name,
         mimeType,
@@ -248,13 +245,10 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       if (materializedPath === undefined) {
         throw new Error('session media materialization returned no path');
       }
-      return { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(meta.id), id: meta.id } };
+      return { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(fileId), id: fileId } };
     } catch (error) {
-      if (savedId !== undefined) {
-        await deps.files.delete(savedId).catch(() => undefined);
-      }
       deps.log?.warn('video staging into the session media store failed; falling back to eager upload', {
-        file_id: savedId,
+        file_id: fileId,
         error_message: error instanceof Error ? error.message : String(error),
       });
       return undefined;

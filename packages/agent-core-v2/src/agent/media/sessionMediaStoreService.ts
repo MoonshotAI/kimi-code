@@ -54,10 +54,15 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     fileId: string,
   ): Promise<{ readonly data: Uint8Array; readonly name: string } | undefined> {
     if (!isFileId(fileId)) return undefined;
-    const key = await this.findKey(fileId);
+    const storedMetadata = await this.documents.get<unknown>(this.scope, this.metadataKey(fileId));
+    const metadata = this.isMetadataFor(storedMetadata, fileId) ? storedMetadata : undefined;
+    const key =
+      metadata !== undefined && (await this.storage.size(this.scope, metadata.key)) !== undefined
+        ? metadata.key
+        : await this.findKey(fileId);
     if (key === undefined) return undefined;
     const data = await this.storage.read(this.scope, key);
-    return data === undefined ? undefined : { data, name: key };
+    return data === undefined ? undefined : { data, name: metadata?.name ?? key };
   }
 
   async open(fileId: string): Promise<SessionMediaFile | undefined> {

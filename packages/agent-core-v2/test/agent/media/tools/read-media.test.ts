@@ -16,7 +16,7 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
-import type { IFileService } from '#/app/file/fileService';
+import { isFileId } from '#/app/file/fileService';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ILogService } from '#/_base/log/log';
 import {
@@ -206,33 +206,19 @@ function stubSessionMedia(options?: {
   failMaterialize?: boolean;
   throwMaterialize?: boolean;
 }): ReadMediaSessionMediaDeps {
-  const files: IFileService = {
-    _serviceBrand: undefined,
-    save: async (_source, filename) => ({
-      id: 'f_test-video',
-      name: filename,
-      media_type: 'video/mp4',
-      size: 0,
-      created_at: new Date(0).toISOString(),
-    }),
-    get: async () => {
-      throw new Error('not implemented');
-    },
-    delete: vi.fn(async () => {}),
-  };
   const mediaStore: ISessionMediaStore = {
     _serviceBrand: undefined,
     pathFor: () => undefined,
     resolveDisplayPath: async () => undefined,
     read: async () => undefined,
     open: async () => undefined,
-    materialize: vi.fn(async () => {
+    materialize: vi.fn(async (input) => {
       if (options?.throwMaterialize === true) throw new Error('disk full');
-      return options?.failMaterialize === true ? undefined : '/session/media/f_test-video.mp4';
+      return options?.failMaterialize === true ? undefined : `/session/media/${input.fileId}.mp4`;
     }),
   };
   const log = { warn: vi.fn() } as unknown as ILogService;
-  return { files, mediaStore, log };
+  return { mediaStore, log };
 }
 
 function makeTool(
@@ -771,9 +757,12 @@ describe('ReadMediaFileTool', () => {
     );
     expect(result.isError).not.toBe(true);
     const parts = outputParts(result);
+    const staged = vi.mocked(sessionMedia.mediaStore.materialize).mock.calls[0]?.[0];
+    expect(staged?.fileId).toBeDefined();
+    expect(isFileId(staged!.fileId)).toBe(true);
     expect(parts[1]).toEqual({
       type: 'video_url',
-      videoUrl: { url: 'kimi-file://f_test-video', id: 'f_test-video' },
+      videoUrl: { url: `kimi-file://${staged!.fileId}`, id: staged!.fileId },
     });
     expect(sessionMedia.mediaStore.materialize).toHaveBeenCalledOnce();
     expect(videoUploader).not.toHaveBeenCalled();
@@ -801,11 +790,10 @@ describe('ReadMediaFileTool', () => {
     const parts = outputParts(result);
     expect(videoUploader).toHaveBeenCalledOnce();
     expect(parts[1]).toEqual(uploadResult);
-    expect(sessionMedia.files.delete).toHaveBeenCalledWith('f_test-video');
     expect(sessionMedia.log?.warn).toHaveBeenCalledOnce();
   });
 
-  it('deletes the orphaned staged file and logs when materialization throws', async () => {
+  it('falls back to the video uploader and logs when materialization throws', async () => {
     const uploadResult = {
       type: 'video_url' as const,
       videoUrl: { url: 'https://example.com/uploaded.mp4' },
@@ -826,7 +814,6 @@ describe('ReadMediaFileTool', () => {
     expect(result.isError).not.toBe(true);
     const parts = outputParts(result);
     expect(parts[1]).toEqual(uploadResult);
-    expect(sessionMedia.files.delete).toHaveBeenCalledWith('f_test-video');
     expect(sessionMedia.log?.warn).toHaveBeenCalledOnce();
     expect(videoUploader).toHaveBeenCalledOnce();
   });
@@ -1020,7 +1007,6 @@ describe('AgentMediaToolsRegistrar', () => {
       workspaceCtx,
       recordingTelemetry([]),
       new AgentStateService(),
-      stubSessionMedia().files,
       stubSessionMedia().mediaStore,
       { warn: () => {} } as unknown as ILogService,
     );

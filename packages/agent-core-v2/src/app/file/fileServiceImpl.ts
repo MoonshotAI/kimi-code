@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import { LifecycleScope } from '#/app/scopes';
@@ -8,6 +7,7 @@ import {
   IFileService,
   fileNotFoundError,
   isFileId,
+  newFileId,
   type FileMeta,
   type FileReadRange,
   type GetResult,
@@ -55,7 +55,7 @@ export class FileServiceImpl implements IFileService {
     await this.ensureIndex();
     await this.pruneExpired();
 
-    const id = `f_${randomUUID()}`;
+    const id = newFileId();
     let size = 0;
     const counting = async function* (): AsyncIterable<Uint8Array> {
       for await (const chunk of source) {
