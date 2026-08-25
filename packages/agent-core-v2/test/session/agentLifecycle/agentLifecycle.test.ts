@@ -1327,7 +1327,6 @@ describe('AgentLifecycleService', () => {
     const forged: AgentContext = {
       agentId: main.agentId,
       generation: main.generation,
-      space: main.space,
     };
 
     expect(() => svc.resolve(forged, AgentTodo)).toThrow('is not a lifecycle-issued context');

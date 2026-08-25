@@ -109,7 +109,6 @@ export * from '#/app/event/event2';
 export * from '#/state/errors';
 export * from '#/state/state';
 export * from '#/state/stateContribution';
-export * from '#/state/agentModel';
 export {
   AgentRuntimeContributionPoint,
   AgentRuntimeOverrideContributionPoint,
@@ -396,8 +395,12 @@ import '#/features/tower/towerFeature';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/cacheProbe';
 export * from '#/agent/usage/cacheProbeService';
+export * from '#/features/usage/usageOps';
+export {
+  AgentUsage,
+  UsageRuntime,
+} from '#/features/usage/usageAgentRuntime';
 export * from '#/session/usage/sessionUsage';
-export * from '#/session/usage/usageAgentModel';
 export * from '#/session/usage/sessionUsageService';
 import '#/features/usage/usageFeature';
 export * from '#/agent/toolDedupe/toolDedupe';
@@ -727,7 +730,6 @@ export * from '#/agent/undo/undoService';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/agentContext/agentContext';
-export * from '#/agent/agentContext/agentSpace';
 export * from '#/agent/scopeContext/scopeContext';
 export * from '#/agent/stepRetry/stepRetry';
 export * from '#/agent/stepRetry/stepRetryService';

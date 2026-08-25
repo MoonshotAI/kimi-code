@@ -7,6 +7,7 @@ import type { IEventBus } from '#/app/event/eventBus';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { AgentUsage, type UsageRuntime } from '#/features/usage/usageAgentRuntime';
 import type {
   ContextInjectionContent,
   ContextInjectionMessage,
@@ -16,6 +17,7 @@ import type {
 } from '#/features/reminder/types';
 
 import { stubContextMemory } from '../contextMemory/stubs';
+import { stubUsage } from '../usage/stubs';
 
 export function createReminderStub(input: {
   register?<D>(variant: string, provider: ContextInjectionProvider<D>): { dispose(): void };
@@ -32,10 +34,14 @@ export function createReminderStub(input: {
 export function lifecycleWithReminder(
   reminder: ReminderRuntime,
   contextMemory: ContextMemoryRuntime = stubContextMemory(),
+  usage: UsageRuntime = stubUsage(),
 ): IAgentLifecycleService {
   return {
-    resolve: (_agent: unknown, definition: unknown) =>
-      definition === AgentContextMemory ? contextMemory : reminder,
+    resolve: (_agent: unknown, definition: unknown) => {
+      if (definition === AgentContextMemory) return contextMemory;
+      if (definition === AgentUsage) return usage;
+      return reminder;
+    },
     handleOf: () => ({}),
     onDidCreateScope: () => toDisposable(() => {}),
   } as unknown as IAgentLifecycleService;

@@ -9,6 +9,7 @@ import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { ContextAppendMessage } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
+import { AgentUsage } from '#/features/usage/usageAgentRuntime';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { LoopErrors } from '#/agent/loop/errors';
 import {
@@ -47,7 +48,6 @@ import {
   type KimiErrorPayload,
 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import type { GoalReasonInput, ResumeGoalInput } from './goal';
@@ -1174,7 +1174,7 @@ function createGoalEffectHandlers(runtime: AgentRuntimeContext<GoalRuntimeState>
     normalize: () => { normalizeAfterReplay(context); },
     turnStarted: (event: TurnStarted) => { handleTurnLaunched(context, event.turnId, event.origin); },
     usageRecorded: (usage: UsageRecordedContext) => {
-      if (usage.agent === runtime.agent) handleUsageRecorded(context, usage);
+      handleUsageRecorded(context, usage);
     },
     beforeStep: (step: BeforeStepContext) => handleBeforeStep(context, step),
     afterStep: (step: AfterStepContext) => { handleAfterStep(context, step); },
@@ -1249,7 +1249,12 @@ const goalEffects = fromCallback(({
   if (input.runtime.agent.agentId === MAIN_AGENT_ID) {
     disposables.push(new GoalInjection(handlers.injection, reminderOf(input.runtime)));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnStarted, handlers.turnStarted));
-    disposables.push(input.runtime.get(ISessionUsageService).onDidRecord(handlers.usageRecorded));
+    disposables.push(
+      input.runtime
+        .get(IAgentLifecycleService)
+        .resolve(input.runtime.agent, AgentUsage)
+        .onDidRecord(handlers.usageRecorded),
+    );
     const loop = input.runtime.get(IAgentLoopService);
     disposables.push(loop.hooks.onWillBeginStep.register('goal-count-turn', async (context, next) => {
       await handlers.beforeStep(context);

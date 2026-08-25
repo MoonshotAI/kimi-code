@@ -6,7 +6,7 @@ import { type TokenUsage } from '#/kosong/contract/usage';
 
 export type UsageRecordScope = 'session' | 'turn';
 
-export interface UsageModelState {
+export interface UsageState {
   readonly byModel: Record<string, TokenUsage>;
 }
 

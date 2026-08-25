@@ -10,7 +10,7 @@ export type EventDispatcherHooks = {
   readonly onDidRestore: Record<string, never>;
 };
 
-export interface ModelCheckpointDepth {
+export interface ParticipantCheckpointDepth {
   readonly id: string;
   readonly depth: number;
 }
@@ -27,7 +27,7 @@ export interface IEventDispatcher extends DurableRuntimeParticipantHost {
   dispatch(event: Event2<any>): Promise<void>;
   history<S>(key: ReplayableStateKey<S>): readonly PatchEntry[];
   checkpointDepth(key: ReplayableStateKey<any>): number;
-  modelCheckpointDepths(): readonly ModelCheckpointDepth[];
+  participantCheckpointDepths(): readonly ParticipantCheckpointDepth[];
   undo<S>(key: ReplayableStateKey<S>, patchId: number): void;
   restore(): Promise<void>;
   flush(): Promise<void>;

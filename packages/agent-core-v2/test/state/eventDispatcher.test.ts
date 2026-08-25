@@ -1,5 +1,5 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { assign, createMachine } from 'xstate';
 
@@ -11,7 +11,6 @@ import {
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/features/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ContextAppendMessage, ContextUndo } from '#/features/contextMemory/contextEvents';
@@ -487,7 +486,7 @@ describe('EventDispatcherService', () => {
     await dispatcher.dispatch(new ItemAdd({ item: 'b' }));
 
     expect(state.items).toEqual(['a', 'b']);
-    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
+    expect(dispatcher.participantCheckpointDepths()).toContainEqual({
       id: 'runtime.test.checkpointed',
       depth: 1,
     });
@@ -495,7 +494,7 @@ describe('EventDispatcherService', () => {
     await dispatcher.dispatch(new UndoEvent({ count: 1 }));
 
     expect(state.items).toEqual(['a']);
-    expect(dispatcher.modelCheckpointDepths()).toContainEqual({
+    expect(dispatcher.participantCheckpointDepths()).toContainEqual({
       id: 'runtime.test.checkpointed',
       depth: 0,
     });
@@ -562,13 +561,13 @@ describe('EventDispatcherService', () => {
     await scoped.dispatch(new ItemAdd({ item: 'b' }));
 
     expect(runtime.get()).toEqual(['a', 'b']);
-    expect(scoped.modelCheckpointDepths()).toEqual([]);
+    expect(scoped.participantCheckpointDepths()).toEqual([]);
 
     await scoped.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
 
     expect(runtime.get()).toEqual(['a', 'custom-cut']);
     expect(undoCalls).toEqual([1]);
-    expect(scoped.modelCheckpointDepths()).toEqual([]);
+    expect(scoped.participantCheckpointDepths()).toEqual([]);
 
     await scoped.dispatch(new ContextUndo({ agentId: 'main', count: 0 }));
     expect(runtime.get()).toEqual(['a', 'custom-cut']);
@@ -577,24 +576,6 @@ describe('EventDispatcherService', () => {
     await scoped.dispatch(new ItemAdd({ item: 'c' }));
     expect(runtime.get()).toEqual(['a', 'custom-cut', 'c']);
     await runtimes.close();
-  });
-
-  it('does not own AgentSpace teardown', () => {
-    const isolated = new TestInstantiationService();
-    const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
-    const space = scope.agentContext.space as AgentSpaceImpl;
-    const kill = vi.spyOn(space, '_kill');
-    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
-    isolated.set(IAgentBlobService, noopBlob);
-    isolated.set(IWireService, stubWireJournal([]));
-    isolated.set(IAgentScopeContext, scope);
-    isolated.set(IAgentStateService, new AgentStateService());
-    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    isolated.get(IEventDispatcher);
-
-    isolated.dispose();
-
-    expect(kill).not.toHaveBeenCalled();
   });
 
   it('withdraws a disposed replayable contribution from dispatcher folds and history', async () => {

@@ -135,7 +135,7 @@ export class AgentConversationUndoService
         model = key.name;
       }
     }
-    for (const entry of this.dispatcher.modelCheckpointDepths()) {
+    for (const entry of this.dispatcher.participantCheckpointDepths()) {
       if (entry.depth < depth) {
         depth = entry.depth;
         model = entry.id;

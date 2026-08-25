@@ -27,7 +27,6 @@ import { SkillErrors } from '#/features/skill/catalog/errors';
 import { StateErrors } from '#/state/errors';
 import { StorageErrors } from '#/persistence/interface/storage';
 import { TerminalErrors } from '#/os/interface/terminalErrors';
-import { UsageErrors } from '#/agent/usage/errors';
 import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
 import { WorkspaceErrors } from '#/app/workspace/errors';
@@ -63,7 +62,6 @@ export { SessionErrors } from '#/session/errors';
 export { SkillErrors } from '#/features/skill/catalog/errors';
 export { StorageErrors } from '#/persistence/interface/storage';
 export { TerminalErrors } from '#/os/interface/terminalErrors';
-export { UsageErrors } from '#/agent/usage/errors';
 export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
 export { WorkspaceErrors } from '#/app/workspace/errors';
@@ -98,7 +96,6 @@ export const ErrorCodes = {
   ...SkillErrors.codes,
   ...StorageErrors.codes,
   ...TerminalErrors.codes,
-  ...UsageErrors.codes,
   ...WebErrors.codes,
   ...WireErrors.codes,
   ...WorkspaceErrors.codes,

@@ -162,7 +162,6 @@ function makeRuntimeAgent(
     dispose: async () => {
       registry.untrack(managed);
       await managed.runtimeSet.close();
-      managed.killSpace();
       await handle.dispose();
     },
   };

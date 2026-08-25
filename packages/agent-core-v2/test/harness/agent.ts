@@ -118,8 +118,6 @@ import { type ThinkingEffort } from '#/kosong/contract/provider';
 import { type Tool as KosongTool } from '#/kosong/contract/tool';
 import { type TokenUsage } from '#/kosong/contract/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
-import { type AgentModelDefinition } from '#/state/agentModel';
-import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { type TodoItem } from '#/features/todo/todoItem';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
@@ -1485,13 +1483,6 @@ export class AgentTestContext {
 
   get agentContext(): AgentContext {
     return this.get(IAgentScopeContext).agentContext;
-  }
-
-  readModel<D extends AgentModelDefinition<any, any>, R>(
-    definition: D,
-    read: (model: AgentModelInstanceOf<D>) => R,
-  ): R {
-    return this.agentContext.space.use(definition, read);
   }
 
   get wire(): IWireService {

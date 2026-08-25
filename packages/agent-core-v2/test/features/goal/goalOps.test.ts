@@ -17,7 +17,6 @@ import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedu
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -114,9 +113,6 @@ function buildHost(key: string): GoalHost {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentLoopService, createLoopStub());
-  ix.stub(ISessionUsageService, {
-    onDidRecord: Event.None,
-  } as unknown as ISessionUsageService);
   ix.stub(
     IAgentLifecycleService,
     lifecycleWithReminder(createReminderStub()),

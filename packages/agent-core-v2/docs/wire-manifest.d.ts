@@ -79,7 +79,7 @@
 //   turn.ended                         turn                                       src/agent/loop/turnOps.ts
 //   turn.prompt                        turn                                       src/agent/loop/turnOps.ts
 //   turn.steer                         turn                                       src/agent/loop/turnOps.ts
-//   usage.record                       (none)                                     src/agent/usage/usageOps.ts
+//   usage.record                       (none)                                     src/features/usage/usageOps.ts
 
 /**
  * states: profile
@@ -809,7 +809,7 @@ interface TurnSteerPayload {
 
 /**
  * states: (none)
- * owner: src/agent/usage/usageOps.ts
+ * owner: src/features/usage/usageOps.ts
  */
 interface UsageRecordPayload {
   _name: 'usage.record';

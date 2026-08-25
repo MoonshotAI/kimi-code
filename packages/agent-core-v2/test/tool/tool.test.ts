@@ -109,6 +109,7 @@ import {
   AgentTokenCounting,
   tokenCountingAgentRuntimeProvider,
 } from '#/features/tokenCounting/tokenCountingAgentRuntime';
+import { AgentUsage, usageAgentRuntimeProvider } from '#/features/usage/usageAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -491,6 +492,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentTokenCounting,
           provider: tokenCountingAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentUsage,
+          provider: usageAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

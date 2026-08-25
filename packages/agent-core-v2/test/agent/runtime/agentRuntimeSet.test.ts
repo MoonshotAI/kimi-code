@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -17,7 +16,7 @@ import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import type { DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 
-const agent = { agentId: 'main', generation: 1, space: {} } as AgentContext;
+const agent: AgentContext = { agentId: 'main', generation: 1 };
 const accessor = { get: vi.fn() } as unknown as ServicesAccessor;
 
 function record<Runtime>(
@@ -79,30 +78,6 @@ describe('AgentRuntimeSet', () => {
     expect(stopped).toBe(1);
     expect(set.inspect()[0]).toMatchObject({ id: 'failing', status: 'retired', error: 'runtimeInstance failed' });
     return set.close();
-  });
-
-  it('keeps runtimes alive when the compatibility AgentSpace is killed', async () => {
-    let stopped = 0;
-    const space = new AgentSpaceImpl('main');
-    const context = Object.freeze({ agentId: 'main', generation: 1, space });
-    space._bindContext(context);
-    const runtime = record(
-      'space-independent',
-      () => ({ value: 1 }),
-      1,
-      fromCallback(() => () => { stopped += 1; }),
-    );
-    const set = new AgentRuntimeSet(context, accessor);
-    set.apply(runtime);
-    const runtimeInstance = set.resolve(runtime.definition);
-
-    space._kill();
-
-    expect(runtimeInstance.value).toBe(1);
-    expect(set.resolve(runtime.definition)).toBe(runtimeInstance);
-    expect(stopped).toBe(0);
-    await set.close();
-    expect(stopped).toBe(1);
   });
 
   it('records actor failure and closes the failed runtime safely', async () => {

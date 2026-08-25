@@ -277,7 +277,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         managed.closing = true;
         if (this.roster.get(agentId) === managed) this.roster.delete(agentId);
         await managed.runtimeSet.close().catch(() => undefined);
-        managed.killSpace();
         try {
           await managed.handle.dispose();
         } catch { }
@@ -450,7 +449,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
     await managed.runtimeSet.close();
-    managed.killSpace();
     await handle.dispose();
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fromTransition } from 'xstate';
-import { z } from 'zod';
 
 import {
   type CollectionToken,
@@ -31,13 +30,6 @@ import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
-import {
-  AgentModel,
-  AgentModelContribution,
-  defineAgentModel,
-  SessionModelContribution,
-  type SessionModelDefinition,
-} from '#/state/agentModel';
 import {
   _clearFeatureRecipesForTests,
   registerFeature,
@@ -159,20 +151,8 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     host.dispose();
   });
 
-  it('registers model and runtime definitions without materializing them', async () => {
+  it('registers runtime definitions without materializing them', async () => {
     let creates = 0;
-    const sessionModel: SessionModelDefinition<number> = {
-      id: 'test-feature.session-model',
-      state: { initial: () => 0, schema: z.custom<number>() },
-      events: [],
-      undoable: false,
-    };
-    const agentModel = defineAgentModel({
-      id: 'test-feature.agent-model',
-      model: class extends AgentModel<number> {},
-      state: { initial: () => 0, schema: z.custom<number>() },
-      events: [],
-    });
     const runtimeContract = defineAgentRuntimeContract<object>('test-feature.runtime');
     const runtime = defineAgentRuntimeProvider<number, object>(runtimeContract, {
       id: 'test-feature.runtime',
@@ -197,8 +177,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
 
       constructor() {
         super();
-        this.contributeSessionModel(sessionModel);
-        this.contributeAgentModel(agentModel);
         this.contributeAgentRuntime(runtime);
       }
     }
@@ -207,31 +185,23 @@ describe('Feature — built-in capability assembly (src/features)', () => {
 
       constructor() {
         super();
-        this.contributeAgentModel(agentModel);
+        this.contributeAgentRuntime(runtime);
       }
     }
     registerFeature(DomainFeature);
 
     const host = createScopedTestHost();
     const manager = host.app.accessor.get(IFeatureManager);
-    const views = [
-      collectionViewOf(host.app, SessionModelContribution),
-      collectionViewOf(host.app, AgentModelContribution),
-      collectionViewOf(host.app, AgentRuntimeContributionPoint),
-    ];
-    expect(views.map((view) => view.items)).toEqual([
-      [sessionModel],
-      [agentModel],
-      [runtime],
-    ]);
+    const view = collectionViewOf(host.app, AgentRuntimeContributionPoint);
+    expect(view.items).toEqual([runtime]);
     expect(creates).toBe(0);
     expect(() => manager.provideUnit(ReplacementFeature)).toThrow(
-      "Agent model 'test-feature.agent-model' already has an active provider",
+      "Agent runtime 'test-feature.runtime' already has an active provider",
     );
 
     await manager.unprovideUnit('domain-definitions');
     await host.app.instantiation.cascade.whenIdle();
-    expect(views.every((view) => view.items.length === 0)).toBe(true);
+    expect(view.items).toHaveLength(0);
     expect(() => manager.provideUnit(ReplacementFeature)).not.toThrow();
     expect(creates).toBe(0);
     host.dispose();
