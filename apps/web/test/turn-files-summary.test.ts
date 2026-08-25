@@ -9,8 +9,8 @@ vi.mock('@moonshot-ai/app-markdown', async () => {
   };
 });
 
-import ChatPane from '../src/components/chat/ChatPane.vue';
-import TurnFilesSummary from '../src/components/chat/TurnFilesSummary.vue';
+import { ChatPane } from '@moonshot-ai/app-components';
+import { TurnFilesSummary } from '@moonshot-ai/app-components';
 
 function propDefault(component: unknown, name: string): unknown {
   const props = (component as { props?: Record<string, { default?: unknown }> }).props;

@@ -3,7 +3,7 @@
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
-import ResizeHandle from './components/ResizeHandle.vue';
+import { ResizeHandle } from '@moonshot-ai/app-components';
 import ConversationPane from './components/chat/ConversationPane.vue';
 import SessionAdminView from './components/admin/SessionAdminView.vue';
 import {
@@ -12,27 +12,27 @@ import {
   type AdminBatchToastPlan,
   type SessionAdminBatchDirection,
 } from '@moonshot-ai/app-components';
-import FilePreview from './components/FilePreview.vue';
-import ThinkingPanel from './components/chat/ThinkingPanel.vue';
-import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
-import SideChatPanel from './components/chat/SideChatPanel.vue';
-import SelectionActionBubble from './components/chat/SelectionActionBubble.vue';
-import DiffView from './components/chat/DiffView.vue';
-import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
-import MediaLightbox from './components/chat/MediaLightbox.vue';
-import ModelPicker from './components/settings/ModelPicker.vue';
+import { FilePreview } from '@moonshot-ai/app-components';
+import { ThinkingPanel } from '@moonshot-ai/app-components';
+import { AgentDetailPanel } from '@moonshot-ai/app-components';
+import { SideChatPanel } from '@moonshot-ai/app-components';
+import { SelectionActionBubble } from '@moonshot-ai/app-components';
+import { DiffView } from '@moonshot-ai/app-components';
+import { TurnDiffPanel } from '@moonshot-ai/app-components';
+import { MediaLightbox } from '@moonshot-ai/app-components';
+import { ModelPicker } from '@moonshot-ai/app-components';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
-import ErrorBoundary from './components/ErrorBoundary.vue';
+import { ErrorBoundary } from '@moonshot-ai/app-components';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
-import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
-import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
-import StatusPanel from './components/chat/StatusPanel.vue';
-import WarningToasts from './components/WarningToasts.vue';
-import MobileTopBar from './components/mobile/MobileTopBar.vue';
+import { AddWorkspaceDialog } from '@moonshot-ai/app-components';
+import { ConfirmDialogHost } from '@moonshot-ai/app-components';
+import { StatusPanel } from '@moonshot-ai/app-components';
+import { WarningToasts } from '@moonshot-ai/app-components';
+import { MobileTopBar } from '@moonshot-ai/app-components';
 import MobileSwitcherSheet from './components/mobile/MobileSwitcherSheet.vue';
 import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
 import OnboardingWizard from './components/onboarding/OnboardingWizard.vue';
-import GlobalLoading from './components/GlobalLoading.vue';
+import { GlobalLoading } from '@moonshot-ai/app-components';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient, promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';

@@ -18,8 +18,8 @@ vi.mock('vue-i18n', async (importActual) => {
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) };
 });
 
-import ChatPane from '../../src/renderer/components/chat/ChatPane.vue';
-import TurnFilesSummary from '../../src/renderer/components/chat/TurnFilesSummary.vue';
+import { ChatPane } from '@moonshot-ai/app-components';
+import { TurnFilesSummary } from '@moonshot-ai/app-components';
 import type { TurnFileChange } from '@moonshot-ai/app-components';
 
 const editChange: TurnFileChange = {

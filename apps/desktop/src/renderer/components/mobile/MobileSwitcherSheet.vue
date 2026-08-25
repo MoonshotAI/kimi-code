@@ -16,7 +16,7 @@ import {
   type SidebarViewMode,
 } from '@moonshot-ai/app-core/lib';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
-import BottomSheet from '../dialogs/BottomSheet.vue';
+import { BottomSheet } from '@moonshot-ai/app-components';
 import { Icon, IconButton, Menu, MenuItem, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();

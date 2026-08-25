@@ -6,14 +6,14 @@ import type { AppGoal, AppModel, AppSkill, QuestionResponse, SessionPlan, Thinki
 import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
-import ChatPane from './ChatPane.vue';
-import ErrorBoundary from '../ErrorBoundary.vue';
+import { ChatPane } from '@moonshot-ai/app-components';
+import { ErrorBoundary } from '@moonshot-ai/app-components';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import WorkspaceHome from './WorkspaceHome.vue';
 import WorkspaceRecentSessions from './WorkspaceRecentSessions.vue';
-import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
+import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
 import TranscriptSearch from './TranscriptSearch.vue';
 import { KimiDoodle } from '@moonshot-ai/app-components';
 import { Icon, IconButton, Spinner, Tooltip, trackMenuSurface, useImeComposition } from '@moonshot-ai/app-ui';

@@ -20,7 +20,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import BottomSheet from '../dialogs/BottomSheet.vue';
+import { BottomSheet } from '@moonshot-ai/app-components';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import PlanUsageCard from '../settings/PlanUsageCard.vue';
 import { formatTokens } from '@moonshot-ai/app-core/lib';

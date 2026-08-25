@@ -6,7 +6,7 @@ import type { ApprovalDecision } from '../../api/types';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import { Badge, Button, Icon, IconButton, Spinner, Textarea, openDialogCount, useImeComposition } from '@moonshot-ai/app-ui';
-import HighlightedCode from '../HighlightedCode.vue';
+import { HighlightedCode } from '@moonshot-ai/app-components';
 import {
   approvalDecisionName,
   type ApprovalTelemetryAction,

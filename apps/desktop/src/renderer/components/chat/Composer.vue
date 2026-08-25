@@ -59,8 +59,8 @@ import {
 import { getKimiWebApi } from '../../api';
 import { openUpgrade, NEW_SESSION_SCOPE } from '@moonshot-ai/app-core/lib';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
-import MediaLightbox from './MediaLightbox.vue';
-import MediaThumb from './MediaThumb.vue';
+import { MediaLightbox } from '@moonshot-ai/app-components';
+import { MediaThumb } from '@moonshot-ai/app-components';
 import { ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip, trackMenuSurface } from '@moonshot-ai/app-ui';
 
 // ---------------------------------------------------------------------------

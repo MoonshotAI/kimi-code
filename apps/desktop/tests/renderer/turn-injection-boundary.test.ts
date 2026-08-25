@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppMessage, AppMessageContent } from '../../src/renderer/api/types';
 import { messagesToTurns } from '@moonshot-ai/app-core/client';
-import { assistantRenderBlocks, splitAssistantFold } from '@moonshot-ai/app-components';
+import { assistantRenderBlocks, splitAssistantFold } from '@moonshot-ai/app-components/support';
 
 function message(
   id: string,

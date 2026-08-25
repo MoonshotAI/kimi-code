@@ -16,7 +16,7 @@ import {
   usageSeverity,
 } from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
-import PlanUpgradeCard from './PlanUpgradeCard.vue';
+import { PlanUpgradeCard } from '@moonshot-ai/app-components';
 import { Button, Spinner } from '@moonshot-ai/app-ui';
 
 const props = defineProps<{

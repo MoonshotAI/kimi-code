@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./support": "./src/support.ts"
   },
   "dependencies": {
     "@moonshot-ai/app-client": "workspace:*",

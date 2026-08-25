@@ -33,8 +33,8 @@ const SCAN_ROOTS = [
 const STRICT = process.argv.includes('--strict');
 
 const DOMAIN_HEX_EXEMPT = new Set([
-  'chat/DiffView.vue',
-  'Terminal.vue',
+  'app-components/chat/DiffView.vue',
+  'app-components/Terminal.vue',
 ]);
 
 // Files that legitimately render their own <svg>: bespoke data-viz / colored
@@ -46,7 +46,7 @@ const DOMAIN_HEX_EXEMPT = new Set([
 // primitive (components/ui/Icon.vue) itself renders no hand-written <svg>, so it
 // is not exempted here.
 const ICON_EXEMPT = new Set([
-  'components/GlobalLoading.vue',
+  'app-components/GlobalLoading.vue',
   'app-components/KimiMascot.vue', // static brand-blob fallback for the Rive canvas
 ]);
 
@@ -75,7 +75,7 @@ const GLASS_MENU_EXEMPT = new Set([
   'components/chat/ConversationPane.vue',
   // Two-pane Select variant (settings → Agent → Subagents): its dropdown is a
   // floating menu surface, same as the Select listbox.
-  'components/settings/SecondaryModelPicker.vue',
+  'app-components/settings/SecondaryModelPicker.vue',
 ]);
 
 // Files exempt from no-gradient-text. The rule targets gradient TEXT, but the

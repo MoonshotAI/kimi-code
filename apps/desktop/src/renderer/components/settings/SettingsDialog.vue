@@ -12,7 +12,7 @@ import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import PluginsPanel from './PluginsPanel.vue';
 import { usePlugins } from '../../composables/usePlugins';
-import ProvidersPanel from './ProvidersPanel.vue';
+import { ProvidersPanel } from '@moonshot-ai/app-components';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
 import { copyTextToClipboard, logWarn } from '@moonshot-ai/app-core/lib';
@@ -27,8 +27,8 @@ import { useUpdateStatus, type UpdateCheckResult } from '@moonshot-ai/app-client
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
-import SecondaryModelPicker from './SecondaryModelPicker.vue';
-import PlanUpgradeCard from './PlanUpgradeCard.vue';
+import { SecondaryModelPicker } from '@moonshot-ai/app-components';
+import { PlanUpgradeCard } from '@moonshot-ai/app-components';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 

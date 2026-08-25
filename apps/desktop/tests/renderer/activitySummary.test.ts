@@ -6,7 +6,7 @@ import {
   summarizeLive,
   type ActivitySummaryItem,
   type SummaryClause,
-} from '@moonshot-ai/app-components';
+} from '@moonshot-ai/app-components/support';
 
 function tool(name: string, over: Partial<{ arg: string; status: 'ok' | 'running' | 'error' }> = {}): ActivitySummaryItem {
   return { kind: 'tool', tool: { name, arg: over.arg ?? '{}', status: over.status ?? 'ok' } };

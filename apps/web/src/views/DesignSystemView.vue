@@ -2,8 +2,8 @@
 import { onMounted, onUnmounted } from 'vue';
 import { ICON_GROUPS } from '@moonshot-ai/app-client/icons';
 import { ActionCard, Icon, Spinner, StatusDot } from '@moonshot-ai/app-ui';
-import WorkingIndicator from '../components/chat/WorkingIndicator.vue';
-import TurnFilesSummary from '../components/chat/TurnFilesSummary.vue';
+import { WorkingIndicator } from '@moonshot-ai/app-components';
+import { TurnFilesSummary } from '@moonshot-ai/app-components';
 import type { TurnFileChange } from '@moonshot-ai/app-components';
 
 // A fixed sample for the §04 turn-files summary stage: a complete-stats file, a

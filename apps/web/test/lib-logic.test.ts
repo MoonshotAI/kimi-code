@@ -31,12 +31,12 @@ import {
   thinkingLevelToConfig,
 } from '@moonshot-ai/app-core/lib';
 import type { AppMessage, AppModel, AppTask } from '../src/api/types';
-import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
-import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
-import BashTool from '../src/components/chat/tool-calls/BashTool.vue';
-import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
-import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
-import ReadTool from '../src/components/chat/tool-calls/ReadTool.vue';
+import { resolveToolRenderer } from '@moonshot-ai/app-components';
+import { AgentTool } from '@moonshot-ai/app-components';
+import { BashTool } from '@moonshot-ai/app-components';
+import { EditTool } from '@moonshot-ai/app-components';
+import { GenericTool } from '@moonshot-ai/app-components';
+import { ReadTool } from '@moonshot-ai/app-components';
 import type { ToolCall } from '../src/types';
 import {
   clearTrace,

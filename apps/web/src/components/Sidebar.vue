@@ -24,13 +24,13 @@ import {
   looksLikeFolderDrag,
 } from '@moonshot-ai/app-core/lib';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
-import ErrorBoundary from './ErrorBoundary.vue';
-import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
+import { ErrorBoundary } from '@moonshot-ai/app-components';
+import { SearchSessionsDialog } from '@moonshot-ai/app-components';
 import RcDeviceSwitcher from './RcDeviceSwitcher.vue';
 import UserMenu from './UserMenu.vue';
-import WorkspaceGroup from './WorkspaceGroup.vue';
-import PinnedSessionList from './PinnedSessionList.vue';
-import SessionRow from './SessionRow.vue';
+import { WorkspaceGroup } from '@moonshot-ai/app-components';
+import { PinnedSessionList } from '@moonshot-ai/app-components';
+import { SessionRow } from '@moonshot-ai/app-components';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';

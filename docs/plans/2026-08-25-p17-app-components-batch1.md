@@ -13,7 +13,7 @@
 `components/` 下同名 .vue 对比（desktop `src/renderer/components/` vs web `src/components/`）：
 
 - **字节一致 75 个**（P13 清理 provenance 注释后从 73 涨到 75，新增 PlanTool、SecondaryModelPicker 进入一致集，AgentDetailPanel 已收敛）——全量下沉。
-- **可解锁 3 个**：`SessionRow.vue`（17 行 diff = desktop-only track 埋点块）、`chat/ThinkingBlock.vue`（4 行 diff = 同上）、`chat/SelectionActionBubble.vue`（2 行 diff = 首行注释措辞）。前两个按 P6/P18 既定模式把 `track` 改走注入缝后 diff 归零，第三个注释中立化——三者随本批下沉。
+- **可解锁 4 个**：`SessionRow.vue`（17 行 diff = desktop-only track 埋点块）、`chat/ThinkingBlock.vue`（4 行 diff = 同上）、`chat/tool-calls/ToolDisclosure.vue`（同款 track 块，执行时发现——13 个 tool 组件都引用它，必须同批解锁）、`chat/SelectionActionBubble.vue`（2 行 diff = 首行注释措辞）。前三个按 P6/P18 既定模式把 `track` 改走注入缝（`@moonshot-ai/app-client/contracts` 的 `track`，web no-op 即现状）后 diff 归零，第四个注释中立化——四者随本批下沉。
 - 真实分叉 28 个：不动。其中 ChatHeader / ApprovalCard / UserMenu / Sidebar 的 track 缝归零归 P18；Composer 归 P19；OpenInMenu 归 P20。
 - web 独有 2（InternalBuildBanner、RcDeviceSwitcher）、desktop 独有 9（terminal/、window/、UpdateIndicator 等）：不动。
 - `views/DesignSystemView.vue`：归 P22，不动。
@@ -29,7 +29,7 @@
 | `composables/useDialogFocus.ts` | 字节一致 | 下沉（另一消费方 SettingsDialog 是真实分叉留 app 侧，改从包 import） |
 | `assets/{mascot,doodle}/*.riv` | 字节一致 | 下沉（KimiMascot/KimiDoodle 以 `?url` 引用，随包走相对路径） |
 
-总计：**78 个 .vue + 10 个 .ts + 2 个资产文件**。
+总计：**79 个 .vue（77 本批 + KimiMascot/KimiDoodle 试点）+ 10 个 .ts + 2 个资产文件**。
 
 ## 3. 包设计
 
@@ -123,13 +123,14 @@ toolRegistry 直接 import 14 个 tool .vue，留 PR-B 与组件同批；toolMet
 6. `client/index.ts` barrel 补 `getKimiWebApi` 与 `t` 导出（toolMeta / activitySummary 改走 `t` 注入缝）。
 7. 台账同步：根 AGENTS.md（`apps/web` 依赖白名单加 app-components、目录地图加一行）、`apps/desktop/docs/native-todos.md`（admin「整目录手动同步副本」条目改写为支撑模块已下沉口径）；`apps/web/scripts/check-style.mjs` 扫描根加入 `packages/app-components/src`（ICON_EXEMPT 的 KimiMascot 键同步改前缀，§06 防线不留缺口）。
 
-### PR-B：解锁 3 文件 + 78 组件全量下沉
+### PR-B：解锁 4 文件 + 77 组件全量下沉
 
-1. 解锁：SessionRow / ThinkingBlock 的 track 改注入缝（diff 归零，双端 cmp 验证）；SelectionActionBubble 注释中立化。
-2. `git mv` 78 个 .vue（web 为源，desktop 删除），barrel 补全部组件导出。
-3. import codemod：两端 app 侧所有 `import X from '…/components/**.vue'`（指向已下沉文件）改 `import { X } from '@moonshot-ai/app-components'`；测试文件同步。
+1. 解锁：SessionRow / ThinkingBlock / ToolDisclosure 的 track 改注入缝（diff 归零，双端 cmp 验证）；SelectionActionBubble 注释中立化。
+2. `git mv` 77 个 .vue（web 为源，desktop 删除）+ toolRegistry.ts，barrel 补全部组件导出。
+3. import codemod：两端 app 侧所有 `import X from '…/components/**.vue'`（指向已下沉文件）改 `import { X } from '@moonshot-ai/app-components'`；测试文件同步（含 `ConversationToc, { type ConversationTocItem }` 混合导入特判）。
 4. 包内相对 import 按 §4 表格分流改写。
-5. 若 PR-B diff 过大，按目录拆 B1（tool-calls 17 + admin 5 + dialogs 5 + settings 6 + 顶层 12）/ B2（chat/ 33，含 ChatPane 依赖簇）。
+5. 纯测试环境保护：barrel 会拉入整张组件图（xterm / rive / markstream worker），node 环境的纯函数测试吃不消——新增 `./support` 子路径导出（仅纯模块，`src/support.ts`），desktop 4 个纯测试套件改从 `@moonshot-ai/app-components/support` 导入。
+6. 若 PR-B diff 过大，按目录拆 B1（tool-calls 17 + admin 5 + dialogs 5 + settings 6 + 顶层 12）/ B2（chat/ 33，含 ChatPane 依赖簇）。
 
 ## 6. 验证
 

@@ -10,7 +10,7 @@ import {
   useSessionAdmin,
   type SessionAdminFilters,
 } from '@moonshot-ai/app-client/client';
-import { pageItems } from '@moonshot-ai/app-components';
+import { pageItems } from '@moonshot-ai/app-components/support';
 import type { V2Session, V2SessionsPage } from '@moonshot-ai/app-core/api';
 
 const getKimiWebApiMock = vi.fn();
@@ -843,7 +843,7 @@ describe('session admin batch chunking (>5000 ids)', () => {
 describe('admin batch toast plan', () => {
   it('plans a toast only when something succeeded; undo inverts the direction', async () => {
     const { planAdminBatchToast, undoBatchDirectionOf } = await import(
-      '@moonshot-ai/app-components'
+      '@moonshot-ai/app-components/support'
     );
 
     // Full success.

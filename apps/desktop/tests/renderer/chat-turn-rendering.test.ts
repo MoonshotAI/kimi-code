@@ -17,7 +17,7 @@ import {
   turnTocTitle,
   turnVisibleFinalText,
   turnWorkMs,
-} from '@moonshot-ai/app-components';
+} from '@moonshot-ai/app-components/support';
 
 function tool(id: string, over: Partial<ToolCall> = {}): ToolCall {
   return { id, name: 'read', arg: `· ${id}.ts`, status: 'ok', ...over };

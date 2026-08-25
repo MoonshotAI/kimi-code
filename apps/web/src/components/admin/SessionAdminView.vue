@@ -18,10 +18,10 @@ import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import type { SessionAdminStatusFilter } from '@moonshot-ai/app-client/client';
 import type { SessionAdminBatchDirection } from '@moonshot-ai/app-components';
-import FilterSelect from './FilterSelect.vue';
-import MultiSelectMenu from './MultiSelectMenu.vue';
-import SessionAdminTable from './SessionAdminTable.vue';
-import SessionAdminPagination from './SessionAdminPagination.vue';
+import { FilterSelect } from '@moonshot-ai/app-components';
+import { MultiSelectMenu } from '@moonshot-ai/app-components';
+import { SessionAdminTable } from '@moonshot-ai/app-components';
+import { SessionAdminPagination } from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
 const client = useKimiWebClient();
