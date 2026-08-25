@@ -1,429 +1,323 @@
-# Renderer 架构治理总计划：共享收敛 → God Object 拆解 → Pinia → 组件化
+# Renderer 架构治理总计划：共享收敛 → God Object 拆解 → 组件层收敛 → 现代化与防护网
 
-> 交给执行者的实施计划。本文档自包含，不需要其他上下文。
-> 调研结论（§1）均为 2026-08-01 实测，含文件清单与差异行数，执行时不必重查。
-> **执行进度与实测偏差记录在文末「执行进度台账」——每个阶段开工前先读台账最新条目，完工后追加新条目。**
-> 每个阶段 = 一个可独立合并、独立可运行的 PR；除明确列出的对齐点外，迁移 PR 的原则是 **逻辑零变化，只动位置与 import**。
+> 本文档是 renderer 架构治理的唯一总计划，由两份计划合并而成（2026-08-25）：原一期计划（P0–P12 已完成）与二期计划（Q0–Q22）。两原件（`2026-08-01-renderer-architecture-refactor.md` / `2026-08-20-renderer-refactor-phase2-plan.md`）已删除，历史版本见 git。
+> **编号统一**：已完成阶段保留原编号 P0–P12；剩余工作统一重编号为 **P13–P35**（原二期 Q0–Q22 顺延映射；原一期未做的 P13–P18 编号作废，映射见 §3 开头）。台账中的历史条目保留撰写时的原编号，不再回改。
+> 沿用制度：每阶段 = 一个可独立合并、独立可运行的 PR；除明确列出的对齐点外，迁移 PR 的原则是 **逻辑零变化，只动位置与 import**；开工先读台账最新条目，完工追加台账。
 > 仓库硬约束：Conventional Commits；每 PR 按 `.agents/skills/changeset` 规则（一律 `patch`、只写 `kimi-code-app`；纯文档/测试/无用户可见变化可免）；UI 变更必须亮+暗色视觉验证。
+> 配套规范：`docs/specs/2026-08-01-renderer-architecture.md`（目标架构、归属矩阵、注入缝、平台分叉规则、组件化标准、store 规范——目标态与纪律的正本，本计划不重复）；`docs/specs/2026-08-20-vue3-best-practices.md`（Vue 3 最佳实践）。
 
-## 0. 决策记录（已拍板，2026-08-01）
+## 0. 决策记录（已拍板）
 
 | 决策点 | 结论 |
 |---|---|
-| Pinia 引入范围 | **全量引入**：app-client 内 domain stores 全部用 Pinia setup store 承载，`useKimiWebClient` facade 降级为兼容聚合层逐步废弃；`apps/web` 与 `apps/desktop` 同步引入 |
-| 共享代码落点 | **两包分工**：纯逻辑进现有 `packages/app-core`；Vue composables / 状态层 / Pinia stores 进新建 `@moonshot-ai/app-client` |
-| 组件化标准落地 | **规范文档 + 示范重构 PR**（1-2 个参照实现），后续 review 对照执行 |
-| 执行顺序 | **先收敛副本，再拆解**——拆解只在唯一正本里做一次 |
-| kimi-code 仓 `apps/kimi-web` 第三副本 | 本计划不动 submodule，冻结处理，处置建议见 §7 |
+| Pinia 引入范围（2026-08-01，已落地 P8–P12） | **全量引入**：app-client 内 domain stores 全部用 Pinia setup store 承载，`useKimiWebClient` facade 降级为兼容聚合层逐步废弃 |
+| 共享代码落点（2026-08-01，已落地 P1–P7b） | **两包分工**：纯逻辑进 `packages/app-core`；Vue composables / 状态层 / Pinia stores 进 `@moonshot-ai/app-client` |
+| 组件化标准落地方式 | 一期定为「规范文档 + 1-2 个示范 PR」；**二期升级为「全面下沉」（该示范决策作废）**：新建 `packages/app-components`（或并入 app-ui，执行时定），零差异组件文件全量下沉（73 个，2026-08-25 复测；P17–P22） |
+| 平台差异收口方式 | 组件层同样走注入缝（ProductTracker / OpenInService / ComposerEditor），禁止整文件分叉存活；残留分叉配 CI drift guard |
+| 协议契约化（2026-08-20 新增战线） | wire 边界 zod 校验 + client_hello 版本协商（需 daemon 侧配合，跨仓库）；按新契约直接消费，不做旧 daemon 兼容路径（与仓规「不做旧服务端兼容逻辑」一致） |
+| 现代化特性批次 | defineModel / defineSlots / InjectionKey 化作为一个独立机械批次（P26），配 lint 防回退 |
+| 错误边界 | 新增：全局 errorHandler + 关键子树 onErrorCaptured + async 组件错误态（随 P13 护栏批次落地） |
+| kimi-code 仓 `apps/kimi-web` 第三副本 | 一期决策冻结、不动 submodule、不回迁；P35 正式推动删除（见 §6） |
+| 执行顺序 | 一期「先收敛副本，再拆解」已完成；剩余工作 **护栏先行**（P13：drift guard / build job / 错误边界 / 真 bug 修复），再续主线拆解，组件下沉与 god object 收尾可并行 |
 
-## 1. 背景：调研结论
+## 1. 现状盘点
 
-### 1.1 双份副本现状（实测）
+### 1.1 一期已建立的基线（勿返工）
 
-`apps/web/src` 与 `apps/desktop/src/renderer` 的共有文件（composables + lib + types + api 壳，~80 个）按差异性质分五类：
+- 纯逻辑/composable/状态层全部单源化：`app-core`（lib + client + api/daemon）+ `app-client`（composables + stores + client 单例）。
+- 注入缝体系：`createKimiWebApi(deps)` 工厂、`setKimiClientDeps` 注册表、`setProductTracker` registry、包持 `clientPinia` 实例。
+- store 纪律：setup store、`kimi.` 前缀 id、写路径只走 action、applyRecordDiff 逐 key 写回、facade 桥接过渡形态。
+- 验收门禁惯例（本计划全部代码 PR 的标准模板）：test / typecheck / lint / build / check:style 五件套 + 浏览器实测双端冒烟 + 多切面 review。
+- 一期的调研明细（2026-08-01 实测的副本五类清单、god object 行数解剖、drilling 链行号等）已随合并归档，历史版本见 git；当前剩余工作以 §1.2 的实测（2026-08-20 初测、2026-08-25 按 main 复测）为准。
 
-**A. 字节一致（8 个）**——直接可搬：
+### 1.2 剩余问题实测（2026-08-20 初测，2026-08-25 按 main 复测刷新）
 
-`composables/client/applyRecordDiff.ts`、`composables/client/turnsProjector.ts`、`composables/client/useSideChat.ts`、`composables/messagesToTurns.ts`、`composables/swarmGroups.ts`、`composables/useFollowScroll.ts`、`composables/useResizable.ts`、`composables/useTerminal.ts`
+**A. God object 残余（一期主线未完成部分）**
+- `useKimiWebClient.ts`（6197 行，较 08-20 再涨 48%）+ `useWorkspaceState.ts`（4308 行）仍混四个内聚层级；~25 个 per-session 平行 map 手工 teardown（`forgetSession` 55 行）；P14–P16 三域未拆。
+- **最 race 密集的文件测试最少**：useKimiWebClient 无专门测试套件（重连 / 订阅 / 基线对齐全靠场景测试间接覆盖；`session-work-reconnect.test.ts` 已 6583 行但属集成层）。
+- 一期拆解期顺手修复清单残余（2026-08-25 复核仍在）：`useTaskPoller.ts` 整表替换（~:74）、`errorName`/`errorMessage` 双份、`PersistSessionProfilePatch` 双定义、facade 死 provide（`KimiWebClientFacadeKey` 有 provide 零 inject）。
 
-**B. 仅头注释差异（37 个）**——web 侧头注释仍是 `// apps/kimi-web/src/...`（更早期拷贝残留），desktop 侧是 `// apps/web/src/...`。lib 下绝大多数纯函数（`parseDiff`、`toolMeta`、`toolDiff`、`slashCommands`、`shellDanger`、`sessionRoute`、`serverAuth`、`snapshotMessages`、`mergeWorkspaces`、`swarmCardRows`、`searchHighlight`、`readOutput`、`planUsage`、`pathBasename`、`pathRelativeTo`、`parseSwarmResult`、`openFileAttachment`、`cronHumanize`、`codeLanguage`、`clipboard`、`workspaceOrder`、`activitySummary` 等）+ `types.ts` + `api/devBackend.ts`。
+**B. 组件层双端分叉（一期未覆盖的最大债）**
+- 共享组件 2026-08-25 复测（`components/` + `views/` 同名 .vue）：**73 个零真实差异**（33 个字节级相同 + 40 个只差首行 provenance 注释）+ 30 个真实分叉 + 2 个 web 独有，可零逻辑改动下沉的部分两端各维护一份。
+- 真实分叉的最大来源是 **telemetry 内联调用**（`import { track }` 撒在 15 个组件文件里）——P6 建的 ProductTracker 注入组件层没用上（组件侧 `contracts.track` 使用为 0）；其次 v-if 包裹的原生块（合理）。
+- 08-20 登记的三条行为级漂移，复测两条已修复（web Composer 已迁 app-composer 的 ProseMirror、`command` emit 已补 `skillName`）；`ApprovalCard` 两端仍有 106 行差异（iOS 视口修复等只在一端）。`AttachmentChip.vue` 两端已删除。
+- **CI 无任何防漂移检查**；kimi-code 仓 `apps/kimi-web` 第三份冻结副本仍在。
 
-**C. 纯格式化差异（3 个）**——web 侧未经 oxfmt 重排，内容等价：`useDetailPanel.ts`、`useAuxiliaryTranscripts.ts`、`lib/auxiliaryTranscriptToTurns.ts`。
+**C. 组件质量（原一期 P16/P17 只计划做示范）**
+- 巨型组件（行数为 2026-08-25 复测 desktop/web，结构数据为 08-20 口径）：ConversationPane 3198/3155 行（内嵌 ~700 行滚动引擎，嵌套滚动接管写了三遍；58 props / 45 emits；26 行纯转发 emit）、Composer 4364/4595 行（160 行手写 keymap、工具条折叠状态机、3 个自撸下拉绕开 app-ui Menu；main 上 mention pills / attachment registry 新逻辑多在壳内，清单以当日重测为准）、Sidebar 2783/2516 行（6 条渲染路径内联、DnD 三种实现、3 个手写弹窗）、App.vue 2945/2331 行（单绑定块 103 行、无 scoped 全局样式反穿 `.chat-header`）。
+- 4 层 prop drilling：同组 ~30 个 props 在 App → ConversationPane → ChatDock → Composer 逐字重复声明；facade 本是全局单例，drilling 无收益。
+- 5 个裸字符串 provide key（`pinScroll` / `resolveImage` / `resolveAgentTaskId` / `modelDisplay` / `subagentEffort`）。
 
-**D. Additive（desktop = web + 增量，可取并集）**：
+**D. Vue 现代化欠账**
+- `defineModel` 0 次 vs 22 个文件手写 modelValue 对（app-ui 全部表单控件）；`defineSlots` 0 次（36 个插槽口无类型）；`useTemplateRef` 0 次（319 个字符串模板 ref）；facade 返回装 ref 的普通对象字面量 → 模板 `.value` 汤（App.vue 188 处，desktop，2026-08-25 复测）；`onWatcherCleanup` 0 次；AbortController 0 次（247 处监听器手工配对）。
+- `ProviderForm.vue:340` 可编辑可删除表单行用 index 作 key——**真 bug**（2026-08-25 复核仍在）。
 
-| 文件 | 差异行数 | desktop 多出什么 |
-|---|---|---|
-| `lib/storage.ts` | 15 | 3 个 storage key（shortcutOverrides / dockIconChoice / openInDefaultTarget 改名） |
-| `lib/desktopFlag.ts` | 8 | `isWindowsDesktop` |
-| `lib/icons.ts` | 47 | 3 个图标条目（eye / eye-off / keyboard，仅 keyboard 有本地 SVG） |
-| `composables/client/useNotification.ts` | 19 | `track()` 通知埋点 |
-| `composables/useAttachmentUpload.ts` | 42 | `track()` + via 参数 |
-| `composables/useOAuthLoginFlow.ts` | 65 | `track()` oauth 阶段埋点 |
-| `composables/useUpdateStatus.ts` | 31 | `track()` + source 参数 |
-| `api/bootstrap.ts` | 1 | `mainAgentOnly: true`（`DaemonKimiWebApi` 既有选项，app-core `ws.ts:101`） |
+**E. 数据层与协议（#279 主线 transcript 迁移后重写，2026-08-25）**
+- #279 已完成 Phase 0–3：主对话消息流改由 transcript 协议驱动，`messagesBySession` 切片与 `agentEventProjector`/`eventReducer` 的消息路径已删除（两文件保留，只剩全局事件 / agent 生命周期 / BTW 侧聊）；`frameClassifier` 仍在，但只分类上述剩余帧。
+- 剩余 record slice（`tasksBySession` 等）仍是深 `reactive()`；`shallowRef` 全仓库仅 3 处、`markRaw` 0——applyRecordDiff 的写入侧优化被读取侧深遍历抵消一半。
+- WS 协议仍无版本号；REST 边界零运行时校验（`as WireEnvelope<T>`）；12 处 PRESUMED 对着未上线服务端特性写代码（2026-08-25 复核仍 12 处）。
+- turn 生命周期隐式散落在 facade（`turnStartBySession` generation map、`turnActiveBySession` 等）与 useWorkspaceState（队列 / 乐观气泡 / settle 清理）。
+- #279 的已知取舍（其计划文档登记）：goal 卡实时流式降级为回合边界 REST 刷新；warnings 实时增量降级为会话选择时 REST 拉取；goal turn-end seam 测试缺口待按 transcript 边沿重写——吸收进 §7。
 
-**E. 实质分叉（需逐点对齐）**：
+**F. 性能敞口**
+- 无界 transcript 全量渲染（无虚拟化、`v-memo` 0）；`assistantVisibleBlocks(turn)` 在 `ChatPane.vue` 的 v-for 表达式里每 tick 重算；主视图 v-show 切换下隐藏视图的 watcher/observer 全活着。
 
-| 文件 | 差异行数 | 分叉内容 |
-|---|---|---|
-| `composables/usePageTitle.ts` | 62 | web：运行中标题加转圈动画、标题 `Kimi Code Web`；desktop：静态 `Kimi Code`（转圈会漏进 macOS Dock 菜单，native-todos.md 记录为有意分叉） |
-| `api/config.ts` | ~10 | identity 常量：web 硬编码 `kimi-code-web`/`web`；desktop 用 `shared/identity.ts` |
-| `composables/client/useModelProviderState.ts` | 184 | desktop 为超集（getProvider/AddProviderInput/loadConfig+checkAuth 依赖）；**错误处理路径不同**：web `pushOperationFailure` toast，desktop 返回错误字符串给表单 inline banner |
-| `composables/client/useWorkspaceState.ts` | 111 | desktop = web + `track()` + `session-intent` + `skipTrack` 参数 + 日志前缀 `[kimi-code]` vs `[kimi-web]` |
-| `composables/useKimiWebClient.ts` | 89 | desktop = web + `track()`（connection_lost/restored）+ native terminal teardown（session/workspace 删除时 `useNativeTerminal().destroySession`）+ `workspaceName` 兜底 `kimi-code` vs `kimi-web` |
-
-**desktop-only（16 个，留在 desktop，不进共享包）**：`useNativeTerminal`、`useShortcuts`、`useFullscreen`、`useVibrancy`、`useTrayAttention`、`useJumpList`、`lib/keymap`、`lib/nativeOpenIn`、`lib/nativeWorkspacePicker`、`lib/track`、`lib/session-intent`、`lib/approvalTelemetry`、`lib/dockIconChoice`、`lib/loginSource`、`lib/windowsMenuAccess`、`lib/providerForm`（待核，P4 时确认 web 侧对应逻辑位置）。
-
-**web-only**：仅测试文件（`activitySummary.test.ts`、`shellDanger.test.ts`、`transcriptSelectAll.test.ts`、`useResizable.test.ts`）与 `InternalBuildBanner.vue`。
-
-**第三份副本（冻结）**：`kimi-code/` 子模块内 `apps/kimi-web` 是同源更早版本，已明显漂移（`agentEventProjector` 1582 行 vs 本仓 1482、`messagesToTurns` 945 vs 1124）。不在本 workspace（pnpm-workspace.yaml 注释明确排除），本计划不动，见 §7。
-
-### 1.2 God object 现状
-
-- `composables/useKimiWebClient.ts`：3577 行，模块级单例，**return 对象 188 个 key**（`:3349-3573`），`ExtendedState` 60+ 字段（`:316-424`）。职责横跨 localStorage 持久化、事件接入/合批/副作用、重连 baseline、快照同步、WS 订阅 LRU、view-model 转换（`buildApprovalBlock` 122 行）、~750 行 computed view props、workspace 排序分组、通知回调。
-- `composables/client/useWorkspaceState.ts`：**单函数 2989 行**（`:294-3282`），return ~90 个 action，deps 接口 70+ 字段（`:223-292`）。名为 "State" 实为应用层全部写操作。
-- 写入纪律靠注释维持（`:234-235`），已被 `useTaskPoller.ts:34-38` 打破（整体替换 `tasksBySession`，与 `applyRecordDiff` 纪律自相矛盾）。
-- 两端 `main.ts` 已 `provide(KimiWebClientFacadeKey, useKimiWebClient())`（`apps/web/src/main.ts:33`、`apps/desktop/src/renderer/main.ts:34`）但**全仓无任何 inject**——死供给。
-
-### 1.3 props drilling 现状
-
-- `App.vue` → `ConversationPane`：**47 props + ~40 emits**（`App.vue:1421-1507`）；`ConversationPane` → `ChatDock` ~35+25；`ChatDock` → `Composer` 38 个绑定；`ConversationPane` 又直连 `Composer` 一份。
-- `models` / `starredIds` / `managedMembership` / `searchFiles` 等约 20 个 prop 在 4 层 `defineProps` 重复声明；`ConversationPane` 模板 28 处 `@x="emit('x', $event)"` 纯转发。
-- 两种风格混用：同一透传链上，`SettingsDialog` / `UserMenu` / `ProvidersPanel` / `ProviderForm` / `AddProviderFlow` / `MobileSettingsSheet` 6 个组件直接调 `useKimiWebClient()` 单例，`useNativeTerminal()` 被 7 处直抓。
-- `App.vue` 模板手动 `client.xxx.value` 解包 144 次。
-
-### 1.4 有利条件（已存在的基础）
-
-- `packages/app-core` 已承载 api/reducer/ws/http/mappers 与 `client/createKimiWebClientCore.ts`（per-call reactive、非单例、`t` 注入先例、`install/dispose` 生命周期钩子）；`KimiWebClientFacadeKey.ts` 也在 app-core。peer vue，exports→src 免构建。
-- 测试基础：`apps/web/test/` 8 个（event-batcher / event-reducer / agent-event-projector / workspace-state / task-poller / ws-lifecycle / side-chat / daemon-client），`packages/app-core/test/` 13 个，`apps/desktop/tests/renderer/` 若干。根 `vitest.config.ts` 以 projects 覆盖 `apps/*` 与 `packages/*`，测试随迁后 `pnpm test` 自然跑到。注意 `apps/web/test/event-reducer.test.ts` 与 `app-core/test/eventReducer.test.ts` 疑似重复，P3 时去重。
-- 两端 `main.ts` 结构一致（i18n / KimiI18nKey / IconResolverKey / facade provide），desktop 仅多 vibrancy 初始化。
-- 图标集合已参数化：两端 vite 配置都用 `kimiRendererViteConfig({ iconsDir })`（vite-preset），仅 `iconsDir` 指向各自目录。
-- 组件复用抽象已正确：tool-calls 注册表（`toolRegistry.ts:24`）+ `ToolDisclosure` 共享壳；`ChatPane` 三处复用。
-- i18n 词条集中在 `packages/app-i18n/src/locales`，双端共享。
+**G. 工程防护网缺口**
+- 零错误边界：无 `app.config.errorHandler`、`onErrorCaptured` 0、2 处 defineAsyncComponent 未配错误态。
+- 组件测试为 0（@vue/test-utils 不在依赖里）；无 e2e；PR 不跑 build（ci.yml 只有 lint/typecheck/test，tsdown/vite build 坏了要等 release）；无依赖更新机制。
 
 ## 2. 目标 / 非目标
 
 **目标**
-
-1. 消灭双份源码：共有代码在 `packages/` 有唯一正本，`apps/web` 与 `apps/desktop/src/renderer` 只保留 app 专属代码。
-2. 拆解 god object：`useWorkspaceState` / `useKimiWebClient` 按域拆成 Pinia stores；`rawState` 写入从注释纪律变成模块边界（store 外只读）。
-3. 消灭 props drilling：跨层共享状态一律 store 直取；透传只保留组件私有输入。
-4. 组件化标准成文（`docs/specs/`）并以 1-2 个示范 PR 落地。
+1. god object 按一期矩阵拆完（P14–P16 三域 + 残余修复清单），facade 降为薄聚合层。
+2. 组件层单源化：零差异组件文件全量下沉（73 个，2026-08-25 复测）+ 真实分叉全部改注入缝 + CI 防漂移。
+3. 三个巨型组件（ConversationPane / Composer / Sidebar）拆到达标（script ≤ ~600 行）。
+4. 错误边界、现代化特性、数据层浅响应化、协议契约化落地。
+5. 防护网补齐：组件测试地板、CI build job、打包冒烟。
 
 **非目标**
+- 不改 daemon（kimi-code 仓）既有行为语义；协议字段只做新增，但客户端按新契约直接消费，不为缺字段的旧 daemon 写兼容/降级路径（仓规「不做旧服务端兼容逻辑」既有口径）。
+- 不做 UI 重设计；不做 Vapor Mode 迁移（等 3.6 stable，见 P35 评估项）。
+- 任何功能新增与视觉变更（各阶段明确列出的行为对齐点除外）。
+- Windows/Linux 签名、CDN 发布自动化不在本计划（基础设施议题另立）。
+- kap-server 挪 utilityProcess 只做评估与 POC（P34），不承诺落地。
 
-- kimi-code 仓 `apps/kimi-web` 第三副本的收敛（仅给建议，§7）。
-- chat 组件下沉 `packages/app-ui`（组件共享是下一步独立计划；本计划只动 ts 层与必要的组件 import 适配）。
-- 主进程安全加固（CSP / openExternal 白名单 / 死 channel 清理）——独立小 PR，见附录 A，可与本计划穿插。
-- 任何功能新增与视觉变更（§5 明确列出的行为对齐点除外）。
+## 3. 阶段总览
 
-## 3. 目标架构与代码归属矩阵
+**编号映射（合并时统一）**：
 
-### 3.1 静态分层（全部阶段完成后的代码归属）
+- 原二期 Q0–Q22 → **P13–P35**（顺延：Q0→P13、Q1→P14、…、Q22→P35）。
+- 原一期未做条目的去向：旧 P13（workspace store）→ P14；旧 P14（prompt store）→ P15；旧 P15（connection store）→ P16（扩大为 + SessionRuntime 容器化）；旧 P16（drilling 示范）→ P24（扩大）；旧 P17（滚动机器 + App.vue 瘦身）→ P23（滚动，扩大）+ P24（App.vue 瘦身残项）；旧 P18（约定核对）→ P35。旧 P13–P18 编号不再使用。
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 应用层（只保留 app 专属）                                                    │
-│                                                                            │
-│  apps/web                            apps/desktop                          │
-│  ├─ main.ts（i18n / Pinia / 注入接线）  ├─ main/    Electron 主进程（不动） │
-│  ├─ App.vue + components/               ├─ preload  window.kimiDesktop     │
-│  │   chat/ settings/ dialogs/ mobile/   ├─ renderer main.ts（同上接线）     │
-│  ├─ debug/trace（Tracer 实现）           ├─ renderer App.vue + components/ │
-│  ├─ style.css（design tokens）           │  └─ desktop 专属：               │
-│  └─ vite.config（iconsDir 指向包内）      │     useNativeTerminal ·         │
-│                                         │     useShortcuts + keymap ·      │
-│                                         │     lib/track(IPC) · vibrancy ·  │
-│                                         │     tray / jump-list 联动        │
-└──────────────────────┬─────────────────────────────────┬───────────────────┘
-                       │      注入（见表 3.3）              │
-                       ▼                                  ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ @moonshot-ai/app-client —— Vue 状态层（新建包）                              │
-│                                                                            │
-│  stores/   Pinia setup stores（共享状态唯一正本；写路径只走 action）         │
-│            connection · sessions · prompt · approvals · files · workspace │
-│            · models · notifications                                       │
-│  composables/  UI 逻辑（无持久状态，可多实例）                               │
-│            useFilePreview · useSlashMenu · useMentionMenu ·               │
-│            useComposerDraft · useInputHistory · useSidebarLayout ·        │
-│            useConfirmDialog · useTerminal · useFollowScroll ·             │
-│            usePageTitle · useOAuthLoginFlow · useAttachmentUpload · …     │
-│  icons/    icons.ts 注册表 + icons/kimi/*.svg（两端 vite iconsDir 同指此）   │
-│  contracts.ts  ProductTracker / TerminalHooks / SessionIntent（默认 no-op）│
-└──────────────────────────────────────┬─────────────────────────────────────┘
-                                       │ depends on
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ @moonshot-ai/app-core —— 纯逻辑 + 传输（既有包扩展；无 DOM 依赖）            │
-│                                                                            │
-│  api/       DaemonKimiWebApi = REST(http) + WS(ws) + wire/mappers          │
-│             + frameClassifier + agentEventProjector（t 注入）+ eventReducer │
-│             + createKimiWebApi(deps) 组合工厂                              │
-│  client/    createKimiWebClientCore（状态机）· eventBatcher ·              │
-│             applyRecordDiff · turnsProjector · messagesToTurns ·          │
-│             swarmGroups · latestTodos · auxiliaryTranscriptToTurns ·      │
-│             渲染类型（ChatTurn / TurnBlock）                                │
-│  lib/       纯函数：parseDiff · toolMeta · storage · desktopFlag · log · … │
-│  contracts/ Tracer · CredentialStore · ClientIdentity                      │
-└──────────────────────────────────────┬─────────────────────────────────────┘
-                                       │ REST + WebSocket /api/v1
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ kimi-code（submodule，本计划不动）：kap-server · agent-core-v2 · sdk        │
-└────────────────────────────────────────────────────────────────────────────┘
+**已完成（P0–P12，详见文末台账）**：
 
-既有旁路（不动）：app-ui（primitives，IconResolverKey 桥到 app-client/icons）
-                 app-i18n（locales + KimiI18nKey）· app-markdown · vite-preset
-```
-
-### 3.2 运行时数据流（server → 屏幕 → server）
-
-```
-读路径
-
-  kap-server
-    │ WS raw frames
-    ▼
-  DaemonEventSocket（app-core/api：握手 / 心跳 / 重连 / 订阅 LRU / seq+epoch 光标）
-    │ frameClassifier 分流
-    ├─ protocol 帧 → mappers.toAppEvent ─────────┐
-    └─ agent 帧   → agentEventProjector（t 注入）─┤ AppEvent[]
-                                                  ▼
-                              eventBatcher（合并连续 delta，控制事件做排序屏障）
-                                                  ▼
-                   reduceAppEvent（纯函数）→ applyRecordDiff 逐 key 写回
-                                                  ▼
-        useConnectionStore（socket 生命周期 / resync / 快照同步 / 订阅 LRU）
-        useSessionsStore · usePromptStore · useApprovalsStore · …（按域切片）
-                                                  ▼
-        turnsProjector + messagesToTurns（增量缓存投影 → ChatTurn[]，store getter）
-                                                  ▼
-        组件（store 直取；props 仅私有输入；无 4 层透传链）
-                                                  ▼
-                                                 屏幕
-
-写路径
-
-  组件事件 → store action → DaemonKimiWebApi（REST 30s 超时 / WS）→ kap-server
-
-  约束：禁 $patch 整表替换（沿用 applyRecordDiff 逐 key 写回纪律）；
-       高频流式 delta 只经 eventBatcher 合批后落地；devtools 不开时间旅行。
-```
-
-### 3.3 注入缝（apps → packages，平台差异的唯一通道）
-
-| 注入物 | apps/web | apps/desktop | 注入点 |
+| PR | 阶段 | 完成 | 合并 |
 |---|---|---|---|
-| Tracer | `debug/trace` | `debug/trace`（主进程 renderer-log 脱敏落盘） | `createKimiWebApi` |
-| CredentialStore | `lib/serverAuth` | 同左 | `createKimiWebApi` |
-| identity（clientName/uiMode） | `kimi-code-web` / `web` | `DESKTOP_PRODUCT_NAME` / `DESKTOP_UI_MODE` | `createKimiWebApi` |
-| mainAgentOnly | `false` | `true` | `createKimiWebApi` |
-| t（翻译） | `i18n.global.t` | 同左 | projector / client-core 工厂 |
-| ProductTracker | no-op | `lib/track`（IPC → 主进程遥测） | app-client 接线 |
-| TerminalHooks | no-op | `useNativeTerminal().destroySession` | stores 接线 |
-| SessionIntent | 无 | `lib/session-intent` | sessions store 接线 |
+| P0 | 架构与组件化规范文档 | 2026-08-05 | — |
+| P1 | lib 纯函数下沉 app-core | 2026-08-11 | #185 |
+| P2 | 渲染类型 + 热路径纯模块下沉 | 2026-08-11 | #196 |
+| P3 | agentEventProjector 下沉 + api 壳合并 | 2026-08-11 | #197 |
+| P4 | 新建 `@moonshot-ai/app-client` + ProductTracker 契约 + 无分叉 composables 迁移 | 2026-08-11 | #198 |
+| P5 | icons 资产与注册表统一 | 2026-08-11 | #199 |
+| P6 | telemetry / 平台分叉 composables 迁移 | 2026-08-12 | #207 |
+| P7a | client 状态模块迁移（task-poller/side-chat/model-provider） | 2026-08-12 | #208 |
+| P7b | 两大单例迁移，副本正式消灭 | 2026-08-17 | #255 |
+| P8 | Pinia 引入 + 首个 domain store（sessions） | 2026-08-17/18 | 与 P9–P12 同批，见台账 |
+| P9 | notifications store | 2026-08-18 | 同上 |
+| P10 | models store | 2026-08-18 | 同上 |
+| P11 | approvals store | 2026-08-18 | 同上 |
+| P12 | files store | 2026-08-18 | 同上 |
 
-### 3.4 组件通信标准（最终态）
-
-- **共享状态**：任何层级组件 `useXxxStore()` 直取，禁止经 props 多层透传。
-- **props/emit**：仅父子私有输入（如 `ChatPane` 的渲染输入 `turns`）；同一 prop 透传 ≥3 层或 emit 纯转发 ≥3 个即下沉 store。
-- **provide/inject**：仅类型化 `InjectionKey<T>` 的局部桥（`pinScroll`、`resolveImage`、`KimiI18nKey`、`IconResolverKey`），禁裸字符串 key。
-
-### 3.5 归属矩阵
-
-| 代码 | 去向 |
-|---|---|
-| `lib/*` 纯函数（含 `storage`、`desktopFlag`、`log`） | `packages/app-core/src/lib`（exports `./lib` 已存在） |
-| 渲染类型 `types.ts`（ChatTurn/TurnBlock 等） | `packages/app-core/src/client` |
-| `eventBatcher` / `turnsProjector` / `applyRecordDiff` / `messagesToTurns` / `latestTodos` / `swarmGroups` / `auxiliaryTranscriptToTurns` | `packages/app-core/src/client` |
-| `agentEventProjector` | `packages/app-core/src/api/daemon`（`t` 注入解耦 i18n） |
-| api 壳（`bootstrap`/`config`/`devBackend`/`errors`/`index`/`types` re-export） | `packages/app-core/src/api`；bootstrap 改 `createKimiWebApi(deps)` 工厂，tracer / credentialStore / identity / mainAgentOnly 全注入 |
-| UI 层 composables（`useFilePreview`、`useSlashMenu`、`useMentionMenu`、`useComposerDraft` 等） | `packages/app-client/src/composables` |
-| 状态层（`useKimiWebClient`、`useWorkspaceState`、`client/*`） | `packages/app-client/src/client`（迁移期原样） |
-| Pinia domain stores | `packages/app-client/src/stores` |
-| `icons.ts` + `icons/kimi/*.svg` | `packages/app-client/src/icons`；两端 vite `iconsDir` 指向包内路径 |
-| desktop 专属（§1.1 清单） | 留 `apps/desktop/src/renderer` |
-| `ProductTracker` 埋点契约 | `packages/app-client` 定义接口 + no-op 默认；desktop 注入 `lib/track`（IPC）实现，web 注入 no-op |
-
-**平台分叉规则**（替代"整目录 re-copy 保留分叉块"）：
-
-1. **注入优先**：telemetry、terminal teardown、tracer、credentialStore 一律经构造参数/工厂注入，web 端 no-op。
-2. 平台分支仅限 UI 行为差异（如 `usePageTitle` 转圈动画），统一走 `lib/desktopFlag.ts` 的 `isDesktop`，分支集中在共享实现内部，不再整文件分叉。
-3. 品牌/持久化协议：日志前缀统一 `[kimi-code]`、`workspaceName` 兜底统一 `kimi-code`（web 跟随 desktop 已完成的品牌清理）；**`kimi-web.*` localStorage key 与 `kimiWeb.optimisticUserMessage` metadata key 保持不变**（持久化协议，native-todos.md 明确禁止清理）。
-
-**迁移期纪律（自 P1 合并起生效，直到 P13 收尾）**：
-
-- 共有文件的任何改动只改 `packages/` 正本；desktop↔web 双向同步工作流即刻停止。
-- 新功能若需动共有代码，一律在 packages 里改；不得让两端副本新增差异（P1 后副本逐步消失，自然强制）。
-- 迁移 PR 逻辑零变化；行为对齐点单独列在 PR 描述里。
-
-**每个代码 PR 的验收模板**：
-
-1. `pnpm test && pnpm typecheck && pnpm lint` 全绿。
-2. 冒烟：`pnpm dev:desktop`（内嵌 server）发一条消息跑通工具调用与审批；`pnpm dev:web`（代理模式）发消息正常。涉及连接/事件层的 PR 加测 `KIMI_SERVER_URL` 外部 server 模式。
-3. 涉及 UI/图标的 PR：亮+暗色、hover/focus 视觉验证；`pnpm --filter kimi-code-web check:style` 无新增 findings。
-4. changeset 按 skill 规则。
-
-## 4. 阶段总览
+**待执行（P13–P35）**：
 
 | PR | 阶段 | 规模 | 依赖 |
 |---|---|---|---|
-| P0 | 架构与组件化规范文档 | 小 | — |
-| P1 | lib 纯函数下沉 app-core | 中 | P0 |
-| P2 | 渲染类型 + 热路径纯模块下沉 | 中 | P1 |
-| P3 | agentEventProjector 下沉（i18n 解耦）+ api 壳合并 | 中 | P1 |
-| P4 | 新建 `@moonshot-ai/app-client` + ProductTracker 契约 + 无分叉 composables 迁移 | 中 | P2 |
-| P5 | icons 资产与注册表统一 | 小 | P4 |
-| P6 | telemetry/平台分叉 composables 迁移 | 中 | P4 |
-| P7a | client 状态模块迁移（task-poller/side-chat/aux/model-provider） | 中 | P6 |
-| P7b | **两大单例迁移，副本正式消灭** | 大 | P7a |
-| P8 | Pinia 引入 + 首个 domain store + store 规范 | 中 | P7b |
-| P9–P15 | 按域拆 god object（每域一个 PR） | 各中 | P8 |
-| P16–P17 | 组件层示范改造（drilling 消除 / 滚动机器抽离） | 各中 | P9 起可穿插 |
-| P18 | 收尾：约定核对（AGENTS.md / native-todos.md） | 小 | 全部 |
+| P13 | 护栏与快赢批次（drift guard / build job / 错误边界 / ProviderForm key / provenance 注释清理） | 中 | — |
+| P14 | workspace store（原一期 P13 原样承接） | 中 | — |
+| P15 | prompt store（原一期 P14 原样承接） | 中 | P14 |
+| P16 | connection store + SessionRuntime 容器化（原一期 P15 扩大；先补测试保护网 P33） | 大 | P15 |
+| P17 | `packages/app-components` 第一批：零差异组件文件机械下沉（73 个，按当日重测） | 中 | P13 |
+| P18 | 组件 telemetry 走 ProductTracker + provide 纪律清理 | 中 | P17 |
+| P19 | Composer 壳合一 + 下沉（web ProseMirror 迁移已完成） | 中 | P17 |
+| P20 | OpenInMenu 注入式 catalog provider 统一 | 中 | P17 |
+| P21 | Sidebar 拆分（StatusTabs/SessionList/WorkspaceDirectory + 单一 DnD） | 中 | P17 |
+| P22 | DesignSystemView 收敛 desktop 单份正本 + App.vue 全局样式反穿清除 | 小 | — |
+| P23 | 滚动引擎提取 `useTranscriptScroll`（原一期 P17 前半，虚拟化前置） | 大 | — |
+| P24 | drilling 消除：Composer 链 + ConversationPane 收敛 + App.vue 瘦身（原一期 P16 扩大） | 大 | P14–P16 |
+| P25 | Composer 拆分（keymap / 折叠状态机 / menu 测量 composable 化） | 中 | P19 |
+| P26 | 现代化批次：defineModel ×22 + defineSlots + InjectionKey 化 + lint 固化 | 中 | — |
+| P27 | 数据层浅响应化 + 就地变更读取点清单化 | 中 | P16 |
+| P28 | 协议契约化：wire 边界 zod + client_hello 版本协商 | 大 | —（跨仓库协调） |
+| P29 | turn 生命周期显式状态机 | 大 | P16、P28 |
+| P30 | transcript 虚拟化 + v-memo 热点 + assistantVisibleBlocks 预计算 | 大 | P23 |
+| P31 | 组件测试地板（@vue/test-utils 引入 + 提取物首批用例） | 中 | P23/P25 |
+| P32 | 打包产物冒烟 + 主进程安全三件套（原一期附录 A） | 中 | P13 |
+| P33 | useKimiWebClient 场景测试保护网（P16 的前置，单独成 PR） | 中 | — |
+| P34 | kap-server utilityProcess 隔离评估 + POC | 中 | — |
+| P35 | 收尾：约定核对（原一期 P18）+ kimi-web 第三副本删除推动 + 3.6/Vapor 评估 | 小 | 全部 |
 
-## 5. 阶段明细
+**并行线**：线 ① P14→P15→P16（god object 收尾，一期主线）；线 ② P17→P18/P19/P20/P21（组件下沉）+ P22（DesignSystemView 单源化，无下沉依赖）；线 ③ P23→P30（滚动与性能）；线 ④ P26/P28/P29（现代化与协议）。P13 与 P33 先行，四条线之后可并行推进。
 
-### P0 — 架构与组件化规范文档
+## 4. 阶段明细
 
-新增 `docs/specs/2026-08-01-renderer-architecture.md`，内容：
+### P13 — 护栏与快赢批次
 
-- 目标架构图 + §3 归属矩阵 + 平台分叉规则 + 迁移期纪律。
-- **组件化标准**（后续 review 对照执行）：
-  - 逻辑归属：纯函数进 `lib`（无 Vue 依赖）；跨组件状态进 store；组件只留视图状态（hover/focus/本地输入）。
-  - 通信：跨层共享一律 store；`provide/inject` 必须用 `InjectionKey<T>`（禁裸字符串 key，现存 `pinScroll`/`resolveImage`/`resolveAgentTaskId`/`resolveSwarmMembers` 四处为待改造反例）；props 只用于父子私有输入；同一 prop 透传 ≥3 层或 emit 纯转发 ≥3 个即应下沉 store。
-  - 复用：变体用注册表 + 共享壳（tool-calls 为范本）；mobile/desktop 优先同组件 + 断点适配，禁止整组件复制（`MobileSwitcherSheet` 复制 `SessionRow` 为反例）。
-  - 尺寸红线：`<script setup>` 超 ~300 行或响应式声明超 ~50 个，进 review 重点，原则上拆分。
-  - i18n 零容忍：任何用户可见字符串（含对话框、placeholder、回退文案）必须走 `t()`；`ServerAuthDialog.vue` 为反例（P17 修）。
-  - 样式只用 token（沿用既有硬约束）。
-- **store 规范**（Pinia）：全部 setup store 形态；state 不直接导出可变引用，消费端只读；写路径只走 action，**禁用 `$patch` 整表替换**（沿用 `applyRecordDiff` 逐 key 写回纪律）；高频 delta 路径（eventBatcher → reducer → 写回）不进 devtools 时间旅行，store 创建时 `devtools: false` 或按 action 粒度规避。
-- 无 changeset（纯文档）。
+先上护栏再动工，防止治理期间新债继续产生。可拆 3-4 个小 PR：
 
-### P1 — lib 纯函数下沉 app-core
+1. **CI drift guard**：脚本 diff 两端 `components/` 同名文件，超白名单（native-todos 台账）即 fail；白名单随 P17–P22 逐批缩短。同步删 51 个文件的第一行 provenance 注释（文件路径即 provenance）。
+2. **CI PR build job**：`tsdown` + `vite build`（不打包），build 坏了不再等 release 才发现。
+3. **错误边界三件套**：`app.config.errorHandler`（desktop 上报走 renderer-log/track IPC，web console + 可见降级）；ChatPane/transcript、SettingsDialog 子树 `onErrorCaptured`；2 处 defineAsyncComponent 补 errorComponent + timeout。
+4. **ProviderForm.vue:340** 表单行 key 改稳定 id（`form.models` 行加内部 id 字段）。
+5. 附带：`useTaskPoller.ts:339` deep-watch getter 返新对象改 computed；`open-external` 主进程补 http(s) 白名单（复用 `isHttpUrl`）；删死 channel `onMenu`/`kimi:menu`。
 
-- 范围：`lib/` 下 B 类（仅头注释）+ A 类纯函数 + `storage.ts` / `desktopFlag.ts` / `log.ts`（D 类并集）+ 随附测试（`searchHighlight.test`、`formatTokens.test`、`modelThinking.test`、`icons.test` 除外——icons 在 P5）。`nativeWorkspaceDrop.ts` 先核实是否触碰 `window.kimiDesktop`：无桥依赖则同批下沉，有则归 P6。
-- 步骤：文件移入 `packages/app-core/src/lib/`（`git mv` 保留历史）→ `lib/index.ts` 补导出 → 两端 import 批量改 `@moonshot-ai/app-core/lib` → 删双份 → 头注释统一改为新路径。
-- `storage.ts` 取并集时保留全部 `kimi-web.*` key 名不变。
-- `log.ts` 前缀统一 `[kimi-code]`（行为对齐点，写入 PR 描述）。
-- 验收：标准模板。
+验收：五件套 + drift guard 对存量白名单外文件误报为零。
 
-### P2 — 渲染类型 + 热路径纯模块下沉
+### P14–P16 — god object 收尾（承接原一期 P13–P15）
 
-- 范围：`src/types.ts`（仅头注释差异）→ `packages/app-core/src/client/types.ts`；`composables/client/{eventBatcher,turnsProjector,applyRecordDiff}.ts`、`composables/{messagesToTurns,latestTodos,swarmGroups}.ts`、`lib/auxiliaryTranscriptToTurns.ts` → `packages/app-core/src/client/`。
-- `messagesToTurns` 等对 `../types` 与 `../lib/*` 的 import 改为包内相对路径（P1 已就位）。
-- 测试随迁：`apps/web/test/event-batcher.test.ts` → `packages/app-core/test/`。
-- `applyRecordDiff.ts` 头注释的 "Pure logic (no Vue)" 声明保留。
-- 验收：标准模板。
+按一期拆解矩阵原样执行，两处扩大：
 
-### P3 — agentEventProjector 下沉 + api 壳合并
+- **P14 `useWorkspaceStore`**：收编 workspace 排序 / pin / 分组。
+- **P15 `usePromptStore`**：收编 prompt 提交 / queue / local turn 生命周期（`submitPromptInternal` 147 行拆小）。
+- **P16 `useConnectionStore` + `SessionRuntime` 容器化**（原一期 P15 扩大）：connect / reconnect / baseline / resync / 快照同步 / WS 订阅 LRU（风险最高，放最后；`connectEventsIfNeeded` 196 行拆小）；~25 个 per-session 平行 map 收敛为单一容器对象 + 单 `dispose()`，`forgetSession` 的 55 行手工 teardown 随之消失；新增 per-session 状态只需在容器里加字段。
+- **P16 前置 P33（测试保护网）**：拆风险最高的连接域之前，先给 useKimiWebClient 补场景测试——快照合并（staleness 一重试策略）、订阅 LRU 驱逐后重开（stale cursor → snapshot rebuild）、epoch 切换窗口、reconnect baseline 对齐。这是「先补网再动刀」，单独成 PR 便于 review。
+- 一期拆解期顺手修复清单残余随所属域 PR 一并做：`useTaskPoller.ts:74` 整表替换（P14）、`errorName`/`errorMessage` 合并与 `PersistSessionProfilePatch` 双定义合并（P15）、facade 死 provide 删除（P24 组件改造完成后）。
 
-- projector 的 4 处 `i18n.global.t`（`agentEventProjector.ts:28, 216, 1125, 1294`）改为构造注入 `t`（沿用 `CreateCoreDeps.t` 模式，`createKimiWebClientCore.ts:35` 为先例）；`createAgentProjector(deps)` 签名扩展，两端 bootstrap 传 `i18n.global.t`。注意：注入 `t` 只影响之后投影的新事件，**已写入 state 的投影文本不会随切语言重算**——"切语言后已投影文本不更新"的正经修法是存 translation key/params 渲染时翻译，或切语言时重投影相关事件；P3 不承诺修复，列为已知问题待后续阶段评估（避免执行者误以为已解决）。
-- projector 移入 `packages/app-core/src/api/daemon/`；测试随迁（`agent-event-projector.test.ts`、`ws-lifecycle.test.ts`、`daemon-client.test.ts`），与 app-core 既有 `eventReducer.test.ts` 去重。
-- api 壳合并：`bootstrap.ts` 改 `createKimiWebApi(deps: { tracer, credentialStore, identity, mainAgentOnly, t })` 工厂放 app-core；两端各自保留 ~20 行接线（tracer 来自 app 侧 `debug/trace`，identity 各自常量——web `kimi-code-web`/`web`、desktop `shared/identity`）。`mainAgentOnly` 保持各端自选（desktop `true`、web 不传），写入归属矩阵。
-- 完成后两端 `src/api/` 仅剩 config/identity 接线和 re-export，或整目录删除。
-- 验收：标准模板 + 外部 server 模式冒烟。
+验收：一期标准模板 + P33 新保护网全绿 + 浏览器实测双端断线重连冒烟。
 
-### P4 — 新建 `@moonshot-ai/app-client` + 无分叉 composables 迁移
+### P17 — app-components 第一批：机械下沉
 
-- 包骨架：`packages/app-client/package.json`（`exports` → `./src/index.ts` 等子路径、peer `vue`、deps `@moonshot-ai/app-core` / `@moonshot-ai/app-i18n`）、`tsconfig.json`、纳入根 `vitest.config.ts` 的 packages include 列表与 `pnpm-workspace.yaml`（`packages/*` 已覆盖，无需改）。**两端 `package.json` 必须声明 `@moonshot-ai/app-client` workspace 依赖**（pnpm 包隔离，不声明则 app 内 import 不可解析）；P8 的 `pinia` 同理（apps 直接 `import { createPinia }` 就要声明，或经 app-client re-export）。
-- **约束条目随阶段更新**：本 PR 同步更新根 `AGENTS.md`「目录地图」与 apps/web 依赖约束（放行 `@moonshot-ai/app-client`），不等 P18。
-- **注入缝先行**：迁移列表中直接 import app 侧 api 单例（`getKimiWebApi`）或 `vue-i18n` 的文件（如 `useTerminal`、`useFilePreview`）不是纯移动——先按 §3.3 落 api/t 构造注入，再迁；迁入前逐文件核实运行时依赖。
-- 定义 `ProductTracker` 契约（`src/contracts.ts`：`track(event, payload)` + no-op 默认实现），先不接线。
-- 迁移 A/B/C 类 composables（逻辑零变化）：`useIsMobile`、`useViewportWidth`、`useFollowScroll`、`useResizable`（web 侧测试随迁）、`useTerminal`、`useConfirmDialog`、`useComposerDraft`、`useComposerAutoFocus`、`useInputHistory`、`useSlashMenu`、`useMentionMenu`、`useSidebarLayout`、`useFilePreview`、`useDetailPanel`。
-- `usePageTitle` 合并：标题字符串参数化（默认 `Kimi Code`，web 传 `Kimi Code Web`），转圈动画按 `isDesktop` 分支关闭（行为对齐点：两端标题逻辑单源）。
-- 验收：标准模板。
+- 新建 `packages/app-components`（deps：app-ui / app-client / app-core / app-i18n / app-markdown；peer vue）。**先定包名与依赖面再动工**（参照本计划 P4 的教训：两端 package.json 必须显式声明 workspace 依赖；约束条目随本阶段更新 AGENTS.md，不等收尾）。
+- 下沉零差异文件（2026-08-25 复测 73 个：字节一致 33 + 仅首行 40；执行时以当日重测清单为准）：`tool-calls/`（16/17）、`dialogs/`、`admin/`、`mobile/MobileTopBar`、`debug/` 等，git mv 保历史，两端 import 批量改指包。
+- 每个文件逐一人肉确认在 P13 的 drift guard 白名单内（防误收真实分叉）。
 
-### P5 — icons 资产与注册表统一
+验收：五件套 + 双端全量页面人工巡检一遍（这是组件层第一次大搬家）。
 
-- `apps/desktop/src/renderer/icons/kimi/*.svg` 与 `apps/web/src/icons/kimi/*.svg` 合并（desktop 多 `keyboard.svg`）移入 `packages/app-client/src/icons/kimi/`。
-- 两端 vite 配置 `iconsDir` 改指包内路径（注意：`import.meta.resolve('@moonshot-ai/app-client/package.json')` 对带 exports map 的包会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`——app-client 需显式 export `./package.json`，或改用 `createRequire` / workspace 相对 URL，执行时确定写法）。
-- `lib/icons.ts` 取并集（含 desktop 的 eye/eye-off/keyboard）下沉 `packages/app-client/src/icons/`；`icons.test.ts` 随迁。
-- 验收：标准模板 + **全量图标视觉验证**（DesignSystemView §02 图标目录页逐排核对）。
+### P18 — 组件 telemetry 走 ProductTracker + provide 纪律
 
-### P6 — telemetry / 平台分叉 composables 迁移
+- 组件内 `import { track }` 全部改走 `contracts.track`（P6 registry 已就绪，web no-op 即现状）：ChatHeader / ApprovalCard / SessionRow / UserMenu / Sidebar 的 diff 因此归零，随改随下沉 P17 未收的这批文件。
+- 5 个裸字符串 provide key 全部 `InjectionKey<T>` 化（`app-client/contracts` 或新建 `injectionKeys.ts`）；`KimiWebClientFacadeKey` 二选一：P24 组件改 inject 则保留，否则删除死 provide（**推荐删除**——P24 直接让组件消费 store/facade，注入键不再必要）。
 
-- `ProductTracker` 接线：desktop 在 `main.ts`/bootstrap 注入 `lib/track` 适配器；web 注入 no-op（行为对齐点：web 不产生这些埋点，与现状一致）。
-- 迁移（D 类取 desktop 版、track 改走 `ProductTracker`）：`useNotification`、`useAttachmentUpload`、`useOAuthLoginFlow`、`useUpdateStatus`。
-- `useAuxiliaryTranscripts`（C 类格式化差异）同批迁移。
-- `nativeWorkspaceDrop.ts` 若 P1 核实有桥依赖，在此批迁移（桥探测+无桥降级注入）。
-- 验收：标准模板 + desktop 侧埋点冒烟（notification_shown / attachment_added / oauth_login_step 各触发一次，主进程日志可见）。
+验收：五件套 + desktop 埋点冒烟（P6 同款清单）。
 
-### P7a — client 状态模块迁移
+### P19 — Composer 壳合一 + 下沉
 
-- 迁移：`useTaskPoller`、`useSideChat`、`useAuxiliaryTranscripts`（若 P6 未做）、`useModelProviderState`。
-- `useModelProviderState` 错误处理对齐（**需产品确认**，见 §6 R4）：统一为 desktop 的 return-error-string 模式，web 侧 `AddProviderFlow` 等表单组件改为消费返回值显示 inline banner（组件在两端各自适配）。
-- `useTaskPoller.ts:34` 的整体替换**本阶段不修**（逻辑零变化），列入 P9+ 拆解期修复清单。
-- 验收：标准模板 + provider 增删改全流程冒烟（两端）。
+- **前置已完成（2026-08-25 复测）**：web Composer 已迁到 app-composer 的 ProseMirror 内核（`createComposerEditor`），`skillName` payload 漂移已修复。两端壳现为 4364/4595 行（desktop/web），且 main 上 mention pills / attachment registry 的新逻辑大多加在壳里——合一前按当日 diff 重测分叉面。
+- Composer 壳合一后下沉 app-components；编辑器内核两端已同为 app-composer，无需再抽象 `ComposerEditor` 接口，残留差异按规范文档规则「包内分支，不再整文件分叉」收口。
+- 与 P25 的边界：P19 只做「两端合一 + 下沉」，拆分在 P25 做（先合一再拆，拆解只做一次）。
 
-### P7b — 两大单例迁移（副本消灭点）
+### P20 — OpenInMenu 注入式统一
 
-- `useWorkspaceState.ts`、`useKimiWebClient.ts` 原样移入 `packages/app-client/src/client/`。
-- native terminal teardown 改注入：`useKimiWebClient` 新增 deps `onSessionDestroyed(sessionId)` / `onWorkspaceDestroyed(workspaceId, root)`；desktop 在接线处注入 `useNativeTerminal` 实现，web no-op。
-- `session-intent`（desktop-only lib）作为可选 deps 注入；`track` 改走 `ProductTracker`。
-- 品牌字符串统一：`[kimi-code]` 日志前缀、`workspaceName` 兜底 `kimi-code`（行为对齐点）。
-- 两端 `main.ts` 的 facade provide 改为从 `@moonshot-ai/app-client` 导入；`apps/web/src/composables/` 与 `apps/desktop/src/renderer/composables/` 至此只剩 desktop 专属文件。
-- 建议 commit 拆分：① `git mv` + 包内接线（纯移动）② 两端 import 切换 ③ 注入点接线，便于 review。
-- 验收：标准模板 + 会话全链路冒烟（新建/选择/归档/删除会话、工作区增删、prompt/审批/问题、断线重连，两端各一遍）。
+定义 `OpenInService`（catalog 列表 + 执行 + 图标解析）InjectionKey：web 实现 = daemon `availableApps` + 现有回退；desktop 实现 = `listNativeOpenInApps` + 图标 map，**探测不到原生桥时返回空 catalog、UI 隐藏整个 Open In 入口——这就是既定降级**，不回退 daemon 路径。props 形态两端已近乎一致，分叉只是数据源。合一后下沉。
 
-### P8 — Pinia 引入 + 首个 domain store
+### P21 — Sidebar 拆分
 
-- `packages/app-client` deps 加 `pinia`；两端 `main.ts` `app.use(createPinia())`。两端 `package.json` 声明 `pinia`（或经 app-client re-export `createPinia`，执行时定）；同步更新 `apps/web/AGENTS.md` 的 no-Pinia 约定与根 `AGENTS.md` 相关条目——约束实际变化随本阶段生效，不等 P18。
-- 首个 store 建议 `useSessionsStore`（sessions 列表 + activeSessionId + select/archive/delete action）：自洽、消费方多（Sidebar/App/ConversationPane），能立刻开始消 drilling。
-- facade 对应字段改为 store 委托（getter 转发），导出数开始下降；store 外不再暴露该切片可变引用——写入纪律开始由模块边界强制。
-- store 规范随此 PR 落入规范文档 §store 章节（P0 已写初稿，此 PR 按实践校准）。
-- 验收：标准模板 + Pinia devtools 人工核对 state 变化正确。
+- 拆 `StatusTabs` / `SessionList` / `WorkspaceDirectory`（模板 6 条渲染路径各归其位）；
+- 三种 DnD 实现收敛为一个 `useSessionDrag` composable（SessionRow/PinnedSessionList/WorkspaceGroup 的重复一并收）；
+- 3 个手写弹窗换 app-ui `Menu`；
+- 拆分后随批下沉 app-components。
 
-### P9–P15 — 按域拆 god object（每域一个 PR）
+### P22 — DesignSystemView 单源化 + App.vue 样式纪律
 
-建议顺序（先易后难，每个 PR 只做一域）：
+DesignSystemView（~3000 行 ×2，已漂移 75 行）**不下沉**——它 import 了 app-client 的 icons 与产品组件（DockIconPicker / WorkingIndicator 等），移入 app-ui 会造成 app-ui ↔ app-client 循环依赖。改为收敛为 **desktop 单份正本**：canonical 仍是 `apps/desktop/src/renderer/views/DesignSystemView.vue`，删除 web 侧副本，AGENTS.md 中设计规范「两端同步」的表述随本阶段同步改写。App.vue 无 scoped 全局样式块中对 `.chat-header` 的反穿改为组件内样式或 token。
 
-| PR | store | 从 facade / workspaceState 收编的内容 |
-|---|---|---|
-| P9 | `useNotificationsStore` | turn-end / question / approval 通知回调与去重 |
-| P10 | `useModelsStore` | `useModelProviderState` 整体转 store |
-| P11 | `useApprovalsStore` | approvals + questions + `buildApprovalBlock`（顺带合并 `messagesToTurns.ts:275` 与 `useKimiWebClient.ts:2144` 的双份实现） |
-| P12 | `useFilesStore` | fileDiff / git status / diff 相关 |
-| P13 | `useWorkspaceStore` | workspace 排序 / pin / 分组 |
-| P14 | `usePromptStore` | prompt 提交 / queue / local turn 生命周期（`submitPromptInternal` 147 行拆小） |
-| P15 | `useConnectionStore` | connect / reconnect / baseline / resync / 快照同步 / WS 订阅 LRU（风险最高，放最后；`connectEventsIfNeeded` 196 行拆小） |
+### P23 — 滚动引擎提取（虚拟化前置，原一期 P17 前半扩大）
 
-拆解期顺手修复清单（随所属域的 PR 一并做，每个都在 PR 描述中声明）：
+- `ConversationPane.vue` 的 ~700 行滚动/跟随/pin/锚点恢复/嵌套接管抽为 `useTranscriptScroll`（app-client），与既有 `useFollowScroll` 合并或取代（执行时定边界）；
+- 嵌套滚动接管的三份实现（wheel/pointer/touch）合一；
+- 20 个 setTimeout/rAF 调用点的 token 守卫统一为可取消形态；
+- **提取后立即可单测**：几何 mock 下的跟随/钉住/历史前插锚点恢复用例随 PR 携带（喂给 P31 当地板）。
+- 同步把 TOC 遮挡命中、transcript 搜索 Range 揭示、Esc-undo 三个子系统各抽一个 composable。
 
-- `useTaskPoller.ts:34` 整体替换 → `applyRecordDiff` 逐 key 写回。
-- `errorName`/`errorMessage` 重复函数（`useKimiWebClient.ts:1650-1664`）合并。
-- `PersistSessionProfilePatch` 双定义（`useWorkspaceState.ts:213-221` vs `useModelProviderState.ts:54-62`）合并。
-- facade 死 provide（`KimiWebClientFacadeKey`）在组件改造完成后删除。
-- 过时头注释（自称 "the only place that imports both src/api/* and src/types.ts"）随迁移修正。
+验收：滚动行为专项回归（跟随/钉住/折叠/TOC/Esc-undo，双端）。
 
-### P16 — 组件示范改造 A：Composer 链 drilling 消除
+### P24 — drilling 消除（原一期 P16 扩大）
 
-- `App.vue` → `ConversationPane` → `ChatDock` → `Composer` 链上属于共享状态的 ~20 个 prop（`models` / `starredIds` / `managedMembership` / `searchFiles` 等）改 store 直取；删除 28 处 `@x="emit('x')"` 纯转发；保留组件私有 props。
-- `App.vue` 模板 144 处 `client.xxx.value` 手动解包顺手清理（script 内解构/计算化）。
-- 作为"组件化标准"的参照实现，PR 描述里附前后对照。
-- 验收：标准模板 + composer 全功能人工回归（附件/斜杠/提及/历史/草稿/发送门禁）。
+- 前置 P14–P16（store 就绪）。Composer 链 + ConversationPane + ChatHeader/Sidebar 的共享状态 props 改 store 直取；删 26 行纯转发 emit；同一 prop 透传 ≥3 层即违规写入规范（P0 规范已有，本阶段强制执行）。
+- facade 按域分组为 reactive 视图（**不是 `toRefs` 包装**——facade 返回的是装 ref 的普通对象字面量，`toRefs` 不会解包嵌套 ref，只会把普通方法也包成属性 ref），或组件在 setup 顶层解构出所需的状态 ref；消灭模板 `client.xxx.value`（App.vue 188 处，desktop，2026-08-25 复测）。
+- ConversationPane 收敛为布局 + 滚动容器，props 从 58 降到个位数。
+- App.vue 瘦身（原一期 P17 残项）：~~slash 命令解释器下沉 `lib/slashCommands.ts`~~（已完成——解释器已在 `app-core/src/lib/slashCommands.ts`，App.vue 无残留）；9 个 dialog 可见性状态收一个 composable；`ServerAuthDialog.vue` 补 i18n（仍硬编码 `"Token"` 等字符串，`app-i18n` locales 双端补词条）。
 
-### P17 — 组件示范改造 B：滚动机器抽离 + App.vue 瘦身
+### P25 — Composer 拆分
 
-- `ConversationPane.vue:534-1690` 的 ~1150 行滚动/跟随/pin/TOC/session-settle 状态机抽为 `useConversationScroll`（与既有 `useFollowScroll` 合并或取代，执行时定边界）。
-- `App.vue:996-1108` 的 slash 命令解释器下沉 `lib/slashCommands.ts`（纯函数化 + 单测）；9 个 dialog 可见性状态收一个 composable。
-- `ServerAuthDialog.vue` 补 i18n（`app-i18n` locales 双端补词条）。
-- 验收：标准模板 + 滚动行为专项回归（跟随/钉住/折叠/TOC 锚点/Esc-undo）。
+`useComposerKeymap`（160 行 handleKeydown）/ `useToolbarCollapse`（折叠状态机 + em 换算 + 12 源 watcher 收敛为 watchEffect 或 RO-on-content）/ `useMenuDescriptionMeasure`（pretext 测字）各成 composable；3 个自撸下拉换 app-ui `Menu`。目标 script ≤600 行。提取物单测随 PR（P31 地板的一部分）。拆分清单以当日重测为准——main 上壳已从 3470 涨到 4364/4595 行（desktop/web），mention pills / attachment registry 新逻辑多在壳内，「160 行 keymap / 3 个自撸下拉」为 08-20 口径。
 
-### P18 — 收尾：约定核对
+### P26 — 现代化批次（机械，可一人一周内完成）
 
-- 根 `AGENTS.md`：「开发顺序」「双仓工作流 - web 改动同步」「目录地图」核对补齐为 packages 正本模式；删"同步副本"描述（app-client 依赖放行与 Pinia 约定已分别在 P4 / P8 随阶段更新，本阶段只做一致性核对与补漏）。
-- `apps/desktop/docs/native-todos.md`：重写为"平台分叉已收编为包内注入/分支，剩余 desktop 专属实现清单"。
-- `apps/web/AGENTS.md`（如适用）：核对 P4/P8 已更新的条目无遗漏。
-- 无 changeset（文档）。
+- 22 处手写 modelValue 对 → `defineModel()`（app-ui 表单控件 + MobileSettingsSheet + Dialog 命名 model）；
+- app-ui 36 个插槽口补 `defineSlots` 类型；
+- 319 个字符串模板 ref 渐进改 `useTemplateRef`（本批只改新下沉/新拆分的文件，存量不强求一次清）；
+- lint 固化：禁手写 `update:modelValue` emit、强制 `InjectionKey`、（可选）`vue/define-macros-order`——防回退靠规则不靠自觉。
 
-## 6. 风险与对策
+### P27 — 数据层浅响应化
+
+- 目标 slice 按 #279 后的现状重列（2026-08-25）：`messagesBySession` 已随主线 transcript 迁移删除，剩余深 `reactive()` record slice 为 `tasksBySession` 等——执行时先全量盘点再定清单。两个形态执行时二选一（默认前者，对现有写路径改动最小）：
+  - **`shallowReactive`**：applyRecordDiff 的逐 key 写回（`target[key] = ...` / `delete target[key]`）保持原样即可被逐 key 追踪；
+  - **`shallowRef` + identity-replace**：每批 diff 后整体替换 `.value` 引用（或显式 `triggerRef`）。注意 `shallowRef` 下逐 key 的嵌套写入**不会**触发依赖更新——若选这个形态，applyRecordDiff 的写路径必须同步改，现有写法与之并不兼容。
+- 风险点：依赖深响应的就地变更读取点（如直接改条目字段的地方）需逐一核查改为替换式更新——先全量 grep `\.value\[.*\]\.` 赋值形态，列清单再动手。
+- 收益：流式高峰期的深遍历税归零（规模较 #279 前缩小，但仍是最直接的运行时性能项）。
+
+### P28 — 协议契约化（跨仓库，需 daemon 配合）
+
+- wire 边界 zod：WS 帧（transcript ops / 残留 session_event）与 REST envelope data 在 `DaemonHttpClient.request` / `handleFrame` 单点校验（zod 依赖已传递存在，`@moonshot-ai/transcript` 有先例）；校验失败转可观测的契约违规遥测而非静默 no-op。
+- `client_hello` 加 `protocol` 版本字段，daemon 声明事件模式；客户端按新契约直接消费——无该字段的旧 daemon 握手失败按普通错误处理（仓规「不做旧服务端兼容逻辑」）。#279 后 frameClassifier 只剩全局事件 / agent 生命周期 / BTW 侧聊的分类（2026-08-25 复核），其 shape sniffing 与残留 snake/camel 双回退随本阶段退役（当版本直接删，不留过渡期）。
+- 12 处 PRESUMED 逐一对账 daemon 侧落地情况，转正式契约或删除。
+- 错误码集中到 app-core 单出口常量模块（40401 等双定义消除）。
+
+### P29 — turn 生命周期状态机
+
+显式 FSM（`idle → submitting → streaming → awaitingInteraction → settling`）收编隐式状态——#279 后现存于 facade 的 `turnStartBySession` generation map、`turnActiveBySession` 与 useWorkspaceState 的队列 / 乐观气泡 / settle 清理（2026-08-25 复测口径；projector/reducer 消息路径已退役）。transcript seq 水位比较的新鲜度门禁改为状态机守卫。依赖 P16（连接域拆完）与 P28（事件契约明确后状态迁移才有据可依）。
+
+### P30 — transcript 虚拟化与渲染热点
+
+- 前置 P23（滚动引擎先归位，虚拟化在其上叠加窗口逻辑）。
+- `useVirtualList` 或自研窗口接入 turn 列表；`assistantVisibleBlocks` 折叠态改预计算 computed；streaming 热区评估 `v-memo`（先测量再上）。
+- 主视图 v-show 切换改评估 KeepAlive + `onDeactivated` 收资源（隐藏视图的 observer/watcher 停机）。
+
+### P31 — 组件测试地板
+
+- 引入 `@vue/test-utils`；**首批用例只给提取物**：keymap、折叠状态机、滚动引擎（P23/P25 的副产品，随对应 PR 携带），不搞快照测试。
+- 组件测试规范写入规范文档：测行为不测实现；DOM 测量逻辑必须经 mock 几何注入。
+
+### P32 — 打包冒烟 + 主进程安全三件套
+
+- desktop-build 产物 headless 起窗（xvfb）+ `/api/v1/meta` 应答断言；
+- 主进程安全三件套（原一期附录 A）落地：`app://` 响应 CSP meta（`default-src 'self'` 起步）、open-external 白名单（P13 已含，此处收尾）、`window ↔ menu` 循环依赖拆解；
+- `#token=` URL fragment 改 webRequest 注入 header 的评估与实施。
+
+### P33 — useKimiWebClient 场景测试保护网
+
+P16 前置（「先补网再动刀」），单独成 PR。场景清单按 #279 后的 transcript 产线重列（2026-08-25 复测：08-20 清单里的 `event-batcher` / `goal-turn-end` 测试已随旧产线删除，`session-work-reconnect.test.ts` 已有 6583 行集成覆盖——本条目是补缺口而非从零建网）：
+
+- transcript channel 池：LRU 保留 / 摘除、后台会话订阅与通知边沿；
+- seq 水位与缺口恢复：ops 跳号 → onGap → REST 补 / 全量 refresh、重连 replay 与 REST 补页合流去重；
+- 双通道一致性：transcript 实体边沿（turn / interaction / prompt 终态）与残留 session_event（全局 / 生命周期 / 侧聊）的副作用不重复、不遗漏；
+- 重连 baseline：resync 后快照与增量的对齐（现行机制当日复核）。
+- 顺带把 #279 的 goal turn-end seam 测试缺口按 transcript 边沿重写（见 §7）。
+
+### P34 — kap-server utilityProcess 隔离（评估 + POC）
+
+现状：server 跑在主进程（崩则全灭；quit 不敢干净关 server 是 documented tradeoff；boot 序列围绕扛住 server 加载期崩溃设计）。评估 utilityProcess 迁移：崩溃隔离、干净退出、主 bundle 启动成本。POC 验证 loopback HTTP/WS 传输不变即可行。产出 = 决策文档，落地另立阶段。
+
+### P35 — 收尾
+
+- 原一期 P18 原样承接：AGENTS.md「开发顺序」「双仓工作流」改写为 packages 正本模式；native-todos.md 重写为「剩余 desktop 专属实现清单」；drift guard 白名单应收窄到接近空——**白名单残留量即本计划的最终验收指标**。
+- kimi-code 仓 `apps/kimi-web` 第三副本：正式提删除 PR（见 §6，code-app 已全量接管）。
+- Vue 3.6 / Vapor Mode 评估：3.6 stable + 生态兼容后，以 ChatPane turn/block 树为首个试点（前置 = P23/P30 完成后的组件粒度）。
+- zod override 治理：推动 kimi-code 上游统一 catalog，撤掉本仓 `zod → 4.3.6` 降级 override。
+
+## 5. 风险与对策
+
+（原一期风险表 R1–R8 随对应阶段完成退役，本表只保留剩余工作的风险。）
 
 | # | 风险 | 对策 |
 |---|---|---|
-| R1 | 迁移期团队继续在两端副本上叠功能，造成新差异 | 迁移期纪律写进 P0 规范文档 + 根 AGENTS.md；P1 起 reviewer 拒绝任何双副本新增差异的 PR |
-| R2 | P7b 三千行级文件搬迁 review 困难 | commit 按"纯移动 / import 切换 / 注入接线"拆分；`git mv` 保历史；冒烟清单加长 |
-| R3 | web 跟随 desktop 版本后的行为微变（日志前缀、兜底名、标题、埋点有无） | 每个对齐点在对应 PR 描述逐条声明；§3 已统一决策 |
-| R4 | `useModelProviderState` 错误处理分叉（toast vs inline banner）是产品决策 | P7a 开工前与产品确认；默认建议保留 desktop 的 inline banner（更新的设计），web 跟随 |
-| R5 | 图标路径变更导致两端构建产物缺图标 | P5 全量图标视觉验证 + 两端 `build` 验证 |
-| R6 | Pinia 高频 mutation 拖慢开发态（devtools 时间旅行） | store 规范禁时间旅行；`eventBatcher` 合批后的事件才进 store action |
-| R7 | P15 连接域拆解引入重连/丢事件回归 | 放最后做；既有 `ws-lifecycle` / `daemon-client` 测试护网 + 外部 server 模式冒烟 |
-| R8 | 双份 `buildApprovalBlock` 等"为避免循环依赖而复制"的代码，合并时引入新循环 | P11 时先画依赖图；store 间依赖单向化（approvals → sessions 只允许一个方向） |
+| R1 | 组件下沉（P17–P22）期间团队在两端副本上继续叠功能 | P13 drift guard 先行；reviewer 拒绝对白名单外文件的双端不对称修改 |
+| R2 | P17 大搬家 review 困难 | git mv 保历史 + commit 按「纯移动 / import 切换」拆分（P7b 同款手法）；drift guard 白名单逐个核对 |
+| R3 | P27 浅响应化漏改就地变更读写点 → 更新不触发 | slice 形态与写路径配套选定（shallowReactive 或整引用替换，二者只选其一）；动手前全量清单化；五件套 + 双端流式冒烟；必要时分 slice 渐进 |
+| R4 | P28 需要 daemon 侧排期，跨仓库不可控 | 客户端先行（zod 校验纯客户端可做）；协商字段按新契约直接消费，不为旧 daemon 留双形态——排期谈不拢时只推迟 client_hello 部分，zod 校验不受影响 |
+| R5 | P16/P29 动连接与 turn 生命周期引入回归 | P33 保护网先行；ws-lifecycle / daemon-client 既有测试 + 浏览器实测双端断线冒烟（一期同款验收） |
+| R6 | P19 web ProseMirror 迁移引入编辑器行为差异 | 桌面端已有实现为正本；mention/slash/IME/粘贴专项回归清单双端各一遍 |
+| R7 | 治理周期长，业务需求插队导致半拉子 | 每个 P 独立可合并、独立有价值；P13/P26 这类快赢先给团队建立信心 |
 
-## 7. kimi-code 仓 `apps/kimi-web` 处置建议（不在本计划执行范围）
+## 6. kimi-code 仓 `apps/kimi-web` 处置
 
-kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 submodule。本计划完成（P7b）后，建议在 kimi-code 仓另立计划：其 `apps/kimi-web` 切换为消费 `@moonshot-ai/app-client` / `app-core`（需要 kimi-code 仓把这两个包纳入其 workspace 或发布渠道），或确认废弃删除。在此之前，kimi-code 仓对 `apps/kimi-web` 的任何修改与本仓无关、不回迁。
+kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，明显漂移（2026-08-01 实测：`agentEventProjector` 1582 行 vs 本仓 1482、`messagesToTurns` 945 vs 1124），不在本 workspace（pnpm-workspace.yaml 注释明确排除）。一期决策为冻结、不动 submodule、不回迁；P7b 副本消灭后 code-app 已全量接管共享代码。P35 正式推动删除：在 kimi-code 仓提删除 PR（或其 `apps/kimi-web` 切换为消费 `@moonshot-ai/app-client` / `app-core`，需 kimi-code 仓把这两个包纳入其 workspace 或发布渠道——删除优先）。在此之前，kimi-code 仓对 `apps/kimi-web` 的任何修改与本仓无关。
 
-## 附录 A：可穿插的独立小 PR（不阻塞主线）
+## 7. 可穿插的独立小 PR（不阻塞主线）
 
-- **主进程安全三件套**：`app://` 响应与 dev HTML 加 CSP（`default-src 'self'` 起步，dev 单独放宽）；`kimi:open-external` 加 http(s) 白名单（复用 `external-links.ts` 的 `isHttpUrl`）；删死 channel `onMenu` / `kimi:menu`（`preload.ts:361-365`）。
-- **内嵌 server loopback 鉴权评估**：`server.ts:86-88` `disableAuth: true` 的风险显式记录或加 loopback token（对齐外部 server 模式）。
-- **主进程循环依赖拆解**：`window ↔ menu` 等三处运行时环（把 `setTerminalMenuFocus` 等移到独立小模块）。
+- `AbortController` signal 渐进替换监听器手工配对（247 处，按文件随手做；卸载时务必 `abort()`）。
+- `onWatcherCleanup` 替换 5 处旧式 onCleanup。
+- dead code 清理：desktop renderer 残留的旧版 `Terminal.vue`（web 已重写、零 importer、已漂移）。
+- app-core 包级 vue-tsc 门禁缺失（P3 台账登记的 79 个存量 error）治理。
+- `publish-desktop-cdn.sh` 的 legacy 双 changelog 布局删除（自标「两个版本后删」，0.0.20 仍在）。
+- node-pty rebuild fallback 改 fail-loud（ABI 不匹配时宁可构建失败，不要用户侧 dlopen 崩溃）。
+- **内嵌 server loopback 鉴权评估**：`server.ts:86-88` `disableAuth: true` 的风险显式记录或加 loopback token（对齐外部 server 模式）。（原一期附录 A 残项；CSP / open-external 白名单 / 死 channel / `window ↔ menu` 循环依赖已分别编入 P13 / P32。）
+- Dependabot/Renovate 引入。
+- **#279 遗留恢复项**（其计划文档「已知取舍」登记）：goal 卡实时流式更新恢复（需 daemon 侧富化 transcript `meta.goal` 带 turns/wallClock 明细后改回实时）；warnings 实时增量恢复（transcript notice marker 边沿接线）；goal turn-end seam 测试按 transcript 边沿重写（随 P33 做）。
 
 ## 执行进度台账
 
-每阶段合并后追加一条目：完成范围、与计划的偏差及原因、留给后面的尾巴。下一阶段执行者先读最新条目，再看 §5 自己阶段的明细。
+每阶段合并后追加一条目：完成范围、与计划的偏差及原因、留给后面的尾巴。下一阶段执行者先读最新条目，再看 §4 自己阶段的明细。**历史条目保留撰写时的编号与文件名引用，不再回改。**
 
 ### P0 — 已完成（2026-08-05）
 
@@ -536,7 +430,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **合 main（2026-08-17 晚，#242 web document.title）**：冲突为两个 web 副本的 modify/delete——按 P1 既定口径，main 侧修改落进包内正本后 `git rm` 旧路径。`useDocumentTitle`（#242 新增、web 侧文件）连同其测试迁包（包单例不能 import app 侧模块），`webTitle`/`documentBaseTitle`/applyMeta 赋值/facade 导出 4 个 hunk 逐字补进包单例（其中 `webTitle: ''`、types 字段、applyMeta 行已被 rename-merge 自动落进包内，diff 核实零丢失）。desktop 标题行为不变（`usePageTitle({ running })` 静态标题，isDesktop 分支）。注意坑：`git mv` 后的文件再被 perl 改会出现 AM 状态——merge commit 里漏了头注释/测试 import 两处路径修正，追加 ec72a2b7 补齐。验收：test 2541 ✅ / typecheck 仅 2 个 main 存量 ✅ / lint 0 error ✅ / build ✅；PR mergeable=CLEAN。
 - 无 changeset（纯重构）。
 
-### P8 — 本地实施 + 验收完成（2026-08-17；待提交 PR，合并后本条转「已完成」）
+### P8 — 本地实施 + 验收完成（2026-08-17；与 P9–P12 同 PR 合入）
 
 - 完成：Pinia 全量引入（pinia 4.0.3，仅 app-client 声明依赖）+ 首个 domain store `kimi.sessions`（`packages/app-client/src/stores/sessions.ts`）。state 收编：sessions / activeSessionId / pinnedSessionIds；facade 的写入漏斗（setSessions / updateSession / upsertSessionSorted / appendSession / removeSession / setActiveSessionId）与 pin 系列（pinSession / unpinSession / unpinSessions / togglePinSession）**逐字搬入 store action**。
 - **关键设计（计划未预判）：pinia 实例由包持有**。`stores/pinia.ts` 导出 `clientPinia`，两端 `main.ts` `app.use(clientPinia)` 安装同一实例。起因：包内 client 单例在 import 时构造（先于任何 app），`useTaskPoller` 的模块级 immediate watcher 读 `activeSessionId`——`getActivePinia()` 时序根本不可用。每个 store 配 `xxxStore()` accessor（内部 `useXStore(clientPinia)` 显式传实例），模块级 / 测试 / 生产全场景安全；组件内 `useXStore()` 走 inject 解析到同一实例。
@@ -578,3 +472,28 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，本计划不动 subm
 - **Review（explore 代理全量，47f0970a..HEAD）**：无 blocker/major。搬运保真 / buildApprovalBlock 逐分支等价 / 漏网零 / 分层无环 / 模块级时序安全 / 测试保真。跟进（commit 1ff04e5f）：barrel 补 filesStore 导出、useModelProviderState 多余缩进、三个测试文件的死传参（P12 已删的 5 个 ref 字段，被 as cast 掩盖）、spec §5 桥接清单补三个 getter-only 条目。记录在案：workspace-state.test.ts 的 createDeps 缺 connectIssue 为 P8 前存量（cast 掩盖）。
 - **冒烟（agent-browser 双端，独立 server 58628 + 临时工作区 /tmp/kimi-p9-ws-a，不碰用户 58627 与存量会话）**：**web**——通知设置渲染（权限未授予时系统通知开关正确置灰）/ 提示音切换 + 刷新后保持（localStorage→store 初始化）、模型选择器列表渲染 + 切换（K3 0813→K3，含 thinking 重解析）、审批卡 shell 分支渲染（命令/cwd/四操作）+ 批准（卡片消失 + 待授权 badge 消失 + echo 执行）、变更面板（分支/+1 -1/M 标记）→ diff 视图（-hello world/+hello kimi 红绿行）→ 返回（clearFileDiff）、文件预览（readFileContent 内容随修改更新），全过。**desktop**（外部 server + CDP 9223）：审批卡渲染 + 批准全链路、变更面板 → diff 视图，全过。测试产物已清理（2 个测试会话已归档、工作区已注销、实例与端口全释放）。
 - 无 changeset（纯重构）。
+
+### 二期计划立项（2026-08-20，原 Q 系列编号）
+
+- 依据为当日全量代码评审（架构锐评 / Vue 用法专项 / gap 分析三份附件）+ 本台账 P0–P12 完成状态。原一期 P13–P15、P18 由 Q1–Q3、Q22 承接；P16/P17 被 Q10–Q12 取代并扩大。
+
+### 两计划文档合并（2026-08-25）
+
+- 一期计划（`2026-08-01-renderer-architecture-refactor.md`）与二期计划（`2026-08-20-renderer-refactor-phase2-plan.md`）合并为本文档，两原件删除；`docs/specs/2026-08-01-renderer-architecture.md` 中的总计划引用改指本文档。
+- **编号统一**：已完成阶段保留 P0–P12；原二期 Q0–Q22 顺延重编号为 P13–P35；原一期未做的 P13–P18 编号作废（去向映射见 §3 开头）。
+- 一期已完成阶段的原始 §5 明细删除（执行记录以本台账为准）；原一期未做条目的内容并入对应新阶段：P13–P15 的拆解范围并入 P14–P16，P17 的 App.vue 瘦身残项（slash 解释器下沉 / dialog 状态收编 / ServerAuthDialog i18n）并入 P24。
+- 一期 §1 调研明细与 §3 目标架构不再重复保留：目标态正本为 `docs/specs/2026-08-01-renderer-architecture.md`，历史版本见 git。
+- 合并前二期计划已按 PR #324 review 修订：P28（原 Q15）删旧 daemon 兼容设计（对齐仓规「不做旧服务端兼容逻辑」）；P27（原 Q14）修正「shallowRef 与逐 key 写回天然兼容」的错误结论（改 shallowReactive / 整引用替换二选一）；P22（原 Q9）DesignSystemView 改 desktop 单份正本（不下沉 app-ui，避免 app-ui ↔ app-client 循环依赖）；P20（原 Q7）明确无桥降级 = 隐藏 Open In 入口；P24（原 Q11）删 `toRefs` 包装 facade 方案。
+- 无 changeset（纯文档）。
+
+### 按 main 复测与计划修订（2026-08-25）
+
+- **背景**：合入 main 最新 23 个 commit 后复测，其中两项颠覆性变更——#279 主线 transcript 迁移（Phase 0–3 全部完成，`messagesBySession` 切片与 projector/reducer 消息路径删除）与 web Composer 的 ProseMirror 迁移（app-composer 内核，`skillName` 漂移同步修复）。
+- **条目修订**：
+  - P19：前置已完成，从「迁移 + 壳下沉」简化为「壳合一 + 下沉」（规模 大→中）；壳在 main 上已涨到 4364/4595 行（desktop/web），mention pills / attachment registry 新逻辑多在壳内。
+  - P27/P28/P29/P33：前提被 #279 颠覆，按 transcript 产线重写——P27 目标 slice 重列（`messagesBySession` 已删）；P28 的 frameClassifier 只剩全局事件 / 生命周期 / 侧聊分类；P29 的隐式 turn 状态改述为 facade `turnStartBySession` generation map / `turnActiveBySession` / workspaceState 队列与乐观气泡；P33 场景清单重列（`event-batcher` / `goal-turn-end` 测试已删，`session-work-reconnect.test.ts` 已 6583 行，属补缺口非从零建网）。
+  - P24：删 slash 解释器下沉项（已完成，`app-core/src/lib/slashCommands.ts`）；App.vue 瘦身剩 dialog 状态收编 + ServerAuthDialog i18n（仍硬编码 `"Token"` 等）。
+  - §7 新增 #279 遗留恢复项：goal 卡实时性、warnings 实时性、goal turn-end seam 测试缺口。
+- **数据刷新（2026-08-25 实测）**：`useKimiWebClient.ts` 6197 行（较 08-20 +48%）/ `useWorkspaceState.ts` 4308 行；零差异组件 95→73（字节一致 33 + 仅首行 40）+ 真实分叉 30 + web 独有 2；DesignSystemView 漂移 75→130 行；App.vue `client.xxx.value` 144→188 处；巨型组件行数 ConversationPane 3198/3155、Composer 4364/4595、Sidebar 2783/2516、App.vue 2945/2331（desktop/web）。
+- **复核仍成立（不改）**：P13 全部（ProviderForm:340 index key、死 channel `onMenu`/`kimi:menu`、`kimi:open-external` IPC 无 http(s) 白名单——`external-links.ts` 守卫只管 webContents、无 errorHandler/onErrorCaptured、ci.yml 无 build job）；P18（组件 `import { track }` 15 文件、组件侧 `contracts.track` 为 0）；修复清单残余（`errorName`/`errorMessage` 双份、`PersistSessionProfilePatch` 双定义、facade 死 provide）；现代化计数全 0（defineModel/defineSlots/useTemplateRef/onWatcherCleanup/AbortController/v-memo）；`shallowRef` 3 处 / `markRaw` 0；PRESUMED 12 处；`ApprovalCard` 两端仍 106 行差异；tool-calls 17 个文件 16 个零差异。
+- 无 changeset（纯文档）。

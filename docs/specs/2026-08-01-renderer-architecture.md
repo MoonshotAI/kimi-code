@@ -4,7 +4,7 @@ Date: 2026-08-01
 Status: Active（自 P1 合并起强制；review 对照本文档执行）
 
 本文档是 renderer 架构的**长期规范**：目标架构、代码归属、平台分叉规则、组件化标准与 store 规范。
-执行排期（阶段划分、每阶段范围）见 `docs/plans/2026-08-01-renderer-architecture-refactor.md`（下称"总计划"），本文档不重复排期，只规定"做完长什么样、过程中守什么纪律"。
+执行排期（阶段划分、每阶段范围）见 `docs/plans/renderer-refactor-plan.md`（下称"总计划"），本文档不重复排期，只规定"做完长什么样、过程中守什么纪律"。
 
 ## 1. 目标架构
 
