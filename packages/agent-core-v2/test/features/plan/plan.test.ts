@@ -10,7 +10,10 @@ import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contex
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
-import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import {
+  AgentPermissionRules,
+  type PermissionRulesRuntime,
+} from '#/features/permissionRules/permissionRulesAgentRuntime';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -76,7 +79,7 @@ describe('Plan service', () => {
   let activeFakes: PlanFakes;
   let context: ContextMemoryRuntime;
   let ctx: TestAgentContext;
-  let permissionRules: IAgentPermissionRulesService;
+  let permissionRules: PermissionRulesRuntime;
   let plan: IAgentPlanService;
   let profile: IAgentProfileService;
   let tempDirs: string[];
@@ -91,7 +94,7 @@ describe('Plan service', () => {
       }),
     );
     context = ctx.resolve(AgentContextMemory);
-    permissionRules = ctx.get(IAgentPermissionRulesService);
+    permissionRules = ctx.resolve(AgentPermissionRules);
     plan = ctx.get(IAgentPlanService);
     profile = ctx.get(IAgentProfileService);
     await ctx.restorePersisted();
@@ -660,7 +663,7 @@ describe('Plan service', () => {
       });
       useFakes(createPlanFakes({ writeText }));
       useTools(['Write']);
-      permissionRules.addRules([
+      await permissionRules.addRules([
         {
           decision: 'deny',
           scope: 'user',

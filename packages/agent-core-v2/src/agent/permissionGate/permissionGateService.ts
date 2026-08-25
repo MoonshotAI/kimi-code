@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionData } from '#/agent/permissionPolicy/types';
-import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
@@ -13,6 +13,8 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { IAgentPermissionGate } from './permissionGate';
 
@@ -20,11 +22,12 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
   declare readonly _serviceBrand: undefined;
   constructor(
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
-    @IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentPermissionPolicyService private readonly policyService: IAgentPermissionPolicyService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     this._register(toolExecutor.onBeforeExecuteTool((event) => this.adjudicate(event)));
@@ -33,7 +36,11 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
   data(): PermissionData {
     return {
       mode: this.modeService.mode,
-      rules: [...this.rulesService.rules],
+      rules: [
+        ...this.agentLifecycle
+          .resolve(this.scopeContext.agentContext, AgentPermissionRules)
+          .rules(),
+      ],
     };
   }
 

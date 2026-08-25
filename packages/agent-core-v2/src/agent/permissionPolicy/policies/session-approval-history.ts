@@ -1,6 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { matchPermissionRule } from '#/agent/permissionRules/matchesRule';
-import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
@@ -10,31 +11,25 @@ export class SessionApprovalHistoryPermissionPolicyService implements Permission
   readonly name = 'session-approval-history';
 
   constructor(
-    @IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
-    for (const pattern of this.rulesService.sessionApprovalRulePatterns) {
-      const match = matchPermissionRule({
-        rule: {
-          decision: 'allow',
-          scope: 'session-runtime',
-          pattern,
-          reason: 'approve for session',
-        },
+    const match = this.agentLifecycle
+      .resolve(this.scopeContext.agentContext, AgentPermissionRules)
+      .evaluateApproval({
         toolName: context.toolCall.name,
+        input: context.args,
         execution: context.execution,
       });
-      if (match !== undefined) {
-        return {
-          kind: 'approve',
-          reason: {
-            has_rule_args: match.hasRuleArgs,
-            match_strategy: match.strategy,
-          },
-        };
-      }
-    }
-    return undefined;
+    if (match === undefined) return undefined;
+    return {
+      kind: 'approve',
+      reason: {
+        has_rule_args: match.hasRuleArgs,
+        match_strategy: match.strategy,
+      },
+    };
   }
 }

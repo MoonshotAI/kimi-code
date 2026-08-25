@@ -42,7 +42,6 @@ import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCa
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
-import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -151,7 +150,6 @@ import {
   ILogService,
   IAgentPermissionGate,
   IAgentPermissionModeService,
-  IAgentPermissionRulesService,
   IHostFileSystem,
   IHostFsWatchService,
   IHostProcessService,
@@ -178,7 +176,7 @@ import {
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
-  AgentPermissionRulesService,
+  AgentPermissionRules,
   AgentProfileService,
   SyncDescriptor,
   AgentUserToolService,
@@ -740,12 +738,6 @@ const noopHookRunner: IExternalHooksRunnerService = {
 
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
   return agentService(IAgentPermissionModeService, createPermissionModeService(mode));
-}
-
-export function permissionRulesServices(
-  rules: readonly PermissionRule[],
-): TestAgentServiceOverride {
-  return agentService(IAgentPermissionRulesService, createPermissionRulesStub(rules));
 }
 
 export function taskServices(): TestAgentServiceOverride {
@@ -1370,10 +1362,6 @@ export class AgentTestContext {
               new SyncDescriptor(AgentFullCompactionService),
             );
             reg.defineDescriptor(
-              IAgentPermissionRulesService,
-              new SyncDescriptor(AgentPermissionRulesService),
-            );
-            reg.defineDescriptor(
               IAgentPermissionGate,
               new SyncDescriptor(AgentPermissionGate),
             );
@@ -1571,7 +1559,7 @@ export class AgentTestContext {
     const tokenCounting = this.tokenCounting;
     const usage = this.usage;
     const permissionMode = this.get(IAgentPermissionModeService);
-    const permissionRules = this.get(IAgentPermissionRulesService);
+    const permissionRules = this.resolve(AgentPermissionRules);
     const cron = this.resolve(AgentCron);
     const plan = this.get(IAgentPlanService);
     void this.get(IAgentToolActivationService).activate();
@@ -1590,7 +1578,7 @@ export class AgentTestContext {
     tasks.list(false);
     permission.data();
     void permissionMode.mode;
-    void permissionRules.rules;
+    void permissionRules.rules();
     cron.list();
     void plan.status();
 
@@ -2340,25 +2328,6 @@ function createPermissionModeService(initialMode: PermissionMode): IAgentPermiss
     onDidChangeMode: Event.None as IAgentPermissionModeService['onDidChangeMode'],
   };
   return service;
-}
-
-function createPermissionRulesStub(
-  initialRules: readonly PermissionRule[],
-): IAgentPermissionRulesService {
-  let rules = [...initialRules];
-  return {
-    _serviceBrand: undefined,
-    get rules() {
-      return rules;
-    },
-    get sessionApprovalRulePatterns() {
-      return [];
-    },
-    addRules: (nextRules) => {
-      rules = [...rules, ...nextRules];
-    },
-    recordApprovalResult: () => { },
-  };
 }
 
 function createHostTerminalService(): IHostTerminalService {

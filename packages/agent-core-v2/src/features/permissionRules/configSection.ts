@@ -8,7 +8,7 @@ import {
   transformPlainObject,
 } from '#/app/config/toml';
 
-import { parsePermissionPattern } from './matchesRule';
+import { parsePermissionPattern } from './internal/matchesRule';
 
 export const PERMISSION_SECTION = 'permission';
 

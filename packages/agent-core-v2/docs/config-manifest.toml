@@ -25,7 +25,7 @@
 #   mergeAllAvailableSkills  src/features/skill/catalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
 #   models                   src/app/kosongConfig/configSection.ts
-#   permission               src/agent/permissionRules/configSection.ts
+#   permission               src/features/permissionRules/configSection.ts
 #   providers                src/app/kosongConfig/configSection.ts
 #   secondaryModel           src/session/subagent/configSection.ts
 #   services                 src/app/auth/configSection.ts
@@ -276,7 +276,7 @@ merge_all_available_skills = true
 
 # ##########################################################################
 # permission
-#   owner: src/agent/permissionRules/configSection.ts
+#   owner: src/features/permissionRules/configSection.ts
 #   scope: core
 #   hooks: custom fromToml · custom toToml
 # ##########################################################################

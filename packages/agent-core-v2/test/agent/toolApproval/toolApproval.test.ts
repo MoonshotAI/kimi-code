@@ -10,10 +10,6 @@ import type {
   PermissionMode,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
-import {
-  IAgentPermissionRulesService,
-  type PermissionApprovalResultRecord,
-} from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import {
@@ -25,6 +21,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import {
@@ -37,6 +35,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionRulesRuntime } from '../../features/permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const RETRY_GUIDANCE =
@@ -88,7 +87,7 @@ describe('AgentToolApprovalService', () => {
   let ix: TestInstantiationService;
   let mode: PermissionMode;
   let records: TelemetryRecord[];
-  let recorded: PermissionApprovalResultRecord[];
+  let recorded: Event2[];
   let eventBus: IEventBus;
 
   beforeEach(() => {
@@ -104,15 +103,12 @@ describe('AgentToolApprovalService', () => {
           makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }),
         );
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
-        reg.defineInstance(IAgentPermissionRulesService, {
-          _serviceBrand: undefined,
-          rules: [],
-          sessionApprovalRulePatterns: [],
-          addRules: () => {},
-          recordApprovalResult: (record) => {
-            recorded.push(record);
+        reg.defineInstance(IAgentLifecycleService, {
+          resolve: (_agent: unknown, definition: unknown) => {
+            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
+            return stubPermissionRulesRuntime({ dispatched: recorded });
           },
-        });
+        } as unknown as IAgentLifecycleService);
         reg.defineInstance(ISessionContext, makeSessionContext({
           sessionId: 'test-session',
           workspaceId: 'test-workspace',
@@ -270,6 +266,7 @@ describe('AgentToolApprovalService', () => {
       expect(events.resolved).not.toHaveBeenCalled();
       expect(recorded).toHaveLength(1);
       expect(recorded[0]).toMatchObject({
+        type: 'permission.record_approval_result',
         toolName: 'Bash',
         sessionApprovalRule: undefined,
         result: { decision: 'approved' },
@@ -392,6 +389,7 @@ describe('AgentToolApprovalService', () => {
 
       expect(recorded).toHaveLength(1);
       expect(recorded[0]).toMatchObject({
+        type: 'permission.record_approval_result',
         turnId: 1,
         toolCallId: 'call-Custom',
         toolName: 'Custom',
@@ -417,6 +415,7 @@ describe('AgentToolApprovalService', () => {
 
       expect(recorded).toHaveLength(1);
       expect(recorded[0]).toMatchObject({
+        type: 'permission.record_approval_result',
         sessionApprovalRule: undefined,
         result: { decision: 'approved' },
       });

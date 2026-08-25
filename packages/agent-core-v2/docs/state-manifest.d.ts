@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 78 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 77 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -82,7 +82,6 @@
 //     permissionMode                                  src/agent/permissionMode/permissionModeOps.ts
 //     permissionMode.configured                       src/agent/permissionMode/permissionModeOps.ts
 //     permissionMode.lastMode                         src/agent/permissionMode/injection/permissionModeInjection.ts
-//     permissionRules                                 src/agent/permissionRules/permissionRulesOps.ts
 //     plan                                            src/features/plan/planOps.ts
 //     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     pluginSessionStartSnapshot                      src/agent/plugin/agentPluginOps.ts
@@ -1122,17 +1121,6 @@ export interface AgentStateSnapshot {
   'permissionMode': /* PermissionMode — packages/agent-core-v2/src/agent/permissionPolicy/types.ts */ 'manual' | 'auto' | 'yolo';
   // replayable · durable — folds: PermissionSetMode
   'permissionMode.configured': boolean;
-  // src/agent/permissionRules/permissionRulesOps.ts
-  // replayable · durable — folds: PermissionRulesAdd, PermissionRecordApprovalResult
-  'permissionRules': /* PermissionRulesModelState — packages/agent-core-v2/src/agent/permissionRules/permissionRulesOps.ts */ {
-    readonly rules: readonly /* PermissionRule — packages/agent-core-v2/src/agent/permissionRules/permissionRules.ts */ {
-      readonly decision: /* PermissionRuleDecision — packages/agent-core-v2/src/agent/permissionRules/permissionRules.ts */ 'allow' | 'deny' | 'ask';
-      readonly scope: /* PermissionRuleScope — packages/agent-core-v2/src/agent/permissionRules/permissionRules.ts */ 'project' | 'user' | 'turn-override' | 'session-runtime';
-      readonly pattern: string;
-      readonly reason?: string;
-    }[];
-    readonly sessionApprovalRulePatterns: readonly string[];
-  };
   // src/agent/plugin/agentPluginOps.ts
   // replayable · durable — folds: PluginSessionStartEvent
   'pluginSessionStartSnapshot': /* PluginSessionStartSnapshotState — packages/agent-core-v2/src/agent/plugin/agentPluginOps.ts */ {

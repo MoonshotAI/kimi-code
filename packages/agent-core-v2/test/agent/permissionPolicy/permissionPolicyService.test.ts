@@ -19,11 +19,8 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
-import {
-  IAgentPermissionRulesService,
-  type IAgentPermissionRulesService as PermissionRulesServiceContract,
-  type PermissionRule,
-} from '#/agent/permissionRules/permissionRules';
+import type { PermissionRule } from '#/features/permissionRules/types';
+import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IGitService } from '#/app/git/git';
@@ -32,8 +29,10 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubPermissionRulesRuntime } from '../../features/permissionRules/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 
 const signal = new AbortController().signal;
@@ -61,10 +60,15 @@ describe('AgentPermissionPolicyService chain', () => {
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
-        reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
-          rules: () => rules,
-          sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
-        }));
+        reg.defineInstance(IAgentLifecycleService, {
+          resolve: (_agent: unknown, definition: unknown) => {
+            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
+            return stubPermissionRulesRuntime({
+              rules: () => rules,
+              approvalPatterns: () => sessionApprovalRulePatterns,
+            });
+          },
+        } as unknown as IAgentLifecycleService);
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentRuntimeService, {
@@ -231,7 +235,12 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
         );
-        reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
+        reg.defineInstance(IAgentLifecycleService, {
+          resolve: (_agent: unknown, definition: unknown) => {
+            if (definition !== AgentPermissionRules) throw new Error('unexpected resolve');
+            return stubPermissionRulesRuntime({});
+          },
+        } as unknown as IAgentLifecycleService);
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentRuntimeService, {
@@ -394,28 +403,6 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     });
   });
 });
-
-interface MutablePermissionRulesStubOptions {
-  readonly rules?: () => readonly PermissionRule[];
-  readonly sessionApprovalRulePatterns?: () => readonly string[];
-}
-
-function permissionRulesStub(
-  options: MutablePermissionRulesStubOptions = {},
-): Partial<PermissionRulesServiceContract> {
-  const rules = options.rules ?? (() => []);
-  const sessionApprovalRulePatterns = options.sessionApprovalRulePatterns ?? (() => []);
-  return {
-    get rules() {
-      return rules();
-    },
-    get sessionApprovalRulePatterns() {
-      return sessionApprovalRulePatterns();
-    },
-    addRules: () => {},
-    recordApprovalResult: () => {},
-  };
-}
 
 interface PolicyContextInput {
   readonly id?: string;

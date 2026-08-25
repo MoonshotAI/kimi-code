@@ -710,10 +710,14 @@ export * from '#/agent/permissionMode/permissionModeService';
 export * from '#/agent/permissionPolicy/permissionPolicy';
 export * from '#/agent/permissionPolicy/permissionPolicyService';
 export * from '#/agent/permissionPolicy/types';
-import '#/agent/permissionRules/configSection';
-export * from '#/agent/permissionRules/permissionRules';
-export * from '#/agent/permissionRules/matchesRule';
-export * from '#/agent/permissionRules/permissionRulesService';
+import '#/features/permissionRules/configSection';
+export * from '#/features/permissionRules/types';
+export * from '#/features/permissionRules/permissionRulesOps';
+export {
+  AgentPermissionRules,
+  PermissionRulesRuntime,
+} from '#/features/permissionRules/permissionRulesAgentRuntime';
+import '#/features/permissionRules/permissionRulesFeature';
 export * from '#/agent/pluginCommand/pluginCommand';
 export * from '#/agent/pluginCommand/pluginCommandService';
 export * from '#/agent/profile/profile';

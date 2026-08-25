@@ -10,7 +10,6 @@ import {
   permissionModeConfiguredKey,
   permissionModeKey,
 } from '#/agent/permissionMode/permissionModeOps';
-import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { promptAdmissionKey } from '#/agent/prompt/promptOps';
 import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
@@ -31,7 +30,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   mcpDiscoveryKey,
   permissionModeKey,
   permissionModeConfiguredKey,
-  permissionRulesKey,
   pluginSessionStartSnapshotKey,
   promptAdmissionKey,
   profileKey,

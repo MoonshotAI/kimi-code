@@ -47,7 +47,7 @@
 //   llm.request                        llm.requestTrace                           src/agent/llmRequester/llmRequestOps.ts
 //   llm.tools_snapshot                 llm.requestTrace                           src/agent/llmRequester/llmRequestOps.ts
 //   mcp.tools_discovered               mcp.discovery                              src/agent/mcp/mcpDiscoveryOps.ts
-//   permission.record_approval_result  permissionRules                            src/agent/permissionRules/permissionRulesOps.ts
+//   permission.record_approval_result  (none)                                     src/features/permissionRules/permissionRulesOps.ts
 //   permission.set_mode                permissionMode, permissionMode.configured  src/agent/permissionMode/permissionModeOps.ts
 //   plan_mode.cancel                   plan                                       src/features/plan/planOps.ts
 //   plan_mode.enter                    plan                                       src/features/plan/planOps.ts
@@ -401,8 +401,8 @@ interface McpToolsDiscoveredPayload {
 }
 
 /**
- * states: permissionRules
- * owner: src/agent/permissionRules/permissionRulesOps.ts
+ * states: (none)
+ * owner: src/features/permissionRules/permissionRulesOps.ts
  */
 interface PermissionRecordApprovalResultPayload {
   _name: 'permission.record_approval_result';

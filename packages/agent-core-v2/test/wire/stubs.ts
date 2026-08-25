@@ -17,6 +17,10 @@ import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRu
 import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { AgentUsage, usageAgentRuntimeProvider } from '#/features/usage/usageAgentRuntime';
 import {
+  AgentPermissionRules,
+  permissionRulesAgentRuntimeProvider,
+} from '#/features/permissionRules/permissionRulesAgentRuntime';
+import {
   IWireService,
   type IWireService as AgentWire,
 } from '#/wire/wire';
@@ -190,6 +194,22 @@ export function attachUsageRuntime(
   runtimes.apply({
     definition: AgentUsage,
     provider: usageAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachPermissionRulesRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentPermissionRules,
+    provider: permissionRulesAgentRuntimeProvider,
     generation: 1,
     active: true,
   });

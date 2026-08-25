@@ -2,11 +2,10 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { defineState } from '#/state/state';
 
-import type { PermissionApprovalResultRecord, PermissionRule } from './permissionRules';
+import type { PermissionApprovalResultRecord, PermissionRule } from './types';
 
-export interface PermissionRulesModelState {
+export interface PermissionRulesState {
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
 }
@@ -44,27 +43,3 @@ export class PermissionRecordApprovalResult extends AgentEvent2<
 export interface PermissionRecordApprovalResult extends PermissionApprovalResultRecord {
   readonly agentId: string;
 }
-
-export const permissionRulesKey = defineState(
-  'permissionRules',
-  (): PermissionRulesModelState => ({
-    rules: [],
-    sessionApprovalRulePatterns: [],
-  }),
-).replayable({ schema: z.custom<PermissionRulesModelState>() })
-  .on(PermissionRulesAdd, (s, e) => {
-    if (e.rules.length === 0) return;
-    s.rules = [...s.rules, ...e.rules];
-  })
-  .on(PermissionRecordApprovalResult, (s, e) => {
-    const pattern = e.sessionApprovalRule;
-    if (
-      e.result.decision !== 'approved' ||
-      e.result.scope !== 'session' ||
-      pattern === undefined ||
-      s.sessionApprovalRulePatterns.includes(pattern)
-    ) {
-      return;
-    }
-    s.sessionApprovalRulePatterns = [...s.sessionApprovalRulePatterns, pattern];
-  });

@@ -19,7 +19,6 @@ export {
   modelProviderOptionServices,
   modelProviderServices,
   permissionModeServices,
-  permissionRulesServices,
   questionServices,
   sessionService,
   sessionServices,

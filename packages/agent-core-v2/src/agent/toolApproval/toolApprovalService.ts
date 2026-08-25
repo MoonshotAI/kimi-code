@@ -12,7 +12,6 @@ import type {
   PermissionPolicyResolution,
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
-import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import type {
@@ -21,6 +20,8 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionApprovalService } from '#/session/approval/approval';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -66,11 +67,11 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
-    @IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService,
     @ISessionContext private readonly session: ISessionContext,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
   }
@@ -184,14 +185,16 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
         }),
       );
     }
-    this.rulesService.recordApprovalResult({
-      turnId: context.turnId,
-      toolCallId: context.toolCall.id,
-      toolName: name,
-      action,
-      sessionApprovalRule,
-      result: response,
-    });
+    void this.agentLifecycle
+      .resolve(this.scopeContext.agentContext, AgentPermissionRules)
+      .recordApproval({
+        turnId: context.turnId,
+        toolCallId: context.toolCall.id,
+        toolName: name,
+        action,
+        sessionApprovalRule,
+        result: response,
+      });
     this.telemetry.track2('permission_approval_result', {
       turn_id: context.turnId,
       tool_call_id: context.toolCall.id,

@@ -1,7 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
+import type { PermissionRule } from '#/features/permissionRules/types';
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
 

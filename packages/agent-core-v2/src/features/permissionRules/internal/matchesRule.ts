@@ -1,8 +1,12 @@
 import picomatch from 'picomatch';
 
 import { Error2, ErrorCodes } from '#/errors';
-import type { RunnableToolExecution } from '#/tool/toolContract';
-import type { PermissionRule } from './permissionRules';
+
+import type {
+  PermissionRule,
+  PermissionRuleMatch,
+  PermissionRuleMatchExecution,
+} from '../types';
 
 export interface ParsedPattern {
   readonly toolName: string;
@@ -10,18 +14,6 @@ export interface ParsedPattern {
 }
 
 export type ParsedPermissionPattern = ParsedPattern;
-
-export interface PermissionRuleMatchExecution {
-  readonly matchesRule?: RunnableToolExecution['matchesRule'];
-}
-
-export type PermissionRuleMatchStrategy = 'tool_name_only' | 'matches_rule';
-
-export interface PermissionRuleMatch {
-  readonly rule: PermissionRule;
-  readonly strategy: PermissionRuleMatchStrategy;
-  readonly hasRuleArgs: boolean;
-}
 
 export interface PermissionRuleMatchInput {
   readonly rule: PermissionRule;

@@ -173,7 +173,7 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentPermissionRulesService,
+  AgentPermissionRules,
   IAgentPluginCommandService,
   IAgentProfileService,
   AgentSkill,
@@ -1111,7 +1111,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       replay: limitAgentReplayByTurns(folded.replay, replayTurnLimit),
       permission: {
         mode: agent.accessor.get(IAgentPermissionModeService).mode,
-        rules: [...agent.accessor.get(IAgentPermissionRulesService).rules],
+        rules: [
+          ...agent.accessor
+            .get(IAgentLifecycleService)
+            .resolve(agentContextOf(agent), AgentPermissionRules)
+            .rules(),
+        ],
       } as ResumedAgentState['permission'],
       plan: plan as ResumedAgentState['plan'],
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,

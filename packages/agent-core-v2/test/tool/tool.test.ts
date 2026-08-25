@@ -110,6 +110,10 @@ import {
   tokenCountingAgentRuntimeProvider,
 } from '#/features/tokenCounting/tokenCountingAgentRuntime';
 import { AgentUsage, usageAgentRuntimeProvider } from '#/features/usage/usageAgentRuntime';
+import {
+  AgentPermissionRules,
+  permissionRulesAgentRuntimeProvider,
+} from '#/features/permissionRules/permissionRulesAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -498,6 +502,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentUsage,
           provider: usageAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentPermissionRules,
+          provider: permissionRulesAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

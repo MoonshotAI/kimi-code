@@ -1,5 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
@@ -9,9 +11,16 @@ import { evaluateUserConfiguredRule } from './user-configured-rule';
 export class UserConfiguredAskPermissionPolicyService implements PermissionPolicy {
   readonly name = 'user-configured-ask';
 
-  constructor(@IAgentPermissionRulesService private readonly rulesService: IAgentPermissionRulesService) {}
+  constructor(
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
-    return evaluateUserConfiguredRule(context, 'ask', this.rulesService);
+    return evaluateUserConfiguredRule(
+      context,
+      'ask',
+      this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentPermissionRules),
+    );
   }
 }
