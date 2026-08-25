@@ -31,6 +31,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   declare readonly _serviceBrand: undefined;
   private readonly entries = new Set<ContextInjectionEntry>();
   private compactionRearmPending = false;
+  private pendingReconcileName: string | undefined;
   private fullCompactionService: IAgentFullCompactionService | undefined;
 
   constructor(
@@ -52,6 +53,15 @@ export class AgentContextInjectorService extends Service implements IAgentContex
         if (isCompactionSplice(splice)) this.compactionRearmPending = true;
       }),
     );
+    this._register(
+      this.fullCompaction.onDidFinishCompaction(() => {
+        const pending = this.pendingReconcileName;
+        this.pendingReconcileName = undefined;
+        if (pending !== undefined) {
+          void this.reconcileWhenIdle(pending);
+        }
+      }),
+    );
   }
 
   register<D = unknown>(
@@ -69,7 +79,10 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   }
 
   async reconcileWhenIdle(name: string): Promise<void> {
-    if (this.fullCompaction.compacting !== null) return;
+    if (this.fullCompaction.compacting !== null) {
+      this.pendingReconcileName = name;
+      return;
+    }
     const quiescence = this.loopService.tryAcquireQuiescence();
     if (quiescence === undefined) return;
     try {
@@ -126,6 +139,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
       return;
     }
     if (!this.entries.has(entry)) return;
+    if (this.fullCompaction.compacting !== null) return;
     this.appendResult(entry, content);
   }
 

@@ -14,10 +14,11 @@ $ARGUMENTS
 
 The user input contains the bug description and (optionally) a slug. Treat it as one of:
 
-1. **Pasted text** — a copy of an issue, a stack trace, an error message, or a freeform description.
-2. **A URL** — a link to a GitHub/GitLab issue, a discussion, a Sentry/log link, a forum thread, or any web page describing the bug. Fetch and read the page content before proceeding.
-3. **A mix** — text plus a URL for additional context.
-4. **An `issue` flag** — `issue` / `--issue` (or `issue=true` / `issue=false`). When present and truthy, this command also files a GitHub issue for the bug after writing the assessment (the "report" phase). See **Optional — file the GitHub issue** below.
+1. **Bare slug with existing record** — if the user provides only a slug (no URL, no pasted text), and `BUG_DIR/issue.md` or `BUG_DIR/assessment.md` already exists for that slug, recognize this as a **refine-existing-record** operation: load the existing record as input, then enhance/update the assessment based on the current codebase state. The existing overwrite guard on writing `assessment.md` (asking before overwriting) is still enforced.
+2. **Pasted text** — a copy of an issue, a stack trace, an error message, or a freeform description.
+3. **A URL** — a link to a GitHub/GitLab issue, a discussion, a Sentry/log link, a forum thread, or any web page describing the bug. Fetch and read the page content before proceeding.
+4. **A mix** — text plus a URL for additional context.
+5. **An `issue` flag** — `issue` / `--issue` (or `issue=true` / `issue=false`). When present and truthy, this command also files a GitHub issue for the bug after writing the assessment (the "report" phase). See **Optional — file the GitHub issue** below.
 
 If both a URL and text are present, fetch the URL and merge its content with the pasted text when forming the bug summary.
 
@@ -65,9 +66,10 @@ Before fetching, classify the URL by its host and scheme:
 
 In every case, record in `assessment.md`:
 
-- The verbatim URL the user supplied.
+- A sanitized version of the URL the user supplied: preserve the scheme, host, and path, but redact query parameters (replace with `?[REDACTED]`) and any credentials embedded in the URL (replace userinfo with `[REDACTED]@`). Do NOT record verbatim URLs that might contain tokens, API keys, session IDs, or other secrets in query strings or auth segments.
 - The host parsed from that URL (no redirect following — see the rule above).
 - Which branch of the policy was taken: `allowlisted` / `confirmed-by-user` / `auto-refused: <reason>`.
+- When recording fetched content or pasted text in the assessment, redact any bearer tokens, API keys, passwords, session cookies, or credentials you observe. Store an excerpt that preserves the structure but removes secret values.
 
 Do not attempt to validate the URL by issuing a preflight `HEAD` (or any other) request to "see what it is" — that probe is itself the request the policy gates.
 

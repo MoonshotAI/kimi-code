@@ -29,7 +29,15 @@ Resolve `BUG_SLUG` in this order, stopping at the first match:
    - **Interactive mode**: ask the user which bug to report and list the candidates.
    - **Automated mode**: stop with an error listing the candidates. Do not guess.
 
-Once resolved, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
+Once resolved, **normalize and validate** `BUG_SLUG` before constructing `BUG_DIR`:
+
+- Reject absolute paths (starting with `/` or a drive letter).
+- Reject any slug containing path separators (`/`, `\`).
+- Reject any slug containing traversal segments (`..`, `.`).
+- Normalize to lowercase, replace spaces/underscores with hyphens, remove special characters other than `-` and digits.
+- After normalization, verify the resolved path `.specify/bugs/<BUG_SLUG>` is strictly under `.specify/bugs/` (no escapes). If validation fails, stop with an error.
+
+Then set `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
 
 ## Prerequisites
 
@@ -59,10 +67,12 @@ Once resolved, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
 
 3. **Create the issue (live path)**
    - Map severity to labels: always include `bug`; also include `severity:<level>` (e.g. `severity:high`) when the repo supports it.
+   - Write the title to a temporary file (e.g., `BUG_DIR/issue-title.txt`) so it can be passed safely. Do **not** interpolate the title directly into the shell command string, as it may contain special characters that could break shell parsing.
    - Run (do **not** use `--json`: older `gh` versions reject it — capture the URL from stdout instead):
      ```bash
-     gh issue create --title "<title>" --body-file BUG_DIR/issue-body.md --label "bug" --label "severity:<level>"
+     gh issue create --title-file BUG_DIR/issue-title.txt --body-file BUG_DIR/issue-body.md --label bug --label "severity:<level>"
      ```
+   - If `gh issue create` does not support `--title-file`, use `--title` with proper shell quoting: ensure the title is passed as a separate argv element, not by concatenating into a shell string. For example, invoke `gh` programmatically with an array of arguments, or quote meticulously if building a shell string.
    - On success `gh` prints the new issue URL (e.g. `https://github.com/<owner>/<repo>/issues/36`) to stdout. Capture that line and extract the **URL** and the **issue number** (the trailing digits after `/issues/`).
    - **If a label is rejected** (e.g. `severity:high` does not exist in the repo), retry without the `severity:<level>` label, then without any labels — a tracked issue is better than none. Record the final outcome either way.
    - **If creation fails for any other reason** (no `gh`, not authenticated, no GitHub remote, network error), skip to Graceful Degradation below.

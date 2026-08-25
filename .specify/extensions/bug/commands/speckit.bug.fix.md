@@ -50,10 +50,12 @@ Once resolved, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`, and brie
 By default the fix is applied to the current branch. To match how `__SPECKIT_COMMAND_SPECIFY__` isolates feature work, you may ask `bug.fix` to create a dedicated branch (or git worktree) first:
 
 - Parse the user input for `branch` / `--branch` / `worktree` / `--worktree` (or `branch=true` / `worktree=true`). These are mutually exclusive; prefer `--branch` unless the user explicitly asks for a worktree.
+- **Before creating a branch or worktree**, check Git availability and working tree state:
+  - Run `git rev-parse --is-inside-work-tree 2>/dev/null` to confirm a repository. If Git is unavailable or the directory is not a Git repository, skip isolation with a warning and apply the fix on the current branch.
+  - Run `git status --porcelain` to check for uncommitted changes. If the working tree has uncommitted changes (modified, staged, or untracked files that would conflict), stop and get explicit user approval before proceeding. Explain that branch mode would apply the fix on top of uncommitted changes, and ask whether to stash/commit first, skip isolation, or abort.
 - Determine the branch name `<prefix>/<BUG_SLUG>`, where `<prefix>` comes from `.specify/extensions/bug/bug-config.yml` (`branch_prefix`, default `fix`). Example: `fix/login-timeout`. If a branch with that name already exists, stop and ask the user how to proceed (reuse it, choose another name, or skip isolation).
-- **Branch mode** (`--branch`): run `git checkout -b <prefix>/<BUG_SLUG>` from the current branch (assumed clean or committed).
+- **Branch mode** (`--branch`): run `git checkout -b <prefix>/<BUG_SLUG>` from the current branch (now verified clean or approved by the user).
 - **Worktree mode** (`--worktree`): run `git worktree add ../<repo>-<BUG_SLUG> -b <prefix>/<BUG_SLUG>` so the fix lives in a separate working directory; then continue operations there.
-- If Git is unavailable or the directory is not a Git repository, skip isolation with a warning and apply the fix on the current branch.
 - State which mode was used in your reply; all subsequent edits happen on that branch/worktree.
 
 2. **Apply the remediation**
@@ -77,6 +79,8 @@ By default the fix is applied to the current branch. To match how `__SPECKIT_COM
    - **Fixed**: <ISO 8601 date>
    - **Assessment**: ./assessment.md
    - **Status**: applied | partial | not-applied
+   - **Branch**: <branch/worktree name, or "current branch" if isolation was not used>
+   - **Revision**: <commit SHA after applying the fix, or "uncommitted" if not yet committed>
 
    ## Summary
 
@@ -110,6 +114,8 @@ By default the fix is applied to the current branch. To match how `__SPECKIT_COM
 
    - <suggested cleanup, monitoring, doc update, etc.>
    ```
+
+   Record the branch name used for isolation (or "current branch" if none), and capture the current Git commit SHA with `git rev-parse HEAD` after the fix is applied (or "uncommitted" if the changes are not yet committed). These fields enable `__SPECKIT_COMMAND_BUG_TEST__` to validate the workspace state matches the fix.
 
 5. **Report back** with:
    - The slug and `BUG_DIR/fix.md` path.

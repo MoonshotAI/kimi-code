@@ -28,7 +28,7 @@ Accept any of:
 
 ## Slug Resolution
 
-Each bug gets its own directory under `.specify/bugs/<slug>/`. If the user passed a slug, use it verbatim after normalization (lowercase, hyphen-separated, no spaces, no special characters other than `-` and digits). Otherwise derive a 2–4 word kebab-case slug from the issue **title**. Ensure the directory is unique — if `.specify/bugs/<slug>/` already exists, append the shortest disambiguating suffix (`-2`, `-3`, …) or `-<issue-number>`. Never overwrite an existing bug directory.
+Each bug gets its own directory under `.specify/bugs/<slug>/`. If the user passed a slug, use it verbatim after normalization (lowercase, hyphen-separated, no spaces, no special characters other than `-` and digits). Otherwise derive a 2–4 word kebab-case slug from the issue **title** when available. When the title is unavailable (e.g., no owner/repo context to fetch a title, or graceful degradation path), derive a deterministic fallback slug from the issue reference itself: use `issue-<number>` for a bare number, or `<repo>-issue-<number>` when the repository name is known. Ensure the directory is unique — if `.specify/bugs/<slug>/` already exists, append the shortest disambiguating suffix (`-2`, `-3`, …). Never overwrite an existing bug directory.
 
 After resolution, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
 
@@ -45,15 +45,20 @@ After resolution, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
 
 1. **Resolve repository + issue number**
    - If the input is a URL (`https://github.com/<owner>/<repo>/issues/<n>`) or `owner/repo#n`, parse `owner`, `repo`, and `number`.
-   - If the input is a bare number, use the `owner`/`repo` parsed from the current Git remote above.
+   - If the input is a bare number, use the `owner`/`repo` parsed from the current Git remote above. If the remote is unavailable or cannot be parsed, preserve the issue number for use in slug generation and graceful degradation (the issue reference is still meaningful even without fetching).
    - If no valid reference can be parsed, stop and tell the user what form to pass.
 
 2. **Fetch the issue (live path)**
-   - Run (no `--json` — it is unsupported on older `gh`; read the rendered output instead):
+   - Run (try `--json` first for robust structured parsing; fall back to plain text for older `gh` if `--json` is rejected):
+     ```bash
+     gh issue view <number> --repo <owner>/<repo> --json title,state,author,labels,body,comments
+     ```
+   - If `--json` succeeds, parse the JSON output to extract: **title**, **state** (`OPEN`/`CLOSED`), **author** (`.login`), **labels** (array of label names), **body**, and **comments** (array with `.author.login` and `.body` for each). This ensures comments are captured reliably.
+   - If `--json` fails or is unavailable (older `gh`), fall back to the plain-text rendering:
      ```bash
      gh issue view <number> --repo <owner>/<repo>
      ```
-   - This prints the issue (title, state, author, labels, body, and any comments) to stdout. Read it directly.
+   - This prints the issue (title, state, author, labels, body) to stdout; comments may appear at the end of the output. Parse what is available, but note that older plain-text output may not reliably include all comments. If comments cannot be reliably parsed from plain text, record `[Comments may be incomplete — fetched without --json support]` in the issue record.
    - Handle the common error cases:
      - **Issue not found / 404** → tell the user and stop; do not write a record.
      - **Not authorized / other failure** → fall through to Graceful Degradation.

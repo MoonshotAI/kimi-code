@@ -70,9 +70,10 @@ Before fetching, classify the URL by its host and scheme:
 
 In every case, record in `assessment.md`:
 
-- The verbatim URL the user supplied.
+- A sanitized version of the URL the user supplied: preserve the scheme, host, and path, but redact query parameters (replace with `?[REDACTED]`) and any credentials embedded in the URL (replace userinfo with `[REDACTED]@`). Do NOT record verbatim URLs that might contain tokens, API keys, session IDs, or other secrets in query strings or auth segments.
 - The host parsed from that URL (no redirect following — see the rule above).
 - Which branch of the policy was taken: `allowlisted` / `confirmed-by-user` / `auto-refused: <reason>`.
+- When recording fetched content or pasted text in the assessment, redact any bearer tokens, API keys, passwords, session cookies, or credentials you observe. Store an excerpt that preserves the structure but removes secret values.
 
 Do not attempt to validate the URL by issuing a preflight `HEAD` (or any other) request to "see what it is" — that probe is itself the request the policy gates.
 

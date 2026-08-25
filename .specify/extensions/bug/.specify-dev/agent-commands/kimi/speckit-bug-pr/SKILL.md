@@ -36,12 +36,23 @@ Resolve `BUG_SLUG` in this order, stopping at the first match:
    - **Interactive mode**: ask the user which bug to open a PR for and list the candidates.
    - **Automated mode**: stop with an error listing the candidates. Do not guess.
 
-Once resolved, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
+Once resolved, **normalize and validate** `BUG_SLUG` before constructing `BUG_DIR`:
+
+- Reject absolute paths (starting with `/` or a drive letter).
+- Reject any slug containing path separators (`/`, `\`).
+- Reject any slug containing traversal segments (`..`, `.`).
+- Normalize to lowercase, replace spaces/underscores with hyphens, remove special characters other than `-` and digits.
+- After normalization, verify the resolved path `.specify/bugs/<BUG_SLUG>` is strictly under `.specify/bugs/` (no escapes). If validation fails, stop with an error.
+
+Then set `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
 
 ## Prerequisites
 
 - `BUG_DIR/fix.md` MUST exist. If it does not, stop and instruct the user to run `/skill:speckit-bug-fix` first.
-- Confirm the current branch is the fix branch (created by `bug.fix --branch`, or whatever branch holds the change). If the working tree is on `main`/`master` with uncommitted changes, warn the user and ask which branch to open the PR from before continuing.
+- Read `BUG_DIR/fix.md` to extract the recorded fix **Branch** field.
+- **Compare the recorded branch with the actual current branch**:
+  - Run `git rev-parse --abbrev-ref HEAD` to get the current branch.
+  - If the recorded branch differs from the current branch, or if the current branch is `main`/`master`/`development` and the working tree is dirty, stop and prompt the user: the PR should open from the fix branch, not from a different branch. Ask whether to switch branches, abort, or proceed anyway (with explicit confirmation).
 - Detect GitHub context (same as `bug.issue`):
   - `git rev-parse --is-inside-work-tree` and `git config --get remote.origin.url` to parse `owner`/`repo`; only proceed live when the remote is `github.com`.
   - `command -v gh` and `gh auth status` to confirm the CLI and auth.
@@ -61,12 +72,16 @@ Once resolved, set `BUG_SLUG` and `BUG_DIR = .specify/bugs/<BUG_SLUG>`.
 
 3. **Open the PR (live path)**
    - Determine the base branch: prefer the repository default (usually `main`/`master`); allow the user to override with `base=<branch>` in `$ARGUMENTS`.
+   - **Check for an existing remote PR** before creating: if `BUG_DIR/pr.md` already exists, read it for the PR number and verify it still exists with `gh pr view <number>` (or check `gh pr list --head <current-branch>`). If a PR already exists for this branch/issue, report the existing PR URL and skip creation (unless the user explicitly asks to create a new one).
+   - Write the title to a temporary file (e.g., `BUG_DIR/pr-title.txt`) so it can be passed safely. Do **not** interpolate the title or base branch directly into the shell command string; pass them as separate argv-safe arguments.
    - Run (do **not** use `--json`: older `gh` versions reject it — capture the URL from stdout instead):
      ```bash
-     gh pr create --base <base> --title "<title>" --body-file BUG_DIR/pr-body.md
+     gh pr create --base <base> --title-file BUG_DIR/pr-title.txt --body-file BUG_DIR/pr-body.md
      ```
+   - If `gh pr create` does not support `--title-file`, use `--title` with proper shell quoting: ensure the title and base branch are passed as separate argv elements, not by concatenating into a shell string. For example, invoke `gh` programmatically with an array of arguments, or quote meticulously if building a shell string.
    - On success `gh` prints the new PR URL (e.g. `https://github.com/<owner>/<repo>/pull/42`) to stdout. Capture that line and extract the **URL** and the **PR number** (the trailing digits after `/pull/`).
-   - If the push of the current branch fails, run `git push -u origin <current-branch>` and retry the `gh pr create`.
+   - **If creation or recording is ambiguous/fails**, re-check for a duplicate remote PR (`gh pr list --head <current-branch>`) before retrying, to avoid creating duplicates.
+   - If the push of the current branch fails, run `git push -u origin <current-branch>` (again, pass `<current-branch>` as a separate argv element) and retry the `gh pr create`.
    - If `gh`/GitHub remote/auth/network is unavailable, skip to Graceful Degradation below.
 
 4. **Record the PR**

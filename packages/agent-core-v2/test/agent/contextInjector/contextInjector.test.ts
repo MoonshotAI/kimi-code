@@ -22,6 +22,7 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
+import { Emitter, Event } from '#/_base/event';
 import { registerLogServices } from '../../_base/log/stubs';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
 import {
@@ -60,9 +61,11 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
   return part?.type === 'text' ? part.text : undefined;
 }
 
+const compactionEmitter = new Emitter<FullCompactionTask>();
 const compactionStub = {
   compacting: null as FullCompactionTask | null,
   cancel() {},
+  onDidFinishCompaction: compactionEmitter.event,
 };
 
 describe('AgentContextInjectorService', () => {
@@ -490,5 +493,63 @@ describe('AgentContextInjectorService', () => {
     expect(seen).toEqual(['called']);
     expect(context.get()).toHaveLength(1);
     expect(lastText(context)).toContain('todo list reminder');
+  });
+
+  it('preserves pending reconcileWhenIdle request during compaction and replays after compaction completes', async () => {
+    const seen: string[] = [];
+    injector(ix).register('idle_test', () => {
+      seen.push('called');
+      return 'idle reminder';
+    });
+
+    const task = {} as FullCompactionTask;
+    compactionStub.compacting = task;
+    await injector(ix).reconcileWhenIdle('idle_test');
+
+    expect(seen).toEqual([]);
+    expect(context.get()).toHaveLength(0);
+
+    compactionStub.compacting = null;
+    compactionEmitter.fire(task);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(seen).toEqual(['called']);
+    expect(context.get()).toHaveLength(1);
+    expect(lastText(context)).toContain('idle reminder');
+  });
+
+  it('does not append when a step starts during compaction', async () => {
+    const seen: string[] = [];
+    injector(ix).register('step_test', () => {
+      seen.push('called');
+      return 'step reminder';
+    });
+
+    compactionStub.compacting = {} as FullCompactionTask;
+    await runInjectionStep(true);
+
+    expect(seen).toEqual([]);
+    expect(context.get()).toHaveLength(0);
+
+    compactionStub.compacting = null;
+    await runInjectionStep(true);
+
+    expect(seen).toEqual(['called']);
+    expect(context.get()).toHaveLength(1);
+  });
+
+  it('does not append when compaction starts during provider await', async () => {
+    const seen: string[] = [];
+    injector(ix).register('deferred_test', async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      compactionStub.compacting = {} as FullCompactionTask;
+      seen.push('called');
+      return 'deferred reminder';
+    });
+
+    await runInjectionStep(true);
+
+    expect(seen).toEqual(['called']);
+    expect(context.get()).toHaveLength(0);
   });
 });
