@@ -22,8 +22,6 @@ const MCP_OUTPUT_TRUNCATED_TEXT = `\n\n[Output truncated: exceeded ${String(
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
 const MCP_MAX_BINARY_PART_CHARS = Math.ceil((MCP_MAX_BINARY_PART_BYTES * 4) / 3);
 
-const MCP_STRUCTURED_LOSSY_RATIO = 2;
-
 function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: number): string {
   const approxMb = ((urlLength * 3) / 4 / (1024 * 1024)).toFixed(1);
   const capMb = String(MCP_MAX_BINARY_PART_BYTES / (1024 * 1024));
@@ -120,19 +118,12 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  const textLength = converted.reduce(
-    (n, part) => (part.type === 'text' ? n + part.text.trim().length : n),
-    0,
+  const hasUsableContent = converted.some((part) =>
+    part.type === 'text' ? part.text.trim().length > 0 : true,
   );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
-    const structuredJson = trySerialize(result.structuredContent);
-    if (
-      structuredJson !== undefined &&
-      (textLength === 0 || structuredJson.length > MCP_STRUCTURED_LOSSY_RATIO * textLength)
-    ) {
-      structuredExtras['structuredContent'] = result.structuredContent;
-    }
+  if (result.structuredContent !== undefined && !hasUsableContent) {
+    structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
     const meta = stripReservedMetaKeys(result._meta);
@@ -205,15 +196,6 @@ function isReservedMetaKey(key: string): boolean {
     (label, i) =>
       (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
   );
-}
-
-function trySerialize(value: unknown): string | undefined {
-  try {
-    const serialized = JSON.stringify(value);
-    return typeof serialized === 'string' ? serialized : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {

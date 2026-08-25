@@ -68,13 +68,6 @@ const MCP_OUTPUT_TRUNCATED_TEXT = `\n\n[Output truncated: exceeded ${String(
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
 const MCP_MAX_BINARY_PART_CHARS = Math.ceil((MCP_MAX_BINARY_PART_BYTES * 4) / 3);
 
-// Size ratio (serialized structuredContent vs. content text) above which a
-// result is treated as a lossy summary and the structured payload is
-// forwarded alongside the content. Faithful renderings measure close to 1
-// (the spec's verbatim dual-emit ≈1, human reorganisations ≈1-2 in
-// practice); lossy summaries sit orders of magnitude higher.
-const MCP_STRUCTURED_LOSSY_RATIO = 2;
-
 function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: number): string {
   const approxMb = ((urlLength * 3) / 4 / (1024 * 1024)).toFixed(1);
   const capMb = String(MCP_MAX_BINARY_PART_BYTES / (1024 * 1024));
@@ -203,28 +196,18 @@ export async function mcpResultToExecutableOutput(
   // block. Protocol-reserved _meta keys are dropped first: those carry
   // host/protocol plumbing, not model-facing data.
   //
-  // structuredContent is appended only when content does not already cover
-  // it. Well-behaved servers render the same data into content — as the
-  // spec's verbatim-serialization fallback, or as a faithful human-readable
-  // reorganisation — and either way the rendered text measures at roughly
-  // the same size as the payload. Forwarding the payload there would send
-  // the same information twice. A payload many times larger than the text
-  // is the signature of a lossy summary (or no text at all), where the
-  // structured data must reach the model. _meta has no such overlap and
-  // always passes through.
-  const textLength = converted.reduce(
-    (n, part) => (part.type === 'text' ? n + part.text.trim().length : n),
-    0,
+  // content and structuredContent are alternatives — never both forwarded.
+  // content wins whenever it carries anything usable (a media block or
+  // non-whitespace text): there is no reliable signal that the structured
+  // payload is richer than what the server already rendered into content,
+  // so the only case structuredContent fills in is an empty content array.
+  // _meta has no such overlap and always passes through.
+  const hasUsableContent = converted.some((part) =>
+    part.type === 'text' ? part.text.trim().length > 0 : true,
   );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
-    const structuredJson = trySerialize(result.structuredContent);
-    if (
-      structuredJson !== undefined &&
-      (textLength === 0 || structuredJson.length > MCP_STRUCTURED_LOSSY_RATIO * textLength)
-    ) {
-      structuredExtras['structuredContent'] = result.structuredContent;
-    }
+  if (result.structuredContent !== undefined && !hasUsableContent) {
+    structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
     const meta = stripReservedMetaKeys(result._meta);
@@ -325,15 +308,6 @@ function isReservedMetaKey(key: string): boolean {
     (label, i) =>
       (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
   );
-}
-
-function trySerialize(value: unknown): string | undefined {
-  try {
-    const serialized = JSON.stringify(value);
-    return typeof serialized === 'string' ? serialized : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**

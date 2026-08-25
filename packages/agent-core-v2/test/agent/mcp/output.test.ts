@@ -319,7 +319,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.output).toBe(text);
   });
 
-  test('appends structuredContent when the payload dwarfs a lossy summary', async () => {
+  test('suppresses structuredContent whenever content carries usable text', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'text', text: 'list_projects returned 6 item(s).' }],
@@ -337,11 +337,7 @@ describe('mcpResultToExecutableOutput', () => {
       },
       'mcp__s__t',
     );
-    const parts = out.output as ContentPart[];
-    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
-    expect(joined).toContain('list_projects returned 6 item(s).');
-    expect(joined).toContain('"structuredContent"');
-    expect(joined).toContain('"name":"Zeta"');
+    expect(out.output).toBe('list_projects returned 6 item(s).');
   });
 
   test('falls back to structuredContent when content carries no usable text', async () => {
@@ -359,7 +355,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined).toContain('"structuredContent":{"foo":1}');
   });
 
-  test('keeps the mcp_tool_result wrap when a media-only result carries structuredContent', async () => {
+  test('keeps the mcp_tool_result wrap for media-only results and suppresses structuredContent', async () => {
     const out = await mcpResultToExecutableOutput(
       {
         content: [{ type: 'image', data: 'AAA', mimeType: 'image/png' }],
@@ -370,9 +366,9 @@ describe('mcpResultToExecutableOutput', () => {
     );
     const parts = out.output as ContentPart[];
     expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__shot">' });
-    expect(parts.at(-2)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
-    const last = parts.at(-1);
-    expect(last?.type === 'text' && last.text.includes('<mcp-structured-result>')).toBe(true);
+    expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).not.toContain('<mcp-structured-result>');
   });
 
   test('strips literal closing tags inside the structured payload', async () => {
@@ -779,11 +775,11 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
     expect(text).toContain('"structuredContent":{"rows":[{"id":1}],"total":1}');
   }, 15000);
 
-  test('a prose summary keeps the structured payload alongside it', async () => {
+  test('a prose summary suppresses the structured payload', async () => {
     const out = await callFixtureTool('prose_plus_structured');
     const text = joinedText(out.output);
     expect(text).toContain('Found 1 row.');
-    expect(text).toContain('"structuredContent":{"rows":[{"id":1}],"total":1}');
+    expect(text).not.toContain('<mcp-structured-result>');
   }, 15000);
 
   test('a faithful rendering of similar size suppresses the structured copy', async () => {
