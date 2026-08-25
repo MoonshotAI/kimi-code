@@ -57,8 +57,13 @@ describe('systemPromptVars', () => {
     expect(vars['skills']).toBe('SKILLS');
     expect(vars['additional_dirs_section']).toContain('## Additional Directories');
     expect(vars['additional_dirs_section']).toContain('/extra');
-    expect(vars['skills_section']).toContain('# Skills');
+    expect(vars['skills_section']).toContain(
+      'The following skills are available for use with the Skill tool:',
+    );
     expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['agents_md_section']).toContain('<system-reminder>');
+    expect(vars['agents_md_section']).toContain('# agentsMd');
+    expect(vars['agents_md_section']).toContain('AGENTS');
   });
 
   it('renders missing context fields as empty strings and defaults ${now}', () => {
@@ -72,6 +77,7 @@ describe('systemPromptVars', () => {
     expect(vars['additional_dirs_section']).toBe('');
     expect(vars['skills']).toBe('');
     expect(vars['skills_section']).toBe('');
+    expect(vars['agents_md_section']).toBe('');
     expect(vars['windows_notes']).toBe('');
     expect(vars['role_additional']).toBe('');
     expect(Number.isNaN(Date.parse(vars['now'] ?? ''))).toBe(false);
@@ -221,14 +227,14 @@ describe('renderSystemPromptResult', () => {
     expect(prompt).toContain('ROLE_TEXT');
     expect(prompt).toContain('AGENTS');
     expect(prompt).toContain('/work');
-    expect(prompt).toContain('# Skills');
+    expect(prompt).toContain('The following skills are available for use with the Skill tool:');
     expect(prompt).toContain('SKILLS');
   });
 
   it('omits the skills section when the profile disables the Skill tool', () => {
     const prompt = renderSystemPromptResult('', { skills: 'SKILLS' }, { skillActive: false }).text;
 
-    expect(prompt).not.toContain('# Skills');
+    expect(prompt).not.toContain('available for use with the Skill tool');
     expect(prompt).not.toContain('SKILLS');
   });
 
@@ -284,9 +290,9 @@ describe('renderSystemPromptResult', () => {
     expect(prompt).not.toMatch(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/);
   });
 
-  it('renders the host identity from the context, defaulting to the CLI text', () => {
+  it('pins the host identity to Claude Code and keeps the reply style guide overridable', () => {
     const fallback = renderSystemPromptResult('', {}, { skillActive: true }).text;
-    expect(fallback).toContain('Kimi Code CLI');
+    expect(fallback).toContain('You are Claude Code');
     expect(fallback).toContain(DEFAULT_REPLY_STYLE_GUIDE);
 
     const overridden = renderSystemPromptResult(
@@ -294,9 +300,9 @@ describe('renderSystemPromptResult', () => {
       { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
       { skillActive: true },
     ).text;
-    expect(overridden).toContain('Kimi Desktop');
+    expect(overridden).toContain('You are Claude Code');
     expect(overridden).toContain('GUI_STYLE');
-    expect(overridden).not.toContain('Kimi Code CLI');
+    expect(overridden).not.toContain(DEFAULT_REPLY_STYLE_GUIDE);
   });
 
   it('renders identical text regardless of the render-time clock', () => {
