@@ -335,6 +335,35 @@ describe('baseline boundaries (errors, cleanup, and platform paths)', () => {
     );
   });
 
+  it('tracks a file under an additional workspace root', async () => {
+    // Multi-root workspace: the agent may write to secondary folders, so an
+    // edit there has to be captured, listed, and undoable like any other.
+    const secondRoot = join(root, 'second-root');
+    await mkdir(secondRoot, { recursive: true });
+    const filePath = join(secondRoot, 'lib.ts');
+    await writeFile(filePath, 'original\n', 'utf-8');
+    const session: BaselineSession = { ...createSession(), additionalDirs: [secondRoot] };
+
+    await manager.capture(session, filePath);
+    await writeFile(filePath, 'edited\n', 'utf-8');
+
+    const changes = await manager.getChanges(session);
+    expect(changes.map((change) => change.path)).toEqual([filePath]);
+
+    await manager.undo(session, filePath);
+    await expect(readFile(filePath, 'utf-8')).resolves.toBe('original\n');
+  });
+
+  it('still rejects a path outside both the workspace and its additional roots', async () => {
+    const secondRoot = join(root, 'second-root');
+    await mkdir(secondRoot, { recursive: true });
+    const session: BaselineSession = { ...createSession(), additionalDirs: [secondRoot] };
+
+    await expect(manager.capture(session, join(root, 'elsewhere.ts'))).rejects.toThrow(
+      'is outside workspace',
+    );
+  });
+
   it('normalizes Windows drive case for an in-workspace baseline', async () => {
     const session: BaselineSession = { id: 'ses-windows', workDir: 'C:\\Workspace' };
     await manager.capture(session, 'C:\\Workspace\\src\\new.ts');

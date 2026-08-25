@@ -51,6 +51,7 @@ interface FakeSessionBoundary {
   readonly setThinkingEfforts: ThinkingEffort[];
   readonly setPermissions: PermissionMode[];
   readonly metadataUpdates: JsonObject[];
+  readonly addedDirs: { dir: string; persist: boolean }[];
   readonly handlerInstallations: { approval: number; question: number };
   readonly subscriptionCount: () => number;
   readonly closeCount: () => number;
@@ -69,6 +70,7 @@ function createFakeSession(
   const setThinkingEfforts: ThinkingEffort[] = [];
   const setPermissions: PermissionMode[] = [];
   const metadataUpdates: JsonObject[] = [];
+  const addedDirs: { dir: string; persist: boolean }[] = [];
   const handlerInstallations = { approval: 0, question: 0 };
   let subscriptions = 0;
   let closes = 0;
@@ -135,6 +137,12 @@ function createFakeSession(
       metadataUpdates.push(patch);
       summary = { ...summary, metadata: { ...summary.metadata, ...patch } };
     },
+    async addAdditionalDir(dir: string, options?: { persist?: boolean }) {
+      addedDirs.push({ dir, persist: options?.persist ?? true });
+      const additionalDirs = [...(summary.additionalDirs ?? []), dir];
+      summary = { ...summary, additionalDirs };
+      return { additionalDirs };
+    },
     async close() {
       closes += 1;
     },
@@ -146,6 +154,7 @@ function createFakeSession(
     setThinkingEfforts,
     setPermissions,
     metadataUpdates,
+    addedDirs,
     handlerInstallations,
     subscriptionCount: () => subscriptions,
     closeCount: () => closes,
@@ -337,6 +346,30 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(sdk.resumeInputs).toEqual([
       { id: "saved-1", includeSubagents: true, additionalDirs: ["/workspace-2"] },
     ]);
+  });
+
+  it("adds a workspace folder opened mid-conversation to the already-open session", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const opened = await runtime.openSession(openOptions());
+    const boundary = sdk.sessions.get(opened.id);
+    // Same session, same workDir: openSession takes its fast path and never
+    // re-runs create/resume, the only places additionalDirs would otherwise
+    // be sent - so a folder added after this point must arrive through here.
+    await runtime.openSession(openOptions({ sessionId: opened.id, additionalDirs: ["/late-root"] }));
+
+    expect(boundary?.addedDirs).toEqual([{ dir: "/late-root", persist: false }]);
+  });
+
+  it("does not re-add a workspace folder the session already has", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const opened = await runtime.openSession(openOptions({ additionalDirs: ["/root-2"] }));
+    const boundary = sdk.sessions.get(opened.id);
+    const addedOnCreate = boundary?.addedDirs.length ?? 0;
+    await runtime.openSession(openOptions({ sessionId: opened.id, additionalDirs: ["/root-2"] }));
+
+    expect(boundary?.addedDirs.length).toBe(addedOnCreate);
   });
 
   it("accepts the normalized SDK workDir when a Windows session is created", async () => {

@@ -251,6 +251,33 @@ export class BridgeHandler {
       : `@${mentionTarget}:${selection.start.line + 1}-${selection.end.line + 1}`;
   }
 
+  /**
+   * The file's URI if the session may write to it: under its working
+   * directory, or under one of its additionalDirs (other multi-root workspace
+   * folders, /add-dir). Additional roots sit outside workDir, where the
+   * workDir-relative resolver returns undefined, so those are resolved from
+   * the absolute path instead. Edits there used to be dropped, never reaching
+   * File Changes and impossible to keep or undo.
+   */
+  private resolveTrackablePath(
+    session: BaselineSession,
+    workDirUri: vscode.Uri,
+    filePath: string,
+  ): vscode.Uri | undefined {
+    const resolved = resolveSessionFilePath(workDirUri, session.workDir, filePath);
+    if (resolved !== undefined) {
+      return isWorkspacePathContainedSync(workDirUri, resolved.uri, { allowMissing: true })
+        ? resolved.uri
+        : undefined;
+    }
+    if (!path.isAbsolute(filePath) && !path.win32.isAbsolute(filePath)) return undefined;
+    const candidate = vscode.Uri.file(filePath);
+    const underAdditionalDir = (session.additionalDirs ?? []).some((dir) =>
+      isWorkspacePathContainedSync(vscode.Uri.file(dir), candidate, { allowMissing: true }),
+    );
+    return underAdditionalDir ? candidate : undefined;
+  }
+
   captureFileBaseline(
     session: BaselineSession,
     filePath: string,
@@ -272,11 +299,8 @@ export class BridgeHandler {
       return;
     }
 
-    const resolved = resolveSessionFilePath(workDirUri, session.workDir, filePath);
-    if (
-      resolved === undefined ||
-      !isWorkspacePathContainedSync(workDirUri, resolved.uri, { allowMissing: true })
-    ) {
+    const resolvedUri = this.resolveTrackablePath(session, workDirUri, filePath);
+    if (resolvedUri === undefined) {
       this.logRuntimeError(
         "Unable to capture a file baseline",
         new Error("File is outside the session working directory"),
@@ -284,12 +308,13 @@ export class BridgeHandler {
       return;
     }
 
-    const capture = this.baselineManager.capture(session, resolved.uri.fsPath);
+    const capture = this.baselineManager.capture(session, resolvedUri.fsPath);
+
     void capture
       .then(async () => {
         await Promise.all(
           webviewIds.map(async (webviewId) => {
-            this.fileManager.trackFile(webviewId, resolved.uri.fsPath);
+            this.fileManager.trackFile(webviewId, resolvedUri.fsPath);
             await this.fileManager.refreshChanges(webviewId);
           }),
         );
@@ -341,14 +366,18 @@ function baselineSession(runtime: SessionRuntime): BaselineSession {
     id: runtime.id,
     workDir: runtime.session.workDir,
     metadata: runtime.summary?.metadata,
+    additionalDirs: runtime.summary?.additionalDirs,
   });
 }
 
-function baselineSummary(summary: Pick<BaselineSession, "id" | "workDir" | "metadata">): BaselineSession {
+function baselineSummary(
+  summary: Pick<BaselineSession, "id" | "workDir" | "metadata" | "additionalDirs">,
+): BaselineSession {
   return {
     id: summary.id,
     workDir: summary.workDir,
     ...(summary.metadata === undefined ? {} : { metadata: summary.metadata }),
+    ...(summary.additionalDirs === undefined ? {} : { additionalDirs: summary.additionalDirs }),
   };
 }
 

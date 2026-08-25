@@ -285,6 +285,25 @@ async function applySessionSettings(
   if (status.permission !== permission) {
     await session.setPermission(permission);
   }
+  await syncAdditionalDirs(session, options.additionalDirs);
+}
+
+/**
+ * Folders added to the workspace after a session opened never reach it
+ * otherwise: openSession's same-session fast path returns the existing runtime
+ * without re-running create/resume, the only two places additionalDirs is sent.
+ * Ephemeral, matching how they are passed at create/resume.
+ */
+async function syncAdditionalDirs(
+  session: Session,
+  additionalDirs: readonly string[] | undefined,
+): Promise<void> {
+  if (additionalDirs === undefined || additionalDirs.length === 0) return;
+  const existing = session.summary?.additionalDirs ?? [];
+  for (const dir of additionalDirs) {
+    if (existing.some((current) => areSameFsPath(current, dir))) continue;
+    await session.addAdditionalDir(dir, { persist: false });
+  }
 }
 
 export function normalizeEffort(effort: string): ThinkingEffort {

@@ -261,8 +261,17 @@ function toSessionInfo(summary: SessionSummary): SessionInfo {
   };
 }
 
-function baselineSession(summary: Pick<SessionSummary, "id" | "workDir" | "metadata">): BaselineSession {
-  return { id: summary.id, workDir: summary.workDir, metadata: summary.metadata };
+function baselineSession(
+  summary: Pick<SessionSummary, "id" | "workDir" | "metadata"> & {
+    readonly additionalDirs?: readonly string[];
+  },
+): BaselineSession {
+  return {
+    id: summary.id,
+    workDir: summary.workDir,
+    metadata: summary.metadata,
+    additionalDirs: summary.additionalDirs,
+  };
 }
 
 function isInsideOrEqual(root: string, candidate: string): boolean {

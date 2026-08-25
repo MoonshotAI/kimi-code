@@ -24,6 +24,12 @@ export interface BaselineSession {
   readonly id: string;
   readonly workDir: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
+  /**
+   * Extra roots the session may write to (multi-root workspace folders,
+   * /add-dir). Files under these are tracked too, keyed in the manifest by
+   * their absolute path rather than a workDir-relative one.
+   */
+  readonly additionalDirs?: readonly string[];
 }
 
 interface ManifestEntry {
@@ -186,7 +192,7 @@ export class BaselineManager {
           `No baseline exists for "${resolved.relativePath}" in session "${session.id}"`,
         );
       }
-      await restoreFile(session.workDir, resolved.absolutePath, baseline);
+      await restoreFile(sessionRoots(session), resolved.absolutePath, baseline);
     });
   }
 
@@ -198,7 +204,7 @@ export class BaselineManager {
         const baseline = await this.readEffectiveBaseline(session, relativePath, manifest);
         if (baseline === undefined) continue;
         await restoreFile(
-          session.workDir,
+          sessionRoots(session),
           resolveSessionFile(session, relativePath).absolutePath,
           baseline,
         );
@@ -654,6 +660,14 @@ function resolveSessionFile(session: BaselineSession, filePath: string): Resolve
     relativePath.startsWith(parentPrefix) ||
     paths.isAbsolute(relativePath)
   ) {
+    // Outside workDir, but the session may still legitimately write here.
+    // Keyed by absolute path: a workDir-relative key would escape the root
+    // (`../other/a.ts`) and could collide with a same-named file in another
+    // root. `paths.resolve(root, <absolute>)` returns it unchanged, so the
+    // key round-trips back through this function on read.
+    if (isUnderAdditionalDir(session, paths, absolutePath)) {
+      return { absolutePath, relativePath: absolutePath };
+    }
     throw new BaselineError(`File "${filePath}" is outside workspace "${session.workDir}"`);
   }
 
@@ -661,6 +675,23 @@ function resolveSessionFile(session: BaselineSession, filePath: string): Resolve
     absolutePath,
     relativePath: windows ? relativePath.replaceAll('\\', '/') : relativePath,
   };
+}
+
+function isUnderAdditionalDir(
+  session: BaselineSession,
+  paths: path.PlatformPath,
+  absolutePath: string,
+): boolean {
+  return (session.additionalDirs ?? []).some((dir) => {
+    const dirRoot = paths.resolve(dir);
+    const relative = paths.relative(dirRoot, absolutePath);
+    return (
+      relative.length > 0 &&
+      relative !== '..' &&
+      !relative.startsWith(`..${paths.sep}`) &&
+      !paths.isAbsolute(relative)
+    );
+  });
 }
 
 function isWindowsAbsolute(value: string): boolean {
@@ -747,11 +778,11 @@ async function readCurrentFile(absolutePath: string): Promise<string | undefined
 }
 
 async function restoreFile(
-  workDir: string,
+  roots: readonly string[],
   absolutePath: string,
   baseline: BaselineValue,
 ): Promise<void> {
-  await requireContainedRestorePath(workDir, absolutePath);
+  await requireContainedRestorePath(roots, absolutePath);
   if (!baseline.existedBefore) {
     try {
       await unlink(absolutePath);
@@ -773,19 +804,29 @@ async function restoreFile(
   }
 }
 
-async function requireContainedRestorePath(workDir: string, absolutePath: string): Promise<void> {
+async function requireContainedRestorePath(
+  roots: readonly string[],
+  absolutePath: string,
+): Promise<void> {
   try {
-    const [realWorkDir, realTarget] = await Promise.all([
-      realpath(workDir),
+    // Resolved through realpath on both sides so a symlink cannot point the
+    // restore outside the session's own roots.
+    const [realRoots, realTarget] = await Promise.all([
+      Promise.all(roots.map(async (root) => realpath(root))),
       realExistingPath(absolutePath),
     ]);
-    if (relativeFsPath(realWorkDir, realTarget) === undefined) {
+    if (realRoots.every((root) => relativeFsPath(root, realTarget) === undefined)) {
       throw new BaselineError(`Refusing to restore path outside the session workspace: "${absolutePath}"`);
     }
   } catch (error) {
     if (error instanceof BaselineError) throw error;
     throw new BaselineError(`Unable to validate restore path "${absolutePath}"`, { cause: error });
   }
+}
+
+/** The session's writable roots: its working directory plus any additionalDirs. */
+function sessionRoots(session: BaselineSession): readonly string[] {
+  return [session.workDir, ...(session.additionalDirs ?? [])];
 }
 
 async function realExistingPath(candidate: string): Promise<string> {
