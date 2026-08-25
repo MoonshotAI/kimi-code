@@ -28,6 +28,10 @@ declare global {
   // Injected by Vite `define` (from @moonshot-ai/vite-preset): the bundle's
   // source commit (full sha; '' when git is unavailable).
   const __KIMI_COMMIT_SHA__: string;
+
+  // Injected by Vite `define` (from @moonshot-ai/vite-preset): the bundle's
+  // source branch ('' when unknown) — the debug pill's label.
+  const __KIMI_BRANCH__: string;
 }
 
 declare module '*.vue' {

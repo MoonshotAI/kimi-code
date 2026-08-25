@@ -174,6 +174,12 @@ onUnmounted(() => {
 });
 
 const pillBusy = computed(() => previewBusy.value || checking.value || triggering.value);
+
+/** Pill label: the branch the bundle was built from (injected at build time;
+ *  'main' for canary CI builds, the checkout's branch in dev), 'debug' when
+ *  unknown. */
+const branchLabel =
+  typeof __KIMI_BRANCH__ === 'string' && __KIMI_BRANCH__.trim() !== '' ? __KIMI_BRANCH__.trim() : 'debug';
 </script>
 
 <template>
@@ -182,12 +188,12 @@ const pillBusy = computed(() => previewBusy.value || checking.value || triggerin
       class="dbg-pill"
       :class="{ 'is-preview-active': previewActive }"
       type="button"
-      aria-label="debug"
+      :aria-label="branchLabel"
       @click="toggleMenu"
     >
       <Spinner v-if="pillBusy" size="xs" />
       <Icon v-else class="dbg-pill-icon" name="flask" size="sm" />
-      <span class="dbg-pill-text">debug</span>
+      <span class="dbg-pill-text">{{ branchLabel }}</span>
     </button>
 
     <Teleport to="body">
@@ -264,6 +270,13 @@ const pillBusy = computed(() => previewBusy.value || checking.value || triggerin
 .dbg-pill-icon {
   flex: none;
   color: var(--color-text-on-accent);
+}
+/* Branch labels can get long (feat/xxx-yyy): cap the pill, ellipsize the
+   overflow — the full label is one hover-tooltip away via aria-label. */
+.dbg-pill-text {
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* Serving a preview build = the "action pending" warning tint, matching the
    update pill's signal. */

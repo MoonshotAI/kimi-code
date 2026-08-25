@@ -17,6 +17,21 @@ function resolveCommitSha(): string {
   }
 }
 
+/** The branch the bundle is built from ('' when unknown). CI checkouts are
+    detached, so GitHub's GITHUB_REF_NAME wins there; locally it is the
+    current checkout's branch. Shown as the debug pill's label. */
+function resolveBranch(): string {
+  const fromEnv = process.env['GITHUB_REF_NAME'];
+  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') {
+    return fromEnv.trim();
+  }
+  try {
+    return execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
 function rawIconPlugin(icons: Plugin): Plugin {
   return {
     name: 'kimi-raw-icons',
@@ -73,6 +88,8 @@ export function kimiRendererViteConfig(opts: KimiRendererViteOptions): UserConfi
       // Bundle source commit (full sha, '' when unavailable) — the debug
       // menu's build info.
       __KIMI_COMMIT_SHA__: JSON.stringify(resolveCommitSha()),
+      // Bundle source branch ('' when unknown) — the debug pill's label.
+      __KIMI_BRANCH__: JSON.stringify(resolveBranch()),
       ...defines,
     },
     build: {
