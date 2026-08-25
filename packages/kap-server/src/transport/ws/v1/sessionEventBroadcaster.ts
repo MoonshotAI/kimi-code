@@ -67,7 +67,6 @@ export type ResyncReason = 'buffer_overflow' | 'session_recreated' | 'epoch_chan
 
 export interface BufferedSinceResult {
   events: Array<{ seq: number; envelope: EventEnvelope }>;
-  /** When set, the client must rebuild from the snapshot and re-subscribe. */
   resyncRequired: ResyncReason | false;
   currentSeq: number;
   epoch: string;
@@ -80,30 +79,14 @@ export interface SessionSnapshotState {
   subagents: SnapshotSubagent[];
 }
 
-/** Internal transport lane: only subscription traffic enters the timed buffer. */
 export type BroadcastDelivery = 'subscription' | 'immediate';
 
-/** A connection (or test double) that receives sequenced envelopes. */
 export interface BroadcastTarget {
   send(envelope: EventEnvelope, delivery?: BroadcastDelivery): void;
 }
 
-/**
- * Per-subscription agent allowlist for fine-grained v1 event delivery.
- * `undefined` (or omitted) means "receive every agent" — the legacy
- * session-grained behavior. A `ReadonlySet` restricts delivery to the listed
- * agent ids; global events ({@link isGlobalEvent}) bypass the filter entirely.
- */
 export type AgentFilter = ReadonlySet<string> | undefined;
 
-/**
- * What one connection wants from a session: two independent dimensions. The
- * legacy agent allowlist gates `session_event` delivery only; the opt-in
- * per-agent transcript grades (`Record<agentId|'*', grade>`; absent = all
- * 'off' — legacy clients see no transcript frames at all) alone decide which
- * agents' transcript frames the connection receives — the allowlist does NOT
- * gate the transcript stream.
- */
 export interface TargetSubscription {
   readonly agentFilter?: AgentFilter;
   readonly transcriptGrades?: TranscriptGradeSpec;
@@ -146,35 +129,8 @@ async function disposeSessionState(state: SessionState): Promise<void> {
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
-  /**
-   * Every established connection, subscribed or not. Global events
-   * ({@link isGlobalEvent}) fan out to this set (union the per-session
-   * targets) so a freshly connected client sees session-level facts —
-   * `event.session.created`, `session.meta.updated`, and every activated
-   * session's `event.session.work_changed` — without subscribing to anything.
-   */
   private readonly globalTargets = new Set<BroadcastTarget>();
-  /**
-   * Opt-in set for the `event.di.*` debug-surface feed. That feed is global
-   * (no owning session) and high-churn, but only kimi-inspect's DI view
-   * consumes it — pushing it to every connection wastes bandwidth on clients
-   * that drop the frames unread. Temporary gate until a client-declared
-   * event-type whitelist exists: `WsConnectionV1` opts a connection in when
-   * its `client_hello` carries `client_id: 'kimi-inspect'`; every other
-   * connection (including subscribed targets) skips `event.di.*` frames.
-   */
   private readonly diEventTargets = new Set<BroadcastTarget>();
-  /**
-   * Single-flight guard for session activation: without it, two concurrent
-   * activations (WS subscribe racing a REST snapshot / replay / resync) each
-   * built their own SessionState, bus subscriptions, and journal writer. The
-   * leaked listeners all route through `onAgentEvent`, which looks up the
-   * current state by session id, so they advance the SAME tracker and journal:
-   * one source delta is emitted at consecutive offsets and adjacent durable
-   * events receive distinct consecutive seqs. WS coalescing then folds the
-   * adjacent delta copies into one doubled payload, producing the observed
-   * per-chunk `AABBCC` stream while every seq and offset still looks valid.
-   */
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
@@ -195,42 +151,19 @@ export class SessionEventBroadcaster {
       .subscribe((event) => this.onCoreEvent(event));
   }
 
-  /**
-   * Register a freshly established connection for global-event fan-out. The
-   * connection receives every global event ({@link isGlobalEvent}) from this
-   * point on, with no per-session subscription required. Idempotent.
-   */
   addGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.add(target);
   }
 
-  /** Drop a closed connection from the global fan-out set. Idempotent. */
   removeGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.delete(target);
     this.diEventTargets.delete(target);
   }
 
-  /**
-   * Opt a connection into the `event.di.*` debug-surface feed (see
-   * {@link diEventTargets}). Idempotent; cleaned up by
-   * {@link removeGlobalTarget}.
-   */
   addDiEventTarget(target: BroadcastTarget): void {
     this.diEventTargets.add(target);
   }
 
-  /**
-   * Subscribe a connection to a session's stream (activates the session).
-   *
-   * When `transcriptGrades` is present the connection also joins the
-   * session's transcript stream: every already-known agent whose grade is not
-   * 'off' and that is an upgrade over the connection's previous grade
-   * (`needsResetOnTransition`) is seeded with a `transcript.reset` snapshot;
-   * later ops arrive as `transcript.ops`. Transcript frames are ALWAYS
-   * volatile (current watermark as seq, never journaled, never replayed) —
-   * frame loss surfaces through the ordinary backpressure → `resync_required`
-   * → REST + re-subscribe path, which resets the transcript naturally.
-   */
   async subscribe(
     sessionId: string,
     target: BroadcastTarget,
@@ -266,10 +199,6 @@ export class SessionEventBroadcaster {
     return true;
   }
 
-  /**
-   * Whether `subscribeTranscript` will send at least one reset for this
-   * (target, spec) pair right now — an upgrade over the previous grades.
-   */
   private willSendTranscriptReset(
     state: SessionState,
     spec: TranscriptGradeSpec,
@@ -289,16 +218,6 @@ export class SessionEventBroadcaster {
     return false;
   }
 
-  /**
-   * Send the transcript baseline deferred by `subscribe(deferTranscriptReset)`
-   * — callers run it after their cursor replay so the reset never lands ahead
-   * of the replayed (lower-seq) backlog. The baseline is forced for every
-   * admitted agent (no previous grades): volatile ops fanned out while the
-   * target sat unseeded were dropped, so only a full reset closes that gap —
-   * unless the subscription carried a `transcriptSince` cursor the journal
-   * still covers, in which case replaying exactly the missed batches closes
-   * it and no reset is sent for that agent.
-   */
   async flushTranscriptSeed(sessionId: string, target: BroadcastTarget): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
@@ -317,17 +236,6 @@ export class SessionEventBroadcaster {
     state.deferredTranscriptSeeds.delete(target);
   }
 
-  /**
-   * Detach one connection's transcript grade stream — agent-grained. With
-   * `agentIds`, only the listed agents drop to an explicit 'off' (a listed
-   * '*' removes the wildcard default); without it, the whole stream goes.
-   * Non-activating and idempotent: unknown sessions/targets are no-ops. A
-   * detached agent stops streaming on the next ops batch and its legacy
-   * session_events resume automatically (both paths re-read the per-agent
-   * grade); when no non-'off' grade remains the spec collapses to
-   * `undefined`, the seeded/deferred baselines are dropped, and any in-flight
-   * `subscribeTranscript` aborts on its grade re-read.
-   */
   unsubscribeTranscript(
     sessionId: string,
     target: BroadcastTarget,
@@ -348,21 +256,6 @@ export class SessionEventBroadcaster {
     }
   }
 
-  /**
-   * Handle one connection's transcript subscription: attach the shared
-   * per-session stream on first use and send `transcript.reset` snapshots for
-   * every known agent admitted by `spec` that is an upgrade over the
-   * connection's previous grade. A cold session (not live in this process)
-   * silently skips streaming — cold transcripts stay REST-only. Live sessions
-   * first await the initial wire-records backfill, so the seeded resets carry
-   * the established main-agent transcript. Explicitly graded agents AND roster
-   * agents admitted via the wildcard get their persisted history replayed
-   * before their first reset — a roster agent whose `AgentTranscript` was
-   * never materialized has nothing to snapshot, so without the backfill its
-   * baseline is silently skipped. Grades are re-read from `state.targets`
-   * after the awaits: subscribe work runs asynchronously, and a newer
-   * subscribe/unsubscribe must not be answered with stale resets.
-   */
   private async subscribeTranscript(
     state: SessionState,
     target: BroadcastTarget,
@@ -408,11 +301,6 @@ export class SessionEventBroadcaster {
     }
   }
 
-  /**
-   * Replay journaled op batches to one connection (the `transcript_since`
-   * catch-up path), grade-filtered like the live fan-out and stamped with
-   * their original batch seqs.
-   */
   private replayTranscriptOps(
     state: SessionState,
     target: BroadcastTarget,
@@ -436,17 +324,6 @@ export class SessionEventBroadcaster {
     }
   }
 
-  /**
-   * Attach the session's shared transcript fan-out: one mapped-ops
-   * subscription for the whole session (grade filtering happens per target at
-   * fan-out). New agents appearing later seed a `transcript.reset` for every
-   * connected target whose grade admits them. The attachment is pinned to the
-   * store instance: when the engine session closes, the service drops the
-   * store together with its ops listener set while this session state
-   * survives, so a subscribe after an in-daemon session resume must
-   * re-register the fan-out against the rebuilt store — returning early on
-   * any stale stream would deliver resets but never the live ops.
-   */
   private ensureTranscriptStream(state: SessionState, store: TranscriptStore): void {
     if (state.transcriptStream?.store === store) return;
     const service = this.opts.transcriptService;
@@ -498,11 +375,6 @@ export class SessionEventBroadcaster {
     );
   }
 
-  /**
-   * Volatile `transcript.reset` baseline: an items-empty snapshot (global
-   * state only, redacted to the target's grade) plus the seq watermark.
-   * History is paged over REST; live ops stream from the watermark.
-   */
   private sendTranscriptReset(
     state: SessionState,
     target: BroadcastTarget,
@@ -523,12 +395,6 @@ export class SessionEventBroadcaster {
     );
   }
 
-  /**
-   * All transcript frames are volatile and carry the current durable watermark
-   * as `seq` (they never advance it and are never journaled or replayed). The
-   * payload is the flat protocol event (`{ type, agent_id, … }`), matching the
-   * `transcriptResetEventSchema` / `transcriptOpsEventSchema` shapes.
-   */
   private buildTranscriptEnvelope(
     state: SessionState,
     type: 'transcript.reset' | 'transcript.ops',
@@ -603,7 +469,6 @@ export class SessionEventBroadcaster {
     return { seq: state.journal.seq, epoch: state.journal.epoch };
   }
 
-  /** Atomic-at-queue watermark + in-flight turn, for the snapshot route. */
   async getSnapshotState(sessionId: string): Promise<SessionSnapshotState> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) {
@@ -621,13 +486,6 @@ export class SessionEventBroadcaster {
     };
   }
 
-  /**
-   * Watermark for a session that is not live in this process but exists on disk
-   * (carried over from a prior process, or created by v1). Opens the journal
-   * transiently — no agent/interaction listeners and not cached in
-   * `this.sessions` — so a later live activation still attaches subscriptions.
-   * Returns `undefined` when the session is unknown to the index (truly absent).
-   */
   private async readColdWatermark(
     sessionId: string,
   ): Promise<{ seq: number; epoch: string } | undefined> {
@@ -879,12 +737,6 @@ export class SessionEventBroadcaster {
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
-  /**
-   * Dispatch an event through a real session's state so the WS envelope carries
-   * the real `session_id` (not the global `'__global__'` watermark). Used for
-   * session-scoped core events that must still fan out to every connection
-   * (e.g. `session.meta.updated`); `isGlobalEvent` keeps the fan-out global.
-   */
   private async dispatchSessionEvent(sessionId: string, event: Event): Promise<void> {
     let state: SessionState | undefined;
     try {
@@ -901,19 +753,6 @@ export class SessionEventBroadcaster {
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
-  /**
-   * Bridge the core's session work aggregate (`ISessionActivityView`) onto
-   * the v1 `event.session.work_changed` frame. The view owns the fold and
-   * its change dedup; the edge only schedules the wire emission. Every cause
-   * except `turn_ended` emits immediately. A `turn_ended` change must land
-   * after the matching `turn.ended` frame, but the agent bus fires
-   * full-stream subscribers (the edge's own handler) before per-type ones
-   * (the activity view chain that reports this change) — so the state is
-   * buffered and flushed from a microtask: the microtask runs after the
-   * whole synchronous publish, by which time the `turn.ended` frame is
-   * already enqueued on the session queue, and the emission can never be
-   * stranded behind a flush that already ran.
-   */
   private attachWorkView(session: ISessionScopeHandle, state: SessionState): void {
     const workView = session.accessor.get(ISessionActivityView);
     workView.state();
@@ -1067,12 +906,6 @@ export class SessionEventBroadcaster {
     }
   }
 
-  /**
-   * Bridge the session's interaction kernel (approvals / questions) onto the
-   * v1 event stream. The kernel only emits in-process notifications
-   * (`onDidChangePending` / `onDidResolve`), so the v1 protocol events are
-   * synthesized here.
-   */
   private attachInteractions(
     sessionId: string,
     session: ISessionScopeHandle,
@@ -1114,11 +947,6 @@ export class SessionEventBroadcaster {
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
-  /**
-   * Emit `event.session.work_changed` for one aggregate change announced by
-   * the core `ISessionActivityView` (the view already dedups — every call
-   * here is a real tuple change).
-   */
   private enqueueWorkChanged(state: SessionState, work: SessionActivityState): void {
     state.queue = state.queue
       .then(() =>
@@ -1141,10 +969,6 @@ export class SessionEventBroadcaster {
       );
   }
 
-  /**
-   * Log a rejected `dispatchSessionEvent` promise — the session's scope was
-   * torn down mid-dispatch, or a non-disposed error escaped `ensureState`.
-   */
   private logDispatchError(sessionId: string, eventType: string, error: unknown): void {
     const logger = this.opts.logger;
     if (logger === undefined) return;
@@ -1155,10 +979,6 @@ export class SessionEventBroadcaster {
     }
   }
 
-  /**
-   * A queued dispatch rejected: the event is permanently lost (and, for durable
-   * events, the seq is skipped). Warn instead of swallowing it silently.
-   */
   private logDispatchDropped(sessionId: string, eventType: string, error: unknown): void {
     this.opts.logger?.warn(
       { sessionId, eventType, err: error },

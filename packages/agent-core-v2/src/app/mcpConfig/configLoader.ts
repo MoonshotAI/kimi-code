@@ -39,9 +39,7 @@ export interface LoadMcpServersInput {
 }
 
 export interface LoadMcpServersDetailedResult {
-  /** Later layers override earlier ones with the same key. */
   readonly servers: Record<string, McpServerConfig>;
-  /** The file each effective entry was last defined in. */
   readonly origins: Record<string, string>;
 }
 
@@ -51,10 +49,6 @@ export async function loadMcpServers(
   return (await loadMcpServersDetailed(input)).servers;
 }
 
-/**
- * {@link loadMcpServers} plus the defining-file origin of every effective
- * entry, for management surfaces that show where a server came from.
- */
 export async function loadMcpServersDetailed(
   input: LoadMcpServersInput,
 ): Promise<LoadMcpServersDetailedResult> {

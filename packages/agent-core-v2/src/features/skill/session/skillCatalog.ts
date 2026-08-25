@@ -12,12 +12,6 @@ export interface ISessionSkillCatalog {
   readonly onDidChange: Event<string>;
   load(): Promise<void>;
   reload(): Promise<void>;
-  /**
-   * Wire-friendly snapshot of the merged catalog: every skill as a
-   * `SkillSummary`, resolved after `ready`. Unlike the `catalog` property
-   * (a live object whose methods do not cross a wire), the result is plain
-   * serializable data.
-   */
   list(): Promise<readonly SkillSummary[]>;
 }
 

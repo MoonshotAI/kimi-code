@@ -13,7 +13,6 @@ export interface ExternalHooksRunnerTriggerArgs {
 export interface IExternalHooksRunnerService {
   readonly _serviceBrand: undefined;
   readonly ready: Promise<void>;
-  /** Fired after the hook index is (re)built — initial load and plugin reloads. */
   readonly onDidReload: Event<void>;
   trigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
   triggerBlock(

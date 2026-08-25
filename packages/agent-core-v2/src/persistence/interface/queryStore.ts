@@ -25,11 +25,6 @@ export type QueryFilter = {
 
 export interface IQuery<T> {
   where(filter: QueryFilter): IQuery<T>;
-  /**
-   * Restrict to records whose ordered column `column` falls inside `bounds`.
-   * The column must have been declared at write time (`put`/`batch` with
-   * `columns`).
-   */
   whereColumn(column: string, bounds: ColumnBounds): IQuery<T>;
   orderBy(field: string, dir?: SortDir): IQuery<T>;
   limit(n: number): IQuery<T>;
@@ -73,7 +68,6 @@ export interface Checkpoint {
   readonly seq: number;
 }
 
-/** Numeric range bounds over an ordered column; every bound is optional. */
 export interface ColumnBounds {
   readonly gt?: number;
   readonly gte?: number;
@@ -81,13 +75,6 @@ export interface ColumnBounds {
   readonly lte?: number;
 }
 
-/**
- * A bounded page over an ordered column: rows whose column value falls inside
- * `bounds` (all bounds optional), filtered by `filter`, ordered by the column
- * in `dir` (default `'asc'`), at most `limit` rows. Rows sharing a column
- * value come back in a deterministic but engine-specific order; a caller that
- * needs a total order re-sorts the (bounded) page itself.
- */
 export interface ColumnPageQuery {
   readonly column: string;
   readonly dir?: SortDir;
@@ -108,19 +95,11 @@ export interface IQueryStore {
   batch(ops: readonly WriteOp[]): Promise<void>;
   delete(collection: string, key: string): Promise<void>;
   get<T>(collection: string, key: string): Promise<T | undefined>;
-  /** Point reads for several keys; missing keys are absent from the result. */
   getMany<T>(collection: string, keys: readonly string[]): Promise<Map<string, T>>;
   query<T>(collection: string): IQuery<T>;
-  /**
-   * Bounded page over an ordered column (see `ColumnPageQuery`). This is the
-   * keyset-pagination primitive: it must stay cheap even over large
-   * collections (index walk, not a full scan + in-memory sort).
-   */
   pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>>;
   ensureIndex(collection: string, def: IndexDef): Promise<void>;
-  /** Every key currently in the collection (engine key decoding applied). */
   listKeys(collection: string): Promise<readonly string[]>;
-  /** Delete the whole collection; a no-op when it does not exist. */
   dropCollection(collection: string): Promise<void>;
   getCheckpoint(source: string): Promise<Checkpoint | undefined>;
   setCheckpoint(source: string, checkpoint: Checkpoint): Promise<void>;

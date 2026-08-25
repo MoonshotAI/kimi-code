@@ -57,28 +57,10 @@ export interface IAgentLifecycleService {
   broadcastPermissionMode(mode: PermissionMode): void;
   remove(agent: AgentContext): Promise<void>;
 
-  /**
-   * Transitional bridge to the compatibility Agent scope (removed in M6):
-   * the scope handle for a live agent, or `undefined` when the agent is
-   * unknown or already closing.
-   */
   handleOf(agentId: string): IAgentScopeHandle | undefined;
 
-  /**
-   * Transitional bridge for hosts that materialize the compatibility Agent
-   * scope out of band (removed in M6): registers an existing scope as a
-   * managed agent, applying the registered runtime definitions. Durable
-   * participants attach through `attachRuntimes` once the scope is fully
-   * materialized. Returns the scope's `AgentContext`.
-   */
   adopt(handle: IAgentScopeHandle): AgentContext;
 
-  /**
-   * Transitional bridge (removed in M6): attaches the agent's durable
-   * runtime participants to its event dispatcher and, on the first call,
-   * marks the agent active and fires `onDidCreate` / `onDidCreateScope`.
-   * Must run before the dispatcher restores; idempotent.
-   */
   attachRuntimes(agent: AgentContext): void;
 }
 

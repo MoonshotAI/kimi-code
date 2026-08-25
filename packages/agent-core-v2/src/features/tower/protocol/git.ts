@@ -29,7 +29,6 @@ export async function git(cwd: string, args: readonly string[]): Promise<string>
   });
 }
 
-/** `git` that returns null instead of throwing when the command fails. */
 export async function tryGit(cwd: string, args: readonly string[]): Promise<string | null> {
   try {
     return await git(cwd, args);
@@ -75,11 +74,6 @@ export async function worktreeAdd(
   await git(cwd, ['worktree', 'add', path, '-b', branch, base]);
 }
 
-/**
- * Removal is always `--force`: the caller's dirty check is the data-loss gate.
- * A plain `git worktree remove` additionally refuses clean worktrees that
- * contain initialized submodules, which must not strand a clean teardown.
- */
 export async function worktreeRemove(cwd: string, path: string): Promise<void> {
   await git(cwd, ['worktree', 'remove', '--force', path]);
 }
@@ -94,7 +88,6 @@ export async function mergeNoFf(cwd: string, branch: string): Promise<string> {
   return branchTip(cwd, 'HEAD');
 }
 
-/** Changed files of `ref` relative to `base` (three-dot, i.e. since merge-base). */
 export async function diffNameOnly(
   cwd: string,
   base: string,

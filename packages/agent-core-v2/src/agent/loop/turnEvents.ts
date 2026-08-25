@@ -43,9 +43,6 @@ export function turnPromptText(
   return text.length > 0 ? text : undefined;
 }
 
-/** Media parts become the turn's transcript attachments only when they point
- *  at a session upload — the id must match the part's daemon file URL (a
- *  provider-issued id on a remote URL is not a session-media file id). */
 export function turnPromptAttachments(
   input: readonly ContentPart[],
 ): TurnStartedPayload['promptAttachments'] {

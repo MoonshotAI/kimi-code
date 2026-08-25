@@ -8,10 +8,6 @@ export const listSkillsResponseSchema = z.object({
 });
 export type ListSkillsResponse = z.infer<typeof listSkillsResponseSchema>;
 
-/**
- * Attachment parts accepted on skill activation — the media/file subset of
- * the prompt submission's `MessageContent` (text stays in `args`).
- */
 export const activateSkillAttachmentSchema = z.discriminatedUnion('type', [
   imageContentSchema,
   videoContentSchema,

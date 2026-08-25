@@ -91,9 +91,7 @@ import { createTokenStore } from './services/auth/tokenStore';
 import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
 
 export interface ServerHostIdentity extends KimiHostIdentity {
-  /** Fills the `${product_name}` slot in the base system prompt. Defaults render the CLI text. */
   readonly displayName?: string;
-  /** Replaces the `${reply_style_guide}` block in the base system prompt. */
   readonly replyStyleGuide?: string;
 }
 
@@ -101,26 +99,9 @@ export interface ServerStartOptions {
   readonly host?: string;
   readonly port?: number;
   readonly homeDir?: string;
-  /**
-   * Environment bag handed to the engine bootstrap (`IBootstrapService.getEnv`).
-   * Defaults to `process.env`; hosts that need to override engine-level env
-   * reads (e.g. an embedded server pinning `KIMI_CODE_REGION_MARKER=off`)
-   * pass a merged bag here instead of mutating the host process's env, which
-   * would leak the override into every child process the host spawns.
-   */
   readonly env?: NodeJS.ProcessEnv;
-  /**
-   * Plugin marketplace catalog URL for `GET /api/v1/plugins/marketplace`.
-   * Defaults to the `KIMI_CODE_PLUGIN_MARKETPLACE_URL` env var, then the
-   * production catalog.
-   */
   readonly pluginMarketplaceUrl?: string;
   readonly configPath?: string;
-  /**
-   * Override the instance-registry directory — used in tests that need the
-   * registry OUTSIDE `homeDir` (e.g. folder-picker fixtures browsing the home
-   * dir). Defaults to `<homeDir>/server/instances`.
-   */
   readonly instancesDir?: string;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
@@ -134,58 +115,13 @@ export interface ServerStartOptions {
   readonly allowRemoteTerminals?: boolean;
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
-  /**
-   * Custom browser tab title for this web UI instance (the CLI's
-   * `--web-title`). Surfaced as `web_title` in `GET /api/v1/meta` so the web
-   * UI can distinguish multiple instances on different machines. Instance-level
-   * and frozen at boot; omit to let the UI fall back to `<workspace dir> | Kimi Code`.
-   */
   readonly webTitle?: string;
-  /**
-   * Optional *additional* credential accepted on the RPC surface (debug REST +
-   * WebSocket) alongside the persistent bearer token. Never required and never
-   * the only gate: the persistent token always protects the RPC surface. Leave
-   * unset unless a second, distinct RPC credential is genuinely needed.
-   */
   readonly rpcToken?: string;
-  /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
   readonly seeds?: ScopeSeed;
-  /**
-   * Identity of the host product embedding the server: feeds the engine's
-   * `bootstrap()` client identity, the default outbound request headers
-   * (User-Agent + `X-Msh-*` via `createKimiDefaultHeaders`), and the session
-   * export manifest. Applied to every agent and request the server hosts —
-   * required, so every host states its own product name, version, and
-   * platform explicitly.
-   */
   readonly hostIdentity: ServerHostIdentity;
-  /**
-   * Explicit skill directories for this process (v1's SDK `skillDirs`): when
-   * non-empty, default user / project skill discovery is skipped and these
-   * directories serve as the user skill source for every session. Applied to
-   * all sessions the server hosts — for embedding hosts, not per-session use.
-   */
   readonly skillDirs?: readonly string[];
-  /**
-   * Directory of the built Kimi web UI (`dist-web`). When set, `GET /` and the
-   * `/*` SPA fallback serve these assets (auth-exempt, matching v1). Omit to run
-   * the API server without the web UI.
-   */
   readonly webAssetsDir?: string;
-  /**
-   * Engine version, reported as `server_version` (GET /api/v1/meta), in the
-   * OpenAPI document, and in the lock / instance registry. Defaults to
-   * kap-server's own package version; the host product version travels in
-   * `hostIdentity.version` instead.
-   */
   readonly serverVersion?: string;
-  /**
-   * Opt-in cloud telemetry for the engine's `ITelemetryService` events: when
-   * true, a `CloudAppender` is attached at startup (still gated by the config
-   * `telemetry` toggle) and flushed on close. Defaults to false so tests and
-   * embedding hosts that wire their own telemetry never post to the real
-   * endpoint unintentionally; the CLI's `kimi web` host passes true.
-   */
   readonly telemetry?: boolean;
 }
 
@@ -647,41 +583,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
 }
 
-/**
- * Maximum consecutive `EADDRINUSE` retries when the requested port is busy.
- * Caps the `port + 1` walk so a permanently-saturated range cannot loop
- * forever; 100 matches the v1 server's `PORT_RETRY_LIMIT` and the daemon
- * spawner's own scan window.
- */
 export const PORT_RETRY_LIMIT = 100;
 
 export interface ListenWithPortRetryOptions {
-  /**
-   * Bind attempt — typically `app.listen`. Called with `(host, port)` and
-   * resolves with the bound address string on success, or rejects with an
-   * `EADDRINUSE` `ErrnoException` when the port is held.
-   */
   readonly listen: (host: string, port: number) => Promise<string>;
   readonly host: string;
   readonly port: number;
   readonly logger: ServerLogger;
-  /** Override the retry cap — used by tests to keep the walk short. */
   readonly maxRetries?: number;
 }
 
-/**
- * Bind the listener, retrying on `port + 1` when the port is held.
- *
- * Why this is the right layer: there is no single-instance lock — every
- * kap-server registers itself under `<home>/server/instances/` instead, so a
- * busy port may be a sibling kimi instance. The `port + 1` walk then serves
- * as the multi-instance coexistence mechanism (the second instance lands on
- * the next free port), and a third-party listener gets the same "port busy ⇒
- * +1" policy as v1.
- *
- * Port `0` (OS-assigned ephemeral) is never retried: the kernel already picks a
- * free port, so `EADDRINUSE` cannot arise from a specific-port conflict.
- */
 export async function listenWithPortRetry(
   opts: ListenWithPortRetryOptions,
 ): Promise<{ address: string; port: number }> {
