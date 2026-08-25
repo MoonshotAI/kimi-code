@@ -50,7 +50,7 @@ export class FetchURLTool implements IFetchURLTool {
         };
       }
 
-      const builder = new ToolResultBuilder({ maxLineLength: null });
+      const builder = new ToolResultBuilder({ maxLineLength: null, retainFullOutput: true });
       const note =
         kind === 'passthrough'
           ? 'The returned content is the full response body, returned verbatim.'

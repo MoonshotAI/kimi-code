@@ -6,14 +6,15 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 import {
   IAgentToolResultTruncationService,
   type ToolResultTruncationInput,
 } from './toolResultTruncation';
 
 const TOOL_RESULT_MAX_CHARS = 50_000;
-const TOOL_RESULT_PREVIEW_CHARS = 2_000;
+const TOOL_RESULT_PREVIEW_HEAD_CHARS = 4_096;
+const TOOL_RESULT_PREVIEW_TAIL_CHARS = 1_024;
 
 const encoder = new TextEncoder();
 
@@ -33,6 +34,25 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
   async truncateForModel<T extends ExecutableToolResult>(
     input: ToolResultTruncationInput<T>,
   ): Promise<T> {
+    if (input.result.spillExempt === true) return input.result;
+
+    const { untruncatedOutput, untruncatedOutputTotalChars, ...rest } = input.result;
+    if (untruncatedOutput !== undefined) {
+      const saved = await this.saveToolResult(input.toolName, input.toolCallId, untruncatedOutput);
+      if (saved === undefined) return rest as T;
+      return {
+        ...rest,
+        output: renderPersistedToolResult(
+          input.toolName,
+          input.toolCallId,
+          untruncatedOutput,
+          saved.outputPath,
+          untruncatedOutputTotalChars ?? untruncatedOutput.length,
+        ),
+        truncated: true,
+      } as T;
+    }
+
     const text = persistableToolResultText(input.result.output);
     if (text === undefined || text.length <= TOOL_RESULT_MAX_CHARS) return input.result;
     if (input.result.truncated === true) return input.result;
@@ -41,10 +61,22 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     if (saved === undefined) return input.result;
 
     return {
-      ...input.result,
-      output: renderPersistedToolResult(input.toolName, input.toolCallId, text, saved.outputPath),
+      ...rest,
+      output: renderPersistedToolResult(
+        input.toolName,
+        input.toolCallId,
+        text,
+        saved.outputPath,
+        text.length,
+      ),
       truncated: true,
     } as T;
+  }
+
+  isSpillFilePath(path: string): boolean {
+    const dir = normalize(join(this.bootstrap.homeDir, this.storageScope));
+    const normalized = normalize(path);
+    return normalized === dir || normalized.startsWith(`${dir}/`);
   }
 
   private async saveToolResult(
@@ -77,19 +109,31 @@ function renderPersistedToolResult(
   toolCallId: string,
   text: string,
   outputPath: string,
+  totalChars: number,
 ): string {
+  const head = text.slice(0, TOOL_RESULT_PREVIEW_HEAD_CHARS);
+  const tailStart = Math.max(head.length, text.length - TOOL_RESULT_PREVIEW_TAIL_CHARS);
+  const tail = text.slice(tailStart);
   const lines = [
-    `Tool output exceeded ${String(TOOL_RESULT_MAX_CHARS)} characters; showing a preview only.`,
+    `Tool output exceeded ${String(TOOL_RESULT_MAX_CHARS)} characters; the full output was saved to a file.`,
     `tool_name: ${toolName}`,
     `tool_call_id: ${toolCallId}`,
-    `output_size_chars: ${String(text.length)}`,
+    totalChars > text.length
+      ? `output_size_chars: ${String(totalChars)} (only the first ${String(text.length)} characters were preserved)`
+      : `output_size_chars: ${String(text.length)}`,
     `output_size_bytes: ${String(Buffer.byteLength(text, 'utf8'))}`,
     `output_path: ${outputPath}`,
-    'next_step: Use Read with output_path to page through the full output.',
+    'next_step: Use Read with output_path to page through the full output, or Grep to search it.',
     '',
-    '[preview]',
-    text.slice(0, TOOL_RESULT_PREVIEW_CHARS),
+    `[preview: chars [0, ${String(head.length)})]`,
+    head,
   ];
+  if (tail !== '') {
+    if (tailStart > head.length) {
+      lines.push('', `[elided: chars [${String(head.length)}, ${String(tailStart)})]`);
+    }
+    lines.push('', `[preview: chars [${String(tailStart)}, ${String(text.length)})]`, tail);
+  }
   return lines.join('\n');
 }
 

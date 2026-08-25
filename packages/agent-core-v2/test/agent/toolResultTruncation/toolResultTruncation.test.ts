@@ -43,7 +43,7 @@ describe('ToolResultTruncationService', () => {
   });
 
   it('persists oversized string output and renders a bounded model preview', async () => {
-    const fullOutput = `${'x'.repeat(50_001)}tail survives on disk`;
+    const fullOutput = `HEAD_MARKER${'x'.repeat(50_000)}MIDDLE_MARKER${'y'.repeat(2_000)}TAIL_MARKER`;
 
     const result = await truncation.truncateForModel<ExecutableToolResult>({
       toolName: 'Lookup Tool',
@@ -59,7 +59,11 @@ describe('ToolResultTruncationService', () => {
     expect(rendered).toContain('Tool output exceeded 50000 characters');
     expect(rendered).toContain('tool_name: Lookup Tool');
     expect(rendered).toContain('tool_call_id: call:lookup');
-    expect(rendered).not.toContain('tail survives on disk');
+    expect(rendered).toContain(`output_size_chars: ${String(fullOutput.length)}`);
+    expect(rendered).toContain('HEAD_MARKER');
+    expect(rendered).toContain('TAIL_MARKER');
+    expect(rendered).not.toContain('MIDDLE_MARKER');
+    expect(rendered).toMatch(/\[elided: chars \[4096, \d+\)\]/);
 
     const outputPath = renderedOutputPath(rendered);
     expect(outputPath).toContain(
@@ -69,6 +73,78 @@ describe('ToolResultTruncationService', () => {
       ),
     );
     await expect(readFile(outputPath, 'utf8')).resolves.toBe(fullOutput);
+  });
+
+  it('spills retained full output carried by a pre-truncated tool result', async () => {
+    const full = `HEAD${'x'.repeat(60_000)}TAIL`;
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Bash',
+      toolCallId: 'call_bash',
+      result: {
+        output: `${'x'.repeat(50_000)}[...truncated]`,
+        truncated: true,
+        untruncatedOutput: full,
+        untruncatedOutputTotalChars: full.length,
+      },
+    });
+
+    expect(result.truncated).toBe(true);
+    expect('untruncatedOutput' in result).toBe(false);
+    expect('untruncatedOutputTotalChars' in result).toBe(false);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain(`output_size_chars: ${String(full.length)}`);
+    expect(rendered).not.toContain('[...truncated]');
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
+  });
+
+  it('reports when retention preserved only a prefix of the full output', async () => {
+    const preserved = 'x'.repeat(60_000);
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Bash',
+      toolCallId: 'call_partial',
+      result: {
+        output: 'truncated view',
+        truncated: true,
+        untruncatedOutput: preserved,
+        untruncatedOutputTotalChars: 25_000_000,
+      },
+    });
+
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain(
+      'output_size_chars: 25000000 (only the first 60000 characters were preserved)',
+    );
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(preserved);
+  });
+
+  it('passes spill-exempt results through untouched', async () => {
+    const exempt = { output: 'z'.repeat(60_000), spillExempt: true as const };
+
+    await expect(
+      truncation.truncateForModel({
+        toolName: 'Read',
+        toolCallId: 'call_read',
+        result: exempt,
+      }),
+    ).resolves.toBe(exempt);
+  });
+
+  it('identifies paths inside the agent spill directory', () => {
+    const dir = join(homeDir, 'sessions/workspace/session/agents/main/tool-results');
+    expect(truncation.isSpillFilePath(join(dir, 'Bash-call-1.txt'))).toBe(true);
+    expect(truncation.isSpillFilePath(dir)).toBe(true);
+    expect(
+      truncation.isSpillFilePath(
+        join(homeDir, 'sessions/workspace/session/agents/main/other/file.txt'),
+      ),
+    ).toBe(false);
+    expect(truncation.isSpillFilePath(join(homeDir, 'tool-results-evil/file.txt'))).toBe(false);
   });
 
   it('persists oversized text content parts as one complete text file', async () => {

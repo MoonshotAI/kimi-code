@@ -4002,7 +4002,7 @@ describe('Agent tools', () => {
         },
       });
 
-      const fullOutput = `${'x'.repeat(50_001)}tail survives on disk`;
+      const fullOutput = `${'x'.repeat(25_000)}middle elided from preview${'x'.repeat(25_000)}`;
       ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
       await ctx.untilToolCall({
@@ -4016,7 +4016,7 @@ describe('Agent tools', () => {
       expect(toolMessage).toContain('Tool output exceeded 50000 characters');
       expect(toolMessage).toContain('tool_name: Lookup');
       expect(toolMessage).toContain('tool_call_id: call_lookup');
-      expect(toolMessage).not.toContain('tail survives on disk');
+      expect(toolMessage).not.toContain('middle elided from preview');
 
       const outputPath = renderedOutputPath(toolMessage);
       expect(outputPath).toContain(

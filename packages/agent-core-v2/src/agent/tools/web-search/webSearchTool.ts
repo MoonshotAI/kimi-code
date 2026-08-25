@@ -52,7 +52,7 @@ export class WebSearchTool implements IWebSearchTool {
     }
     try {
       const results = await provider.search(args.query, { toolCallId, signal });
-      const builder = new ToolResultBuilder({ maxLineLength: null });
+      const builder = new ToolResultBuilder({ maxLineLength: null, retainFullOutput: true });
 
       if (results.length === 0) {
         builder.write('No search results found.');

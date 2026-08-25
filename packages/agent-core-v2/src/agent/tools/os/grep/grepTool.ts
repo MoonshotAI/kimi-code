@@ -287,7 +287,7 @@ export class GrepTool implements IGrepTool {
         : visibleBody;
     const combined = [...headerLines, body, ...messages].filter((part) => part !== '').join('\n');
 
-    const builder = new ToolResultBuilder();
+    const builder = new ToolResultBuilder({ retainFullOutput: true });
     builder.write(combined);
     return builder.ok();
   }

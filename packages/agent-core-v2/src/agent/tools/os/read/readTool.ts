@@ -29,6 +29,7 @@ import {
   TRANSCODE_MAX_BYTES,
   type ReadInput,
 } from './read';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import readDescriptionTemplate from './read.md?raw';
 
 interface LineEndingFlags {
@@ -207,6 +208,7 @@ export class ReadTool implements IReadTool {
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
   ) {}
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
@@ -243,7 +245,10 @@ export class ReadTool implements IReadTool {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(lease.runtime.fs!, args, path);
+          const result = await this.execution(lease.runtime.fs!, args, path);
+          return this.resultTruncation.isSpillFilePath(path)
+            ? { ...result, spillExempt: true as const }
+            : result;
         } finally {
           lease.dispose();
         }

@@ -14,6 +14,7 @@ import {
   TRANSCODE_MAX_BYTES,
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
@@ -86,7 +87,7 @@ function createReadTool(
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
   };
-  return new ReadTool(resolver, workspace, skillCatalog);
+  return new ReadTool(resolver, workspace, skillCatalog, stubToolResultTruncationService());
 }
 
 function createSpiedFs(content: string) {
@@ -895,6 +896,7 @@ describe('ReadTool', () => {
       runtime,
       stubWorkspaceContext('/workspace'),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+      stubToolResultTruncationService(),
     );
     const execution = tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);

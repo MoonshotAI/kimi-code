@@ -28,7 +28,11 @@ function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: 
   return `[${kind}_url dropped: ~${approxMb} MB exceeds ${capMb} MB per-part limit. Try a smaller resource.]`;
 }
 
-export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | null {
+function droppedBlockNotice(reason: string): ContentPart {
+  return { type: 'text', text: `[MCP content dropped: ${reason}]` };
+}
+
+export function convertMCPContentBlock(block: MCPContentBlock): ContentPart {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { type: 'text', text: block.text };
   }
@@ -74,9 +78,12 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
           videoUrl: { url: `data:${mimeType};base64,${res.blob}` },
         };
       }
-      return null;
+      const approxMb = ((res.blob.length * 3) / 4 / (1024 * 1024)).toFixed(1);
+      return droppedBlockNotice(
+        `resource blob with unsupported mimeType "${mimeType}" (~${approxMb} MB, uri: ${res.uri}) was not delivered.`,
+      );
     }
-    return null;
+    return droppedBlockNotice(`resource (uri: ${res.uri}) carried no text or blob payload.`);
   }
 
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
@@ -93,10 +100,12 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
     if (mimeType.startsWith('video/')) {
       return { type: 'video_url', videoUrl: { url: block.uri } };
     }
-    return null;
+    return droppedBlockNotice(
+      `resource_link with unsupported mimeType "${mimeType}" was not delivered. Fetch it directly if needed: ${block.uri}`,
+    );
   }
 
-  return null;
+  return droppedBlockNotice(`content block of unsupported type "${block.type}" was not delivered.`);
 }
 
 export async function mcpResultToExecutableOutput(
@@ -111,10 +120,7 @@ export async function mcpResultToExecutableOutput(
 }> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
-    const part = convertMCPContentBlock(block);
-    if (part !== null) {
-      converted.push(part);
-    }
+    converted.push(convertMCPContentBlock(block));
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);

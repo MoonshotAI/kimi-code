@@ -144,25 +144,39 @@ describe('convertMCPContentBlock', () => {
     });
   });
 
-  test('returns null for blob EmbeddedResource with unsupported mimeType', () => {
+  test('replaces a blob EmbeddedResource with unsupported mimeType with a drop notice', () => {
     const block = assertValidMcpBlock({
       type: 'resource',
       resource: { uri: 'file:///doc.pdf', mimeType: 'application/pdf', blob: 'XXX' },
     });
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('application/pdf');
+    expect(text).toContain('file:///doc.pdf');
   });
 
-  test('blob EmbeddedResource defaults to application/octet-stream and returns null', () => {
+  test('blob EmbeddedResource defaults to application/octet-stream in the drop notice', () => {
     const block = assertValidMcpBlock({
       type: 'resource',
       resource: { uri: 'file:///unknown', blob: 'XXX' },
     });
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('application/octet-stream');
+    expect(text).toContain('file:///unknown');
   });
 
-  test('returns null for resource block missing resource field', () => {
+  test('replaces a resource block missing the resource field with a drop notice', () => {
     const block = { type: 'resource' } as MCPContentBlock;
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('"resource"');
   });
 
   test('converts resource_link with image/* mimeType to ImageURLPart with URL', () => {
@@ -218,29 +232,46 @@ describe('convertMCPContentBlock', () => {
     });
   });
 
-  test('returns null for resource_link with unsupported mimeType', () => {
+  test('replaces a resource_link with unsupported mimeType with a drop notice carrying the uri', () => {
     const block = assertValidMcpBlock({
       type: 'resource_link',
       name: 'file.bin',
       uri: 'https://example.com/file.bin',
       mimeType: 'application/octet-stream',
     });
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('application/octet-stream');
+    expect(text).toContain('https://example.com/file.bin');
   });
 
-  test('returns null for unknown block type', () => {
+  test('replaces an unknown block type with a drop notice', () => {
     const block: MCPContentBlock = { type: 'fancy_new_type', text: 'whatever' };
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('"fancy_new_type"');
   });
 
-  test('returns null for text block missing text field', () => {
+  test('replaces a text block missing the text field with a drop notice', () => {
     const block: MCPContentBlock = { type: 'text' };
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('"text"');
   });
 
-  test('returns null for image block missing data field', () => {
+  test('replaces an image block missing the data field with a drop notice', () => {
     const block: MCPContentBlock = { type: 'image', mimeType: 'image/png' };
-    expect(convertMCPContentBlock(block)).toBeNull();
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('"image"');
   });
 });
 
@@ -355,7 +386,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out).toEqual({ output: [], isError: false });
   });
 
-  test('drops unconvertible blocks and keeps the rest', async () => {
+  test('keeps unconvertible blocks as drop notices alongside the rest', async () => {
     const out = await mcpResultToExecutableOutput(
       result([
         { type: 'text', text: 'kept' },
@@ -363,7 +394,13 @@ describe('mcpResultToExecutableOutput', () => {
       ]),
       'mcp__s__t',
     );
-    expect(out).toEqual({ output: 'kept', isError: false });
+    const parts = out.output as ContentPart[];
+    expect(parts[0]).toEqual({ type: 'text', text: 'kept' });
+    const notice = parts[1];
+    expect(notice?.type).toBe('text');
+    const text = (notice as { text: string }).text;
+    expect(text).toContain('MCP content dropped');
+    expect(text).toContain('"fancy_new_type"');
   });
 
   test('wraps media-only output in mcp_tool_result tags using the qualified name', async () => {

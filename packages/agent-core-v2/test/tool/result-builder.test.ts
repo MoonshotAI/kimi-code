@@ -145,4 +145,76 @@ describe('ToolResultBuilder', () => {
 
     expect(result.output).toBe('ok\n');
   });
+
+  it('retains the full output when retention is on and the char cap is hit', () => {
+    const builder = new ToolResultBuilder({ maxChars: 10, maxLineLength: null, retainFullOutput: true });
+
+    builder.write('Hello');
+    builder.write(' world!');
+    const result = builder.ok();
+
+    expect(result.truncated).toBe(true);
+    expect(result.untruncatedOutput).toBe('Hello world!');
+    expect(result.untruncatedOutputTotalChars).toBe(12);
+    expect(builder.totalChars).toBe(12);
+  });
+
+  it('attaches the full output on error results as well', () => {
+    const builder = new ToolResultBuilder({ maxChars: 10, maxLineLength: null, retainFullOutput: true });
+
+    builder.write('Very long output that exceeds limit');
+    const result = builder.error('Command failed');
+
+    expect(result.untruncatedOutput).toBe('Very long output that exceeds limit');
+    expect(result.untruncatedOutputTotalChars).toBe(35);
+  });
+
+  it('does not attach full output when retention is off', () => {
+    const builder = new ToolResultBuilder({ maxChars: 10, maxLineLength: null });
+
+    builder.write('Hello world!');
+    const result = builder.ok();
+
+    expect(result.truncated).toBe(true);
+    expect(result.untruncatedOutput).toBeUndefined();
+    expect(result.untruncatedOutputTotalChars).toBeUndefined();
+  });
+
+  it('does not attach full output for line-length-only truncation', () => {
+    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 20, retainFullOutput: true });
+
+    builder.write('This is a very long line that should be truncated\n');
+    const result = builder.ok();
+
+    expect(result.truncated).toBe(true);
+    expect(result.untruncatedOutput).toBeUndefined();
+    expect(result.untruncatedOutputTotalChars).toBeUndefined();
+  });
+
+  it('does not attach full output when nothing was truncated', () => {
+    const builder = new ToolResultBuilder({ maxChars: 100, retainFullOutput: true });
+
+    builder.write('short');
+    const result = builder.ok();
+
+    expect(result.truncated).toBe(false);
+    expect(result.untruncatedOutput).toBeUndefined();
+  });
+
+  it('caps retention and still reports the true total size', () => {
+    const builder = new ToolResultBuilder({
+      maxChars: 10,
+      maxLineLength: null,
+      retainFullOutput: true,
+      maxRetainedChars: 12,
+    });
+
+    builder.write('Hello ');
+    builder.write('world! and beyond');
+    const result = builder.ok();
+
+    expect(result.untruncatedOutput).toBe('Hello world!');
+    expect(result.untruncatedOutputTotalChars).toBe(23);
+    expect(builder.totalChars).toBe(23);
+  });
 });

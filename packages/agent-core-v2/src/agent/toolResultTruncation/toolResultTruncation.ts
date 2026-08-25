@@ -15,6 +15,12 @@ export interface IAgentToolResultTruncationService {
   truncateForModel<T extends ExecutableToolResult>(
     input: ToolResultTruncationInput<T>,
   ): Promise<T>;
+
+  /**
+   * Whether an absolute path lives inside this agent's spill directory
+   * (files previously persisted by this service).
+   */
+  isSpillFilePath(path: string): boolean;
 }
 
 export const IAgentToolResultTruncationService: ServiceIdentifier<

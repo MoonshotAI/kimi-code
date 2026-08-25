@@ -69,6 +69,7 @@ beforeEach(() => {
       reg.defineInstance(IAgentToolResultTruncationService, {
         _serviceBrand: undefined,
         truncateForModel: (input) => truncateForModel(input),
+        isSpillFilePath: () => false,
       });
       reg.defineInstance(IEventBus, {
         publish: (event: ProtocolEvent) => {

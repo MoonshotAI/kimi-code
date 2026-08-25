@@ -4,12 +4,15 @@ import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from './t
 
 const DEFAULT_MAX_CHARS = 50_000;
 const DEFAULT_MAX_LINE_LENGTH = 2000;
+const DEFAULT_MAX_RETAINED_CHARS = 10_000_000;
 const TRUNCATION_MARKER = '[...truncated]';
 const TRUNCATION_MESSAGE = 'Output is truncated to fit in the message.';
 
 export interface ToolResultBuilderOptions {
   readonly maxChars?: number;
   readonly maxLineLength?: number | null;
+  readonly retainFullOutput?: boolean;
+  readonly maxRetainedChars?: number;
 }
 
 export type ExecutableToolResultBuilderResult = (
@@ -19,20 +22,31 @@ export type ExecutableToolResultBuilderResult = (
   readonly output: string;
   readonly truncated: boolean;
   readonly brief?: string;
+  readonly untruncatedOutput?: string;
+  readonly untruncatedOutputTotalChars?: number;
 };
 
 export class ToolResultBuilder {
   private readonly maxChars: number;
   private readonly maxLineLength: number | null;
+  private readonly maxRetainedChars: number;
 
   private readonly buffer: string[] = [];
+  private readonly retained: string[] | null = null;
+  private retainedChars = 0;
   private nCharsValue = 0;
+  private totalCharsValue = 0;
   private truncationHappened = false;
+  private charCapTruncationHappened = false;
 
   constructor(options: ToolResultBuilderOptions = {}) {
     this.maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
     this.maxLineLength =
       options.maxLineLength === undefined ? DEFAULT_MAX_LINE_LENGTH : options.maxLineLength;
+    this.maxRetainedChars = options.maxRetainedChars ?? DEFAULT_MAX_RETAINED_CHARS;
+    if (options.retainFullOutput === true) {
+      this.retained = [];
+    }
 
     if (this.maxLineLength !== null && this.maxLineLength <= TRUNCATION_MARKER.length) {
       throw new BugIndicatingError('maxLineLength must be greater than the truncation marker length.');
@@ -43,16 +57,30 @@ export class ToolResultBuilder {
     return this.nCharsValue;
   }
 
+  get totalChars(): number {
+    return this.totalCharsValue;
+  }
+
   get truncated(): boolean {
     return this.truncationHappened;
   }
 
   write(text: string): number {
+    this.totalCharsValue += text.length;
+    if (this.retained !== null && this.retainedChars < this.maxRetainedChars) {
+      const remainingRetention = this.maxRetainedChars - this.retainedChars;
+      const kept = text.length <= remainingRetention ? text : text.slice(0, remainingRetention);
+      this.retained.push(kept);
+      this.retainedChars += kept.length;
+    }
     if (this.nCharsValue >= this.maxChars) {
-      if (text.length > 0 && !this.truncationHappened) {
-        this.buffer.push(TRUNCATION_MARKER);
-        this.nCharsValue += TRUNCATION_MARKER.length;
-        this.truncationHappened = true;
+      if (text.length > 0) {
+        this.charCapTruncationHappened = true;
+        if (!this.truncationHappened) {
+          this.buffer.push(TRUNCATION_MARKER);
+          this.nCharsValue += TRUNCATION_MARKER.length;
+          this.truncationHappened = true;
+        }
       }
       return 0;
     }
@@ -63,6 +91,7 @@ export class ToolResultBuilder {
     let charsWritten = 0;
     for (const originalLine of lines) {
       if (this.nCharsValue >= this.maxChars) {
+        this.charCapTruncationHappened = true;
         if (!this.truncationHappened) {
           this.buffer.push(TRUNCATION_MARKER);
           this.nCharsValue += TRUNCATION_MARKER.length;
@@ -78,6 +107,9 @@ export class ToolResultBuilder {
           : Math.min(remainingChars, this.maxLineLength);
       let line = originalLine;
       if (line.length > limit) {
+        if (line.length > remainingChars) {
+          this.charCapTruncationHappened = true;
+        }
         const lineBreak = /[\r\n]+$/.exec(line)?.[0] ?? '';
         const suffix = TRUNCATION_MARKER + lineBreak;
         const effectiveMaxLength = Math.max(limit, suffix.length);
@@ -119,6 +151,7 @@ export class ToolResultBuilder {
         : output,
       truncated: this.truncationHappened,
       brief: options.brief,
+      ...this.fullOutputFields(),
     };
   }
 
@@ -144,6 +177,18 @@ export class ToolResultBuilder {
               : `${output}\n${finalMessage}`,
       truncated: this.truncationHappened,
       brief: options.brief,
+      ...this.fullOutputFields(),
+    };
+  }
+
+  private fullOutputFields(): {
+    readonly untruncatedOutput?: string;
+    readonly untruncatedOutputTotalChars?: number;
+  } {
+    if (this.retained === null || !this.charCapTruncationHappened) return {};
+    return {
+      untruncatedOutput: this.retained.join(''),
+      untruncatedOutputTotalChars: this.totalCharsValue,
     };
   }
 }

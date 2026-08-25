@@ -186,7 +186,7 @@ export class BashTool implements IBashTool {
         : normalizeTimeoutMs(args.timeout, true)
       : foregroundTimeoutMs;
 
-    const builder = new ToolResultBuilder();
+    const builder = new ToolResultBuilder({ retainFullOutput: true });
     let proc: IHostProcess;
     try {
       proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
@@ -359,7 +359,7 @@ export class BashTool implements IBashTool {
     proc: IHostProcess,
     description: string,
     labels: { title: string; brief: string },
-    builder = new ToolResultBuilder(),
+    builder = new ToolResultBuilder({ retainFullOutput: true }),
     scenario: 'background_started' | 'foreground_detached' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';

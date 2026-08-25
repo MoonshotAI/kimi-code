@@ -276,6 +276,36 @@ describe('Agent loop', () => {
     );
   });
 
+  it('appends streamed partial content to the wire when the request fails mid-stream', async () => {
+    profile.update({ activeToolNames: [] });
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'partial before error' }],
+      error: new Error('stream broke mid-flight'),
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.append_loop_event',
+        args: expect.objectContaining({
+          event: expect.objectContaining({
+            type: 'content.part',
+            part: { type: 'text', text: 'partial before error' },
+          }),
+        }),
+      }),
+    );
+    expect(ctx.allEvents).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.step.interrupted',
+        args: expect.objectContaining({ reason: 'error', message: 'stream broke mid-flight' }),
+      }),
+    );
+  });
+
   it('does not run loop error handlers for aborted turns', async () => {
     let called = false;
     loop.registerLoopErrorHandler({
