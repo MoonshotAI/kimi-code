@@ -69,7 +69,7 @@ async function collect(journal: AsyncIterable<WireRecord>): Promise<WireRecord[]
 function wireOverLog(
   stubLog: IAppendLogStore,
   key: string,
-  dependencies: { blob?: IAgentBlobService } = {},
+  dependencies: { blob?: IAgentBlobService; telemetry?: ITelemetryService } = {},
 ): IWireService {
   const stubIx = disposables.add(new TestInstantiationService());
   return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, ...dependencies });
@@ -230,6 +230,104 @@ describe('WireService appendRecord', () => {
 });
 
 describe('WireService readJournal', () => {
+  it('normalizes legacy plan revision paths and rewrites them as keys', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ];
+    const stubLog = recordingWireLog(seeded);
+    const stub = wireOverLog(stubLog, 'legacy-plan', { telemetry });
+
+    expect(await collect(stub.readJournal())).toEqual([
+      seeded[0],
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        key: 'plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ]);
+    expect(telemetryRecords).toEqual([
+      {
+        event: 'wire_plan_revision_migrated',
+        properties: {
+          record_type: 'plan.revision',
+          legacy_field: 'path',
+          migration_outcome: 'migrated',
+        },
+      },
+    ]);
+    expect(await readRecords(stubLog, SCOPE, 'legacy-plan')).toEqual([
+      seeded[0],
+      { type: 'wire.test.before', value: 1, time: 2 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        key: 'plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+      { type: 'wire.test.after', value: 2, time: 3 },
+    ]);
+  });
+
+  it('skips unsafe legacy plan revision paths and reports the migration outcome', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const stub = wireOverLog(
+      recordingWireLog([
+        { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+        {
+          type: 'plan.revision',
+          id: 'plan-1',
+          version: 1,
+          path: 'sessions/source/session-1/agents/other-agent/plan/plan-1/v1.md',
+          sha256: 'sha',
+          bytes: 3,
+        },
+      ]),
+      'unsafe-legacy-plan',
+      { telemetry },
+    );
+
+    expect(await collect(stub.readJournal())).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+    ]);
+    expect(telemetryRecords).toContainEqual({
+      event: 'wire_plan_revision_migrated',
+      properties: {
+        record_type: 'plan.revision',
+        legacy_field: 'path',
+        migration_outcome: 'skipped',
+      },
+    });
+  });
+
   it('bootstraps the metadata envelope onto an empty journal', async () => {
     expect(await collect(wire.readJournal())).toEqual([]);
 
@@ -328,6 +426,38 @@ describe('WireService readJournal', () => {
 
     expect(await collect(stub.readJournal())).toEqual(seeded);
     expect(rewrites).toBe(0);
+  });
+
+  it('leaves legacy plan revision paths untouched in a newer-version journal', async () => {
+    const telemetryRecords: { event: string; properties: unknown }[] = [];
+    const telemetry = {
+      ...noopTelemetryService,
+      track2: (event: string, properties: unknown) => telemetryRecords.push({ event, properties }),
+    } as unknown as ITelemetryService;
+    const seeded: WireRecord[] = [
+      { type: 'metadata', protocol_version: '9.9', created_at: 1 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+      },
+    ];
+    let rewrites = 0;
+    const counting = recordingWireLog(seeded);
+    const rewrite = counting.rewrite.bind(counting);
+    counting.rewrite = async (scope, key, next) => {
+      rewrites += 1;
+      return rewrite(scope, key, next);
+    };
+    const stub = wireOverLog(counting, 'newer-legacy-plan', { telemetry });
+
+    expect(await collect(stub.readJournal())).toEqual(seeded);
+    expect(rewrites).toBe(0);
+    expect(telemetryRecords).toEqual([]);
   });
 
   it('rejects a malformed metadata envelope as corrupted storage', async () => {
@@ -505,6 +635,47 @@ describe('WireService corruption repair', () => {
     ]);
     expect(await rawBytes()).toBe(
       `${currentMetadata()}\n${JSON.stringify({ type: 'wire.test.legacy', time: 9 })}\n`,
+    );
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+  });
+
+  it('repairs a corrupted journal that also carries a migratable legacy plan revision', async () => {
+    const legacyPlan = JSON.stringify({
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 1,
+      path: 'sessions/source/session-1/agents/test-agent/plan/plan-1/v1.md',
+      sha256: 'sha',
+      bytes: 3,
+      time: 2,
+    });
+    const raw = `${currentMetadata()}\n${legacyPlan}\nGARBAGE\n${JSON.stringify({ type: 'wire.test.dropped', time: 3 })}\n`;
+    await seedCorrupt(raw);
+
+    const yielded = await collect(wire.readJournal());
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+        key: 'plan/plan-1/v1.md',
+      },
+    ]);
+    expect(await rawBytes()).toBe(
+      `${currentMetadata()}\n${JSON.stringify({
+        type: 'plan.revision',
+        id: 'plan-1',
+        version: 1,
+        sha256: 'sha',
+        bytes: 3,
+        time: 2,
+        key: 'plan/plan-1/v1.md',
+      })}\n`,
     );
     expect(await rawBytes(BACKUP_KEY)).toBe(raw);
   });

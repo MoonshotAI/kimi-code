@@ -1545,7 +1545,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
       type: 'plan.revision',
       id: 'plan-1',
       version: 2,
-      path: 'agents/main/plan/plan-1/v2.md',
+      key: 'plan/plan-1/v2.md',
       sha256: 'deadbeef',
       bytes: 512,
       time: 2000,
@@ -1553,9 +1553,10 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const folded = foldWireRecordFacts(
       [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }, revision],
       base,
+      { resolvePlanRevisionKey: (key) => `sessions/w/s/agents/main/${key}` },
     );
     expect(folded.meta.modes).toEqual({
-      plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
+      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v2.md', version: 2 },
     });
     const revisionMarkers = folded.items.filter(
       (item) => item.kind === 'marker' && item.marker === 'plan.revision',
@@ -1568,7 +1569,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
         payload: {
           id: 'plan-1',
           version: 2,
-          path: 'agents/main/plan/plan-1/v2.md',
+          path: 'sessions/w/s/agents/main/plan/plan-1/v2.md',
           sha256: 'deadbeef',
           bytes: 512,
         },
@@ -1599,6 +1600,44 @@ describe('foldWireRecordFacts (cold facts)', () => {
       base,
     );
     expect(reentered.meta.modes).toEqual({ plan: {} });
+  });
+
+  it('folds legacy plan.revision path records without a key', () => {
+    const base = baseWithMarker();
+    const legacy = {
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 1,
+      path: 'sessions/w/s/agents/main/plan/plan-1/v1.md',
+      sha256: 'deadbeef',
+      bytes: 256,
+      time: 2000,
+    };
+    const folded = foldWireRecordFacts(
+      [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }, legacy],
+      base,
+    );
+    expect(folded.meta.modes).toEqual({
+      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v1.md', version: 1 },
+    });
+    const revisionMarkers = folded.items.filter(
+      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
+    );
+    expect(revisionMarkers).toEqual([
+      {
+        kind: 'marker',
+        markerId: 'm3',
+        marker: 'plan.revision',
+        payload: {
+          id: 'plan-1',
+          version: 1,
+          path: 'sessions/w/s/agents/main/plan/plan-1/v1.md',
+          sha256: 'deadbeef',
+          bytes: 256,
+        },
+        at: new Date(2000).toISOString(),
+      },
+    ]);
   });
 
   it('folds task records into task entities and timeline taskrefs', () => {

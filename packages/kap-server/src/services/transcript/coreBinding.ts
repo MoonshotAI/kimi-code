@@ -3,6 +3,7 @@ import {
   IAgentActivityView,
   IAgentLoopService,
   IAgentPromptService,
+  IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
   ISessionMetadata,
@@ -94,6 +95,8 @@ export function bindSessionTranscript(
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
         items: () => store.getAgent(agentId)?.getItems(),
+        resolvePlanRevisionKey: (key) =>
+          agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });
       const agentHandle = agents.handleOf(agentId);
       if (agentHandle !== undefined) {

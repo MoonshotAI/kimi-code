@@ -467,7 +467,7 @@ interface PlanRevisionPayload {
   agentId: string;
   id: string;
   version: number;
-  path: string;
+  key: string;
   sha256: string;
   bytes: number;
 }

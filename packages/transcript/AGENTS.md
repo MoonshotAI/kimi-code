@@ -12,7 +12,7 @@ The cold rebuild is a two-level fold over `wire.jsonl` as the single source of t
 
 ## Plan content
 
-Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, path, sha256, bytes}`), which projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`).
+Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, key, sha256, bytes}`), where `key` is relative to the current Agent scope and never contains session identity. It projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`).
 
 ## Op-batch sequencing contract
 

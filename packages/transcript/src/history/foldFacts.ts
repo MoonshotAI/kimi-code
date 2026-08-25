@@ -51,6 +51,7 @@ interface InteractionResolvedPayload {
 interface PlanRevisionPayload {
   readonly id?: unknown;
   readonly version?: unknown;
+  readonly key?: unknown;
   readonly path?: unknown;
   readonly sha256?: unknown;
   readonly bytes?: unknown;
@@ -214,6 +215,7 @@ function readTodoItems(raw: unknown): TodoItem[] {
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
+  options?: { readonly resolvePlanRevisionKey?: (key: string) => string },
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
@@ -370,12 +372,23 @@ export function foldWireRecordFacts(
       }
       case 'plan.revision': {
         const payload = record as PlanRevisionPayload;
+        const path =
+          typeof payload.key === 'string'
+            ? (options?.resolvePlanRevisionKey?.(payload.key) ?? payload.key)
+            : typeof payload.path === 'string'
+              ? payload.path
+              : undefined;
         planActive = true;
         planRevision = {
-          reviewPath: typeof payload.path === 'string' ? payload.path : undefined,
+          reviewPath: path,
           version: typeof payload.version === 'number' ? payload.version : undefined,
         };
-        pushMarker('plan.revision', record);
+        if (path === undefined) {
+          pushMarker('plan.revision', record);
+        } else {
+          const { key: _key, ...rest } = record;
+          pushMarker('plan.revision', { ...rest, path });
+        }
         break;
       }
       case 'swarm_mode.enter': {
