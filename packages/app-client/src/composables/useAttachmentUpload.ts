@@ -15,7 +15,10 @@
 // next submit. Ready attachments (upload completed, daemon file id known) also
 // persist to localStorage per session scope, so they survive the composer
 // unmounting — switching away from the New Session page and back, or a page
-// refresh — exactly like the text draft (see "Draft persistence" below).
+// refresh — exactly like the text draft (see "Draft persistence" below). The
+// upload bookkeeping lives at module level (see "Module-level upload
+// bookkeeping"), so an upload that finishes AFTER the composer unmounted still
+// lands its file id in the stored draft — an unmount never aborts an upload.
 // The composer keeps `handleSubmit`/`handleSteer` (which read the
 // attachments to build the payload) and the `hasUpload` toolbar flag; this
 // composable owns the attachment state, all the file-input UI handlers, and the
@@ -120,6 +123,267 @@ export interface AttachmentUploadDeps {
   adoptFileAttachment?: (att: TurnAttachment) => void;
 }
 
+// -------------------------------------------------------------------------
+// Draft persistence. Pending attachments survive the composer unmounting
+// (switching between the New Session page and a session view, or a page
+// refresh) the same way the text draft does: metadata is written to
+// localStorage per session scope and rehydrated on next mount. Only READY
+// attachments persist — the entry's daemon file id is the restore handle.
+// In-flight uploads (no fileId yet) are not written here — rehydrating them
+// would need the local bytes, and base64-inlining file data into localStorage
+// is off the table (5 MB quota) — but they are NOT dropped either: the
+// module-level upload bookkeeping below merges their file id into the stored
+// draft when the upload settles, even if the composer has unmounted by then.
+// Failed uploads drop. Thumbnails are NOT stored — restore re-fetches them
+// with auth via loadAttachments.
+// -------------------------------------------------------------------------
+
+/** localStorage shape of one persisted attachment — mirrors PromptAttachment. */
+type PersistedAttachmentDraft = Pick<PromptAttachment, 'fileId' | 'kind' | 'name' | 'mediaType' | 'size' | 'sessionId'> & {
+  /** The chip's local id — the merge key the module-level settle folds a
+   *  late completion in by. Older drafts without it still validate (the
+   *  reader stays lenient); they just can't absorb a late settle, which they
+   *  never need to (their uploads settled before they were written). */
+  localId?: string;
+  /** The chip's add-order stamp — round-tripped so a remount keeps the
+   *  payload's media/file interleave instead of re-stamping (a restored
+   *  stamp is adopted as-is; only a missing one gets re-stamped at load). */
+  seq?: number;
+};
+
+function persistForSession(sid: string, atts: readonly Attachment[]): void {
+  const key = attachmentDraftStorageKey(sid);
+  const ready: PersistedAttachmentDraft[] = [];
+  for (const att of atts) {
+    if (att.uploading || att.error || !att.fileId) continue;
+    ready.push({
+      localId: att.localId,
+      fileId: att.fileId,
+      kind: att.kind,
+      name: att.name,
+      mediaType: att.mediaType,
+      size: att.size,
+      sessionId: att.sessionId,
+      seq: att.seq,
+    });
+  }
+  if (ready.length === 0) safeRemove(key);
+  else safeSetJson(key, ready);
+}
+
+/** The validated persisted draft (original order in `valid`, plus the
+    kind partitions), or null when nothing usable is stored. Validation
+    stays lenient: unknown/missing optional fields (localId included) never
+    disqualify an entry. */
+function readStoredDraft(sid: string): { valid: PersistedAttachmentDraft[]; media: PersistedAttachmentDraft[]; files: PersistedAttachmentDraft[] } | null {
+  const stored = safeGetJson<unknown>(attachmentDraftStorageKey(sid));
+  if (!Array.isArray(stored) || stored.length === 0) return null;
+  const valid: PersistedAttachmentDraft[] = [];
+  for (const entry of stored as Array<Partial<PersistedAttachmentDraft> | null>) {
+    if (!entry || typeof entry.fileId !== 'string' || entry.fileId === '') continue;
+    if (entry.kind !== 'image' && entry.kind !== 'video' && entry.kind !== 'file') continue;
+    valid.push({
+      localId: typeof entry.localId === 'string' && entry.localId !== '' ? entry.localId : undefined,
+      fileId: entry.fileId,
+      kind: entry.kind,
+      name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : entry.kind,
+      mediaType: typeof entry.mediaType === 'string' ? entry.mediaType : undefined,
+      size: typeof entry.size === 'number' ? entry.size : undefined,
+      sessionId: typeof entry.sessionId === 'string' ? entry.sessionId : undefined,
+      seq: typeof entry.seq === 'number' ? entry.seq : undefined,
+    });
+  }
+  if (valid.length === 0) return null;
+  return {
+    valid,
+    media: valid.filter((att) => att.kind !== 'file'),
+    files: valid.filter((att) => att.kind === 'file'),
+  };
+}
+
+/** Stable sort by the add-order stamp — unstamped entries (legacy drafts)
+ *  sort FIRST, the same ordering nicety as interleaveSubmitAttachments (the
+ *  index tiebreak keeps the input order of equal/unstamped entries). Late
+ *  settles merge in COMPLETION order, so the storage merge re-sorts to keep
+ *  the restored strip and the submit payload in add order. */
+function byAddOrder<T extends { seq?: number }>(items: readonly T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (a, b) =>
+        (a.item.seq ?? Number.NEGATIVE_INFINITY) - (b.item.seq ?? Number.NEGATIVE_INFINITY) ||
+        a.index - b.index,
+    )
+    .map(({ item }) => item);
+}
+
+// -------------------------------------------------------------------------
+// Module-level upload bookkeeping. Uploads are NOT aborted when the composer
+// unmounts (aborting would lose the file), so a completion can land on a dead
+// instance — the bookkeeping that turns it into a persisted draft therefore
+// can't live on the instance. Every upload registers HERE, keyed by session
+// id + local id; its settle runs at module level:
+//  - entry still registered → the outcome merges into the session's stored
+//    draft with a storage-layer read-merge-write keyed by localId (NEVER by
+//    rewriting an instance's attachment array — a dead instance's stale array
+//    would clobber a newer instance's draft);
+//  - entry consumed meanwhile (submit's clearAfterSubmit, a manual chip
+//    removal, or loadAttachments replacing the strip) → the late outcome is
+//    dropped, so an already-sent or deleted attachment can never resurrect.
+// Entries leave the table on settle and on every consume path, keeping it
+// bounded. A live composer instance keeps updating its own reactive state on
+// completion exactly as before — that is all the `disposed` guard still owns.
+//
+// Storage alone leaves one gap: a composer that REMOUNTED (hydrating an
+// empty/partial storage draft) while the upload was still in flight never
+// learns about the settle until its NEXT mount — a submit before that would
+// send a payload without the attachment. So a mounted instance also
+// registers itself in liveAttachmentInstances under its session id, and a
+// settle delivers the entry to a live same-session receiver, which inserts
+// the chip into its own strip. Single realm only — no cross-tab machinery.
+// -------------------------------------------------------------------------
+
+let localIdCounter = 0;
+function nextLocalId(): string {
+  // Module-level, not per instance: instance-scoped counters all start at
+  // att_1, so two composers' chips could share a localId — and localId is
+  // the registry/merge key, which must be unique across instances.
+  return `att_${++localIdCounter}`;
+}
+
+/** Bookkeeping for one in-flight upload — the metadata the storage merge
+    needs to write the settled draft entry without the (possibly dead)
+    instance's chip. */
+interface PendingUpload {
+  /** Entries are registered `uploading` and leave the table the moment they
+      settle (ready/error), so `uploading` is the only status ever at rest. */
+  status: 'uploading' | 'ready' | 'error';
+  fileId?: string;
+  name: string;
+  kind: Attachment['kind'];
+  mediaType?: string;
+  size?: number;
+  /** Mirrors Attachment.sessionId — set when the file id belongs to the
+      session media store rather than the global upload store. */
+  sessionId?: string;
+  seq?: number;
+}
+
+const pendingUploads = new Map<string, PendingUpload>();
+
+function pendingUploadKey(sid: string, localId: string): string {
+  return `${sid}\n${localId}`;
+}
+
+function registerPendingUpload(sid: string, localId: string, meta: Omit<PendingUpload, 'status' | 'fileId'>): void {
+  pendingUploads.set(pendingUploadKey(sid, localId), { status: 'uploading', ...meta });
+}
+
+/** Drop one entry WITHOUT settling it — the chip was removed by hand. */
+function dropPendingUpload(sid: string, localId: string): void {
+  pendingUploads.delete(pendingUploadKey(sid, localId));
+}
+
+/** Consume every in-flight entry of one session: submit (clearAfterSubmit)
+    sends the chips and loadAttachments' replace discards them — either way
+    their late settles must find nothing left to merge. */
+function consumePendingUploads(sid: string): void {
+  const prefix = `${sid}\n`;
+  for (const key of pendingUploads.keys()) {
+    if (key.startsWith(prefix)) pendingUploads.delete(key);
+  }
+}
+
+/** A delivery target for settles: a live composer's strip, or a mounted
+    instance's in-memory cache of a session it is not live for. */
+interface AttachmentSink {
+  /** Settled drafts: append new ones, swap restored in-flight chips for the
+      ready entry (dedup by localId, so the ORIGINATING instance's own chip —
+      which its completion handler patches — is left alone). */
+  merge(sid: string, drafts: PersistedAttachmentDraft[]): void;
+  /** Failed settles: remove chips that were restored from the registry while
+      the upload was in flight — nothing else. */
+  drop(sid: string, localIds: string[]): void;
+}
+
+/** Live composer instances by session id — the delivery target for a settle
+    that lands AFTER a same-session remount already hydrated (too early) from
+    storage. An instance registers at setup, follows its session id when the
+    composer switches sessions, and unregisters on unmount. Storage stays the
+    cross-mount channel; this map only closes the gap between the storage
+    write and the next mount for the instance already on screen. */
+const liveAttachmentInstances = new Map<string, AttachmentSink>();
+
+/** One per mounted instance: merges a settle into the instance's in-memory
+    cache of a session it is NOT the live composer of (the user switched away
+    after that session already hydrated once). Without it the entry would sit
+    in storage while the cache — which hydrate prefers over storage — keeps
+    that session's strip stale for the rest of the page's life. */
+const attachmentCacheSinks = new Set<AttachmentSink>();
+
+/** Settle an in-flight upload at module level (see the block comment above).
+    Returns without touching storage when the entry was already consumed, or
+    when the upload failed — a failure was never persisted while in flight,
+    so there is nothing to merge out. */
+function settlePendingUpload(
+  sid: string,
+  localId: string,
+  result: { fileId: string; name: string; mediaType: string } | null,
+): void {
+  const entry = pendingUploads.get(pendingUploadKey(sid, localId));
+  if (entry === undefined) return;
+  pendingUploads.delete(pendingUploadKey(sid, localId));
+  entry.status = result === null ? 'error' : 'ready';
+  if (result === null) {
+    // A remount may have restored the in-flight chip from this registry (see
+    // hydrateDraft): the failure must take that chip down too. The chip of the
+    // ORIGINATING instance is untouched — its own completion handler marks it.
+    liveAttachmentInstances.get(sid)?.drop(sid, [localId]);
+    for (const sink of attachmentCacheSinks) sink.drop(sid, [localId]);
+    return;
+  }
+  entry.fileId = result.fileId;
+  const draft: PersistedAttachmentDraft = {
+    localId,
+    fileId: result.fileId,
+    kind: entry.kind,
+    name: entry.name,
+    // Adopt the server-recorded MIME when available — the server's file meta
+    // is what the prompt route reads (same preference as the live patch).
+    mediaType: result.mediaType ?? entry.mediaType,
+    size: entry.size,
+    sessionId: entry.sessionId,
+    seq: entry.seq,
+  };
+  mergeSettledDraft(sid, localId, draft);
+  // A live composer of the SAME session may have remounted while this upload
+  // was in flight — its hydrate read storage before the fileId landed. Hand
+  // the settled entry to its strip too, or a submit before the next remount
+  // would send a payload without the attachment. No live instance → fall back
+  // to any mounted instance holding an in-memory cache of this session (its
+  // hydrate prefers the cache over storage), or storage alone carries the
+  // entry to the next mount.
+  const live = liveAttachmentInstances.get(sid);
+  if (live !== undefined) {
+    live.merge(sid, [draft]);
+  } else {
+    for (const sink of attachmentCacheSinks) sink.merge(sid, [draft]);
+  }
+}
+
+/** Storage-layer read-merge-write: replace the draft entry carrying this
+    localId when one is stored, append otherwise (the usual case — an upload
+    that was in flight when its instance last persisted was never written).
+    The write is re-sorted by the add-order stamp: settles land in completion
+    order, which must not scramble the restored strip. */
+function mergeSettledDraft(sid: string, localId: string, draft: PersistedAttachmentDraft): void {
+  const drafts = readStoredDraft(sid)?.valid ?? [];
+  const index = drafts.findIndex((entry) => entry.localId === localId);
+  if (index >= 0) drafts[index] = draft;
+  else drafts.push(draft);
+  safeSetJson(attachmentDraftStorageKey(sid), byAddOrder(drafts));
+}
+
 export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   const { api, uploadImage, sessionId, insertFolderPaths, insertFileAttachment, adoptFileAttachment } = deps;
 
@@ -129,57 +393,21 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   const fileInputRef = ref<HTMLInputElement | null>(null);
   const isDragOver = ref(false);
 
-  let localIdCounter = 0;
-  function nextLocalId(): string {
-    return `att_${++localIdCounter}`;
-  }
-
-  // -------------------------------------------------------------------------
-  // Draft persistence. Pending attachments survive the composer unmounting
-  // (switching between the New Session page and a session view, or a page
-  // refresh) the same way the text draft does: metadata is written to
-  // localStorage per session scope and rehydrated on next mount. Only READY
-  // attachments persist — the entry's daemon file id is the restore handle.
-  // In-flight uploads (no fileId yet) are dropped: rehydrating them would
-  // need the local bytes, and base64-inlining file data into localStorage is
-  // off the table (5 MB quota). Failed uploads drop too. Thumbnails are NOT
-  // stored — restore re-fetches them with auth via loadAttachments.
-  // -------------------------------------------------------------------------
-
-  /** localStorage shape of one persisted attachment — mirrors PromptAttachment. */
-  type PersistedAttachmentDraft = Pick<PromptAttachment, 'fileId' | 'kind' | 'name' | 'mediaType' | 'size' | 'sessionId'> & {
-    /** The chip's add-order stamp — round-tripped so a remount keeps the
-     *  payload's media/file interleave instead of re-stamping (a restored
-     *  stamp is adopted as-is; only a missing one gets re-stamped at load). */
-    seq?: number;
-  };
-
-  function persistForSession(sid: string, atts: readonly Attachment[]): void {
-    const key = attachmentDraftStorageKey(sid);
-    const ready: PersistedAttachmentDraft[] = [];
-    for (const att of atts) {
-      if (att.uploading || att.error || !att.fileId) continue;
-      ready.push({
-        fileId: att.fileId,
-        kind: att.kind,
-        name: att.name,
-        mediaType: att.mediaType,
-        size: att.size,
-        sessionId: att.sessionId,
-        seq: att.seq,
-      });
-    }
-    if (ready.length === 0) safeRemove(key);
-    else safeSetJson(key, ready);
-  }
-
   // Set by onUnmounted. Async callbacks that outlive the composer (an
-  // in-flight upload, a thumbnail blob fetch) must not touch state or
-  // storage afterwards: setForSession would write this dead instance's stale
-  // array over a newer composer instance's persisted draft, and a
+  // in-flight upload, a thumbnail blob fetch) must not touch this instance's
+  // reactive state afterwards — the strip belongs to the next mount — and a
   // late-created object URL would never be revoked (the unmount hook can only
-  // revoke URLs that already exist).
+  // revoke URLs that already exist). PERSISTENCE is deliberately NOT behind
+  // this guard: it lives in the module-level upload bookkeeping above, which
+  // merges a late completion straight into the session's stored draft.
   let disposed = false;
+
+  /** localIds of the in-flight chips THIS instance restored from the module
+      registry at hydrate (see hydrateDraft). The settle/drop delivery paths
+      only swap or remove chips in this set — the ORIGINATING instance's own
+      uploading chip is its completion handler's business (it patches the chip
+      on success and marks it on failure), never the delivery's. */
+  const restoredInFlightLocalIds = new Set<string>();
 
   function setForSession(sid: string, next: Attachment[]): void {
     // Drop post-unmount writes — see `disposed` above.
@@ -192,33 +420,6 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     persistForSession(sid, next);
   }
 
-  /** The validated persisted draft (original order in `valid`, plus the
-      kind partitions), or null when nothing usable is stored. */
-  function readStoredDraft(sid: string): { valid: PersistedAttachmentDraft[]; media: PersistedAttachmentDraft[]; files: PersistedAttachmentDraft[] } | null {
-    const stored = safeGetJson<unknown>(attachmentDraftStorageKey(sid));
-    if (!Array.isArray(stored) || stored.length === 0) return null;
-    const valid: PersistedAttachmentDraft[] = [];
-    for (const entry of stored as Array<Partial<PersistedAttachmentDraft> | null>) {
-      if (!entry || typeof entry.fileId !== 'string' || entry.fileId === '') continue;
-      if (entry.kind !== 'image' && entry.kind !== 'video' && entry.kind !== 'file') continue;
-      valid.push({
-        fileId: entry.fileId,
-        kind: entry.kind,
-        name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : entry.kind,
-        mediaType: typeof entry.mediaType === 'string' ? entry.mediaType : undefined,
-        size: typeof entry.size === 'number' ? entry.size : undefined,
-        sessionId: typeof entry.sessionId === 'string' ? entry.sessionId : undefined,
-        seq: typeof entry.seq === 'number' ? entry.seq : undefined,
-      });
-    }
-    if (valid.length === 0) return null;
-    return {
-      valid,
-      media: valid.filter((att) => att.kind !== 'file'),
-      files: valid.filter((att) => att.kind === 'file'),
-    };
-  }
-
   /** Rehydrate a session's persisted attachment draft into the strip. Skipped
       when the in-memory map already holds the session — live state (with its
       object-URL thumbnails) always wins over storage. Invalid entries are
@@ -228,8 +429,34 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
       adoptStoredFileDrafts drive (see the session watcher below). */
   function hydrateDraft(sid: string, opts?: { deferFiles?: boolean }): void {
     if (attachmentsBySession.value[sid] !== undefined) return;
+    // In-flight uploads live in the module registry, not in storage — a
+    // remount BEFORE completion (e.g. the dock swapping the composer for a
+    // question/approval card, or switching sessions back early) would
+    // otherwise show an empty strip until the settle lands. Restore them as
+    // uploading chips; they never persist (persistForSession skips uploading
+    // entries) and the settle/drop paths above finish or remove them.
+    const inFlight: Attachment[] = [];
+    for (const [key, entry] of pendingUploads) {
+      if (!key.startsWith(`${sid}\n`)) continue;
+      const localId = key.slice(sid.length + 1);
+      inFlight.push({
+        localId,
+        name: entry.name,
+        kind: entry.kind,
+        previewUrl: undefined,
+        mediaType: entry.mediaType,
+        size: entry.size,
+        sessionId: entry.sessionId,
+        seq: entry.seq,
+        uploading: true,
+      });
+      restoredInFlightLocalIds.add(localId);
+    }
     const stored = readStoredDraft(sid);
-    if (!stored) return;
+    if (!stored) {
+      if (inFlight.length > 0) setForSession(sid, byAddOrder(inFlight));
+      return;
+    }
     const { media, files } = stored;
     // LEGACY (see the note on AttachmentUploadDeps.adoptFileAttachment):
     // file-kind drafts are adopted as in-document pills when the seam is
@@ -257,6 +484,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
       // AGAIN on the next mount (a duplicate pill).
       if (media.length === 0) safeRemove(attachmentDraftStorageKey(sid));
       else safeSetJson(attachmentDraftStorageKey(sid), media);
+    }
+    // In-flight chips ride on top of the hydrated ready ones, in add order.
+    if (inFlight.length > 0) {
+      setForSession(sid, byAddOrder([...(attachmentsBySession.value[sid] ?? []), ...inFlight]));
     }
   }
 
@@ -346,9 +577,23 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         uploading: true,
       };
       setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), att]);
+      // The upload outlives this instance (an unmount never aborts it) — its
+      // bookkeeping lives at module level so a late completion still persists.
+      registerPendingUpload(sid, localId, {
+        name: att.name,
+        kind: att.kind,
+        mediaType: att.mediaType,
+        size: att.size,
+        sessionId: att.sessionId,
+        seq: att.seq,
+      });
 
       // Upload in background; update the attachment when done.
       upload(file, file.name).then((result) => {
+        // Module-level settle FIRST: the fileId reaches the stored draft even
+        // when this instance is already unmounted (setForSession below would
+        // no-op then). A consumed entry (submit/manual removal) drops here.
+        settlePendingUpload(sid, localId, result);
         const current = attachmentsBySession.value[sid] ?? [];
         setForSession(
           sid,
@@ -367,6 +612,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           ),
         );
       }).catch(() => {
+        settlePendingUpload(sid, localId, null);
         const current = attachmentsBySession.value[sid] ?? [];
         setForSession(
           sid,
@@ -434,6 +680,9 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     const att = current.find((a) => a.localId === localId);
     if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
     if (att) revokeAttachment(att);
+    // A chip the user deleted is consumed: its late upload completion must
+    // find no registry entry, or the deleted attachment would be written back.
+    dropPendingUpload(sid, localId);
     setForSession(sid, current.filter((a) => a.localId !== localId));
   }
 
@@ -637,6 +886,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     for (const att of attachmentsBySession.value[sid] ?? []) {
       revokeAttachment(att);
     }
+    // Consume the session's in-flight uploads: they were just sent (or are
+    // being discarded with the strip), so a late settle must find no entry —
+    // that is what keeps an already-submitted attachment from resurrecting.
+    consumePendingUploads(sid);
     setForSession(sid, []);
   }
 
@@ -673,6 +926,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     const sid = targetSid ?? sessionId() ?? '';
     if (opts?.append !== true) {
       for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
+      // Replacing the strip discards its in-flight uploads along with the
+      // chips — consume them like removeAttachment does, or a late settle
+      // would write a discarded attachment back into the stored draft.
+      consumePendingUploads(sid);
       setForSession(sid, []);
     }
     for (const att of atts) {
@@ -745,26 +1002,187 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           uploading: true,
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+        // Same module-level bookkeeping as addFiles — this re-upload outlives
+        // the instance too.
+        registerPendingUpload(sid, localId, {
+          name,
+          kind: att.kind,
+          mediaType: att.mediaType,
+          size: att.size,
+          sessionId: att.sessionId,
+          seq: entry.seq,
+        });
         void urlToBlob(att.url)
           .then((blob) => {
             const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
             return upload(blob, fname);
           })
           .then((result) => {
+            settlePendingUpload(sid, localId, result);
             if (result === null) {
               const current = attachmentsBySession.value[sid] ?? [];
+              // Revoke before filtering — a dropped chip's object URL would
+              // otherwise leak (the unmount hook can only revoke URLs of
+              // chips still in the array), and its preview goes away with it
+              // (same rule as the manual remove path).
+              const dropped = current.find((a) => a.localId === localId);
+              if (dropped) {
+                revokeAttachment(dropped);
+                if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
+              }
               setForSession(sid, current.filter((a) => a.localId !== localId));
               return;
             }
             patchAttachment(sid, localId, { uploading: false, fileId: result.fileId });
           })
           .catch(() => {
+            settlePendingUpload(sid, localId, null);
             const current = attachmentsBySession.value[sid] ?? [];
+            // Same revoke-before-filter as the null-result branch above.
+            const dropped = current.find((a) => a.localId === localId);
+            if (dropped) {
+              revokeAttachment(dropped);
+              if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
+            }
             setForSession(sid, current.filter((a) => a.localId !== localId));
           });
       }
     }
   }
+
+  /** Receive uploads that settled at module level while THIS instance is the
+      live composer of their session (see liveAttachmentInstances): the
+      remount hydrated before the fileId reached storage, so the strip missed
+      the chip. Dedup by localId — the instance that ORIGINATED the upload
+      already carries the chip (its own completion handler patches it), so
+      delivery is a no-op there, and a repeated delivery can never duplicate.
+      A chip THIS instance restored from the registry at hydrate (still
+      uploading) is swapped for the ready entry. The settled entries reuse the
+      ready-chip refill path (fileId kept, no re-upload, authed thumbnail
+      re-fetch); the strip is then re-sorted by the add-order stamp, so a late
+      delivery can't scramble the strip or the submit payload's media/file
+      interleave. */
+  function receiveSettledUploads(drafts: PersistedAttachmentDraft[]): void {
+    if (disposed) return;
+    const strip = attachmentsBySession.value[liveSid] ?? [];
+    const fresh: PersistedAttachmentDraft[] = [];
+    const replaced = new Set<string>();
+    for (const draft of byAddOrder(drafts)) {
+      if (draft.localId === undefined) continue;
+      const existing = strip.find((att) => att.localId === draft.localId);
+      if (existing === undefined) {
+        fresh.push(draft);
+      } else if (existing.uploading && restoredInFlightLocalIds.has(draft.localId)) {
+        replaced.add(draft.localId);
+        fresh.push(draft);
+      }
+    }
+    if (fresh.length === 0) return;
+    if (replaced.size > 0) {
+      for (const localId of replaced) restoredInFlightLocalIds.delete(localId);
+      setForSession(liveSid, strip.filter((att) => !replaced.has(att.localId)));
+    }
+    for (const draft of fresh) {
+      loadAttachments([promptAttachmentToTurnAttachment(api, draft)], liveSid, { append: true });
+    }
+    setForSession(liveSid, byAddOrder(attachmentsBySession.value[liveSid] ?? []));
+  }
+
+  /** A failed settle takes down the chips this instance restored from the
+      registry while the upload was in flight (they would spin forever) —
+      nothing else: an uploading chip outside the restored set belongs to a
+      live upload whose own completion handler marks it. */
+  function dropSettledUploads(localIds: string[]): void {
+    if (disposed) return;
+    const strip = attachmentsBySession.value[liveSid] ?? [];
+    const doomed = strip.filter((att) => att.uploading && restoredInFlightLocalIds.has(att.localId) && localIds.includes(att.localId));
+    if (doomed.length === 0) return;
+    for (const att of doomed) {
+      restoredInFlightLocalIds.delete(att.localId);
+      revokeAttachment(att);
+      if (previewAttachment.value?.localId === att.localId) previewAttachment.value = null;
+    }
+    setForSession(liveSid, strip.filter((att) => !doomed.includes(att)));
+  }
+
+  const liveSink: AttachmentSink = {
+    merge: (_sid, drafts) => receiveSettledUploads(drafts),
+    drop: (_sid, localIds) => dropSettledUploads(localIds),
+  };
+
+  /** Cache sink: a settle for a session this instance is NOT live for still
+      reaches that session's in-memory cache here (hydrate prefers the cache
+      over storage, so storage alone would leave the strip stale for the rest
+      of the page's life). Same restored-set rules as the live sink. Memory
+      only — the settle already wrote storage, so this path must NOT persist
+      (the cache is a view, not a draft owner). */
+  const cacheSink: AttachmentSink = {
+    merge(sid, drafts) {
+      if (disposed) return;
+      const cache = attachmentsBySession.value[sid];
+      if (cache === undefined) return;
+      let next = cache;
+      for (const draft of drafts) {
+        if (draft.localId === undefined) continue;
+        const existing = next.find((att) => att.localId === draft.localId);
+        if (existing !== undefined && !(existing.uploading && restoredInFlightLocalIds.has(draft.localId))) continue;
+        if (existing !== undefined) restoredInFlightLocalIds.delete(draft.localId);
+        const turned = promptAttachmentToTurnAttachment(api, draft);
+        const ready: Attachment = {
+          // Keep the registry identity: a repeated delivery dedups by it.
+          localId: draft.localId,
+          name: turned.name ?? turned.kind,
+          kind: turned.kind,
+          previewUrl: turned.kind === 'file' ? undefined : turned.url,
+          uploading: false,
+          fileId: turned.fileId,
+          sessionId: turned.sessionId,
+          mediaType: turned.mediaType,
+          size: turned.size,
+          seq: turned.seq ?? nextAttachmentSeq(),
+        };
+        next = existing === undefined ? [...next, ready] : next.map((att) => (att.localId === draft.localId ? ready : att));
+        // Authed thumbnail for images, mirroring the refill path (and its
+        // late-fetch guards).
+        if (turned.kind === 'image' && turned.fileId !== undefined && !/^(data|blob):/i.test(turned.url)) {
+          const blobRequest = turned.sessionId
+            ? api.getSessionMediaBlob(turned.sessionId, turned.fileId)
+            : api.getFileBlob(turned.fileId);
+          void blobRequest.then((blob) => {
+            if (disposed) return;
+            const blobUrl = URL.createObjectURL(blob);
+            const current = attachmentsBySession.value[sid] ?? [];
+            if (!current.some((a) => a.localId === ready.localId)) {
+              URL.revokeObjectURL(blobUrl);
+              return;
+            }
+            attachmentsBySession.value = {
+              ...attachmentsBySession.value,
+              [sid]: current.map((a) => (a.localId === ready.localId ? { ...a, previewUrl: blobUrl } : a)),
+            };
+          }).catch(() => {
+            // Keep the fallback previewUrl (honest broken state if it 401s).
+          });
+        }
+      }
+      if (next !== cache) attachmentsBySession.value = { ...attachmentsBySession.value, [sid]: byAddOrder(next) };
+    },
+    drop(sid, localIds) {
+      if (disposed) return;
+      const cache = attachmentsBySession.value[sid];
+      if (cache === undefined) return;
+      const doomed = cache.filter((att) => att.uploading && restoredInFlightLocalIds.has(att.localId) && localIds.includes(att.localId));
+      if (doomed.length === 0) return;
+      for (const att of doomed) restoredInFlightLocalIds.delete(att.localId);
+      attachmentsBySession.value = { ...attachmentsBySession.value, [sid]: cache.filter((att) => !doomed.includes(att)) };
+    },
+  };
+  attachmentCacheSinks.add(cacheSink);
+
+  // Register as the live instance of the current session so a settle landing
+  // after a remount reaches this strip — see the module comment above.
+  let liveSid = sessionId() ?? '';
+  liveAttachmentInstances.set(liveSid, liveSink);
 
   // Close the preview lightbox when switching sessions — it may reference an
   // attachment that belongs to the previous session. Then rehydrate the new
@@ -774,9 +1192,16 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   // fires before the composer's own stash/restore watcher, while the editor
   // still shows the previous session (media chips are editor-independent and
   // hydrate immediately).
-  watch(sessionId, () => {
+  watch(sessionId, (next, prev) => {
     previewAttachment.value = null;
-    hydrateDraft(sessionId() ?? '', { deferFiles: true });
+    // Follow the session switch in the live-instance registry: settles for
+    // the previous session no longer belong to this instance's strip.
+    if (liveAttachmentInstances.get(prev ?? '') === liveSink) {
+      liveAttachmentInstances.delete(prev ?? '');
+    }
+    liveSid = next ?? '';
+    liveAttachmentInstances.set(liveSid, liveSink);
+    hydrateDraft(liveSid, { deferFiles: true });
   });
 
   // First mount: restore the current session's persisted attachment draft.
@@ -794,6 +1219,12 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   onUnmounted(() => {
     // First: late async callbacks must no-op from here on (see `disposed`).
     disposed = true;
+    // Leave the live-instance registry — but only if the slot still points at
+    // THIS instance: a newer mount of the same session owns it now.
+    if (liveAttachmentInstances.get(liveSid) === liveSink) {
+      liveAttachmentInstances.delete(liveSid);
+    }
+    attachmentCacheSinks.delete(cacheSink);
     document.removeEventListener('paste', handleDocumentPaste);
     document.removeEventListener('dragenter', handleWindowDragEnter);
     document.removeEventListener('dragover', handleWindowDragOver);
