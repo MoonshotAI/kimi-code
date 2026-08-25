@@ -196,16 +196,18 @@ export async function mcpResultToExecutableOutput(
   // block. Protocol-reserved _meta keys are dropped first: those carry
   // host/protocol plumbing, not model-facing data.
   //
-  // structuredContent is only a FALLBACK for content blocks without usable
-  // text: the MCP spec asks servers returning structuredContent to also
-  // place the serialized JSON in a TextContent block, so forwarding it next
-  // to real text would send the same data to the model twice. _meta has no
-  // such overlap and always passes through.
-  const hasUsableText = converted.some(
-    (part) => part.type === 'text' && part.text.trim().length > 0,
-  );
+  // structuredContent is skipped only when a content text block already
+  // carries its verbatim serialization — the spec's backwards-compatibility
+  // pattern (e.g. the Google Workspace servers) — where forwarding it would
+  // send the same data to the model twice. Servers are equally allowed to
+  // put a lossy human summary in content, so "has text" alone must NOT
+  // suppress the structured payload. _meta has no such overlap and always
+  // passes through.
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined && !hasUsableText) {
+  if (
+    result.structuredContent !== undefined &&
+    !serializesStructuredContent(converted, result.structuredContent)
+  ) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -307,6 +309,51 @@ function isReservedMetaKey(key: string): boolean {
     (label, i) =>
       (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
   );
+}
+
+/**
+ * True when some converted text part is exactly the JSON serialization of
+ * `structured` — the pattern the MCP spec recommends for backwards
+ * compatibility. The comparison is semantic (parse, then compare with
+ * canonical key order), not textual, so formatting and key-order
+ * differences still count as the same payload.
+ *
+ * Conservative by construction: any doubt — non-JSON text, prose wrapped
+ * around the JSON, structural mismatch — returns false and the structured
+ * block is appended. A duplicate costs tokens; a wrong drop loses data.
+ */
+function serializesStructuredContent(
+  parts: readonly ContentPart[],
+  structured: unknown,
+): boolean {
+  return parts.some(
+    (part) => part.type === 'text' && textIsJsonSerializationOf(part.text, structured),
+  );
+}
+
+function textIsJsonSerializationOf(text: string, structured: unknown): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return false;
+  }
+  return canonicalJson(parsed) === canonicalJson(structured);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, val]) => `${JSON.stringify(key)}:${canonicalJson(val)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return String(JSON.stringify(value));
 }
 
 /**

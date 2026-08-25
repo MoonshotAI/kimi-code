@@ -118,11 +118,11 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  const hasUsableText = converted.some(
-    (part) => part.type === 'text' && part.text.trim().length > 0,
-  );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined && !hasUsableText) {
+  if (
+    result.structuredContent !== undefined &&
+    !serializesStructuredContent(converted, result.structuredContent)
+  ) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -196,6 +196,40 @@ function isReservedMetaKey(key: string): boolean {
     (label, i) =>
       (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
   );
+}
+
+function serializesStructuredContent(
+  parts: readonly ContentPart[],
+  structured: unknown,
+): boolean {
+  return parts.some(
+    (part) => part.type === 'text' && textIsJsonSerializationOf(part.text, structured),
+  );
+}
+
+function textIsJsonSerializationOf(text: string, structured: unknown): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return false;
+  }
+  return canonicalJson(parsed) === canonicalJson(structured);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, val]) => `${JSON.stringify(key)}:${canonicalJson(val)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return String(JSON.stringify(value));
 }
 
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {

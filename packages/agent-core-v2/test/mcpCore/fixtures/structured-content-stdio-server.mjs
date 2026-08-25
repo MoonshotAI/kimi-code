@@ -6,11 +6,12 @@ const server = new McpServer({ name: 'mock-structured-content', version: '0.0.1'
 server.registerTool(
   'dual_emit',
   {
-    description: 'Returns the same JSON as a text block and as structuredContent',
+    description:
+      'Returns the same JSON as a text block (pretty-printed, different key order) and as structuredContent',
     inputSchema: {},
   },
   () => ({
-    content: [{ type: 'text', text: '{"rows":[{"id":1}],"total":1}' }],
+    content: [{ type: 'text', text: '{\n  "total": 1,\n  "rows": [ { "id": 1 } ]\n}' }],
     structuredContent: { rows: [{ id: 1 }], total: 1 },
   }),
 );
