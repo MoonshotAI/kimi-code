@@ -375,6 +375,27 @@ describe('statement lists', () => {
     expectTree('ls |', `(program (pipeline (command (command_name (word "ls"))) "|"))`, true);
   });
 
+  it('keeps a lone trailing backslash as word text instead of degrading the whole parse', () => {
+    expectTree('echo \\', `(program (command (command_name (word "echo")) (word "\\\\")))`);
+    expectTree('\\', `(program (command (command_name (word "\\\\"))))`);
+  });
+
+  it('recovers a test command whose expression ends in a lone trailing backslash', () => {
+    expectTree(
+      '[[ -f x && \\',
+      `(program (test_command "[[" (binary_expression (unary_expression (test_operator "-f") (word "x")) "&&" (word "\\\\")) "]]"))`,
+      true,
+    );
+  });
+
+  it('recovers a case item pattern that ends in a lone trailing backslash', () => {
+    expectTree(
+      'case x in a\\',
+      `(program (case_statement "case" (word "x") "in" (case_item (word "a\\\\"))))`,
+      true,
+    );
+  });
+
   it('continues a list across a newline after &&', () => {
     expectTree(
       'a &&\nb',

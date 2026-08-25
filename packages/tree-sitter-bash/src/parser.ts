@@ -1031,7 +1031,7 @@ export class Parser {
       const ch = this.source[j]!;
       if (ch === '\n' || ch === ';') break; // defensive: malformed item
       if (ch === '\\') {
-        j += 2;
+        j = Math.min(j + 2, end);
         continue;
       }
       if (ch === '"') {
@@ -3482,7 +3482,7 @@ export class Parser {
         continue;
       }
       if (c === '\\') {
-        j += 2;
+        j = Math.min(j + 2, end);
         continue;
       }
       j++;
@@ -3652,7 +3652,7 @@ export class Parser {
       const ch = this.source[j]!;
       if (ch === '\n') break;
       if (ch === '\\') {
-        j += 2;
+        j = Math.min(j + 2, end);
         continue;
       }
       if (ch === '"') {

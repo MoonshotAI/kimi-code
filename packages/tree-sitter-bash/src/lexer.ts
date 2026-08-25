@@ -566,7 +566,7 @@ export class Lexer {
         // A line continuation ends the run (it acts as whitespace); a lone
         // trailing backslash at end of range is consumed as word text.
         if (this.source[i + 1] === '\n') break;
-        i += 2;
+        i = Math.min(i + 2, this.end);
         continue;
       }
       if (ch === '"') {
