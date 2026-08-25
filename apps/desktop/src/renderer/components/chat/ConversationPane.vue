@@ -7,6 +7,7 @@ import type { FileItem } from './MentionMenu.vue';
 import type { ManagedMembership, PromptAttachment } from '@moonshot-ai/app-client/client';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import ChatPane from './ChatPane.vue';
+import ErrorBoundary from '../ErrorBoundary.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
@@ -2543,6 +2544,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, hasInsertableComposer, 
             </div>
           </template>
           <template v-else>
+            <ErrorBoundary>
             <ChatPane
               ref="chatPaneRef"
               :key="fileReloadKey ?? 'no-session'"
@@ -2580,6 +2582,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, hasInsertableComposer, 
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
             />
+            </ErrorBoundary>
           </template>
         </div>
       </div>

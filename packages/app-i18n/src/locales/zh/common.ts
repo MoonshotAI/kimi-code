@@ -9,4 +9,9 @@ export default {
   dismiss: '关闭',
   loading: '加载中',
   copy: '复制',
+  /** 错误边界 fallback 文案（components/ErrorBoundary.vue）。 */
+  errorBoundaryTitle: '出错了',
+  errorBoundaryRetry: '重试',
+  /** defineAsyncComponent 的 errorComponent（如设计规范覆盖层）。 */
+  asyncLoadFailed: '加载失败，请关闭后重试',
 } as const;

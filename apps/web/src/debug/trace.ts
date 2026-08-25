@@ -59,6 +59,7 @@ const EXPORT_TRACE_EVENTS = [
   'operation:failed',
   'window:error',
   'window:unhandled-rejection',
+  'vue:error',
   'ws:connection',
   'ws:error',
   'ws:resync',
@@ -69,6 +70,7 @@ type ExportTraceEvent = (typeof EXPORT_TRACE_EVENTS)[number];
 
 export interface ExportTraceMetadata {
   sessionId?: string;
+  info?: string;
   status?: string;
   busy?: boolean;
   /** Client operation name (e.g. 'archiveSession') for operation:failed. */
@@ -521,6 +523,16 @@ export function traceKeyEvent(event: ExportTraceEvent, info?: ExportTraceMetadat
 
 let clientCaptureInstalled = false;
 let uninstallClientCapture: (() => void) | null = null;
+
+/** Vue render-tree failure (app.config.errorHandler). */
+export function reportRendererException(err: unknown, info: string): void {
+  const errorClass = err instanceof Error ? err.name : 'Error';
+  traceKeyEvent('vue:error', { status: 'failed', errorName: errorClass, info });
+  logError(
+    `[kimi-web] vue error (${info}): ${err instanceof Error ? err.message : String(err)}`,
+    err instanceof Error ? err.stack : undefined,
+  );
+}
 
 /** Wire up always-on window failures and debug-only console capture. */
 export function installClientErrorCapture(): () => void {

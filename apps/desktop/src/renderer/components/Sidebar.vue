@@ -33,6 +33,7 @@ import {
   looksLikeFolderDrag,
 } from '@moonshot-ai/app-core/lib';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
+import ErrorBoundary from './ErrorBoundary.vue';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
 // Desktop-only (not synced to web — docs/native-todos.md): PR preview pill.
@@ -1240,9 +1241,10 @@ function blinkOnce(): void {
 // Logo long-press easter-egg: holding the Kimi mark for 1 second opens the
 // design system as a full-screen overlay. A short click still just blinks.
 // Pointer capture keeps the hold alive even if the pointer drifts off the mark.
-const DesignSystemView = defineAsyncComponent(
-  () => import('../views/DesignSystemView.vue'),
-);
+const DesignSystemView = defineAsyncComponent({
+  loader: () => import('../views/DesignSystemView.vue'),
+  timeout: 30_000,
+});
 const showDesignSystem = ref(false);
 const EGG_HOLD_MS = 1000;
 let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1926,7 +1928,9 @@ onBeforeUnmount(() => {
          which breaks v-show on the host (Vue can't apply display:none to a
          Fragment). Teleport still renders to body regardless of placement. -->
     <Teleport to="body">
-      <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
+      <ErrorBoundary v-if="showDesignSystem" fullscreen closable @close="showDesignSystem = false">
+        <DesignSystemView @close="showDesignSystem = false" />
+      </ErrorBoundary>
     </Teleport>
   </aside>
 </template>

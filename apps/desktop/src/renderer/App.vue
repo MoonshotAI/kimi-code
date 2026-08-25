@@ -22,6 +22,7 @@ import TurnDiffPanel from './components/chat/TurnDiffPanel.vue';
 import MediaLightbox from './components/chat/MediaLightbox.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
+import ErrorBoundary from './components/ErrorBoundary.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
@@ -2415,6 +2416,7 @@ function openPr(url: string): void {
     />
 
     <!-- Settings page (modal) -->
+    <ErrorBoundary closable @close="showSettings = false">
     <SettingsDialog
       v-if="showSettings"
       :color-scheme="client.colorScheme.value"
@@ -2440,6 +2442,7 @@ function openPr(url: string): void {
       @logout="confirmLogout"
       @close="showSettings = false; settingsInitialTab = undefined"
     />
+    </ErrorBoundary>
 
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->
     <StatusPanel

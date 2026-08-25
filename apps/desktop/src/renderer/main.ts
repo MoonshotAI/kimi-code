@@ -9,7 +9,7 @@ import { clientPinia } from '@moonshot-ai/app-client/stores';
 import { initVibrancy } from './composables/useVibrancy';
 import { isDesktop, isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
-import { installClientErrorCapture, sessionExportTraceToJsonl, traceClientEvent, traceKeyEvent } from './debug/trace';
+import { installClientErrorCapture, reportRendererException, sessionExportTraceToJsonl, traceClientEvent, traceKeyEvent } from './debug/trace';
 import { setProductTracker } from '@moonshot-ai/app-client/contracts';
 import { productTracker } from './lib/track';
 import { getKimiWebApi } from './api';
@@ -49,6 +49,7 @@ setKimiClientDeps({
 });
 
 const app = createApp(App).use(i18n);
+app.config.errorHandler = (err, _instance, info) => reportRendererException(err, info);
 // Install the package-held pinia instance (app-client/stores): the domain
 // stores' truth source, shared with the client singletons' module-level code.
 app.use(clientPinia);

@@ -60,6 +60,7 @@ const EXPORT_TRACE_EVENTS = [
   'operation:failed',
   'window:error',
   'window:unhandled-rejection',
+  'vue:error',
   'ws:connection',
   'ws:error',
   'ws:resync',
@@ -70,6 +71,7 @@ type ExportTraceEvent = (typeof EXPORT_TRACE_EVENTS)[number];
 
 export interface ExportTraceMetadata {
   sessionId?: string;
+  info?: string;
   status?: string;
   busy?: boolean;
   /** Client operation name (e.g. 'archiveSession') for operation:failed. */
@@ -535,6 +537,17 @@ function trackRendererError(errorClass: string): void {
   rendererErrorLastSent.set(errorClass, now);
   // Class only — never the message/stack (user content can leak there).
   track('renderer_error', { error_class: errorClass });
+}
+
+/** Vue render-tree failure (app.config.errorHandler). */
+export function reportRendererException(err: unknown, info: string): void {
+  const errorClass = err instanceof Error ? err.name : 'Error';
+  traceKeyEvent('vue:error', { status: 'failed', errorName: errorClass, info });
+  trackRendererError(errorClass);
+  logError(
+    `[kimi-code] vue error (${info}): ${err instanceof Error ? err.message : String(err)}`,
+    err instanceof Error ? err.stack : undefined,
+  );
 }
 
 /** Wire up always-on window failures and debug-only console capture. */

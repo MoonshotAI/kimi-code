@@ -8,7 +8,7 @@ import { useKimiWebClient, setKimiClientDeps } from '@moonshot-ai/app-client/cli
 import { clientPinia } from '@moonshot-ai/app-client/stores';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
-import { installClientErrorCapture, sessionExportTraceToJsonl, traceClientEvent, traceKeyEvent } from './debug/trace';
+import { installClientErrorCapture, reportRendererException, sessionExportTraceToJsonl, traceClientEvent, traceKeyEvent } from './debug/trace';
 import { getKimiWebApi } from './api';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './style.css';
@@ -30,6 +30,7 @@ setKimiClientDeps({
 });
 
 const app = createApp(App).use(i18n);
+app.config.errorHandler = (err, _instance, info) => reportRendererException(err, info);
 // Install the package-held pinia instance (app-client/stores): the domain
 // stores' truth source, shared with the client singletons' module-level code.
 app.use(clientPinia);

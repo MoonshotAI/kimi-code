@@ -9,4 +9,9 @@ export default {
   dismiss: 'Dismiss',
   loading: 'Loading',
   copy: 'Copy',
+  /** Error boundary fallback (components/ErrorBoundary.vue). */
+  errorBoundaryTitle: 'Something went wrong',
+  errorBoundaryRetry: 'Try again',
+  /** defineAsyncComponent errorComponent (e.g. the design-system overlay). */
+  asyncLoadFailed: 'Failed to load. Close this view and try again.',
 } as const;
