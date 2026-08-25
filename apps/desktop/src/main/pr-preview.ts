@@ -632,7 +632,7 @@ export async function startPreview(target: PreviewTarget): Promise<PrPreviewStat
     // --ignore-scripts: an arbitrary remote PR must not get to run its
     // install-time lifecycle scripts (the classic supply-chain vector) under
     // the developer's full user account. Fonts are still prepared by the
-    // build's own prebuild:renderer hook; node-pty's rebuild is irrelevant
+    // explicit prepare:fonts step below; node-pty's rebuild is irrelevant
     // to a renderer-only build.
     await runStage('install', pnpmCommand(), ['install', '--prefer-offline', '--ignore-scripts'], worktreeDir);
     throwIfCancelled();
@@ -644,11 +644,30 @@ export async function startPreview(target: PreviewTarget): Promise<PrPreviewStat
     // from under the protocol handler (a failed rebuild keeps the previous
     // build serving, files and all — and no rename dance means no Windows
     // file-lock edge).
+    // Build through `pnpm exec`, NOT `pnpm run build:renderer -- <args>`:
+    // pnpm composes the script command with a literal `--` separator and
+    // vite's arg parser (cac) treats everything after `--` as positional —
+    // `--outDir` would silently never apply. `pnpm exec` passes argv
+    // verbatim, so the CLI options land for every target ref.
+    // No `--base` override: the default absolute base (`/`) is exactly right
+    // here — the preview window's whole session partition serves this dist
+    // (preview-window.ts / protocol.ts), so `/assets/*` resolves correctly
+    // even after in-app navigation rewrites the document path (a relative
+    // base would break asset URLs under `/sessions/<id>`).
+    // Skipping the build:renderer script also skips its prebuild hook, so
+    // prepare:fonts runs explicitly (the preview install uses
+    // --ignore-scripts, leaving fonts unprepared otherwise).
     const desktopDir = join(worktreeDir, 'apps', 'desktop');
     const distA = join(desktopDir, 'desktop-dist');
     const distB = join(desktopDir, 'desktop-dist.next');
     const stagingDist = activeDistRoot === distA ? distB : distA;
-    await runStage('build', pnpmCommand(), ['--filter', 'kimi-code-app', 'run', 'build:renderer', '--', '--outDir', stagingDist], worktreeDir);
+    await runStage('build', pnpmCommand(), ['--filter', 'kimi-code-app', 'run', 'prepare:fonts'], worktreeDir);
+    await runStage(
+      'build',
+      pnpmCommand(),
+      ['--filter', 'kimi-code-app', 'exec', 'vite', 'build', '--config', 'vite.renderer.config.ts', '--outDir', stagingDist],
+      worktreeDir,
+    );
     throwIfCancelled();
     activeDistRoot = stagingDist;
     activePr = pr;

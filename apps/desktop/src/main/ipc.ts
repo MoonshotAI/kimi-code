@@ -5,7 +5,6 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { getMainWindow, showMainWindow, applyWindowVibrancy, sendToRenderer } from './window';
-import { connect } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import { getTerminalManager, initTerminalManager } from './terminal';
 import { startShellEnvProbe } from './shell-env';
@@ -40,6 +39,9 @@ import {
   whenBuildSettled,
   type PreviewTarget,
 } from './pr-preview';
+import { closePreviewWindow, openPreviewWindow } from './preview-window';
+import { embeddedServerOrigin, readServerToken, setPreviewDistRoot } from './connect';
+import { resolveConnectTarget } from './connect-target';
 import { log, redactUrlForLog } from './log';
 import { updateServerRegionToken } from './region';
 import { createRendererLogWriter } from './renderer-log';
@@ -412,12 +414,26 @@ export function registerIpcHandlers(): void {
     }
     const distRootBefore = getPrPreviewDistRoot();
     const state = await startPreview(target);
-    // Reload only when a NEW build actually swapped the served dist: a cancel
-    // restores phase 'active' with the old root, and reloading then would
-    // needlessly nuke the preview renderer's transient UI state.
+    // Build succeeded → open (or reuse) the preview window. Reload only when
+    // the dist root actually changed: a cancel restores phase 'active' with
+    // the old root, and the preview window's copy needs no refresh then.
     if (state.phase === 'active' && getPrPreviewDistRoot() !== distRootBefore) {
-      const win = getMainWindow();
-      if (win !== null && !win.isDestroyed()) await connect(win);
+      const distRoot = getPrPreviewDistRoot();
+      if (distRoot !== null) {
+        const target2 = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
+        const origin = target2.external ? target2.origin : embeddedServerOrigin();
+        if (origin !== null) {
+          openPreviewWindow(
+            {
+              label: state.label ?? (state.pr !== undefined ? `#${state.pr}` : '?'),
+              distRoot,
+              origin,
+              ...(target2.external && target2.token !== undefined ? { token: target2.token } : {}),
+            },
+            setPreviewDistRoot,
+          );
+        }
+      }
     }
     return state;
   });
@@ -426,10 +442,10 @@ export function registerIpcHandlers(): void {
     stopPreview();
     // The state flips at signal time, but `running` clears only when the
     // killed child's close settles — wait for it, or an immediate restart
-    // hits 'already in flight', and reload only after the dust has settled.
+    // hits 'already in flight'.
     await whenBuildSettled();
-    const win = getMainWindow();
-    if (win !== null && !win.isDestroyed()) await connect(win);
+    closePreviewWindow();
+    setPreviewDistRoot(null);
     return getPrPreviewState();
   });
   ipcMain.handle(IPC.prPreviewCancel, async () => {

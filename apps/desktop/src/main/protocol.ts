@@ -103,13 +103,23 @@ export function rendererDevBase(raw: string | undefined): string | undefined {
 }
 
 /**
- * Map `app://renderer/<path>` to `<rendererDistRoot>/<path>` (the desktop
- * renderer build, `desktop-dist`) with MIME + traversal protection. Returns a
- * Response for `protocol.handle`.
+ * Map `app://renderer/<path>` to `<distRoot>/<path>` (a desktop renderer
+ * build, `desktop-dist`) with MIME + traversal protection. Returns a Response
+ * for `protocol.handle`; a null root (no preview build active) answers 404.
+ *
+ * The same handler serves two per-session registrations:
+ * - the default session (main window): the normal dist — see
+ *   registerRendererProtocol;
+ * - the PR-preview session partition (preview-window.ts): the preview
+ *   worktree's dist — see registerPreviewRendererProtocol. Both windows share
+ *   scheme and origin (the embedded server's origin allowlist needs no
+ *   change) while each session resolves `app://renderer/*` to its own build,
+ *   so in-app URL pushes (`/sessions/<id>`) and reloads can never leak the
+ *   preview window onto the regular build.
  */
 export async function handleRendererRequest(
   request: Request,
-  getRendererDistRoot: () => string,
+  getDistRoot: () => string | null,
 ): Promise<Response> {
   const url = new URL(request.url);
   // Reject traversal before the URL parser collapses `..`: inspect the raw
@@ -127,8 +137,11 @@ export async function handleRendererRequest(
   if (decodedPathname.split('/').some((seg) => seg === '..')) {
     return new Response('forbidden', { status: 403 });
   }
+  const root = getDistRoot();
+  if (root === null) {
+    return new Response('not found', { status: 404 });
+  }
   const rel = decodedPathname === '/' ? '/index.html' : decodedPathname;
-  const root = getRendererDistRoot();
   const filePath = resolve(join(root, rel));
   if (!filePath.startsWith(root)) {
     return new Response('forbidden', { status: 403 });
@@ -156,4 +169,13 @@ export async function handleRendererRequest(
 
 export function registerRendererProtocol(getRendererDistRoot: () => string): void {
   protocol.handle(RENDERER_SCHEME, (request) => handleRendererRequest(request, getRendererDistRoot));
+}
+
+/** Serve the preview dist for `app://renderer/*` inside the preview window's
+    session partition (PR preview, preview-window.ts). */
+export function registerPreviewRendererProtocol(
+  previewSession: Electron.Session,
+  getPreviewDistRoot: () => string | null,
+): void {
+  previewSession.protocol.handle(RENDERER_SCHEME, (request) => handleRendererRequest(request, getPreviewDistRoot));
 }

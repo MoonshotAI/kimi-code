@@ -2,10 +2,12 @@
 <!-- PR preview entry (desktop-only, dev builds / Kimi Code Canary): a pill in
      the sidebar header that opens a Dialog to build a code-app pull request's
      (or any branch/tag/sha's) renderer in an isolated git worktree
-     (main/pr-preview.ts) and load it into this window.
+     (main/pr-preview.ts) and open it in a separate preview window
+     (main/preview-window.ts — a dedicated session partition whose
+     app://renderer registration serves the preview dist).
      States: idle (pick a PR/branch, or enter a custom ref) →
-     fetching/installing/building (live phase + cancel) → active (the window
-     is serving the preview build; exit or fetch & rebuild) → error (stage
+     fetching/installing/building (live phase + cancel) → active (the preview
+     window is serving the build; exit or fetch & rebuild) → error (stage
      output tail + retry). Hidden unless the preload bridge exposes the
      pr-preview methods AND getState answers non-null (stable packaged builds
      answer null) — plain web never renders this.
@@ -536,7 +538,7 @@ defineExpose({
   flex: none;
   color: var(--color-text-on-accent);
 }
-/* Active = the window is serving the preview build: warning yellow, matching
+/* Active = a preview window is serving the build: warning yellow, matching
    the update pill's "action pending" signal; error flips to danger. */
 .prp[data-state='active'] .prp-pill {
   background: var(--color-warning);

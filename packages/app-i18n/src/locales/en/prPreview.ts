@@ -5,7 +5,7 @@
 export default {
   /** Sidebar pill (idle) and dialog title. */
   title: 'PR Preview',
-  intro: 'Build a pull request or branch of this repo in an isolated worktree and load its UI into this window. The first build can take a few minutes.',
+  intro: 'Build a pull request or branch of this repo in an isolated worktree and open its UI in a separate window. The first build can take a few minutes.',
   prLabel: 'Preview target',
   customRefPlaceholder: 'PR number, branch, tag, or commit SHA',
   invalidRef: 'Enter a valid branch name, tag, or commit SHA',

@@ -46,6 +46,7 @@ vi.mock('../../src/main/protocol', () => ({
 }));
 vi.mock('../../src/main/connect', () => ({
   rendererDistRoot: '/renderer',
+  getPreviewDistRoot: () => null,
   closeServerHandle: mocks.closeServerHandle,
   shutdownServerTelemetry: mocks.shutdownServerTelemetry,
 }));
@@ -68,6 +69,11 @@ vi.mock('../../src/main/shortcuts', () => ({
 vi.mock('../../src/main/shell-env', () => ({ stopShellEnvProbe: mocks.stopShellEnvProbe }));
 vi.mock('../../src/main/terminal', () => ({ killAllTerminals: mocks.killAllTerminals }));
 vi.mock('../../src/main/ipc', () => ({ registerIpcHandlers: vi.fn() }));
+vi.mock('../../src/main/preview-window', () => ({
+  initPreviewSession: vi.fn(),
+  openPreviewWindow: vi.fn(),
+  closePreviewWindow: vi.fn(),
+}));
 vi.mock('../../src/main/updater', () => ({ initAutoUpdater: vi.fn(), setUpdateController: vi.fn() }));
 vi.mock('../../src/main/canary-updater', () => ({ initCanaryGithubUpdater: vi.fn() }));
 vi.mock('../../src/main/track', () => ({ trackDesktopEvent: mocks.trackDesktopEvent }));

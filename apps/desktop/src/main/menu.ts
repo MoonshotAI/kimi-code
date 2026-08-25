@@ -9,6 +9,8 @@ import {
   stopPreview,
   whenBuildSettled,
 } from './pr-preview';
+import { closePreviewWindow } from './preview-window';
+import { setPreviewDistRoot } from './connect';
 import { getTraceRecorder } from './trace';
 import { refreshServerRegion, serverRegionProfile, whenServerRegionSource } from './region';
 import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall, UPDATE_CHECK_TIMED_OUT } from './updater';
@@ -560,7 +562,8 @@ export function menuTemplate(
     label: strings.view,
     submenu: [
       // See the "PR preview exit entry" section above: this is the one exit
-      // hatch the preview build can't swap away.
+      // hatch the preview window can't offer itself (its renderer comes from
+      // the target ref, which may not carry a sidebar exit button).
       ...(previewLabel === undefined
         ? []
         : [
@@ -573,16 +576,14 @@ export function menuTemplate(
               // regardless of menu bar visibility.
               accelerator: 'CommandOrControl+Alt+Shift+P',
               click: () => {
-                // Same settle discipline as the IPC stop handler: reconnect
-                // only once the killed build has fully wound down, so an
-                // immediate restart can't hit 'already in flight'.
+                // Same settle discipline as the IPC stop handler: wait until
+                // the killed build has fully wound down, so an immediate
+                // restart can't hit 'already in flight'.
                 void (async () => {
                   stopPreview();
                   await whenBuildSettled();
-                  const win = getMainWindow();
-                  if (win !== null) {
-                    await connect(win);
-                  }
+                  closePreviewWindow();
+                  setPreviewDistRoot(null);
                 })();
               },
             } as MenuItemConstructorOptions,

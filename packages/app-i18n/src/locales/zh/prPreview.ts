@@ -3,7 +3,7 @@
 export default {
   /** 侧栏 pill（空闲态）与对话框标题。 */
   title: 'PR 预览',
-  intro: '在隔离 worktree 中构建本仓库某个 PR 或分支的代码，并把它的界面加载进当前窗口。首次构建可能需要几分钟。',
+  intro: '在隔离 worktree 中构建本仓库某个 PR 或分支的代码，构建完成后在独立窗口中打开它的界面。首次构建可能需要几分钟。',
   prLabel: '预览目标',
   customRefPlaceholder: 'PR 编号、分支名、tag 或 commit sha',
   invalidRef: '请输入有效的分支名、tag 或 commit sha',

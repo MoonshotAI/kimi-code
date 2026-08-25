@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mimeFor, rendererUrl, rendererDevBase, handleRendererRequest } from '../../src/main/protocol';
+import { mimeFor, rendererUrl, rendererDevBase, handleRendererRequest, registerPreviewRendererProtocol } from '../../src/main/protocol';
 
 describe('mimeFor', () => {
   it('maps common web extensions and falls back to octet-stream', () => {
@@ -166,5 +166,70 @@ describe('handleRendererRequest', () => {
       () => root,
     );
     expect(encoded.status).not.toBe(200);
+  });
+
+  describe('preview session serving', () => {
+    it('serves the preview dist for the same paths the main session maps to its own root', async () => {
+      const root = await makeRoot();
+      const preview = await mkdtemp(join(tmpdir(), 'kimi-preview-'));
+      await mkdir(join(preview, 'assets'), { recursive: true });
+      await writeFile(join(preview, 'index.html'), '<h1>preview</h1>');
+      await writeFile(join(preview, 'assets', 'p.js'), 'preview-js');
+
+      const index = await handleRendererRequest(
+        { url: 'app://renderer/index.html' } as any,
+        () => preview,
+      );
+      expect(index.status).toBe(200);
+      expect(await index.text()).toBe('<h1>preview</h1>');
+
+      const asset = await handleRendererRequest(
+        { url: 'app://renderer/assets/p.js' } as any,
+        () => preview,
+      );
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe('preview-js');
+
+      // The main session's root answers the same URL shapes independently.
+      const normal = await handleRendererRequest(
+        { url: 'app://renderer/assets/app.js' } as any,
+        () => root,
+      );
+      expect(normal.status).toBe(200);
+      expect(await normal.text()).toBe('console.log(1)');
+    });
+
+    it('applies the SPA fallback inside the preview root too', async () => {
+      const preview = await mkdtemp(join(tmpdir(), 'kimi-preview-'));
+      await writeFile(join(preview, 'index.html'), '<h1>preview</h1>');
+      const res = await handleRendererRequest(
+        { url: 'app://renderer/sessions/abc' } as any,
+        () => preview,
+      );
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('<h1>preview</h1>');
+    });
+
+    it('404s when no preview dist is set (never leaks another root)', async () => {
+      const res = await handleRendererRequest(
+        { url: 'app://renderer/index.html' } as any,
+        () => null,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it('registers the scheme handler on the given session partition', async () => {
+      const preview = await mkdtemp(join(tmpdir(), 'kimi-preview-'));
+      await writeFile(join(preview, 'index.html'), '<h1>preview</h1>');
+      const handle = vi.fn();
+      const fakeSession = { protocol: { handle } } as unknown as Electron.Session;
+      registerPreviewRendererProtocol(fakeSession, () => preview);
+      expect(handle).toHaveBeenCalledOnce();
+      const [scheme, handler] = handle.mock.calls[0] as [string, (request: Request) => Promise<Response>];
+      expect(scheme).toBe('app');
+      const res = await handler({ url: 'app://renderer/index.html' } as Request);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('<h1>preview</h1>');
+    });
   });
 });

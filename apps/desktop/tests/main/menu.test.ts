@@ -46,7 +46,11 @@ vi.mock('../../src/main/window', () => ({
   sendToRenderer: mocks.sendToRenderer,
   showMainWindow: mocks.showMainWindow,
 }));
-vi.mock('../../src/main/connect', () => ({ connect: mocks.connect }));
+vi.mock('../../src/main/connect', () => ({ connect: mocks.connect, setPreviewDistRoot: vi.fn() }));
+vi.mock('../../src/main/preview-window', () => ({
+  closePreviewWindow: vi.fn(),
+  openPreviewWindow: vi.fn(),
+}));
 vi.mock('../../src/main/updater', () => ({
   getUpdateAutoDownload: mocks.getUpdateAutoDownload,
   getUpdateStatus: mocks.getUpdateStatus,

@@ -4,7 +4,7 @@ import { DESKTOP_WINDOWS_APP_ID, DESKTOP_WINDOWS_DEV_APP_ID } from '../shared/id
 import { log } from './log';
 import { IPC } from './ipc-channels';
 import { registerRendererProtocol } from './protocol';
-import { rendererDistRoot, closeServerHandle, shutdownServerTelemetry } from './connect';
+import { rendererDistRoot, closeServerHandle, getPreviewDistRoot, shutdownServerTelemetry } from './connect';
 import { stopShellEnvProbe } from './shell-env';
 import { createWindow, selectSessionInRenderer, sendLaunchAction, sendToRenderer, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
@@ -14,6 +14,7 @@ import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { killAllTerminals } from './terminal';
 import { killActiveBuild, sweepStalePreviews } from './pr-preview';
+import { initPreviewSession } from './preview-window';
 import { initAutoUpdater, setUpdateController } from './updater';
 import { initCanaryGithubUpdater } from './canary-updater';
 import { isCanaryVersion } from './release-channel';
@@ -184,6 +185,9 @@ export function main(): void {
     // static .icns for Finder etc.
     initDockIcon();
     registerRendererProtocol(rendererDistRoot);
+    // The preview window's session partition serves the preview dist for the
+    // same scheme/origin (protocol.ts registerPreviewRendererProtocol).
+    initPreviewSession(getPreviewDistRoot);
     // Boot-time PR-preview hygiene: sweep worktrees previous runs left
     // behind (fire-and-forget; see pr-preview.ts sweepStalePreviews).
     try {

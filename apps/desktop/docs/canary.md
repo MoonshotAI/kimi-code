@@ -55,14 +55,15 @@ GUI 应用看不到 Homebrew 的 PATH 没关系，app 会自动探测 `/opt/home
 
 - **PR 预览…**：打开预览对话框——选择 open PR、remote 分支，或输入任意
   commit sha → 在隔离 worktree（`<userData>/pr-previews/`）里构建该代码的
-  渲染层并换进当前窗口。主进程 server 不动，预览的只是界面；随时「退出
-  预览」回到正常版本（原生 View 菜单也有「退出 PR 预览」+ 快捷键）。
+  渲染层，构建完成后自动在**独立预览窗口**打开，主窗口不动。server 仍是
+  当前 app 的，预览的只是界面；关掉预览窗口即退出预览（原生 View 菜单
+  也有「退出 PR 预览」+ 快捷键）。
   - 首次预览某个目标需要 `pnpm install` + 构建，几分钟；同一目标再次预览
     会复用缓存，快很多。
   - 预览 worktree 的 git 对象来自 `<userData>/pr-previews/repo-cache.git`
     （自动维护的 bare 镜像），不碰你本机的任何 checkout。
-- **Canary 内测更新**：立即检查 GitHub 上的最新内测版（本机 gh 身份）。
-- **触发构建**：确认后触发 `desktop-build.yml`（`canary=true`）——macOS
+- **更新 Canary**：立即检查 GitHub 上的最新内测版（本机 gh 身份）。
+- **重新打包 Canary**：确认后触发 `desktop-build.yml`（`canary=true`）——macOS
   arm64 签名公证构建，完成后自动建 prerelease，约 20–30 分钟。
 - **查看流水线**：浏览器打开 Actions 页。
 
