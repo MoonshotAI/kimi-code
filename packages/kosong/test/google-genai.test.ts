@@ -519,7 +519,7 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
-    it('tool message with image_url result yields functionResponse with nested inline data', () => {
+    it('tool message with image_url result nests inline data for Gemini 3+ models', () => {
       const messages: Message[] = [
         {
           role: 'assistant',
@@ -543,7 +543,9 @@ describe('GoogleGenAIChatProvider', () => {
         },
       ];
 
-      const contents = messagesToGoogleGenAIContents(messages);
+      const contents = messagesToGoogleGenAIContents(messages, {
+        nestMediaInFunctionResponse: true,
+      });
 
       // Should have assistant Content + one user Content with a single
       // functionResponse part carrying the media nested inside its own `parts`.
@@ -571,6 +573,60 @@ describe('GoogleGenAIChatProvider', () => {
       ]);
     });
 
+    it('tool message with image_url result keeps sibling media parts by default', () => {
+      const messages: Message[] = [
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'tc_001',
+              name: 'fetch_image', arguments: '{}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'Found image:' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+          ],
+          toolCalls: [],
+          toolCallId: 'tc_001',
+        },
+      ];
+
+      const contents = messagesToGoogleGenAIContents(messages);
+
+      // Pre-Gemini-3 models keep media as sibling parts after the functionResponse.
+      expect(contents).toHaveLength(2);
+      const userContent = contents[1] as unknown as {
+        role: string;
+        parts: Array<Record<string, unknown>>;
+      };
+      expect(userContent.role).toBe('user');
+      expect(userContent.parts).toHaveLength(2);
+
+      const fnResp = userContent.parts[0] as {
+        functionResponse: {
+          name: string;
+          response: { output: string };
+          parts: unknown[];
+        };
+      };
+      expect(fnResp.functionResponse).toMatchObject({
+        name: 'fetch_image',
+        response: { output: 'Found image:' },
+      });
+      expect(fnResp.functionResponse.parts).toEqual([]);
+
+      const inlineData = userContent.parts[1] as {
+        inlineData: { mimeType: string; data: string };
+      };
+      expect(inlineData).toEqual({ inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } });
+    });
+
     it('tool message with audio_url and video_url results yields nested fileData parts', () => {
       const messages: Message[] = [
         {
@@ -596,7 +652,9 @@ describe('GoogleGenAIChatProvider', () => {
         },
       ];
 
-      const contents = messagesToGoogleGenAIContents(messages);
+      const contents = messagesToGoogleGenAIContents(messages, {
+        nestMediaInFunctionResponse: true,
+      });
 
       expect(contents).toHaveLength(2);
       const userContent = contents[1] as unknown as {
