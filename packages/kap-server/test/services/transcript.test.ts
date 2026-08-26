@@ -1402,6 +1402,74 @@ describe('AgentTranscriptProjector', () => {
     expect(markers[7]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
   });
 
+  it('removes trailing turns and the undo marker on context.undone', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', {
+      items: () => tx.getItems(),
+    });
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'first' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'second' }));
+    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
+
+    const removeOps = projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }));
+    expect(removeOps).toEqual([{ op: 'items.remove', ids: ['t2', 'live-m1'] }]);
+    tx.apply(removeOps);
+
+    expect(tx.getItems().map((item) => item.kind)).toEqual(['turn']);
+    expect(turnOps('t1', tx.getItems()).prompt).toBe('first');
+  });
+
+  it('removes multiple trailing turns and keeps taskrefs appended during them', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', {
+      items: () => tx.getItems(),
+    });
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+    feed(
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task1',
+          kind: 'process',
+          description: 'ls',
+          status: 'running',
+          startedAt: 1,
+          endedAt: null,
+        },
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.ended', turnId: 3, reason: 'completed' }));
+
+    const removeOps = projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 2 }));
+    expect(removeOps).toEqual([{ op: 'items.remove', ids: ['t3', 't2'] }]);
+    tx.apply(removeOps);
+
+    expect(tx.getItems().map((item) => item.kind)).toEqual(['turn', 'taskref']);
+    expect(tx.getTask('task1')?.state).toBe('running');
+  });
+
+  it('ignores context.undone when no removable turns exist', () => {
+    const bare = new AgentTranscriptProjector('main');
+    expect(bare.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
+
+    const projector = new AgentTranscriptProjector('main', { items: () => [] });
+    expect(projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
+  });
+
   it('projects error / warning events as notice markers outside any step', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

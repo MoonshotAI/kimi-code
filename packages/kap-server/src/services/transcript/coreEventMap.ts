@@ -7,7 +7,7 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { ContentPart, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import type { ContentPart, ContextUndone, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -67,6 +67,7 @@ import type {
   TranscriptAttachment,
   TranscriptFrame,
   TranscriptInteraction,
+  TranscriptItem,
   TranscriptMarker,
   TranscriptOperation,
   TranscriptPrompt,
@@ -143,6 +144,7 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'compaction.cancelled' } & CompactionCancelled)
   | ({ readonly type: 'compaction.completed' } & CompactionCompleted)
   | ({ readonly type: 'context.spliced' } & ContextSpliced)
+  | ({ readonly type: 'context.undone' } & ContextUndone)
   | ({ readonly type: 'error' } & AgentErrorEvent)
   | ({ readonly type: 'warning' } & WarningIssued);
 
@@ -157,11 +159,14 @@ export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
+export type ProjectorItemsLookup = () => readonly TranscriptItem[] | undefined;
+
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
+  readonly items?: ProjectorItemsLookup;
 }
 
 interface OpenTextFrame {
@@ -309,6 +314,8 @@ export class AgentTranscriptProjector {
         ];
       case 'context.spliced':
         return [this.markerOp('undo', restOf(event))];
+      case 'context.undone':
+        return this.onContextUndone(event);
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':
@@ -1185,6 +1192,27 @@ export class AgentTranscriptProjector {
       });
     }
     return ops;
+  }
+
+  private onContextUndone(event: { turns: number }): TranscriptOperation[] {
+    const items = this.lookups?.items?.();
+    if (items === undefined) return [];
+    const ids: string[] = [];
+    let cutIndex = items.length;
+    let remaining = event.turns;
+    for (let i = items.length - 1; i >= 0 && remaining > 0; i--) {
+      const item = items[i];
+      if (item === undefined || item.kind !== 'turn') continue;
+      ids.push(item.turnId);
+      cutIndex = i;
+      remaining -= 1;
+    }
+    if (ids.length === 0) return [];
+    for (let i = cutIndex + 1; i < items.length; i++) {
+      const item = items[i];
+      if (item?.kind === 'marker' && item.marker === 'undo') ids.push(item.markerId);
+    }
+    return [{ op: 'items.remove', ids }];
   }
 
   private markerOp(marker: string, payload: unknown): TranscriptOperation {

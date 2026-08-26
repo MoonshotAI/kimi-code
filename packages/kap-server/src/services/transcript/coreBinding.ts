@@ -91,6 +91,7 @@ export function bindSessionTranscript(
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        items: () => store.getAgent(agentId)?.getItems(),
       });
       const agentHandle = agents.handleOf(agentId);
       if (agentHandle !== undefined) {
