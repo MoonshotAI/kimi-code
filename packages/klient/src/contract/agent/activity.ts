@@ -46,7 +46,13 @@ export const activityTurnStateSchema = z.object({
   since: z.number(),
 });
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']);
+export const turnEndReasonSchema = z.enum([
+  'completed',
+  'cancelled',
+  'failed',
+  'blocked',
+  'interrupted',
+]);
 
 export const activityLastTurnStateSchema = z.object({
   turnId: z.number(),

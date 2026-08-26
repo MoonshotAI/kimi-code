@@ -60,7 +60,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
@@ -153,7 +153,7 @@ describe('Agent resume', () => {
       await ctx.untilTurnEnd();
 
       expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 1 });
-      expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+      expect(findRpcEvent(ctx.allEvents, 'turn.ended', (a) => a.turnId === 1)?.args).toMatchObject({
         turnId: 1,
         reason: 'completed',
       });
@@ -214,10 +214,16 @@ describe('Agent resume', () => {
     await ctx.restorePersisted();
     const plan = await ctx.get(IAgentPlanService).status();
     expect(plan?.path).toContain('resume-plan');
-    expect(ctx.newEvents()).toMatchInlineSnapshot(`[]`);
+    expect(ctx.newEvents()).toMatchInlineSnapshot(`
+      [wire] turn.ended                     { "agentId": "main", "turnId": 0, "reason": "interrupted", "interruptReason": "aborted", "time": "<time>" }
+      [emit] turn.ended                     { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "interrupted", "interruptReason": "aborted" }
+      [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 1, "tokens": 9, "time": "<time>" }
+      [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 9 }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "interrupted", "at": "<time>" }, "background": [], "agentId": "main" }
+    `);
     expect(ctx.llmCalls).toHaveLength(0);
     expect(execWithEnv).not.toHaveBeenCalled();
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
     await ctx.expectResumeMatches();
 
     ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
@@ -227,7 +233,7 @@ describe('Agent resume', () => {
     expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({
       turnId: 1,
     });
-    expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+    expect(findRpcEvent(ctx.allEvents, 'turn.ended', (a) => a.turnId === 1)?.args).toMatchObject({
       turnId: 1,
       reason: 'completed',
     });
@@ -258,7 +264,7 @@ describe('Agent resume', () => {
     await ctx.untilTurnEnd();
 
     expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
-    expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+    expect(findRpcEvent(ctx.allEvents, 'turn.ended', (a) => a.turnId === 2)?.args).toMatchObject({
       turnId: 2,
       reason: 'completed',
     });
@@ -277,10 +283,125 @@ describe('Agent resume', () => {
     await ctx.untilTurnEnd();
 
     expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 3 });
-    expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+    expect(findRpcEvent(ctx.allEvents, 'turn.ended', (a) => a.turnId === 3)?.args).toMatchObject({
       turnId: 3,
       reason: 'completed',
     });
+  });
+
+  it('closes an open turn during restore without replaying it', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'Interrupted' }], origin: { kind: 'user' } },
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'open', turnId: '0' } },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+
+    expect(turnCurrentId(ctx)).toBe(0);
+    expect(persistence.records).toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 0, reason: 'interrupted', interruptReason: 'aborted',
+    }));
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
+
+    const resumedPersistence = new RecordingAgentPersistence(
+      persistence.records as unknown as WireRecord[],
+    );
+    const resumed = testAgent({ persistence: resumedPersistence, autoConfigure: false });
+    await resumed.restorePersisted();
+    expect(resumedPersistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(0);
+  });
+
+  it('closes prompt-only turns and preserves complete and multiple turns', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'open' }], origin: { kind: 'user' } },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'complete' }], origin: { kind: 'user' } },
+      { type: 'turn.ended', turnId: 1, reason: 'completed' },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'open second' }], origin: { kind: 'user' } },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
+    expect(persistence.records).toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 2, reason: 'interrupted', interruptReason: 'aborted',
+    }));
+    expect(persistence.appended).not.toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 0,
+    }));
+  });
+
+  it('retires superseded turns without synthetic endings for legacy journals', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'first' }], origin: { kind: 'user' } },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'second' }], origin: { kind: 'user' } },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
+    expect(persistence.records).toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 1, reason: 'interrupted', interruptReason: 'aborted',
+    }));
+    expect(persistence.appended).not.toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 0,
+    }));
+
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+    await ctx.untilTurnEnd();
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
+  });
+
+  it('honours cancelled turn-id gaps when closing restored turns', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'done' }], origin: { kind: 'user' } },
+      { type: 'turn.ended', turnId: 0, reason: 'completed' },
+      { type: 'turn.cancel', turnId: 1, target: 'queued', reason: 'user_cancelled' },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'open' }], origin: { kind: 'user' } },
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'open', turnId: '2' } },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
+    expect(persistence.records).toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 2, reason: 'interrupted', interruptReason: 'aborted',
+    }));
+    expect(persistence.records).not.toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 1,
+    }));
+
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+    await ctx.untilTurnEnd();
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 3 });
+  });
+
+  it('preserves a persisted user cancellation when closing restored turns', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'cancel me' }], origin: { kind: 'user' } },
+      { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    await ctx.restorePersisted();
+
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
+    expect(persistence.records).toContainEqual(expect.objectContaining({
+      type: 'turn.ended', turnId: 0, reason: 'cancelled', interruptReason: 'user_cancelled',
+    }));
+    expect(persistence.records).not.toContainEqual(expect.objectContaining({
+      type: 'turn.ended', reason: 'interrupted',
+    }));
   });
 
   it('keeps turnIds monotonic across repeated resume cycles', async () => {
@@ -304,7 +425,7 @@ describe('Agent resume', () => {
     await ctx2.untilTurnEnd();
 
     expect(findRpcEvent(ctx2.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 3 });
-    expect(findRpcEvent(ctx2.allEvents, 'turn.ended')?.args).toMatchObject({
+    expect(findRpcEvent(ctx2.allEvents, 'turn.ended', (a) => a.turnId === 3)?.args).toMatchObject({
       turnId: 3,
       reason: 'completed',
     });
@@ -416,7 +537,7 @@ describe('Agent resume', () => {
     ]);
     expect(textContent(ctx.project()[2])).toBe('lookup result');
     expect(textContent(ctx.project()[3])).toBe('Follow-up recorded before result');
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended.filter((record) => record.type === 'turn.ended')).toHaveLength(1);
     await ctx.expectResumeMatches();
   });
 
@@ -1362,6 +1483,12 @@ function goalContinuationResumeHistory(): WireRecord[] {
 function findRpcEvent(
   ctxEvents: readonly { type: string; event: string; args: unknown }[],
   event: string,
+  match?: (args: { turnId?: unknown }) => boolean,
 ) {
-  return ctxEvents.find((entry) => entry.type === '[rpc]' && entry.event === event);
+  return ctxEvents.find(
+    (entry) =>
+      entry.type === '[rpc]' &&
+      entry.event === event &&
+      (match === undefined || match(entry.args as { turnId?: unknown })),
+  );
 }

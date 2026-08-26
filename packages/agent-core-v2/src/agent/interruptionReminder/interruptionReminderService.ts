@@ -10,6 +10,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentInterruptionReminderService } from './interruptionReminder';
 import { INTERRUPTION_REMINDER_VARIANT, interruptionReminderKey } from './interruptionReminderOps';
@@ -29,6 +30,7 @@ export class AgentInterruptionReminderService
   constructor(
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IEventDispatcher dispatcher: IEventDispatcher,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentStateService agentState: IAgentStateService,
@@ -37,6 +39,7 @@ export class AgentInterruptionReminderService
     agentState.contributeState(interruptionReminderKey);
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {
+        if (dispatcher.restorePhase === 'restoring') return;
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
         const origin = lastComparableMessage(this.context.get())?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;

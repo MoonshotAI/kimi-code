@@ -157,11 +157,15 @@ export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
 
 export type ProjectorTurnLookup = (turnId: string) => TurnHeader | undefined;
 
+export type ProjectorPromptsLookup = () => ReadonlyMap<string, TranscriptPrompt>;
+
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
   readonly stepOrdinal?: ProjectorStepOrdinalLookup;
   readonly turn?: ProjectorTurnLookup;
+  readonly prompts?: ProjectorPromptsLookup;
+  readonly restoring?: () => boolean;
 }
 
 interface OpenTextFrame {
@@ -359,7 +363,7 @@ export class AgentTranscriptProjector {
   private onTurnEnded(event: {
     time?: number;
     turnId: number;
-    reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    reason: 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
     error?: { message: string };
     durationMs?: number;
     interruptReason?: string;
@@ -397,6 +401,28 @@ export class AgentTranscriptProjector {
       ops.push(
         this.markerOp('interruption', { turnId: event.turnId, reason: event.interruptReason }),
       );
+    }
+    if (
+      (event.reason === 'interrupted' || event.reason === 'cancelled') &&
+      this.lookups?.restoring?.() === true &&
+      this.lookups.prompts !== undefined
+    ) {
+      const finishedAt = event.time === undefined ? nowIso() : epochMsToIso(event.time);
+      const status = event.reason === 'interrupted' ? 'failed' : 'aborted';
+      for (const [promptId, prev] of this.lookups.prompts()) {
+        if (prev.status !== 'running' && prev.status !== 'queued') continue;
+        const prompt: TranscriptPrompt = {
+          promptId,
+          status,
+          userMessageId: prev.userMessageId,
+          content: prev.content,
+          createdAt: prev.createdAt,
+          finishedAt,
+          steeredAt: prev.steeredAt,
+        };
+        this.prompts.set(promptId, prompt);
+        ops.push({ op: 'prompt.upsert', prompt });
+      }
     }
     return ops;
   }
@@ -1405,7 +1431,9 @@ function mapTurnOrigin(origin: unknown): TurnOrigin {
   }
 }
 
-function mapTurnEndState(reason: 'completed' | 'cancelled' | 'failed' | 'blocked'): TurnState {
+function mapTurnEndState(
+  reason: 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted',
+): TurnState {
   switch (reason) {
     case 'completed':
       return 'completed';
@@ -1413,6 +1441,7 @@ function mapTurnEndState(reason: 'completed' | 'cancelled' | 'failed' | 'blocked
       return 'cancelled';
     case 'failed':
     case 'blocked':
+    case 'interrupted':
       return 'failed';
   }
 }

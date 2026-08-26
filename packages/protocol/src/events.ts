@@ -466,7 +466,7 @@ export interface McpOAuthAuthorizationUrlUpdateData {
   readonly expiresAt?: number;
 }
 
-export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
 
 export type TurnInterruptReason =
   | 'user_cancelled'
@@ -1469,7 +1469,7 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   expiresAt: z.number().optional(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
+export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked', 'interrupted']) satisfies z.ZodType<TurnEndReason>;
 
 export const turnInterruptReasonSchema = z.enum(['user_cancelled', 'aborted', 'max_steps', 'error', 'filtered', 'blocked']) satisfies z.ZodType<TurnInterruptReason>;
 

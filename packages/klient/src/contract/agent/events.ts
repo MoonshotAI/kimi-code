@@ -43,7 +43,7 @@ export const turnEndedEventSchema = z.object({
   type: z.literal('turn.ended'),
   time: z.number().optional(),
   turnId: z.number(),
-  reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
+  reason: z.enum(['completed', 'cancelled', 'failed', 'blocked', 'interrupted']),
   /** Protocol `KimiErrorPayload` — mirrored as `unknown`. */
   error: z.unknown().optional(),
   durationMs: z.number().optional(),

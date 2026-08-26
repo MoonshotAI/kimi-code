@@ -287,7 +287,7 @@ export const agentPhaseMetaSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('ended'),
     turnId: z.number(),
-    reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
+    reason: z.enum(['completed', 'cancelled', 'failed', 'blocked', 'interrupted']),
     durationMs: z.number().optional(),
     at: z.number(),
   }),

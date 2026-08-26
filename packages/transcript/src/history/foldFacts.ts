@@ -127,6 +127,7 @@ function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined 
       return 'cancelled';
     case 'failed':
     case 'blocked':
+    case 'interrupted':
       return 'failed';
     default:
       return undefined;

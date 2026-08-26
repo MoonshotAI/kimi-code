@@ -1514,6 +1514,14 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const blockedTurn = blocked.items[0];
     if (blockedTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(blockedTurn.state).toBe('failed');
+
+    const interrupted = foldWireRecordFacts(
+      [{ type: 'turn.ended', turnId: 0, reason: 'interrupted', time: 4000 }],
+      base,
+    );
+    const interruptedTurn = interrupted.items[0];
+    if (interruptedTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(interruptedTurn.state).toBe('failed');
   });
 
   it('ignores turn.ended records with unknown turn ids or malformed payloads', () => {

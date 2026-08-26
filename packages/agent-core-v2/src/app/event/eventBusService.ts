@@ -15,24 +15,45 @@ export class EventBusService extends Service implements ISessionEventBus {
   private readonly allEmitter = this._register(new Emitter<Event2<any>>('*'));
   private readonly perType = new Map<string, Emitter<Event2<any>>>();
   private readonly agents = new Map<string, AgentContext>();
+  private readonly latestGeneration = new Map<string, number>();
+  private readonly retiredGeneration = new Map<string, number>();
   private readonly sources = new WeakMap<Event2<any>, AgentContext>();
 
   activateAgent(agent: AgentContext): void {
+    this.latestGeneration.set(
+      agent.agentId,
+      Math.max(this.latestGeneration.get(agent.agentId) ?? 0, agent.generation),
+    );
     this.agents.set(agent.agentId, agent);
   }
 
   deactivateAgent(agent: AgentContext): void {
+    this.retiredGeneration.set(
+      agent.agentId,
+      Math.max(this.retiredGeneration.get(agent.agentId) ?? 0, agent.generation),
+    );
+    this.latestGeneration.set(
+      agent.agentId,
+      Math.max(this.latestGeneration.get(agent.agentId) ?? 0, agent.generation),
+    );
     if (this.agents.get(agent.agentId) === agent) this.agents.delete(agent.agentId);
   }
 
   publish(event: Event2<any>, agent?: AgentContext): void {
     const cls = event.constructor as Event2Class;
     if (cls.agentDomain) {
-      if (
-        agent === undefined ||
-        this.agents.get(agent.agentId) !== agent ||
-        (event as Event2<any> & AgentDomainTrait).agentId !== agent.agentId
-      ) {
+      const eventAgentId = (event as Event2<any> & AgentDomainTrait).agentId;
+      if (agent === undefined || eventAgentId !== agent.agentId) {
+        throw new Error(`Agent event '${event.type}' has no active lifecycle context`);
+      }
+      const active = this.agents.get(agent.agentId);
+      if (active !== agent) {
+        const latest = this.latestGeneration.get(agent.agentId);
+        const retired = this.retiredGeneration.get(agent.agentId);
+        const known = latest !== undefined || retired !== undefined;
+        if (known && (agent.generation < (latest ?? 0) || agent.generation <= (retired ?? 0))) {
+          return;
+        }
         throw new Error(`Agent event '${event.type}' has no active lifecycle context`);
       }
     }

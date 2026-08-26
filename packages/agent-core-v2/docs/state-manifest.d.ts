@@ -801,7 +801,7 @@ export interface AgentStateSnapshot {
     };
     readonly lastTurn?: /* ActivityLastTurnState — packages/agent-core-v2/src/agent/activityView/activityView.ts */ {
       readonly turnId: number;
-      readonly reason: /* TurnEndReason — packages/agent-core-v2/src/agent/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked';
+      readonly reason: /* TurnEndReason — packages/agent-core-v2/src/agent/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
       readonly durationMs?: number;
       readonly at: number;
     };
@@ -813,7 +813,7 @@ export interface AgentStateSnapshot {
   };
   'activityView.lastTurn': /* ActivityLastTurnState — packages/agent-core-v2/src/agent/activityView/activityView.ts */ {
     readonly turnId: number;
-    readonly reason: /* TurnEndReason — packages/agent-core-v2/src/agent/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked';
+    readonly reason: /* TurnEndReason — packages/agent-core-v2/src/agent/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
     readonly durationMs?: number;
     readonly at: number;
   } | undefined;
@@ -1191,7 +1191,7 @@ export interface AgentStateSnapshot {
     readonly cancelledTurnIds: readonly number[];
     readonly lastEnded?: {
       readonly turnId: number;
-      readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+      readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked' | 'interrupted';
       readonly durationMs?: number;
     };
   };

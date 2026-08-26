@@ -10,6 +10,8 @@ export type EventDispatcherHooks = {
   readonly onDidRestore: Record<string, never>;
 };
 
+export type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
+
 export interface ModelCheckpointDepth {
   readonly id: string;
   readonly depth: number;
@@ -23,6 +25,8 @@ export interface IEventDispatcher extends DurableRuntimeParticipantHost {
   readonly _serviceBrand: undefined;
 
   readonly hooks: Hooks<EventDispatcherHooks>;
+
+  readonly restorePhase: RestorePhase;
 
   dispatch(event: Event2<any>): Promise<void>;
   history<S>(key: ReplayableStateKey<S>): readonly PatchEntry[];

@@ -19,6 +19,8 @@ import {
   type Event2Class,
 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
+import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
+import { advanceTurnClock, TurnCancel, TurnEnded, TurnPrompt, type TurnModelState } from '#/agent/loop/turnOps';
 import type { ContentPart } from '#/kosong/contract/message';
 import { OrderedHookSlot } from '#/hooks';
 import { IWireService } from '#/wire/wire';
@@ -31,7 +33,7 @@ import {
   type AgentModel,
   type AgentModelDefinition,
 } from './agentModel';
-import { IEventDispatcher, type ModelCheckpointDepth } from './eventDispatcher';
+import { IEventDispatcher, type ModelCheckpointDepth, type RestorePhase } from './eventDispatcher';
 import { StateError, StateErrors } from './errors';
 import {
   expandedModelAppliers,
@@ -109,8 +111,6 @@ interface PreparedParticipant {
   readonly inversePatches: PatchEntry['inversePatches'];
 }
 
-type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
-
 class FoldContextImpl implements FoldContext {
   pendingCheckpoint = false;
   pendingClear = false;
@@ -178,7 +178,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     readLegacyState: (key) => this.agentState.get(key),
   };
 
-  private restorePhase: RestorePhase = 'new';
+  restorePhase: RestorePhase = 'new';
   private dispatching = false;
   private disposed = false;
   private queue: QueuedEvent[] = [];
@@ -718,6 +718,9 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
     this.restorePhase = 'restoring';
     try {
+      let openTurn: number | undefined;
+      let openTurnCancel: 'user_cancelled' | 'aborted' | undefined;
+      let turnClock: TurnModelState = { nextTurnId: 0, cancelledTurnIds: [] };
       let recordIndex = 0;
       for await (const record of this.wire.readJournal()) {
         if (record.type === 'metadata') continue;
@@ -750,9 +753,51 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
           continue;
         }
         this.executeEvent(event, true);
+        if (event instanceof TurnPrompt) {
+          openTurn = turnClock.nextTurnId;
+          openTurnCancel = undefined;
+          turnClock = advanceTurnClock(turnClock, turnClock.nextTurnId + 1);
+        } else if (event instanceof TurnCancel) {
+          if (
+            event.target !== undefined &&
+            event.turnId !== undefined &&
+            event.turnId >= turnClock.nextTurnId
+          ) {
+            turnClock = advanceTurnClock(turnClock, turnClock.nextTurnId, [
+              ...turnClock.cancelledTurnIds,
+              event.turnId,
+            ]);
+          }
+          if (event.turnId !== undefined && event.turnId === openTurn) {
+            openTurnCancel = event.reason ?? 'aborted';
+          }
+        } else if (event instanceof TurnEnded) {
+          if (event.turnId === openTurn) {
+            openTurn = undefined;
+            openTurnCancel = undefined;
+          }
+        } else if (event instanceof ContextAppendLoopEvent) {
+          const loopEvent = event.event;
+          if (loopEvent.type !== 'tool.result' && loopEvent.turnId !== undefined) {
+            const turnId = Number.parseInt(loopEvent.turnId, 10);
+            if (Number.isInteger(turnId) && turnId >= turnClock.nextTurnId) {
+              turnClock = advanceTurnClock(turnClock, turnId + 1);
+            }
+          }
+        }
         recordIndex++;
       }
       await this.rehydrateStates();
+      if (openTurn !== undefined) {
+        const event = new TurnEnded({
+          agentId: this.agentScope!.agentId,
+          turnId: openTurn,
+          reason: openTurnCancel === undefined ? 'interrupted' : 'cancelled',
+          interruptReason: openTurnCancel ?? 'aborted',
+        });
+        this.executeEvent(event, false);
+        await this.wire.flush();
+      }
       this.restorePhase = 'ready';
       await this.hooks.onDidRestore.run({});
     } catch (error) {

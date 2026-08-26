@@ -1531,6 +1531,7 @@ function telemetryInterruptReason(
     return 'user_cancelled';
   }
   if (reason === 'aborted' || reason === 'cancelled') return 'aborted';
+  if (reason === 'interrupted') return 'aborted';
   if (reason === 'failed') return 'error';
   if (reason === 'blocked') return 'blocked';
   // Remaining values are `max_steps` | `error` | `filtered`, which match the
