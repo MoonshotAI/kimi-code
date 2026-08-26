@@ -80,6 +80,7 @@ import type {
 } from '@moonshot-ai/transcript';
 
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
+import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 
 export interface ProjectorInteraction {
@@ -87,6 +88,7 @@ export interface ProjectorInteraction {
   readonly kind: 'approval' | 'question';
   readonly payload: unknown;
   readonly origin: { readonly agentId?: string; readonly turnId?: number };
+  readonly createdAt: number;
 }
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
@@ -230,6 +232,7 @@ export class AgentTranscriptProjector {
 
   constructor(
     readonly agentId: string,
+    private readonly sessionId: string,
     private readonly lookups?: ProjectorLookups,
   ) {}
 
@@ -1443,10 +1446,19 @@ export class AgentTranscriptProjector {
       interactionKind: interaction.kind,
       toolCallId,
       state: 'pending',
-      request: interaction.payload,
+      request: this.wireInteractionRequest(interaction),
     };
     this.interactions.set(interaction.id, entity);
     return [{ op: 'interaction.upsert', interaction: entity }];
+  }
+
+  private wireInteractionRequest(interaction: ProjectorInteraction): unknown {
+    if (interaction.kind !== 'question') return interaction.payload;
+    try {
+      return toWireQuestion(interaction, this.sessionId);
+    } catch {
+      return interaction.payload;
+    }
   }
 
   mapInteractionResolved(id: string, response: unknown): TranscriptOperation[] {
