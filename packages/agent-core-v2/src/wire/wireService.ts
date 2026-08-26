@@ -1,15 +1,21 @@
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '#/kosong/contract/message';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { StorageError, StorageErrors } from '#/persistence/interface/storage';
+import {
+  type AppendLogTruncation,
+  IAppendLogStore,
+} from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 
 import { IWireService } from './wire';
 import { WireError, WireErrors } from './errors';
+import { repairWireJournal } from './repair';
 import {
   WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
@@ -38,6 +44,9 @@ export class WireService extends Service implements IWireService {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAppendLogStore private readonly log: IAppendLogStore,
     @IAgentBlobService private readonly blobService: IAgentBlobService,
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ILogService private readonly logger: ILogService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.wireScope = scopeContext.scope();
@@ -45,7 +54,8 @@ export class WireService extends Service implements IWireService {
   }
 
   async seal(): Promise<void> {
-    for await (const record of this.log.read(this.wireScope, AGENT_WIRE_RECORD_KEY)) {
+    const tolerate = { onTruncate: () => {} };
+    for await (const record of this.log.read(this.wireScope, AGENT_WIRE_RECORD_KEY, tolerate)) {
       void record;
       return;
     }
@@ -78,7 +88,12 @@ export class WireService extends Service implements IWireService {
   }
 
   async *readJournal(): AsyncIterable<WireRecord> {
-    const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY);
+    let truncation: AppendLogTruncation | undefined;
+    const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY, {
+      onTruncate: (info) => {
+        truncation = info;
+      },
+    });
     let migrations: readonly WireMigration[] = [];
     let rewrittenRecords: WireRecord[] | undefined;
     let newerWireVersion = false;
@@ -128,9 +143,40 @@ export class WireService extends Service implements IWireService {
     if (!hasRecords) {
       rewrittenRecords = [createWireMetadataRecord()];
     }
-    if (rewrittenRecords !== undefined) {
+    if (truncation !== undefined) {
+      await this.repairJournal(truncation, rewrittenRecords);
+    } else if (rewrittenRecords !== undefined) {
       await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
     }
+  }
+
+  private async repairJournal(
+    truncation: AppendLogTruncation,
+    rewrittenRecords: WireRecord[] | undefined,
+  ): Promise<void> {
+    let records: WireRecord[] = rewrittenRecords ?? [];
+    if (rewrittenRecords === undefined) {
+      const tolerate = { onTruncate: () => {} };
+      for await (const record of this.log.read<WireRecord>(
+        this.wireScope,
+        AGENT_WIRE_RECORD_KEY,
+        tolerate,
+      )) {
+        records.push(record);
+      }
+    }
+    await repairWireJournal(
+      {
+        appendLog: this.log,
+        storage: this.storage,
+        log: this.logger,
+        telemetry: this.telemetry,
+      },
+      this.wireScope,
+      AGENT_WIRE_RECORD_KEY,
+      records,
+      truncation,
+    );
   }
 
   async flush(): Promise<void> {
