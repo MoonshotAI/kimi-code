@@ -208,17 +208,22 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     data: Buffer,
     mimeType: string,
     safePath: string,
+    signal: AbortSignal,
   ): Promise<ContentPart> {
-    const daemonPart = await this.daemonVideoPart(data, mimeType, safePath);
+    const daemonPart = await this.daemonVideoPart(data, mimeType, safePath, signal);
     if (daemonPart !== undefined) return daemonPart;
     if (this.videoUploader !== undefined) {
       try {
-        return await this.videoUploader({
-          data,
-          mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        });
+        return await this.videoUploader(
+          {
+            data,
+            mimeType,
+            filename: safePath.split(/[\\/]/).at(-1),
+          },
+          { signal },
+        );
       } catch (error) {
+        if (signal.aborted) throw error;
         if (shouldSurfaceVideoUploadError(error, this.inlineVideoSupported)) throw error;
       }
     }
@@ -229,6 +234,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     data: Buffer,
     mimeType: string,
     safePath: string,
+    signal: AbortSignal,
   ): Promise<ContentPart | undefined> {
     const deps = this.sessionMedia;
     if (deps === undefined) return undefined;
@@ -241,9 +247,11 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         name,
         mimeType,
         stream: () => Readable.from(data),
+        signal,
       });
       return { type: 'video_url', videoUrl: { url: buildDaemonFileUrl(fileId), id: fileId } };
     } catch (error) {
+      signal.throwIfAborted();
       deps.log?.warn('video staging into the session media store failed; falling back to eager upload', {
         file_id: fileId,
         error_message: error instanceof Error ? error.message : String(error),
@@ -279,13 +287,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           pathClass: env.pathClass,
           homeDir: env.homeDir,
         }),
-      execute: async () => {
+      execute: async (ctx) => {
         const lease = this.runtime.acquire(['fs']);
         try {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(args, path, lease.runtime.fs!, env);
+          return await this.execution(args, path, lease.runtime.fs!, env, ctx.signal);
         } finally {
           lease.dispose();
         }
@@ -298,6 +306,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     safePath: string,
     fs: IHostFileSystem,
     env: HostEnvironmentInfo,
+    signal: AbortSignal,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
@@ -409,6 +418,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       }
 
       const data = Buffer.from(await fs.readBytes(safePath));
+      signal.throwIfAborted();
       let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       let mediaPart: ContentPart;
       let delivery: ImageDelivery | undefined;
@@ -492,7 +502,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           }
         }
       } else {
-        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath);
+        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath, signal);
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';
@@ -515,6 +525,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
 
       return { output, note, isError: false };
     } catch (error) {
+      if (signal.aborted) throw error;
       return {
         isError: true,
         output: `Failed to read ${args.path}: ${error instanceof Error ? error.message : String(error)}`,

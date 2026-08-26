@@ -13,7 +13,7 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IFileSystemStorageService, type StorageWriteOptions } from '#/persistence/interface/storage';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 const BYTES = Buffer.from('media bytes');
@@ -118,6 +118,34 @@ describe('SessionMediaStoreService', () => {
     const entries = await readdir(join(sessionDir, 'media')).catch(() => [] as string[]);
     expect(entries.filter((name) => name.includes('.tmp.'))).toEqual([]);
     expect(entries).not.toContain('f_1.mp4');
+  });
+
+  it('stages nothing when the signal is already aborted', async () => {
+    await expect(store.materialize(input({ signal: AbortSignal.abort() }))).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    const entries = await readdir(join(sessionDir, 'media')).catch(() => [] as string[]);
+    expect(entries).toEqual([]);
+  });
+
+  it('discards the canonical copy when the metadata write fails', async () => {
+    await mkdir(join(sessionDir, 'media', 'meta', 'f_1.json'), { recursive: true });
+
+    await expect(store.materialize(input())).rejects.toThrow();
+
+    const entries = await readdir(join(sessionDir, 'media'));
+    expect(entries).not.toContain('f_1.mp4');
+    expect(entries.filter((name) => name.includes('.tmp.'))).toEqual([]);
+  });
+
+  it('keeps a pre-existing canonical copy when the metadata write fails', async () => {
+    const target = await store.materialize(input());
+    await rm(join(sessionDir, 'media', 'meta', 'f_1.json'));
+    await mkdir(join(sessionDir, 'media', 'meta', 'f_1.json'), { recursive: true });
+
+    await expect(store.materialize(input())).rejects.toThrow();
+
+    expect(await readFile(target!)).toEqual(BYTES);
   });
 
   it('derives the extension from the name, then the MIME fallback', async () => {
@@ -261,6 +289,56 @@ it('retains canonical bytes without inventing a path for a non-filesystem backen
   expect(canonical === undefined ? undefined : Buffer.from(canonical.data)).toEqual(BYTES);
   expect((await store.open('f_1'))?.path).toBeUndefined();
   disposables.dispose();
+});
+
+it('discards the canonical copy when the signal aborts after the bytes land', async () => {
+  const disposables = new DisposableStore();
+  const homeDir = await mkdtemp(join(tmpdir(), 'session-media-store-home-'));
+  const sessionDir = join(homeDir, 'sessions', 's1');
+  await mkdir(sessionDir, { recursive: true });
+  const controller = new AbortController();
+  class AbortingStorage extends FileStorageService {
+    override async writeStream(
+      scope: string,
+      key: string,
+      source: AsyncIterable<Uint8Array>,
+      options?: StorageWriteOptions,
+    ): Promise<void> {
+      await super.writeStream(scope, key, source, options);
+      controller.abort();
+    }
+  }
+  try {
+    const ix = createServices(disposables, {
+      strict: true,
+      additionalServices: (reg) => {
+        reg.defineInstance(ISessionContext, makeSessionContext({
+          sessionId: 's1',
+          workspaceId: 'w1',
+          sessionDir,
+          sessionScope: join('sessions', 's1'),
+          cwd: '/tmp',
+        }));
+        reg.defineInstance(IFileSystemStorageService, new AbortingStorage(homeDir));
+        reg.define(IAtomicDocumentStore, JsonAtomicDocumentStore);
+        reg.define(ISessionMediaStore, SessionMediaStoreService);
+      },
+    });
+    const store = ix.get(ISessionMediaStore);
+    await expect(store.materialize({
+      fileId: 'f_1',
+      size: BYTES.length,
+      name: 'clip.mp4',
+      mimeType: 'video/mp4',
+      stream: streamOf(BYTES),
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    const entries = await readdir(join(sessionDir, 'media')).catch(() => [] as string[]);
+    expect(entries).toEqual([]);
+  } finally {
+    disposables.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  }
 });
 
 async function collect(source: AsyncIterable<Uint8Array>): Promise<Uint8Array> {

@@ -84,20 +84,29 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     if (!isFileId(input.fileId)) return undefined;
     const ext = extname(input.name) || (mediaExtensionForMime(input.mimeType) ?? '.bin');
     const key = this.keyFor(input.fileId, ext);
-    const existingSize = await this.storage.size(this.scope, key);
-    if (existingSize !== input.size) {
-      const source = input.stream() as NodeJS.ReadableStream & AsyncIterable<Uint8Array>;
-      await this.storage.writeStream(this.scope, key, source, {
-        atomic: true,
-        signal: input.signal,
+    let wroteCanonical = false;
+    try {
+      const existingSize = await this.storage.size(this.scope, key);
+      input.signal?.throwIfAborted();
+      if (existingSize !== input.size) {
+        const source = input.stream() as NodeJS.ReadableStream & AsyncIterable<Uint8Array>;
+        await this.storage.writeStream(this.scope, key, source, {
+          atomic: true,
+          signal: input.signal,
+        });
+        wroteCanonical = true;
+      }
+      input.signal?.throwIfAborted();
+      await this.documents.set(this.scope, this.metadataKey(input.fileId), {
+        version: 1,
+        key,
+        name: input.name,
+        mediaType: input.mimeType,
       });
+    } catch (error) {
+      if (wroteCanonical) await this.storage.delete(this.scope, key).catch(() => undefined);
+      throw error;
     }
-    await this.documents.set(this.scope, this.metadataKey(input.fileId), {
-      version: 1,
-      key,
-      name: input.name,
-      mediaType: input.mimeType,
-    });
     return this.storage.pathFor(this.scope, key);
   }
 

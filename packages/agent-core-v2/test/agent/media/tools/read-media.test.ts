@@ -243,6 +243,7 @@ function makeTool(
 async function execute(
   tool: ReadMediaFileTool,
   args: ReadMediaFileInput,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<ExecutableToolResult> {
   const execution = tool.resolveExecution(args);
   if (!('execute' in execution)) {
@@ -251,7 +252,7 @@ async function execute(
   const ctx: ExecutableToolContext = {
     turnId: 1,
     toolCallId: 'call_media',
-    signal: new AbortController().signal,
+    signal,
   };
   return execution.execute(ctx);
 }
@@ -737,6 +738,7 @@ describe('ReadMediaFileTool', () => {
     expect(videoUploader).toHaveBeenCalledOnce();
     expect(videoUploader).toHaveBeenCalledWith(
       expect.objectContaining({ mimeType: 'video/mp4', filename: 'clip.mp4' }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(parts[1]).toEqual(uploadResult);
   });
@@ -765,6 +767,47 @@ describe('ReadMediaFileTool', () => {
       videoUrl: { url: `kimi-file://${staged!.fileId}`, id: staged!.fileId },
     });
     expect(sessionMedia.mediaStore.materialize).toHaveBeenCalledOnce();
+    expect(videoUploader).not.toHaveBeenCalled();
+  });
+
+  it('passes the execution signal through to session media staging', async () => {
+    const sessionMedia = stubSessionMedia();
+    const controller = new AbortController();
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        undefined,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+      controller.signal,
+    );
+    expect(result.isError).not.toBe(true);
+    const staged = vi.mocked(sessionMedia.mediaStore.materialize).mock.calls[0]?.[0];
+    expect(staged?.signal).toBe(controller.signal);
+  });
+
+  it('rethrows an aborted read without staging the video', async () => {
+    const sessionMedia = stubSessionMedia();
+    const videoUploader = vi.fn<VideoUploader>();
+    await expect(
+      execute(
+        makeTool(
+          { '/workspace/clip.mp4': { data: mp4Buffer() } },
+          capabilities(),
+          videoUploader,
+          undefined,
+          undefined,
+          sessionMedia,
+        ),
+        { path: '/workspace/clip.mp4' },
+        AbortSignal.abort(),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(sessionMedia.mediaStore.materialize).not.toHaveBeenCalled();
     expect(videoUploader).not.toHaveBeenCalled();
   });
 
