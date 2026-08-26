@@ -13,7 +13,8 @@ import ShortcutsPanel from './ShortcutsPanel.vue';
 import PluginsPanel from './PluginsPanel.vue';
 import { usePlugins } from '../../composables/usePlugins';
 import { ProvidersPanel } from '@moonshot-ai/app-components';
-import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
+import { canOpenInNative, listNativeOpenInApps, openInAppIcon } from '../../lib/nativeOpenIn';
+import { saveDefaultOpenInTarget, useDefaultOpenInTarget } from '@moonshot-ai/app-components';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
 import {
   commitLevel,

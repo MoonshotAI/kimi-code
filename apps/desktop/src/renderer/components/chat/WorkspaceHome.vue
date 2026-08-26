@@ -5,12 +5,10 @@
      sits below it. Entering this state creates nothing — a session only
      exists once the first prompt is sent. -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
-import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
+import { OpenInMenu } from '@moonshot-ai/app-components';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
-import OpenInMenu from './OpenInMenu.vue';
 
 const props = defineProps<{
   /** Workspace display name. */
@@ -20,23 +18,6 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-
-// Open-in-app (same bridge-gated catalog as the chat header's): hidden where
-// the bridge or the root is missing.
-const openInApps = ref<Array<{ id: string; label: string }>>([]);
-
-onMounted(async () => {
-  if (canOpenInNative()) {
-    openInApps.value = await listNativeOpenInApps();
-  }
-});
-
-const showOpenIn = computed(() => openInApps.value.length > 0 && Boolean(props.workspaceRoot));
-
-async function onOpenInApp(appId: string): Promise<void> {
-  if (!props.workspaceRoot) return;
-  await openInNativeApp(appId, props.workspaceRoot);
-}
 
 // Native terminal (desktop bridge-gated; hidden on web / old bridges). The
 // panel is keyed by cwd, so a draft workspace gets its own terminal.
@@ -55,12 +36,7 @@ function toggleTerminalPanel(): void {
     </div>
     <div v-if="workspaceRoot" class="ws-home-path">{{ workspaceRoot }}</div>
     <div class="ws-home-actions">
-      <OpenInMenu
-        v-if="showOpenIn"
-        :work-dir="workspaceRoot ?? ''"
-        :available-apps="openInApps"
-        @open-in-app="onOpenInApp"
-      />
+      <OpenInMenu v-if="workspaceRoot" :work-dir="workspaceRoot" />
       <button
         v-if="terminalStore.available"
         type="button"

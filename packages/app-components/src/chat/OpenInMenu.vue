@@ -1,12 +1,14 @@
-<!-- Desktop-only "open workspace in <app>" control: a compact pill in the chat
-     header. Left half = current target's icon, click opens with it; right
-     caret expands the app menu. Picking a menu item opens immediately and
-     becomes the shown target. The catalog and the launch live in the main
-     process (lib/nativeOpenIn.ts, no daemon REST); web keeps its own copy. -->
+<!-- "Open workspace in <app>" control: a compact pill in the chat header. Left
+     half = current target's icon, click opens with it; right caret expands the
+     app menu. Picking a menu item opens immediately and becomes the shown
+     target. The app catalog and the launch come from the injected
+     OpenInService (desktop: native bridge; web: daemon) — an empty catalog
+     hides the whole control, which is the no-bridge degradation. -->
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { openInAppIcon, resolveOpenInTarget, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
+import { OpenInServiceKey, type OpenInAppEntry } from '@moonshot-ai/app-client/contracts';
+import { resolveOpenInTarget, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../lib/openInTarget';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Icon, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
@@ -15,34 +17,20 @@ const { t } = useI18n();
 const props = defineProps<{
   /** Absolute path of the workspace to open; the control is disabled without it. */
   workDir?: string;
-  /** Installed app catalog from the main process; unset/empty shows the fallback catalog. */
-  availableApps?: Array<{ id: string; label: string }>;
 }>();
 
-const emit = defineEmits<{
-  openInApp: [appId: string];
-}>();
-
-const TARGETS: Array<{ id: string; label: string }> = [
-  { id: 'vscode', label: 'VS Code' },
-  { id: 'vscode-insiders', label: 'VS Code Insiders' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'zed', label: 'Zed' },
-  { id: 'finder', label: 'Finder' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'iterm', label: 'iTerm2' },
-  { id: 'ghostty', label: 'Ghostty' },
-  { id: 'warp', label: 'Warp' },
-  { id: 'kitty', label: 'kitty' },
-  { id: 'xcode', label: 'Xcode' },
-];
+const openInService = inject(OpenInServiceKey);
 
 const hasWorkDir = computed(() => Boolean(props.workDir && props.workDir.trim().length > 0));
 
-const visibleTargets = computed(() => {
-  if (!props.availableApps || props.availableApps.length === 0) return TARGETS;
-  return props.availableApps;
+// App catalog from the injected service; loaded once on mount (same cadence as
+// the old parent-side load). Empty catalog hides the control (see template).
+const catalog = ref<OpenInAppEntry[]>([]);
+onMounted(async () => {
+  catalog.value = openInService ? await openInService.catalog() : [];
 });
+
+const visibleTargets = computed(() => catalog.value);
 
 // ---------------------------------------------------------------------------
 // Target selection: the chosen app (shared reactive ref — the settings
@@ -60,7 +48,7 @@ const quickTargetLabel = computed(
 
 /** Icon URL for the pill's left half; '' when nothing can be resolved. */
 const quickTargetIcon = computed(() =>
-  quickTargetId.value === null ? '' : openInAppIcon(quickTargetId.value),
+  quickTargetId.value === null || !openInService ? '' : openInService.icon(quickTargetId.value),
 );
 
 const quickTooltipText = computed(() =>
@@ -69,12 +57,19 @@ const quickTooltipText = computed(() =>
     : t('header.openInApp', { app: quickTargetLabel.value }),
 );
 
+function executeOpen(id: string): void {
+  if (!hasWorkDir.value || !openInService) return;
+  // Fire and forget — service implementations absorb and report their own
+  // failures (native bridge returns false, daemon logs an operation failure).
+  void openInService.open(id, { path: props.workDir! });
+}
+
 function handleOpenTarget(id: string): void {
   // Picking an item both opens with it and selects it — the same key the
   // settings dropdown writes, so the pill and settings stay in sync.
   saveDefaultOpenInTarget(id);
   closeMenu();
-  if (hasWorkDir.value) emit('openInApp', id);
+  executeOpen(id);
 }
 
 function handleQuickOpen(): void {
@@ -83,7 +78,7 @@ function handleQuickOpen(): void {
   // selection; otherwise the first quick open would freeze the "auto"
   // behavior (first available app) forever, even after installing editors.
   const id = quickTargetId.value;
-  if (id !== null && hasWorkDir.value) emit('openInApp', id);
+  if (id !== null) executeOpen(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +163,8 @@ async function copyPath(): Promise<void> {
 </script>
 
 <template>
-  <div class="open-in" :class="{ open: menuOpen }">
+  <!-- Empty catalog = the no-bridge degradation: hide the whole control. -->
+  <div v-if="visibleTargets.length > 0" class="open-in" :class="{ open: menuOpen }">
     <Tooltip :text="quickTooltipText">
       <button
         type="button"
@@ -210,7 +206,8 @@ async function copyPath(): Promise<void> {
         :active="target.id === quickTargetId"
         @click="handleOpenTarget(target.id)"
       >
-        <img class="om-icon" :src="openInAppIcon(target.id)" alt="" />
+        <img v-if="openInService?.icon(target.id)" class="om-icon" :src="openInService?.icon(target.id)" alt="" />
+        <Icon v-else name="external-link" size="sm" />
         <span class="om-label">{{ target.label }}</span>
       </MenuItem>
       <MenuItem separator />
@@ -258,6 +255,13 @@ async function copyPath(): Promise<void> {
 .open-in-caret:hover:not(:disabled) {
   background: var(--color-hover);
   color: var(--color-text-strong);
+}
+/* IconButton contract (focus ring) replicated on the segmented halves — see
+   the DesignSystemView exception entry for this control. */
+.open-in-main:focus-visible,
+.open-in-caret:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
 }
 .open-in-main:disabled,
 .open-in-caret:disabled { cursor: default; opacity: 0.5; }

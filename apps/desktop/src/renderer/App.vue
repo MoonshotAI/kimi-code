@@ -81,10 +81,11 @@ import { shortcutActionById } from './lib/keymap';
 import {
   canOpenInNative,
   listNativeOpenInApps,
+  openInAppIcon,
   openInNativeApp,
-  resolveOpenInTarget,
-  useDefaultOpenInTarget,
 } from './lib/nativeOpenIn';
+import { OpenInServiceKey, type OpenInService } from '@moonshot-ai/app-client/contracts';
+import { resolveOpenInTarget, useDefaultOpenInTarget } from '@moonshot-ai/app-components';
 import { track } from './lib/track';
 import { openUpgrade, resolveUpgradeRegion, setUpgradeRegionProbe } from '@moonshot-ai/app-core/lib';
 import { setSessionIntent } from './lib/session-intent';
@@ -485,18 +486,27 @@ const MENU_ACTION_TO_SHORTCUT: Record<string, AppActionId> = {
 const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
 
 // "Open in <default app>": same target resolution as the header menu pick
-// (nativeOpenIn.ts owns the persisted default), keyed off the same root the
-// ChatHeader gets.
+// (the shared openInTarget module owns the persisted default), keyed off the
+// same root the ChatHeader gets. The service is also provided app-wide for
+// the OpenInMenu pill — empty catalog hides the entry (the no-bridge
+// degradation; there is deliberately no daemon fallback on desktop).
+const openInService: OpenInService = {
+  catalog: () => (canOpenInNative() ? listNativeOpenInApps() : Promise.resolve([])),
+  open: (appId, target) => openInNativeApp(appId, target.path),
+  icon: (appId) => openInAppIcon(appId),
+};
+provide(OpenInServiceKey, openInService);
+
 async function openWorkspaceInDefaultApp(): Promise<void> {
   const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
-  if (!root || !canOpenInNative()) return;
-  const apps = await listNativeOpenInApps();
+  if (!root) return;
+  const apps = await openInService.catalog();
   const target = resolveOpenInTarget(
     apps.map((app) => app.id),
     useDefaultOpenInTarget().value,
   );
   if (target === null) return;
-  await openInNativeApp(target, root);
+  await openInService.open(target, { path: root });
 }
 
 // Single funnel for app-level actions — the keydown dispatcher, the native

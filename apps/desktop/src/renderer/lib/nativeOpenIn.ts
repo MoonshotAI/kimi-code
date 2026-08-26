@@ -5,10 +5,10 @@
 // The whole flow stays in the main process — no daemon REST involved. When
 // the bridge is missing (not desktop) callers hide the entry entirely; this
 // is a desktop-only feature by design (see docs/native-todos.md).
+// Default-target persistence lives in @moonshot-ai/app-components
+// (lib/openInTarget.ts, P20); this file keeps only the native bridge.
 
-import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { track } from './track';
-import { ref, type Ref } from 'vue';
 
 // Colored app icons, extracted from the apps' own bundles (macOS .icns /
 // Windows exe resources; the "open in <app>" menu is nominative use of the
@@ -97,40 +97,4 @@ export async function openInNativeApp(appId: string, path: string): Promise<bool
   } catch {
     return false;
   }
-}
-
-/** The user's settings choice of default app id; null means "auto". */
-export function loadDefaultOpenInTarget(): string | null {
-  const value = safeGetString(STORAGE_KEYS.openInDefaultTarget);
-  return value !== null && value !== '' ? value : null;
-}
-
-// Module-level reactive mirror of the persisted default, so every consumer
-// (header pill, settings dialog) sees a settings change in the same tick —
-// localStorage alone is not reactive.
-const defaultTarget: Ref<string | null> = ref(loadDefaultOpenInTarget());
-
-/** Shared reactive default-target (settings choice; null = auto). */
-export function useDefaultOpenInTarget(): Ref<string | null> {
-  return defaultTarget;
-}
-
-/** Persists the settings choice; '' clears it back to "auto". */
-export function saveDefaultOpenInTarget(appId: string): void {
-  if (appId === '') {
-    safeRemove(STORAGE_KEYS.openInDefaultTarget);
-  } else {
-    safeSetString(STORAGE_KEYS.openInDefaultTarget, appId);
-  }
-  defaultTarget.value = appId === '' ? null : appId;
-}
-
-/**
- * Pure selected-target resolution: the chosen app when still installed,
- * otherwise the first available one. Single source of truth — a menu pick in
- * the header and the settings dropdown write the same storage key.
- */
-export function resolveOpenInTarget(availableIds: string[], selectedId: string | null): string | null {
-  if (selectedId !== null && availableIds.includes(selectedId)) return selectedId;
-  return availableIds[0] ?? null;
 }

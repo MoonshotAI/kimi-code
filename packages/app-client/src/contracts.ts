@@ -70,3 +70,22 @@ export const ModelDisplayKey: InjectionKey<(alias: string | undefined) => string
 /** Human-readable suffix for a sub-agent's thinking effort. */
 export const SubagentEffortKey: InjectionKey<(effort: string | undefined) => string | undefined> =
   Symbol('subagentEffort');
+
+/** "Open In" app catalog + launcher: desktop implements it over the native
+    bridge (main-process app detection + launch), web over the daemon's
+    `/meta` openInApps + `fs:open-in`. An empty catalog hides the whole Open
+    In entry — that IS the no-bridge degradation, there is no daemon fallback
+    on desktop. */
+export interface OpenInAppEntry {
+  id: string;
+  label: string;
+}
+
+export interface OpenInService {
+  catalog(): Promise<OpenInAppEntry[]>;
+  open(appId: string, target: { path: string; line?: number }): Promise<boolean>;
+  /** Colored official icon (or generic fallback) renderable by <img>. */
+  icon(appId: string): string;
+}
+
+export const OpenInServiceKey: InjectionKey<OpenInService> = Symbol('openInService');

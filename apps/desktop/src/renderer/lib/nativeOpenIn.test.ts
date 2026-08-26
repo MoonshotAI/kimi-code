@@ -1,15 +1,6 @@
 // apps/desktop/src/renderer/lib/nativeOpenIn.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  canOpenInNative,
-  listNativeOpenInApps,
-  loadDefaultOpenInTarget,
-  openInNativeApp,
-  resolveOpenInTarget,
-  saveDefaultOpenInTarget,
-  useDefaultOpenInTarget,
-} from './nativeOpenIn';
-import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
+import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from './nativeOpenIn';
 
 // Renderer tests run in the node environment, so there is no real `window`
 // or `localStorage`; each test installs just enough of both to stand in for
@@ -114,49 +105,5 @@ describe('openInNativeApp', () => {
   it('is false when the IPC call rejects', async () => {
     setBridge({ ...FULL_BRIDGE, openInApp: async () => Promise.reject(new Error('ipc down')) });
     expect(await openInNativeApp('ghostty', '/work/dir')).toBe(false);
-  });
-});
-
-describe('default target persistence', () => {
-  it('round-trips the settings choice', () => {
-    expect(loadDefaultOpenInTarget()).toBeNull();
-    saveDefaultOpenInTarget('ghostty');
-    expect(loadDefaultOpenInTarget()).toBe('ghostty');
-  });
-
-  it('clears back to auto when saved as an empty string', () => {
-    saveDefaultOpenInTarget('ghostty');
-    saveDefaultOpenInTarget('');
-    expect(loadDefaultOpenInTarget()).toBeNull();
-    expect(store.has(STORAGE_KEYS.openInDefaultTarget)).toBe(false);
-  });
-});
-
-describe('useDefaultOpenInTarget', () => {
-  it('is a singleton reactive mirror of the persisted default', () => {
-    expect(useDefaultOpenInTarget()).toBe(useDefaultOpenInTarget());
-    saveDefaultOpenInTarget('zed');
-    expect(useDefaultOpenInTarget().value).toBe('zed');
-    saveDefaultOpenInTarget('');
-    expect(useDefaultOpenInTarget().value).toBeNull();
-  });
-});
-
-describe('resolveOpenInTarget', () => {
-  it('returns the selected app when it is still installed', () => {
-    expect(resolveOpenInTarget(['vscode', 'ghostty'], 'ghostty')).toBe('ghostty');
-  });
-
-  it('falls back to the first available app when nothing is selected', () => {
-    expect(resolveOpenInTarget(['vscode', 'ghostty'], null)).toBe('vscode');
-  });
-
-  it('falls back to the first available app when the selection was uninstalled', () => {
-    expect(resolveOpenInTarget(['vscode', 'ghostty'], 'cursor')).toBe('vscode');
-  });
-
-  it('returns null with an empty catalog', () => {
-    expect(resolveOpenInTarget([], null)).toBeNull();
-    expect(resolveOpenInTarget([], 'vscode')).toBeNull();
   });
 });

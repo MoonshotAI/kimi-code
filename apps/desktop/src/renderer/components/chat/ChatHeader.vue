@@ -7,9 +7,8 @@ import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
-import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
+import { OpenInMenu } from '@moonshot-ai/app-components';
 import { track } from '@moonshot-ai/app-client/contracts';
-import OpenInMenu from './OpenInMenu.vue';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { Button, Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 
@@ -291,26 +290,6 @@ function onOpenPr(): void {
 // (`import.meta.env.DEV`), tree-shaken out of production bundles.
 const isDev = import.meta.env.DEV;
 
-// ---------------------------------------------------------------------------
-// Open-in-app (desktop-only fork): the catalog comes from the main process,
-// never from the daemon. Empty catalog (non-desktop / non-macOS) hides the
-// whole control.
-// ---------------------------------------------------------------------------
-const openInApps = ref<Array<{ id: string; label: string }>>([]);
-
-onMounted(async () => {
-  if (canOpenInNative()) {
-    openInApps.value = await listNativeOpenInApps();
-  }
-});
-
-const showOpenIn = computed(() => openInApps.value.length > 0 && Boolean(props.workspaceRoot));
-
-async function onOpenInApp(appId: string): Promise<void> {
-  if (!props.workspaceRoot) return;
-  await openInNativeApp(appId, props.workspaceRoot);
-}
-
 // Native terminal toggle (desktop-only fork): the bridge-probing store hides
 // the button entirely on web / old bridges.
 const terminalStore = useNativeTerminal();
@@ -413,13 +392,9 @@ function toggleTerminalPanel(): void {
 
     <div class="ch-spacer" />
 
-    <!-- Open workspace in editor/terminal (desktop-only fork; hidden otherwise) -->
-    <OpenInMenu
-      v-if="showOpenIn"
-      :work-dir="workspaceRoot"
-      :available-apps="openInApps"
-      @open-in-app="onOpenInApp"
-    />
+    <!-- Open workspace in editor/terminal; the pill self-hides on an empty
+         service catalog (the no-bridge degradation). -->
+    <OpenInMenu v-if="workspaceRoot" :work-dir="workspaceRoot" />
 
     <!-- Toggle the bottom terminal panel (desktop-only fork; hidden otherwise) -->
     <IconButton

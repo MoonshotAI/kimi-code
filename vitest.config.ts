@@ -21,7 +21,7 @@ export default defineConfig({
       {
         test: {
           name: 'packages',
-          include: ['packages/{app-core,app-i18n,app-ui,vite-preset}/{src,test}/**/*.test.ts'],
+          include: ['packages/{app-core,app-i18n,app-ui,app-components,vite-preset}/{src,test}/**/*.test.ts'],
         },
       },
     ],
