@@ -1,22 +1,27 @@
-# Local Server and API
+# Using Kimi Code in the browser
 
-Kimi Code CLI ships with a built-in local server: running `kimi web` starts a foreground process that mounts three things at once — the web UI in your browser, a REST API (`/api/v1`), and a WebSocket event stream (`/api/v1/ws`). The web UI lets you use Kimi Code in a browser; the REST and WebSocket APIs are for scripts and third-party tools, letting you create sessions, submit prompts, and follow execution from code — all reading and writing the same session data as the TUI and the web UI.
+Kimi Code Web is the browser-based graphical interface built into Kimi Code CLI: run `kimi web` in a terminal, and you can start sessions, chat, handle approvals, and review file changes in a browser — a friendlier interface, while sessions and data still live entirely on your machine.
 
-> Make sure Kimi Code CLI is installed and ready to use first — either logged in via `/login` (in the TUI, or `kimi login`), or with a provider configured in `config.toml`. The server shares the CLI's login state and configuration, so no separate credential is needed for it.
+![Kimi Code Web UI](../../media/kimi-web-ui.jpg)
 
-::: warning
-The REST and WebSocket APIs described on this page are experimental: interface stability is not guaranteed, and endpoints, fields, and event types may change in any release. When integrating, rely on the `/openapi.json` and `/asyncapi.json` documents served by your version.
-:::
+## Getting started
 
-## Start the server
+<div class="step">
+<span class="step-num">1</span> <strong>Install Kimi Code CLI and log in</strong>
 
-```sh
-kimi web                 # run the server in the foreground and open the browser
-kimi web --no-open       # run the server only, don't open the browser
-kimi web --port 58628    # pick a specific bind port
-```
+`kimi web` is a built-in CLI command — it isn't available without the CLI. See [Getting started](./getting-started.md) for installation and login.
+</div>
 
-The server binds to `127.0.0.1:58627` by default (loopback only). If the port is taken it automatically retries with the next one, so multiple instances can coexist on the same machine; each instance registers under `~/.kimi-code/server/instances/`. The startup banner prints the access URL and the plaintext token:
+<div class="step">
+<span class="step-num">2</span> <strong>Run <code>kimi web</code> in a terminal</strong>
+
+If you're already in the CLI, you can also type `/web` to hand the current session off to the browser.
+</div>
+
+<div class="step">
+<span class="step-num">3</span> <strong>The web UI opens in your default browser once ready</strong>
+
+The startup banner prints the access URL — if the browser doesn't open by itself, copy this URL and open it manually:
 
 ```text
 Local:   http://127.0.0.1:58627/#token=...
@@ -24,93 +29,67 @@ Token:   ...
 Stop:    Ctrl+C
 ```
 
-The server runs in the foreground; press `Ctrl-C` for a clean shutdown. For the full option list such as `--host` and `--log-level`, see the [kimi command reference](../reference/kimi-command.md#kimi-web).
-
-## Authentication
-
-Every `/api/*` endpoint requires a bearer token (any request carrying this string is treated as authorized). The token is generated on the first server boot, persisted at `~/.kimi-code/server.token` (file mode 0600), and reused across restarts.
-
-Pick the carrying method that fits your client:
-
-- **REST**: the `Authorization: Bearer <token>` request header.
-- **web UI**: the URL in the startup banner carries a `#token=` fragment, so opening it in a browser completes sign-in automatically. The fragment is never sent to the server.
-- **WebSocket**: clients that can set headers use `Authorization: Bearer`; clients that cannot (such as browsers) pass the subprotocol (a protocol name declared during the WebSocket handshake) `kimi-code.bearer.<token>` instead.
-
-If the token leaks, run `kimi web rotate-token`: the new token is written to `server.token` immediately, the old one stops working at once, and running instances pick up the new token without a restart.
-
-If you bind the server to a non-loopback address (`--host`), also set the `KIMI_CODE_PASSWORD` environment variable as a parallel credential; the server then rate-limits authentication failures automatically.
-
-::: danger
-`--dangerous-bypass-auth` disables authentication entirely — anyone who can reach the port can control your sessions, file system, and shell. Only use it on trusted networks or behind your own authenticating proxy. See the [kimi command reference](../reference/kimi-command.md#kimi-web).
+::: warning
+The `#token=` fragment is the access credential — don't share it. Stop the server with `Ctrl+C` in the terminal.
 :::
+</div>
 
-## Drive a session over the API
+### Common commands
 
-The minimal flow with curl: check the server → create a session → subscribe to events → submit a prompt → read history back. The examples assume the server runs at the default address and the token is stored in the shell variable `TOKEN`.
+| Option | Description |
+| --- | --- |
+| `--port <port>` | Bind port; defaults to `58627`, auto-increments when taken |
+| `--host [host]` | IP address to listen on. Without it, only this machine (`127.0.0.1`) can connect; bare `--host` binds `0.0.0.0`, so phones, tablets, or other computers on the same LAN (same Wi-Fi/router) can use it — just open the Network URL from the banner; or pick a specific IP, e.g. `--host 192.168.1.10` |
+| `--no-open` | Don't open the browser when ready |
+| `--log-level <level>` | Enable server logs at the given level; off by default |
 
-1. Check server status:
+## Security notes
 
-```sh
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:58627/api/v1/meta
-```
+- **Set a parallel credential**: when binding a LAN address, also set the `KIMI_CODE_PASSWORD` environment variable; the server then rate-limits authentication failures automatically.
+- **Don't disable authentication entirely**: `--dangerous-bypass-auth` turns off all authentication — anyone who can reach the port can control your sessions, file system, and shell. Only use it on trusted networks or behind your own authenticating proxy. See the [kimi command reference](../reference/kimi-command.md#kimi-web).
 
-Every JSON response is wrapped in a uniform envelope — `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. The business outcome lives in `code` (`0` means success); the HTTP status only reports transport-level results.
+## Relationship with the CLI
 
-2. Create a session; `metadata.cwd` sets the working directory:
+The web UI and the CLI share the same login state, configuration (`config.toml`), and session data — a session started in the CLI shows up in the web UI after a refresh, and you can use both at the same time.
 
-```sh
-curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"metadata": {"cwd": "/path/to/project"}}'
-```
+Note that the web UI supports only a subset of the CLI's slash commands — common ones like `/new`, `/goal`, and `/compact` all work. Everything else usually has a point-and-click equivalent in the UI (the settings page, the model picker, the account menu, the task panel).
 
-The returned `data.id` (shaped like `session_...`) is the session id used by every subsequent request.
+How the two sides compare:
 
-3. Connect to the WebSocket and subscribe to session events. Any WebSocket client works; below is a dependency-free Node.js script (Node.js 22+ ships a built-in `WebSocket` client):
+<div class="feature-compare-table">
 
-```js
-// subscribe.mjs — usage: TOKEN=... node subscribe.mjs session_...
-const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
-  `kimi-code.bearer.${process.env.TOKEN}`,
-]);
-ws.onmessage = (e) => console.log(e.data);
-ws.onopen = () =>
-  ws.send(
-    JSON.stringify({
-      type: 'subscribe',
-      id: '1',
-      payload: { session_ids: [process.argv[2]] },
-    }),
-  );
-```
+| Feature | CLI | Web | Notes |
+| --- | --- | --- | --- |
+| Streaming chat | ✓ | ✓ | Web renders rich format incrementally (tables, code highlighting, diffs, tool cards) |
+| Session management | ✓ | ✓ | Web lets you archive sessions away and restore them anytime from the archive page, sorted by time; the Open / Done / Workspaces tabs are a Lab experiment (off by default) — enable them on the settings Lab page |
+| Approvals | ✓ | ✓ | Web handles them with clicks in the UI — no commands needed |
+| Background tasks | ✓ | ✓ | Web shows live progress in the task panel |
+| Files and changes | ✓ | ✓ | Web has a changed-files summary card and per-file diffs |
+| Settings | ✓ | ✓ | Web adds a settings UI (providers, account & usage, Lab experiments) |
+| Global search | — | ✓ | Web searches across sessions and workspaces |
+| Mobile layout | — | ✓ | With LAN sharing on (`--host`), it works in phone browsers on the same network |
 
-4. Submit a prompt:
+</div>
 
-```sh
-curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"content": [{"type": "text", "text": "Introduce this repository in one sentence"}]}'
-```
+## FAQ
 
-The subscriber sees, in order: `turn.started` (turn begins) → `assistant.delta` (streaming text increments) → `tool.call.started` / `tool.result` when tool calls happen → `turn.ended` (turn finishes).
+### The port is already taken
 
-5. Read history back over REST at any time:
+Nothing to do. `kimi web` automatically retries with the next port (58628, 58629, …) — just use the address printed in the startup banner.
 
-```sh
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
-```
+### The URL won't open in the browser
 
-## Live specification documents
+First check the server is still running in the terminal (it runs in the foreground there). Copy the full URL including the `#token=` part; opening only `http://127.0.0.1:58627` lands on a token input page, where pasting the `Token` value from the banner also works.
 
-While running, the server describes itself with two specification documents, both requiring the bearer token:
+### How to recover from an invalid token
 
-- `GET /openapi.json` — an OpenAPI document for the REST API, with request/response schemas for every endpoint; import it into Swagger UI, Postman, and similar tools.
-- `GET /asyncapi.json` — an AsyncAPI document for the WebSocket protocol, covering control frames and event types.
+Run `kimi web rotate-token` to generate a new token, then open the new banner URL. All running instances switch to the new token automatically — no restart needed.
+
+### Other devices on the same Wi-Fi can't connect
+
+Make sure you started with `--host` (bare is fine), and use the LAN URL from the banner (like `http://192.168.x.x:58627/#token=...`). If it still fails, check that the machine's firewall allows the port, and that both devices are really on the same network segment — guest Wi-Fi, VPNs, and switching to a 4G/5G hotspot all isolate devices.
 
 ## Next steps
 
-- [Server API](../reference/server-api.md) — full REST endpoint inventory, error codes, WebSocket events, and the transcript protocol
+- [Server API](../reference/server-api.md) — REST / WebSocket APIs for scripts and third-party integrations (experimental)
 - [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` command-line options
