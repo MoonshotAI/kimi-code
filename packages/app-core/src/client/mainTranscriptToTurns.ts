@@ -16,7 +16,7 @@ import type {
 import type { AppApprovalRequest, AppMessage, AppQuestionRequest, CompactionMarkerMetadata, SessionPlan } from '../api';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
 
-import { earliestTimestamp, turnToMessages } from './auxiliaryTranscriptToTurns';
+import { earliestTimestamp, turnToMessages, type ThinkingTimingMap } from './auxiliaryTranscriptToTurns';
 import { messagesToTurns, extractCronPrompt } from './messagesToTurns';
 import type { ChatTurn } from './types';
 
@@ -36,6 +36,11 @@ export function mainTranscriptToTurns(
     /** Observed times the session's pending interactions appeared, keyed by
      *  the suspended step id (see turnToMessages). */
     pendingInteractionAtByStepId?: ReadonlyMap<string, string>;
+    /** Client-clock spans for live thinking frames (see turnToMessages) —
+     *  the main flow passes the per-session store so a thinking block's
+     *  clock starts at its first visible delta instead of the daemon's
+     *  step start (which would bill the queue/prefill wait as thinking). */
+    thinkingTiming?: ThinkingTimingMap;
   },
 ): ChatTurn[] {
   const transcriptTurns = snapshot.items.filter((item) => item.kind === 'turn');
@@ -74,6 +79,7 @@ export function mainTranscriptToTurns(
         undefined,
         deps.sessionId,
         deps.pendingInteractionAtByStepId,
+        deps.thinkingTiming,
       );
     }
     if (item.kind === 'marker' && item.marker === 'compaction') {
@@ -145,6 +151,7 @@ function turnMessagesForMain(
   fallbackEndedAt: string | undefined,
   sessionId: string,
   pendingInteractionAtByStepId?: ReadonlyMap<string, string>,
+  thinkingTiming?: ThinkingTimingMap,
 ): AppMessage[] {
   const originPayload = (turn.origin as { payload?: unknown }).payload ?? turn.origin;
   const originKind = (originPayload as { kind?: unknown } | undefined)?.kind;
@@ -178,6 +185,7 @@ function turnMessagesForMain(
     ...turnToMessages(turn, attachments, taskById, fallbackStartedAt, fallbackEndedAt, sessionId, {
       includeOrigin: true,
       pendingInteractionAtByStepId,
+      thinkingTiming,
     }),
   ];
 }

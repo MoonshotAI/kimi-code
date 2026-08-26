@@ -15,6 +15,11 @@ import {
   type AgentTranscriptSnapshot,
   type TranscriptOperation,
 } from '@moonshot-ai/app-core/transcript';
+import {
+  pruneThinkingSpans,
+  settleClosedThinkingSpans,
+  type ThinkingTimingMap,
+} from '@moonshot-ai/app-core/client';
 import type { KimiEventConnection, KimiWebApi } from '@moonshot-ai/app-core/api';
 
 const MAIN_AGENT_ID = 'main';
@@ -23,6 +28,12 @@ const DEFAULT_MAX_RESIDENT_SESSIONS = 4;
 export interface MainTranscriptEntry {
   readonly channel: TranscriptChannel;
   readonly version: Ref<number>;
+  /** Client-clock spans for the session's live thinking frames (the turns
+   *  projection stamps them, the pool settles them on ops application; see
+   *  thinkingTiming.ts). Pruned by the channel's onReset — frame ids are
+   *  reused after an undo rewind, so a stale span must not outlive the
+   *  content it was measured on. */
+  readonly thinkingTiming: ThinkingTimingMap;
   baselineLoaded: boolean;
   resumePromise: Promise<void> | null;
   /** A gap surfaced while a refresh was already in flight — re-run once the
@@ -137,6 +148,11 @@ export function createMainTranscriptPool(deps: {
   }
 
   function scheduleNotification(entry: MainTranscriptEntry): void {
+    // Settle live thinking spans as the closing fact LANDS (step end, frame
+    // takeover, interaction suspension) — a session only projects its turns
+    // while active, so deferring the settle to the next projection would
+    // bill the time spent in the background into the thinking duration.
+    settleClosedThinkingSpans(entry.channel.snapshot, entry.thinkingTiming);
     dirtyEntries.add(entry);
     if (frameHandle !== null || taskHandle !== null) return;
     if (typeof requestAnimationFrame === 'function') {
@@ -155,6 +171,7 @@ export function createMainTranscriptPool(deps: {
   function getOrCreate(sessionId: string): MainTranscriptEntry {
     const existing = entries.get(sessionId);
     if (existing !== undefined) return existing;
+    const thinkingTiming: ThinkingTimingMap = new Map();
     const entry: MainTranscriptEntry = {
       channel: new TranscriptChannel({
         sessionId,
@@ -163,6 +180,13 @@ export function createMainTranscriptPool(deps: {
           deps.api.getSessionTranscript(sessionId, { ...query, agentId: MAIN_AGENT_ID }),
         onChange: () => {
           scheduleNotification(entry);
+        },
+        onReset: () => {
+          // The window was re-anchored (refresh/reset): drop only the spans
+          // whose frame is gone (an undo rewind reuses frame ids), and keep
+          // the stamps of frames that survived — clearing those would
+          // visibly reset a running thinking clock to zero.
+          pruneThinkingSpans(entry.channel.snapshot, thinkingTiming);
         },
         onGap: () => {
           // A gap detected while a refresh is already running (e.g. replaying
@@ -176,6 +200,7 @@ export function createMainTranscriptPool(deps: {
           void refreshAndResume(entry);
         },
       }),
+      thinkingTiming,
       version: ref(0),
       baselineLoaded: false,
       resumePromise: null,

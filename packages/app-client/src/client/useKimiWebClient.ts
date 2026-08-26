@@ -3185,6 +3185,7 @@ const turns = computed<ChatTurn[]>(() => {
     planReviewByToolCallId: rawState.planReviewByToolCallId,
     agentCreatedAt: rawState.sessions.find((s) => s.id === sid)?.createdAt,
     pendingInteractionAtByStepId: pendingInteractionAtBySid.get(sid),
+    thinkingTiming: transcriptEntry.thinkingTiming,
   });
   // Optimistic user bubbles (S8): pure UI state, overlaid until the
   // transcript's turn header covers the same prompt — then dropped.

@@ -19,6 +19,11 @@ export interface TranscriptChannelOptions {
   pageSize?: number;
   onChange?: () => void;
   onGap?: () => void;
+  /** Fired when the transcript window is REPLACED (refresh re-anchor or a
+   *  server-pushed reset) — not when an older history page merges in.
+   *  Consumers keying local state off frame ids (which an undo rewind
+   *  reuses) must drop that state here. */
+  onReset?: () => void;
 }
 
 export class TranscriptChannel {
@@ -30,6 +35,7 @@ export class TranscriptChannel {
   private readonly pageSize: number;
   private readonly onChange?: () => void;
   private readonly onGap?: () => void;
+  private readonly onReset?: () => void;
   private refreshPromise: Promise<void> | null = null;
   private buffered: Array<{ ops: readonly TranscriptOperation[]; seq?: number }> = [];
   private agents_: readonly AgentDescriptor[] = [];
@@ -46,6 +52,7 @@ export class TranscriptChannel {
     this.pageSize = options.pageSize ?? 20;
     this.onChange = options.onChange;
     this.onGap = options.onGap;
+    this.onReset = options.onReset;
   }
 
   get snapshot(): AgentTranscriptSnapshot {
@@ -120,6 +127,7 @@ export class TranscriptChannel {
     this.transcript.receive([{ op: 'reset', agentId: this.agentId, snapshot }]);
     if (seq !== undefined) this.seq_ = seq;
     this.refreshError_ = false;
+    this.onReset?.();
     this.onChange?.();
   }
 
@@ -188,16 +196,22 @@ export class TranscriptChannel {
   private applyPage(page: SessionTranscriptPage, replace: boolean): void {
     this.agents_ = page.agents;
     const current = this.snapshot;
-    const snapshot: AgentTranscriptSnapshot = replace
-      ? page
-      : {
-          ...page,
-          items: mergeItems(page.items, current.items),
-          hasMoreOlder: page.hasMoreOlder,
-        };
-    // An older page does not contain the live tail, so its watermark must not
-    // supersede buffered ops that still need to update the current items.
-    this.receiveReset(snapshot, replace ? page.seq : undefined);
+    if (replace) {
+      this.receiveReset(page, page.seq);
+      return;
+    }
+    // An older page MERGES into the window: the live tail survives, so
+    // frame-id-keyed local state stays valid (no onReset) — and its
+    // watermark must not supersede buffered ops that still need to update
+    // the current items (no seq advance).
+    const merged: AgentTranscriptSnapshot = {
+      ...page,
+      items: mergeItems(page.items, current.items),
+      hasMoreOlder: page.hasMoreOlder,
+    };
+    this.transcript.receive([{ op: 'reset', agentId: this.agentId, snapshot: merged }]);
+    this.refreshError_ = false;
+    this.onChange?.();
   }
 }
 

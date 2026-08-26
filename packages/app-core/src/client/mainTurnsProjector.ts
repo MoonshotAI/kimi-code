@@ -17,6 +17,7 @@
 import type { AgentTranscriptSnapshot } from '../transcript';
 import type { SessionPlan } from '../api/types';
 import { mainTranscriptToTurns } from './mainTranscriptToTurns';
+import type { ThinkingTimingMap } from './auxiliaryTranscriptToTurns';
 import type { ChatTurn } from './types';
 
 export interface MainTurnsProjectDeps {
@@ -30,6 +31,9 @@ export interface MainTurnsProjectDeps {
    *  suspended step id — each waiting step's open thinking span settles at
    *  its own stamp. */
   pendingInteractionAtByStepId?: ReadonlyMap<string, string>;
+  /** Client-clock live thinking spans (see turnToMessages) — rides the
+   *  per-session store so the projection stays pure apart from stamping. */
+  thinkingTiming?: ThinkingTimingMap;
 }
 
 export interface MainTurnsProjector {

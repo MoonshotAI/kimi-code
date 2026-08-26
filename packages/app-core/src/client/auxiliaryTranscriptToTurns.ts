@@ -8,7 +8,10 @@ import type { AppMessage, AppMessageContent, ImageSource } from '../api';
 
 import { messagesToTurns, normalizeToolOutput } from './messagesToTurns';
 import { TASK_NOTIFICATION_METADATA_KEY } from './notificationXml';
+import { isThinkingFrameOpen, type ThinkingTimingMap } from './thinkingTiming';
 import type { ChatTurn, TaskNotification } from './types';
+
+export type { ThinkingSpanStamp, ThinkingTimingMap } from './thinkingTiming';
 
 export function auxiliaryTranscriptToTurns(
   snapshot: AgentTranscriptSnapshot,
@@ -60,6 +63,9 @@ export function turnToMessages(
      *  ending it, and each suspended step's open thinking span settles at its
      *  own stamp instead of billing the human's wait as thinking time. */
     pendingInteractionAtByStepId?: ReadonlyMap<string, string>;
+    /** Live thinking spans measured on the client clock (main flow only —
+     *  the detail panel passes none and keeps the daemon step bounds). */
+    thinkingTiming?: ThinkingTimingMap;
   },
 ): AppMessage[] {
   const messages: AppMessage[] = [];
@@ -135,6 +141,45 @@ export function turnToMessages(
         });
       } else if (frame.kind === 'thinking') {
         if (frame.text.length === 0) continue;
+        const pendingAt = options?.pendingInteractionAtByStepId?.get(step.stepId);
+        const isOpenFrame = isThinkingFrameOpen(step, frame, pendingAt !== undefined);
+        const timing = options?.thinkingTiming;
+        const seen = timing?.get(frame.frameId);
+        let startedAt: string | undefined;
+        let spanMs: number | undefined;
+        if (seen !== undefined) {
+          // Client-clocked span: freeze it the first time the frame is seen
+          // closed (the transcript pool already settles on ops application —
+          // this is the fallback for non-pool hosts). Both stamps ride the
+          // client clock, so the span is immune to daemon↔client clock skew.
+          if (seen.settledAt === undefined && !isOpenFrame) {
+            seen.settledAt = new Date().toISOString();
+          }
+          startedAt = seen.startedAt;
+          spanMs = durationMs(seen.startedAt, seen.settledAt);
+        } else if (timing !== undefined && isOpenFrame) {
+          // First projection of a streaming frame: the clock starts at first
+          // visibility, NOT at the daemon's step start — the queue/prefill/
+          // retry wait before the first thinking delta is not thinking time.
+          const now = new Date().toISOString();
+          timing.set(frame.frameId, { startedAt: now });
+          startedAt = now;
+        } else {
+          // History (already closed at first sight) or no timing map: the
+          // true first-delta moment is unrecoverable — keep the daemon step
+          // bounds. A step the interaction paused settles its open span at
+          // the observed pending time — and KEEPS that ceiling when the step
+          // later ends, or the human's wait gets billed back into the
+          // thinking duration. Each suspended step carries its OWN stamp, so
+          // sequential interactions never re-bill an earlier step. (A span
+          // the suspension precedes shows as open/negative and is filtered
+          // below.)
+          startedAt = step.startedAt;
+          spanMs = durationMs(
+            step.startedAt,
+            earliestTimestamp([step.endedAt, pendingAt]),
+          );
+        }
         messages.push({
           id: frame.frameId,
           sessionId: '',
@@ -142,21 +187,8 @@ export function turnToMessages(
           content: [{
             type: 'thinking',
             thinking: frame.text,
-            startedAt: step.startedAt,
-            // A step the interaction paused settles its open span at the
-            // observed pending time — and KEEPS that ceiling when the step
-            // later ends, or the human's wait gets billed back into the
-            // thinking duration. Each suspended step carries its OWN stamp,
-            // so sequential interactions never re-bill an earlier step. (A
-            // span the suspension precedes shows as open/negative and is
-            // filtered below.)
-            durationMs: durationMs(
-              step.startedAt,
-              earliestTimestamp([
-                step.endedAt,
-                options?.pendingInteractionAtByStepId?.get(step.stepId),
-              ]),
-            ),
+            startedAt,
+            durationMs: spanMs,
           }],
           createdAt: step.startedAt ?? createdAt,
           promptId,

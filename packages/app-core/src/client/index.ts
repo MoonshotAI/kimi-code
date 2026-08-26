@@ -14,6 +14,7 @@ export * from './notificationXml';
 export * from './parseDiff';
 export * from './swarmCardRows';
 export * from './swarmGroups';
+export * from './thinkingTiming';
 export * from './toolDiff';
 export * from './transcriptTasks';
 export * from './turnsProjector';
