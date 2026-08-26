@@ -145,8 +145,8 @@ export class BashTool implements IBashTool {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
-        this.execution(args, signal, onUpdate, onForegroundTaskStart),
+      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart),
     };
   }
 
@@ -171,6 +171,7 @@ export class BashTool implements IBashTool {
   private async execution(
     args: BashInput,
     signal: AbortSignal,
+    toolCallId: string,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
   ): Promise<ExecutableToolResult> {
@@ -226,7 +227,7 @@ export class BashTool implements IBashTool {
     let taskId: string;
     try {
       taskId = this.tasks.registerTask(
-        new ProcessTask(proc, command, description, onProcessOutput, () => lease.dispose()),
+        new ProcessTask(proc, command, description, onProcessOutput, () => lease.dispose(), toolCallId),
         {
           detached: startsInBackground,
           timeoutMs,

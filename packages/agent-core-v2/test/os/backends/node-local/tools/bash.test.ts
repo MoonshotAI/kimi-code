@@ -1427,6 +1427,28 @@ describe('BashTool background mode', () => {
     await running;
   });
 
+  it('records the parent tool call id on the registered task', async () => {
+    const { proc, finish } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service } = createFakeTaskService();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+    const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(service.list(false)).toHaveLength(1);
+    });
+    const task = service.list(false)[0]!;
+
+    expect(task).toMatchObject({
+      kind: 'process',
+      detached: false,
+      parentToolCallId: 'call_bash',
+    });
+
+    finish();
+    await running;
+  });
+
   it('applies the background timeout when a foreground command is detached', async () => {
     vi.useFakeTimers();
     try {
