@@ -10,7 +10,7 @@ export interface FileEditInput {
 }
 
 export type FileEditResult =
-  | { readonly ok: true; readonly count: number }
+  | { readonly ok: true; readonly count: number; readonly before: string; readonly after: string }
   | { readonly ok: false; readonly error: string };
 
 export interface IFileEditService {

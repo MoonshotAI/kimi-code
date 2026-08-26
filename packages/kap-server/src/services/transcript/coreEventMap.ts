@@ -47,6 +47,7 @@ import type {
   ToolProgress,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { FileEditSnapshot } from '@moonshot-ai/agent-core-v2/app/edit/fileEditEvents';
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
@@ -114,6 +115,7 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'tool.progress' } & ToolProgress)
   | ({ readonly type: 'tool.call.started' } & ToolCallStarted)
   | ({ readonly type: 'tool.result' } & ToolResultEvent)
+  | ({ readonly type: 'file.edit_snapshot' } & FileEditSnapshot)
   | ({ readonly type: 'task.started' } & TaskStarted)
   | ({ readonly type: 'task.terminated' } & TaskTerminatedNotice)
   | ({ readonly type: 'task.notified' } & TaskNotified)
@@ -256,6 +258,8 @@ export class AgentTranscriptProjector {
         return this.onToolCallStarted(event);
       case 'tool.result':
         return this.onToolResult(event);
+      case 'file.edit_snapshot':
+        return this.onFileEditSnapshot(event);
       case 'task.started':
       case 'task.terminated':
         return this.onTaskLifecycle(event);
@@ -778,6 +782,28 @@ export class AgentTranscriptProjector {
       }
     }
     return ops;
+  }
+
+  private onFileEditSnapshot(event: {
+    toolCallId: string;
+    path: string;
+    before?: string | null;
+    after?: string;
+    truncated?: boolean;
+  }): TranscriptOperation[] {
+    const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
+    if (hit === undefined) return [];
+    const frame: ToolCallFrame = {
+      ...hit.frame,
+      edit: {
+        path: event.path,
+        before: event.before,
+        after: event.after,
+        truncated: event.truncated,
+      },
+    };
+    this.toolFrames.set(event.toolCallId, { ...hit, frame });
+    return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
   }
 
   private adoptToolFrame(toolCallId: string): ToolFrameRecord | undefined {

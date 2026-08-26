@@ -17,6 +17,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
+import { buildFileSnapshot } from '#/agent/tools/fileSnapshot';
 
 import { EditInputSchema, IEditTool, type EditInput } from './edit';
 import editDescriptionTemplate from './edit.md?raw';
@@ -108,7 +109,10 @@ export class EditTool implements IEditTool {
       return { isError: true, output: result.error };
     }
     const word = result.count === 1 ? 'occurrence' : 'occurrences';
-    return { output: `Replaced ${String(result.count)} ${word} in ${args.path}` };
+    return {
+      output: `Replaced ${String(result.count)} ${word} in ${args.path}`,
+      fileSnapshot: buildFileSnapshot(args.path, result.before, result.after),
+    };
   }
 }
 

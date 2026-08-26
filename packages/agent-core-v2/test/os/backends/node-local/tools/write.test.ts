@@ -172,6 +172,35 @@ describe('WriteTool', () => {
     expect(result.output).toContain('Wrote 5 bytes');
   });
 
+  it('reports a real fileSnapshot for an overwrite, with before:null for a new file', async () => {
+    const { tool } = makeTool();
+
+    const result = await execute(tool, { path: '/tmp/new.txt', content: 'hello' });
+
+    expect(result.fileSnapshot).toEqual({ path: '/tmp/new.txt', before: null, after: 'hello' });
+  });
+
+  it('reports the true prior content as fileSnapshot.before when overwriting an existing file', async () => {
+    const { tool } = makeTool({ readText: async () => 'old content' });
+
+    const result = await execute(tool, { path: '/tmp/existing.txt', content: 'new content' });
+
+    expect(result.fileSnapshot).toEqual({
+      path: '/tmp/existing.txt',
+      before: 'old content',
+      after: 'new content',
+    });
+  });
+
+  it('ships no fileSnapshot for an append — the tool never reads to build one', async () => {
+    const { tool, readText } = makeTool();
+
+    const result = await execute(tool, { path: '/tmp/existing.txt', content: '\nhello', mode: 'append' });
+
+    expect(readText).not.toHaveBeenCalled();
+    expect(result.fileSnapshot).toBeUndefined();
+  });
+
   it('expands leading tilde paths using the kaos home directory', async () => {
     const fakes = createWriteFs();
     const environment = createTestEnv('/home/test');

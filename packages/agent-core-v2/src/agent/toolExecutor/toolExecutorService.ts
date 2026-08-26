@@ -1,5 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
+import { FileEditSnapshot } from '#/app/edit/fileEditEvents';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
@@ -564,6 +565,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       approvalRule: execution?.approvalRule,
       stopBatchAfterThis: normalized.stopBatchAfterThis ?? execution?.stopBatchAfterThis,
       delivery: coerced.delivery,
+      fileSnapshot: coerced.fileSnapshot,
     };
   }
 
@@ -605,6 +607,19 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         isError: result.isError,
       }),
     );
+    if (result.fileSnapshot !== undefined) {
+      void this.dispatcher.dispatch(
+        new FileEditSnapshot({
+          agentId: this.scopeContext.agentId,
+          turnId: options.turnId,
+          toolCallId: call.toolCall.id,
+          path: result.fileSnapshot.path,
+          before: result.fileSnapshot.before,
+          after: result.fileSnapshot.after,
+          truncated: result.fileSnapshot.truncated,
+        }),
+      );
+    }
   }
 
   private dispatchToolProgress(
@@ -671,6 +686,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
       delivery: coercedResult.delivery,
+      fileSnapshot: coercedResult.fileSnapshot,
     };
     return this.resultTruncation.truncateForModel({
       toolName: call.toolName,

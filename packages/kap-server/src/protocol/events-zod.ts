@@ -68,6 +68,7 @@ import type {
   ToolProgressPayload,
   ToolResultEventPayload,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { FileEditSnapshotPayload } from '@moonshot-ai/agent-core-v2/app/edit/fileEditEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
@@ -863,6 +864,17 @@ export const toolResultEventSchema = z.object({
   synthetic: z.boolean().optional(),
 }) satisfies z.ZodType<ToolResultEventPayload>;
 
+export const fileEditSnapshotEventSchema = z.object({
+  type: z.literal('file.edit_snapshot'),
+  agentId: z.string(),
+  turnId: z.number(),
+  toolCallId: z.string(),
+  path: z.string(),
+  before: z.string().nullable().optional(),
+  after: z.string().optional(),
+  truncated: z.boolean().optional(),
+}) satisfies z.ZodType<FileEditSnapshotPayload & { type: 'file.edit_snapshot' }>;
+
 export const subagentSpawnedEventSchema = z.object({
   type: z.literal('subagent.spawned'),
   subagentId: z.string(),
@@ -1052,6 +1064,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   shellStartedEventSchema,
   shellCompletedEventSchema,
   toolResultEventSchema,
+  fileEditSnapshotEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,
   subagentSpawnedEventSchema,

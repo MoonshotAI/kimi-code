@@ -1121,6 +1121,7 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'tool.call.started',
   'tool.progress',
   'tool.result',
+  'file.edit_snapshot',
   'shell.started',
   'shell.output',
   'shell.completed',

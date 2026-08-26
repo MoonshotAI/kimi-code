@@ -54,6 +54,14 @@ export interface ToolCallFrame {
   readonly approvalId?: InteractionId;
   readonly todoId?: TodoId;
   readonly agentRefs?: readonly AgentRef[];
+  readonly edit?: ToolFrameFileEdit;
+}
+
+export interface ToolFrameFileEdit {
+  readonly path: string;
+  readonly before?: string | null;
+  readonly after?: string;
+  readonly truncated?: boolean;
 }
 
 export interface NoticeFrame {

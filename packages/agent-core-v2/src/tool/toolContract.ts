@@ -29,6 +29,13 @@ export interface ToolDelivery {
   readonly message: ToolDeliveryMessage;
 }
 
+export interface FileSnapshot {
+  readonly path: string;
+  readonly before?: string | null;
+  readonly after?: string;
+  readonly truncated?: boolean;
+}
+
 export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
   readonly isError?: false | undefined;
@@ -38,6 +45,7 @@ export interface ExecutableToolSuccessResult {
   readonly delivery?: ToolDelivery | undefined;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
+  readonly fileSnapshot?: FileSnapshot | undefined;
 }
 
 export interface ExecutableToolErrorResult {
@@ -49,6 +57,7 @@ export interface ExecutableToolErrorResult {
   readonly delivery?: ToolDelivery | undefined;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
+  readonly fileSnapshot?: FileSnapshot | undefined;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;
