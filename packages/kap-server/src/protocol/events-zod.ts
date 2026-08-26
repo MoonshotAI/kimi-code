@@ -52,7 +52,7 @@ import type {
   ToolListUpdatedReason,
 } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
 import type { WarningIssuedPayload as WarningEvent } from '@moonshot-ai/agent-core-v2/features/profile/profileOps';
 import type { PluginCommandActivatedPayload } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type {
@@ -67,7 +67,7 @@ import type {
   ToolCallStartedPayload,
   ToolProgressPayload,
   ToolResultEventPayload,
-} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+} from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';

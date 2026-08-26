@@ -9,8 +9,8 @@ import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAge
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -46,7 +46,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
@@ -105,7 +104,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       ),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      activateToolExecutorWhenReady(agentLifecycle, this.agentCtx, (executor) =>
+        executor.participateExecution(
+          'tower-tool-guard',
+          (event) => {
         if (this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!TOWER_MODE_TOOLS.includes(event.toolCall.name)) return;
         event.veto(
@@ -115,10 +117,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
             ),
           ),
         );
-      }),
+          },
+        ),
+      ),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      activateToolExecutorWhenReady(agentLifecycle, this.agentCtx, (executor) =>
+        executor.participateExecution(
+          'tower-todolist-guard',
+          (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'TodoList') return;
@@ -129,10 +136,15 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
             ),
           ),
         );
-      }),
+          },
+        ),
+      ),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+      activateToolExecutorWhenReady(agentLifecycle, this.agentCtx, (executor) =>
+        executor.participateExecution(
+          'tower-worktree-guard',
+          async (event) => {
         if (this.profile.data().profileName !== TOWER_WORKER_PROFILE) return;
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;
@@ -166,7 +178,9 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
             ),
           ),
         );
-      }),
+          },
+        ),
+      ),
     );
   }
 

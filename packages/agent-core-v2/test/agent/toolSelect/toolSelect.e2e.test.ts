@@ -4,7 +4,7 @@ import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentR
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -95,7 +95,7 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
     ctx.get(IAgentToolSelectSchemasService);
-    ctx.get(IAgentToolExecutorService);
+    ctx.resolve(AgentToolExecutor);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();

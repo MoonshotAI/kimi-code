@@ -23,8 +23,11 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
+import { runtimeFromPipeline, lifecycleWithToolExecutor } from '../../features/toolExecutor/stubs';
+import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -223,7 +226,6 @@ describe('AgentMcpService', () => {
     });
     ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
@@ -234,6 +236,21 @@ describe('AgentMcpService', () => {
       }),
     });
     dispatcher = registerTestEventDispatcher(ix);
+    const context: AgentRuntimeContext<unknown> = {
+      agent: ix.get(IAgentScopeContext).agentContext,
+      get: (id) => ix.get(id as never),
+      getState: () => {
+        throw new Error('no durable state');
+      },
+      getLogicState: () => {
+        throw new Error('no logic state');
+      },
+      dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
+      send: () => {},
+      onDidChange: Event.None,
+    };
+    const pipeline = new ToolExecutorPipeline(context);
+    ix.stub(IAgentLifecycleService, lifecycleWithToolExecutor(runtimeFromPipeline(pipeline)));
   });
   afterEach(() => {
     disposables.dispose();

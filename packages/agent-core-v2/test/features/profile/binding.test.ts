@@ -22,7 +22,7 @@ import { IHostClock } from '#/os/interface/hostClock';
 import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -1104,7 +1104,7 @@ async function executeDirectToolCall(ctx: TestAgentContext, name: string): Promi
     name,
     arguments: '{}',
   };
-  for await (const result of ctx.get(IAgentToolExecutorService).execute([call], {
+  for await (const result of ctx.resolve(AgentToolExecutor).execute([call], {
     signal: new AbortController().signal,
     turnId: 1,
   })) {

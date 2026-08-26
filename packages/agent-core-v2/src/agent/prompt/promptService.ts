@@ -15,8 +15,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IFileService } from '#/app/file/fileService';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -155,7 +155,6 @@ export class AgentPromptService implements IAgentPromptService {
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -168,10 +167,16 @@ export class AgentPromptService implements IAgentPromptService {
     this.context = agentLifecycle.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(promptLaunchingKey);
     this.states.contributeState(promptAdmissionKey);
-    toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
-      await this.deliverToolResult(ctx);
-      await next();
-    });
+    activateToolExecutorWhenReady(
+      this.agentLifecycle,
+      this.scopeContext,
+      (executor) =>
+        executor.registerDidExecuteHook('prompt-service-delivery', async (ctx, next) => {
+          await this.deliverToolResult(ctx);
+          await next();
+        }),
+      { deferToScopeCreated: true },
+    );
   }
 
   private reminder(): ReminderRuntime {

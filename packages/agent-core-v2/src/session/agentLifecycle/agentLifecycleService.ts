@@ -20,7 +20,7 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/features/permissionMode/confi
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentTaskService } from '#/agent/task/task';

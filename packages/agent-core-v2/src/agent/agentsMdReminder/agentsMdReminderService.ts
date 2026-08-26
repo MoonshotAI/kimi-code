@@ -28,8 +28,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
+import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';
@@ -59,7 +59,6 @@ export class AgentAgentsMdReminderService
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -95,7 +94,11 @@ export class AgentAgentsMdReminderService
       await this.probeAndRemind(ctx);
       await next();
     };
-    this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));
+    this._register(
+      activateToolExecutorWhenReady(this.agentLifecycle, this.scopeContext, (executor) =>
+        executor.registerDidExecuteHook('agentsMdReminder', handler),
+      ),
+    );
   }
 
   seedInjected(paths: readonly string[], cwd: string): void {

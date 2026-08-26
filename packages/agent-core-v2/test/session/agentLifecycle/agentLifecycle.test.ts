@@ -26,6 +26,7 @@ import { ISessionPermissionModeService } from '#/session/permissionMode/sessionP
 import { SessionPermissionModeService } from '#/session/permissionMode/sessionPermissionModeService';
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IGitService } from '#/app/git/git';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -67,7 +68,6 @@ import { Ledger } from '#/_base/lifecycle/ledger';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { AgentRuntimeContributionPoint } from '#/agent/runtime/agentRuntime';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
-import '#/agent/toolDedupe/toolDedupeService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
@@ -83,7 +83,11 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor, ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { permissionRulesAgentRuntimeProvider } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import type { ToolExecutorDomain } from '#/features/toolExecutor/internal/domain';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -202,8 +206,6 @@ describe('AgentLifecycleService', () => {
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
-  let beforeExecuteListeners: number;
-  let didExecuteHookIds: string[];
 
   beforeEach(() => {
     _clearAgentToolContributionsForTests();
@@ -300,24 +302,6 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
     } as IAgentMediaToolsRegistrar);
-    beforeExecuteListeners = 0;
-    didExecuteHookIds = [];
-    ix.stub(IAgentToolExecutorService, {
-      _serviceBrand: undefined,
-      onBeforeExecuteTool: () => {
-        beforeExecuteListeners += 1;
-        return { dispose: () => {} };
-      },
-      onWillExecuteTool: () => ({ dispose: () => {} }),
-      hooks: {
-        onDidExecuteTool: {
-          register: (id: string) => {
-            didExecuteHookIds.push(id);
-            return { dispose: () => {} };
-          },
-        },
-      },
-    } as unknown as IAgentToolExecutorService);
     loopActiveTurnId = undefined;
     loopPendingTurnIds = [];
     loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
@@ -783,10 +767,47 @@ describe('AgentLifecycleService', () => {
   });
 
   it('ignites the self-wiring toolDedupe plugin so its listeners exist before the first turn', async () => {
+    ix.stub(IAgentRuntimeService, {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+    } as unknown as IAgentRuntimeService);
+    ix.stub(IGitService, {} as unknown as IGitService);
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-tool-executor',
+      new Ledger('test-tool-executor'),
+      toolExecutorAgentRuntimeProvider,
+    );
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-permission-rules',
+      new Ledger('test-permission-rules'),
+      permissionRulesAgentRuntimeProvider,
+    );
     const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    expect(beforeExecuteListeners).toBeGreaterThan(0);
-    expect(didExecuteHookIds).toContain('toolDedupe');
+    const main = await svc.create({ agentId: 'main' });
+    const runtime: ToolExecutorRuntime = svc.resolve(main, AgentToolExecutor);
+    const domain = (runtime as unknown as { domain: ToolExecutorDomain }).domain;
+    const makeCtx = (id: string): ResolvedToolExecutionHookContext => {
+      const toolCall = {
+        type: 'function' as const,
+        id,
+        name: 'Read',
+        arguments: JSON.stringify({ path: '/a' }),
+      };
+      return {
+        turnId: 0,
+        signal: new AbortController().signal,
+        toolCall,
+        toolCalls: [toolCall],
+        args: { path: '/a' },
+        execution: { approvalRule: 'Read', execute: async () => ({ output: '' }) },
+      };
+    };
+    const first = await domain.pipeline.beforeExecuteBus.fireBeforeExecute(makeCtx('c1'));
+    const second = await domain.pipeline.beforeExecuteBus.fireBeforeExecute(makeCtx('c2'));
+    expect(first).toBeUndefined();
+    expect(second?.veto).toBeDefined();
   });
 
   it('create skips auto ids that collide with agents persisted by a previous run', async () => {

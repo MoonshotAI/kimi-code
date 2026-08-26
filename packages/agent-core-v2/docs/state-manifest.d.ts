@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 61 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 49 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -91,18 +91,6 @@
 //     task.ghosts                                     src/agent/task/taskService.ts
 //     task.notificationDelivery                       src/agent/task/taskService.ts
 //     task.scheduledNotificationKeys                  src/agent/task/taskService.ts
-//     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.callKeyByCallId                      src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.consecutiveCount                     src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.consecutiveKey                       src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.originalCallIndex                    src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.stepCalls                            src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.syntheticCallIds                     src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.turnCallRecords                      src/agent/toolDedupe/toolDedupeService.ts
-//     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
-//     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
-//     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
@@ -1177,23 +1165,6 @@ export interface AgentStateSnapshot {
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
-  // src/agent/toolDedupe/toolDedupeService.ts
-  'toolDedupe.activeStep': number;
-  'toolDedupe.activeTurnId': number | undefined;
-  'toolDedupe.callKeyByCallId': Map<string, string>;
-  'toolDedupe.consecutiveCount': number;
-  'toolDedupe.consecutiveKey': string | null;
-  'toolDedupe.originalCallIndex': Map<string, number>;
-  'toolDedupe.stepCalls': string[];
-  'toolDedupe.syntheticCallIds': Set<string>;
-  'toolDedupe.turnCallRecords': Map<string, /* TurnCallRecord — packages/agent-core-v2/src/agent/toolDedupe/toolDedupeService.ts */ {
-    count: number;
-    lastStep: number;
-  }>;
-  'toolDedupe.turnRepeatCount': number;
-  // src/agent/toolExecutor/toolExecutorService.ts
-  'toolExecutor.dupTypeTurnId': number | undefined;
-  'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
   // src/agent/toolSelect/toolSelectService.ts
   'toolSelect.pendingLoaded': Set<string>;
   // src/agent/userTool/userToolOps.ts

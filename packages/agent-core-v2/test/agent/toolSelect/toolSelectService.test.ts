@@ -36,8 +36,16 @@ import type {
   ToolDisclosure,
   ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
+import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
+import { Event } from '#/_base/event';
+import {
+  lifecycleWithToolExecutor,
+  runtimeFromPipeline,
+  stubToolExecutorEvents,
+} from '../../features/toolExecutor/stubs';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
@@ -355,10 +363,13 @@ function createHarness(): Harness {
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerSharedServices(reg, contextMemory, loop, eventBus);
-      reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
     },
     strict: true,
   });
+  ix.stub(
+    IAgentLifecycleService,
+    lifecycleWithToolExecutor(stubToolExecutorEvents().executor, ix.get(IAgentLifecycleService)),
+  );
   mountAnnouncements(ix);
   return {
     ix,
@@ -371,7 +382,7 @@ function createHarness(): Harness {
 }
 
 interface ExecutorHarness extends Harness {
-  readonly executor: IAgentToolExecutorService;
+  readonly executor: ToolExecutorRuntime;
 }
 
 function createExecutorHarness(): ExecutorHarness {
@@ -383,17 +394,32 @@ function createExecutorHarness(): ExecutorHarness {
       registerSharedServices(reg, contextMemory, loop, eventBus);
       reg.defineInstance(ITelemetryService, recordingTelemetry([]));
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-      reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       registerToolResultTruncationServices(reg);
     },
     strict: true,
   });
+  const runtimeContext: AgentRuntimeContext<unknown> = {
+    agent: { agentId: 'main', generation: 1 } as AgentRuntimeContext<unknown>['agent'],
+    get: (id) => ix.get(id as never),
+    getState: () => {
+      throw new Error('no durable state');
+    },
+    getLogicState: () => {
+      throw new Error('no logic state');
+    },
+    dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
+    send: () => {},
+    onDidChange: Event.None,
+  };
+  const pipeline = new ToolExecutorPipeline(runtimeContext);
+  const executor = runtimeFromPipeline(pipeline);
+  ix.stub(IAgentLifecycleService, lifecycleWithToolExecutor(executor, ix.get(IAgentLifecycleService)));
   mountAnnouncements(ix);
   return {
     ix,
     sut: ix.get(IAgentToolSelectService),
     registry: ix.get(IAgentToolRegistryService),
-    executor: ix.get(IAgentToolExecutorService),
+    executor,
     contextMemory,
     loop,
     eventBus,

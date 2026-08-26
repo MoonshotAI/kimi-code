@@ -11,12 +11,15 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -45,25 +48,20 @@ interface CapturedHooks {
   readonly did: ((ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>)[];
 }
 
-function stubToolExecutor(captured: CapturedHooks): IAgentToolExecutorService {
+function stubToolExecutor(captured: CapturedHooks): ToolExecutorRuntime {
   return {
-    _serviceBrand: undefined,
-    onBeforeExecuteTool: (listener: (event: BeforeToolExecuteEvent) => unknown) => {
+    participateExecution: (_name: string, listener: (event: BeforeToolExecuteEvent) => unknown) => {
       captured.before.push(listener);
       return toDisposable(() => {});
     },
-    hooks: {
-      onDidExecuteTool: {
-        register: (
-          _name: string,
-          handler: (ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>,
-        ) => {
-          captured.did.push(handler);
-          return toDisposable(() => {});
-        },
-      },
+    registerDidExecuteHook: (
+      _name: string,
+      handler: (ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>,
+    ) => {
+      captured.did.push(handler);
+      return toDisposable(() => {});
     },
-  } as unknown as IAgentToolExecutorService;
+  } as unknown as ToolExecutorRuntime;
 }
 
 let activeFs: IHostFileSystem;
@@ -175,7 +173,8 @@ describe('StaleGuardService', () => {
     ix.set(IWireService, stubWireJournal(journal));
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    ix.set(IAgentToolExecutorService, stubToolExecutor(captured));
+    ix.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+    ix.set(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(captured)));
     ix.set(IAgentRuntimeService, stubRuntime());
     ix.set(IStaleGuardService, new SyncDescriptor(StaleGuardService));
     return {

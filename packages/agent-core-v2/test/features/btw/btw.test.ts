@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import {
   ISessionBtwService,
   SIDE_QUESTION_SYSTEM_REMINDER,
@@ -15,7 +15,7 @@ import { SessionBtwService } from '#/features/btw/btwService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 describe('SessionBtwService', () => {
@@ -38,7 +38,6 @@ describe('SessionBtwService', () => {
       accessor: {
         get: (id: unknown) => {
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
-          if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
         },
       },
@@ -63,7 +62,10 @@ describe('SessionBtwService', () => {
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
-      resolve: () => ({ notify: appendReminder }),
+      resolve: (_agent: unknown, definition: unknown) => {
+        if (definition === AgentToolExecutor) return executorEvents.executor;
+        return { notify: appendReminder };
+      },
       handleOf: (id: string) => {
         if (id === 'main') return main;
         if (id === 'agent-btw-1') return child;

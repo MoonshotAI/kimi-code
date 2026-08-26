@@ -40,11 +40,10 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -73,7 +72,11 @@ import {
   testWireScope,
 } from '../../wire/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import {
+  lifecycleWithToolExecutor,
+  stubToolExecutorEvents,
+  type ToolExecutorEventStubs,
+} from '../toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
 
 const signal = new AbortController().signal;
@@ -366,7 +369,13 @@ describe('AgentSwarmService', () => {
     });
     executorEvents = stubToolExecutorEvents();
     permissionGateRan = false;
-    ix.stub(IAgentToolExecutorService, executorEvents.executor);
+    ix.stub(
+      IAgentLifecycleService,
+      lifecycleWithToolExecutor(
+        executorEvents.executor,
+        lifecycleWithReminder(reminder, contextMemory),
+      ),
+    );
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
@@ -377,9 +386,13 @@ describe('AgentSwarmService', () => {
     ctx: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
     disposables.add(
-      executorEvents.executor.onBeforeExecuteTool(() => {
-        permissionGateRan = true;
-      }),
+      executorEvents.executor.participateExecution(
+        'permissionGate',
+        () => {
+          permissionGateRan = true;
+        },
+        'postPolicy',
+      ),
     );
     return executorEvents.fireBeforeExecute(ctx);
   }

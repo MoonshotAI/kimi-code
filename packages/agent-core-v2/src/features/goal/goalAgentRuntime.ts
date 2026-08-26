@@ -23,7 +23,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -31,8 +31,8 @@ import {
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
+import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { BeforeToolExecuteEvent, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
@@ -1213,7 +1213,7 @@ function createGoalEffectHandlers(runtime: AgentRuntimeContext<GoalRuntimeState>
         event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
       }
     },
-    toolCompleted: (tool: Parameters<Parameters<IAgentToolExecutorService['hooks']['onDidExecuteTool']['register']>[1]>[0]) => {
+    toolCompleted: (tool: ToolDidExecuteContext) => {
       const goalId = goalTurnTarget(context, tool.turnId);
       if (
         goalId !== undefined &&
@@ -1269,10 +1269,12 @@ const goalEffects = fromCallback(({
       handlers.afterStep(context);
       await next();
     }));
-    const tools = input.runtime.get(IAgentToolExecutorService);
-    disposables.push(tools.onBeforeExecuteTool(handlers.approval));
-    disposables.push(tools.onBeforeExecuteTool(handlers.veto));
-    disposables.push(tools.hooks.onDidExecuteTool.register(
+    const tools = input.runtime
+      .get(IAgentLifecycleService)
+      .resolve(input.runtime.agent, AgentToolExecutor);
+    disposables.push(tools.participateExecution('goal-approval', handlers.approval));
+    disposables.push(tools.participateExecution('goal-veto', handlers.veto));
+    disposables.push(tools.registerDidExecuteHook(
       'goal-outcome-tool-result',
       async (context, next) => {
         handlers.toolCompleted(context);

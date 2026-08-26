@@ -30,13 +30,11 @@ import {
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
-import type { PermissionMode, PermissionPolicyResult } from '#/agent/permissionPolicy/types';
+import type { PermissionMode, PermissionPolicyResult } from '#/features/toolExecutor/permissionTypes';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import {
-  IAgentToolExecutorService,
-  type ToolExecutionResult,
-} from '#/agent/toolExecutor/toolExecutor';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
+import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
@@ -67,7 +65,8 @@ import { IFlagService } from '#/app/flag/flag';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import type { ToolExecutorDomain } from '#/features/toolExecutor/internal/domain';
+import type { BeforeExecuteDecision } from '#/features/toolExecutor/toolHooks';
 import { stubAgentSwarm } from './stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
@@ -253,30 +252,36 @@ async function recordStepUsage(
 }
 
 async function runTerminalUpdateGoalResult(
-  toolExecutor: IAgentToolExecutorService,
+  toolExecutor: ToolExecutorRuntime,
+  registry: IAgentToolRegistryService,
   turn: Turn,
   status: 'complete' | 'blocked',
   output: string,
+  mark?: () => Promise<void>,
 ): Promise<void> {
+  registry.register({
+    name: 'UpdateGoal',
+    description: 'Scripted UpdateGoal for tests.',
+    parameters: { type: 'object', additionalProperties: true },
+    resolveExecution: () => ({
+      approvalRule: 'UpdateGoal',
+      execute: async () => {
+        await mark?.();
+        return { output, stopTurn: true };
+      },
+    }),
+  });
   const toolCall: ToolCall = {
     type: 'function',
     id: 'call_update_goal',
     name: 'UpdateGoal',
     arguments: JSON.stringify({ status }),
   };
-  await toolExecutor.hooks.onDidExecuteTool.run({
-    turnId: turn.id,
-    signal: turn.signal,
-    toolCall,
-    toolCalls: [toolCall],
-    args: { status },
-    outcome: 'executed',
-    result: { output, stopTurn: true },
-  });
+  await executeToolCall(toolExecutor, turn, toolCall);
 }
 
 async function executeToolCall(
-  toolExecutor: IAgentToolExecutorService,
+  toolExecutor: ToolExecutorRuntime,
   turn: Turn,
   toolCall: ToolCall,
 ): Promise<ToolExecutionResult[]> {
@@ -748,7 +753,6 @@ describe('AgentGoalService goal-start review', () => {
   };
 
   let ctx: TestAgentContext | undefined;
-  let executorEvents: ToolExecutorEventStubs;
   let approvalCalls: ApprovalCall[];
 
   function approvalStub(): IAgentToolApprovalService {
@@ -766,10 +770,8 @@ describe('AgentGoalService goal-start review', () => {
 
   function setup(mode: PermissionMode): void {
     approvalCalls = [];
-    executorEvents = stubToolExecutorEvents();
     ctx = createTestAgent(
       agentService(IAgentToolApprovalService, approvalStub()),
-      agentService(IAgentToolExecutorService, executorEvents.executor),
     );
     applyPermissionMode(ctx, mode);
     ctx.resolve(AgentGoal);
@@ -802,11 +804,20 @@ describe('AgentGoalService goal-start review', () => {
     };
   }
 
+  function fireGoalBeforeExecute(
+    agentCtx: TestAgentContext,
+    hookCtx: ResolvedToolExecutionHookContext,
+  ): Promise<BeforeExecuteDecision | undefined> {
+    const runtime = agentCtx.resolve(AgentToolExecutor);
+    const domain = (runtime as unknown as { domain: ToolExecutorDomain }).domain;
+    return domain.pipeline.beforeExecuteBus.fireBeforeExecute(hookCtx);
+  }
+
   it('routes a goal_start CreateGoal through toolApproval and applies the mode switch', async () => {
     setup('manual');
     const hookCtx = createGoalHookContext(goalStartDisplay);
 
-    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+    const decision = await fireGoalBeforeExecute(ctx!, hookCtx);
 
     expect(approvalCalls).toHaveLength(1);
     expect(approvalCalls[0]!.origin).toBe('goal-start-review-ask');
@@ -825,7 +836,7 @@ describe('AgentGoalService goal-start review', () => {
     setup('auto');
     const hookCtx = createGoalHookContext(goalStartDisplay);
 
-    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+    const decision = await fireGoalBeforeExecute(ctx!, hookCtx);
 
     expect(approvalCalls).toHaveLength(0);
     expect(decision).toBeUndefined();
@@ -835,7 +846,7 @@ describe('AgentGoalService goal-start review', () => {
     setup('manual');
     const hookCtx = createGoalHookContext({ kind: 'generic', summary: 'Creating a goal' });
 
-    const decision = await executorEvents.fireBeforeExecute(hookCtx);
+    const decision = await fireGoalBeforeExecute(ctx!, hookCtx);
 
     expect(approvalCalls).toHaveLength(0);
     expect(decision).toBeUndefined();
@@ -848,7 +859,7 @@ describe('AgentGoalService core workflow hooks', () => {
   let context: ContextMemoryRuntime;
   let goals: GoalRuntime;
   let loopService: StubLoop;
-  let toolExecutor: IAgentToolExecutorService;
+  let toolExecutor: ToolExecutorRuntime;
   let usageService: TestAgentContext['usage'];
   let eventBus: IEventBus;
   let clock: ManualGoalDeadlineScheduler;
@@ -863,7 +874,7 @@ describe('AgentGoalService core workflow hooks', () => {
     applyPermissionMode(ctx, 'auto');
     context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal);
-    toolExecutor = ctx.get(IAgentToolExecutorService);
+    toolExecutor = ctx.resolve(AgentToolExecutor);
     usageService = ctx.usage;
     eventBus = ctx.get(IEventBus);
   });
@@ -1079,7 +1090,7 @@ describe('AgentGoalService core workflow hooks', () => {
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN }));
     const replacement = await goals.createGoal({ objective: 'new task', replace: true });
 
-    await runTerminalUpdateGoalResult(toolExecutor, oldTurn, 'complete', 'old outcome');
+    await runTerminalUpdateGoalResult(toolExecutor, ctx!.get(IAgentToolRegistryService), oldTurn, 'complete', 'old outcome');
     await loopService.hooks.onDidFinishStep.run({
       turnId: oldTurn.id,
       step: 1,
@@ -1414,7 +1425,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
     });
     await goals.markBlocked({}, 'model');
-    await runTerminalUpdateGoalResult(toolExecutor, turn, 'blocked', 'outcome prompt');
+    await runTerminalUpdateGoalResult(toolExecutor, ctx!.get(IAgentToolRegistryService), turn, 'blocked', 'outcome prompt');
 
     const afterStep: AfterStepContext = {
       turnId: turn.id,
@@ -1557,8 +1568,16 @@ describe('AgentGoalService core workflow hooks', () => {
     };
     await loopService.hooks.onWillBeginStep.run(step);
 
-    await goals.markComplete({}, 'model');
-    await runTerminalUpdateGoalResult(toolExecutor, turn, 'complete', 'outcome prompt');
+    await runTerminalUpdateGoalResult(
+      toolExecutor,
+      ctx!.get(IAgentToolRegistryService),
+      turn,
+      'complete',
+      'outcome prompt',
+      async () => {
+        await goals.markComplete({}, 'model');
+      },
+    );
     await loopService.hooks.onDidFinishStep.run(afterStep);
 
     expect(loopService.hasPendingRequests()).toBe(true);

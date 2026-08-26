@@ -310,8 +310,6 @@ export * from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoade
 export * from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
 export * from '#/workspace/workspaceInstructions/workspaceInstructions';
 export * from '#/workspace/workspaceInstructions/workspaceInstructionsService';
-export * from '#/agent/permissionGate/permissionGate';
-export * from '#/agent/permissionGate/permissionGateService';
 export * from '#/agent/toolApproval/toolApproval';
 export * from '#/agent/toolApproval/toolApprovalService';
 import '#/app/flag/flag';
@@ -403,8 +401,6 @@ export {
 export * from '#/session/usage/sessionUsage';
 export * from '#/session/usage/sessionUsageService';
 import '#/features/usage/usageFeature';
-export * from '#/agent/toolDedupe/toolDedupe';
-export * from '#/agent/toolDedupe/toolDedupeService';
 export * from '#/agent/agentsMdReminder/agentsMdReminder';
 export * from '#/agent/agentsMdReminder/agentsMdReminderService';
 import '#/agent/toolSelect/flag';
@@ -719,9 +715,7 @@ export {
 export * from '#/session/permissionMode/sessionPermissionMode';
 export * from '#/session/permissionMode/sessionPermissionModeService';
 import '#/features/permissionMode/permissionModeFeature';
-export * from '#/agent/permissionPolicy/permissionPolicy';
-export * from '#/agent/permissionPolicy/permissionPolicyService';
-export * from '#/agent/permissionPolicy/types';
+export * from '#/features/toolExecutor/permissionTypes';
 import '#/features/permissionRules/configSection';
 export * from '#/features/permissionRules/types';
 export * from '#/features/permissionRules/permissionRulesOps';
@@ -765,9 +759,13 @@ export * from '#/features/todo/todoAgentRuntime';
 export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
 export * from '#/tool/toolContract';
-export * from '#/agent/toolExecutor/toolHooks';
-export * from '#/agent/toolExecutor/toolExecutor';
-export * from '#/agent/toolExecutor/toolExecutorService';
+export * from '#/features/toolExecutor/toolHooks';
+export * from '#/features/toolExecutor/toolExecutor';
+export {
+  AgentToolExecutor,
+  ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import '#/features/toolExecutor/toolExecutorFeature';
 export * from '#/agent/toolResultTruncation/toolResultTruncation';
 import '#/agent/toolResultTruncation/toolResultTruncationService';
 import '#/agent/toolActivation/toolActivationService';

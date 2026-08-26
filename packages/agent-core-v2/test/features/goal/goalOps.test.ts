@@ -16,7 +16,8 @@ import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { stubToolExecutorEvents } from '../toolExecutor/stubs';
+import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -58,15 +59,6 @@ function createTelemetryStub(): ITelemetryService {
     track: () => undefined,
     track2: () => undefined,
   } as unknown as ITelemetryService;
-}
-
-function createToolExecutorStub(): IAgentToolExecutorService {
-  return {
-    _serviceBrand: undefined,
-    onBeforeExecuteTool: Event.None,
-    onWillExecuteTool: Event.None,
-    hooks: { onDidExecuteTool: hookSlot() },
-  } as unknown as IAgentToolExecutorService;
 }
 
 function createConfigStub(): IConfigService {
@@ -115,10 +107,9 @@ function buildHost(key: string): GoalHost {
   ix.stub(IAgentLoopService, createLoopStub());
   ix.stub(
     IAgentLifecycleService,
-    lifecycleWithReminder(createReminderStub()),
+    lifecycleWithToolExecutor(stubToolExecutorEvents().executor, lifecycleWithReminder(createReminderStub())),
   );
   ix.stub(ITelemetryService, createTelemetryStub());
-  ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());
   ix.set(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
   registerTestAgentWire(ix, testWireScope(SCOPE, key), {

@@ -1,15 +1,18 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import type {
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import type { ToolAccesses, ToolFileAccessOperation } from '#/tool/toolContract';
 
 import { IStaleGuardService } from './staleGuard';
@@ -48,24 +51,35 @@ export class StaleGuardService extends Disposable implements IStaleGuardService 
 
   constructor(
     @IAgentStateService private readonly states: IAgentStateService,
-    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
     super();
     this.states.contributeState(staleGuardKey);
-    this._register(toolExecutor.onBeforeExecuteTool((event) => this.guardWrite(event)));
     this._register(
-      toolExecutor.hooks.onDidExecuteTool.register('staleGuard', async (ctx, next) => {
-        await this.observeExecution(ctx);
-        await next();
-      }),
+      activateToolExecutorWhenReady(agentLifecycle, scopeContext, (executor) =>
+        executor.participateExecution('staleGuard', (event) => this.guardWrite(event)),
+      ),
+    );
+    this._register(
+      activateToolExecutorWhenReady(agentLifecycle, scopeContext, (executor) =>
+        executor.registerDidExecuteHook('staleGuard', async (ctx, next) => {
+          await this.observeExecution(ctx);
+          await next();
+        }),
+      ),
     );
     this._register(
       this.runtime.onDidChange(() => {
         void this.dispatcher.dispatch(new StaleGuardCleared({}));
       }),
     );
+  }
+
+  private get dispatcher(): IEventDispatcher {
+    return this.instantiation.invokeFunction((accessor) => accessor.get(IEventDispatcher));
   }
 
   recordedMtimeMs(path: string): number | undefined {

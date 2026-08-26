@@ -41,8 +41,8 @@ import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
-import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
-import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
+import type { PermissionData, PermissionMode } from '#/features/toolExecutor/permissionTypes';
+import { toContractMode, toWireMode } from '#/features/permissionMode/internal/modeMapping';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type AgentConfigData } from '#/features/profile/profile';
@@ -96,7 +96,6 @@ import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding'
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { RuntimeLease } from '#/runtime/runtime';
 import { LocalRuntime } from '#/runtime/localRuntime';
-import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
   ExecutableToolResult,
@@ -149,7 +148,6 @@ import {
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
   ILogService,
-  IAgentPermissionGate,
   ISessionPermissionModeService,
   AgentPermissionMode,
   IHostFileSystem,
@@ -176,8 +174,8 @@ import {
   IWorkspaceStateService,
   LifecycleScope,
   AgentMcpService,
-  AgentPermissionGate,
   AgentPermissionRules,
+  AgentToolExecutor,
   SyncDescriptor,
   AgentUserToolService,
   SessionWorkspaceContextService,
@@ -437,7 +435,7 @@ interface ResumeStateSnapshot {
   };
   readonly checkpointedModels: Readonly<Record<string, unknown>>;
   readonly todos: readonly TodoItem[];
-  readonly permission: Omit<ReturnType<IAgentPermissionGate['data']>, 'rules'>;
+  readonly permission: Omit<PermissionData, 'rules'>;
   readonly usage: Omit<ReturnType<ISessionUsageService['status']>, 'currentTurn'>;
 }
 
@@ -1357,10 +1355,6 @@ export class AgentTestContext {
               new SyncDescriptor(AgentFullCompactionService),
             );
             reg.defineDescriptor(
-              IAgentPermissionGate,
-              new SyncDescriptor(AgentPermissionGate),
-            );
-            reg.defineDescriptor(
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
@@ -1558,12 +1552,11 @@ export class AgentTestContext {
     const cron = this.resolve(AgentCron);
     const plan = this.get(IAgentPlanService);
     void this.get(IAgentToolActivationService).activate();
-    this.get(IAgentToolDedupeService);
+    this.resolve(AgentToolExecutor);
     this.get(IAgentExternalHooksService);
     this.get(IAgentStepRetryService);
     this.get(IAgentLoopContinuationService);
     const tasks = this.get(IAgentTaskService);
-    const permission = this.get(IAgentPermissionGate);
     const swarm = this.get(IAgentSwarmService);
 
     context.get();
@@ -1571,7 +1564,6 @@ export class AgentTestContext {
     tokenCounting.get();
     usage.status();
     tasks.list(false);
-    permission.data();
     void permissionMode.mode();
     void permissionRules.rules();
     cron.list();
@@ -2218,7 +2210,10 @@ export class AgentTestContext {
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.resolve(AgentProfile).data(),
-      getPermission: () => this.get(IAgentPermissionGate).data(),
+      getPermission: () => ({
+        mode: toWireMode(this.resolve(AgentPermissionMode).mode()),
+        rules: [...this.resolve(AgentPermissionRules).rules()],
+      }),
       getPlan: () => this.get(IAgentPlanService).status(),
       getUsage: () => this.usage.status(),
       getTasks: (payload) =>
@@ -2325,9 +2320,8 @@ const failOnResumeGenerate: GenerateFn = async () => {
 
 function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
   const usage = ctx.usage;
-  const permission = ctx.get(IAgentPermissionGate);
   const { currentTurn: _currentTurn, ...usageStatus } = usage.status();
-  const { rules: _rules, ...permissionData } = permission.data();
+  const permissionData = { mode: toWireMode(ctx.resolve(AgentPermissionMode).mode()) };
   return {
     config: configStateSnapshot(ctx),
     context: resumeContextSnapshot(ctx),

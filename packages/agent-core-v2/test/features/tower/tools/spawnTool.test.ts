@@ -11,7 +11,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';

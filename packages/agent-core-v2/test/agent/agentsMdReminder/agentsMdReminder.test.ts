@@ -29,8 +29,11 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
+import { ToolDedupePolicy } from '#/features/toolExecutor/internal/toolDedupe';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
+import { Event } from '#/_base/event';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -43,15 +46,13 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
-import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { PromptOrigin } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { stubProfileRuntime } from '../../features/profile/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import {
   AgentAgentsMdReminderService,
@@ -59,7 +60,12 @@ import {
 } from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
+import {
+  lifecycleWithToolExecutor,
+  runtimeFromPipeline,
+  stubToolExecutorEvents,
+  type ToolExecutorEventStubs,
+} from '../../features/toolExecutor/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -88,6 +94,7 @@ interface CapturedReminder {
 
 interface Harness {
   readonly ix: TestInstantiationService;
+  readonly executor: ToolExecutorRuntime;
   readonly events: ToolExecutorEventStubs;
   readonly reminder: IAgentAgentsMdReminderService;
   readonly dispatcher: IEventDispatcher;
@@ -123,14 +130,11 @@ function createHarness(
           subscribe: () => ({ dispose: () => {} }),
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-        reg.define(IAgentToolExecutorService, AgentToolExecutorService);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
         reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
         registerLogServices(reg);
-      } else {
-        reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
       reg.defineInstance(IAgentScopeContext, {
         _serviceBrand: undefined,
@@ -232,15 +236,50 @@ function createHarness(
       );
       if (options.withDedupe === true) {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
-        reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       }
       reg.define(IAgentAgentsMdReminderService, AgentAgentsMdReminderService);
     },
     strict: true,
   });
+  let executorRuntime: ToolExecutorRuntime = events.executor;
+  if (options.withRealExecutor === true) {
+    const context: AgentRuntimeContext<unknown> = {
+      agent: stubAgentContext('main', 0),
+      get: (id) => ix.get(id as never),
+      getState: () => {
+        throw new Error('no durable state');
+      },
+      getLogicState: () => {
+        throw new Error('no logic state');
+      },
+      dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
+      send: () => {},
+      onDidChange: Event.None,
+    };
+    const pipeline = new ToolExecutorPipeline(context);
+    if (options.withDedupe === true) {
+      const loop = ix.get(IAgentLoopService);
+      const dedupe = new ToolDedupePolicy(context, pipeline);
+      loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
+        dedupe.beginStep(ctx.turnId, ctx.step);
+        await next();
+      });
+      loop.hooks.onDidFinishStep.register('toolDedupe', async (_ctx, next) => {
+        dedupe.endStep();
+        await next();
+      });
+      pipeline.beforeExecuteBus.register('toolDedupe', dedupe.checkExecution);
+      pipeline.registerDidExecuteHook('toolDedupe', dedupe.finalizeExecution);
+    }
+    executorRuntime = runtimeFromPipeline(pipeline);
+  }
+  ix.stub(
+    IAgentLifecycleService,
+    lifecycleWithToolExecutor(executorRuntime, ix.get(IAgentLifecycleService)),
+  );
   const reminder = ix.get(IAgentAgentsMdReminderService);
   const dispatcher = ix.get(IEventDispatcher);
-  return { ix, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
+  return { ix, executor: executorRuntime, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
 }
 
 function didCtx(
@@ -591,7 +630,6 @@ describe('agentsMdReminder duplicate calls', () => {
 
   it('leaves the vetoed placeholder untouched and reminds exactly once on the visible results', async () => {
     const h = createHarness({ withRealExecutor: true, withDedupe: true });
-    h.ix.get(IAgentToolDedupeService);
     const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
 
     class ReadTool implements ExecutableTool<Record<string, unknown>> {
@@ -614,9 +652,7 @@ describe('agentsMdReminder duplicate calls', () => {
       { type: 'function', id: 'call-2', name: 'Read', arguments: JSON.stringify(args) },
     ];
     const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute(calls, { turnId: 1, signal: new AbortController().signal })) {
+    for await (const item of h.executor.execute(calls, { turnId: 1, signal: new AbortController().signal })) {
       results.push(item);
     }
 
@@ -944,9 +980,7 @@ describe('agentsMdReminder round-2 hardening', () => {
       arguments: JSON.stringify({ path: join(workDir, 'packages', 'kap-server', 'big.ts') }),
     };
     const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute([toolCall], { turnId: 1, signal: new AbortController().signal })) {
+    for await (const item of h.executor.execute([toolCall], { turnId: 1, signal: new AbortController().signal })) {
       results.push(item);
     }
 
@@ -982,7 +1016,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     h.ix.get(IAgentToolRegistryService).register(new ResolvedReadTool());
 
     const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+    for await (const item of h.executor.execute(
       [
         {
           type: 'function',
@@ -1026,12 +1060,12 @@ describe('agentsMdReminder round-2 hardening', () => {
       }
     }
     h.ix.get(IAgentToolRegistryService).register(new ReadTool());
-    h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
+    h.executor.participateExecution('test-deny', (event) => {
       event.veto({ output: 'permission denied', isError: true });
     });
 
     const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+    for await (const item of h.executor.execute(
       [
         {
           type: 'function',
@@ -1123,7 +1157,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
     ];
     const pending = (async () => {
       const results = [];
-      for await (const item of h.ix.get(IAgentToolExecutorService).execute(calls, {
+      for await (const item of h.executor.execute(calls, {
         turnId: 1,
         signal: controller.signal,
       })) {
@@ -1143,7 +1177,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
     ).toEqual([]);
 
     const real = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
+    for await (const item of h.executor.execute(
       [
         {
           type: 'function',

@@ -10,13 +10,13 @@ import type {
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-} from '#/agent/permissionPolicy/types';
+} from '#/features/toolExecutor/permissionTypes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
+import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';

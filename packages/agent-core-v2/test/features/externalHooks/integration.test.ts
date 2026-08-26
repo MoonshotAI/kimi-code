@@ -31,7 +31,6 @@ import {
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { PromptQueued } from '#/agent/prompt/promptService';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -40,7 +39,6 @@ import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import { makeHookRunner } from './runner-stub';
@@ -80,6 +78,7 @@ import { IModelService } from '#/kosong/model/model';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
+import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 
@@ -320,14 +319,12 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), context));
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), context)));
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -428,14 +425,12 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), stubContextMemory()));
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), stubContextMemory())));
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -635,14 +630,12 @@ describe('IExternalHooksRunnerService integration', () => {
             enabledHooks: async () => [],
             onDidReload: Event.None as IPluginService['onDidReload'],
           });
-          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), context));
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), context)));
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });
@@ -1171,14 +1164,12 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(createReminderStub(), stubContextMemory()));
+          reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), stubContextMemory())));
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
           });
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
           reg.definePartialInstance(IAgentFullCompactionService, {
             hooks: createHooks(['onWillCompact']),
           });

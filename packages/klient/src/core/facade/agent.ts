@@ -21,7 +21,7 @@ import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/ski
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import type { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
 
 import type { ScopeRef } from '../channel.js';
 import type { ScopedCaller } from './session.js';

@@ -14,7 +14,10 @@ import {
 } from '#/features/llmRequester/llmRequesterAgentRuntime';
 import { type AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  AgentToolExecutor,
+  type ToolExecutorRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/app/event/agentEvents';
 import { type FinishReason } from '#/kosong/contract/provider';
@@ -113,9 +116,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.manager.resolve(this.scopeContext.agentContext, AgentLlmRequester);
   }
 
+  private get toolExecutor(): ToolExecutorRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentToolExecutor);
+  }
+
   constructor(
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,

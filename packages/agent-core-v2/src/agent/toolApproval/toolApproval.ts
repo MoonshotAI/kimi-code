@@ -3,11 +3,11 @@ import type {
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-} from '#/agent/permissionPolicy/types';
+} from '#/features/toolExecutor/permissionTypes';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 
 export interface IAgentToolApprovalService {
   readonly _serviceBrand: undefined;

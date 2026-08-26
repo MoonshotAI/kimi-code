@@ -14,7 +14,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -47,7 +47,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
     @IEventBus eventBus: IEventBus,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -56,10 +55,14 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
     this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(
-      toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
+      activateToolExecutorWhenReady(this.manager, this.scopeContext, (executor) =>
+        executor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
+      ),
     );
     this._register(
-      toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
+      activateToolExecutorWhenReady(this.manager, this.scopeContext, (executor) =>
+        executor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
+      ),
     );
     this._register(
       eventBus.subscribe(CompactionCompleted, () => {

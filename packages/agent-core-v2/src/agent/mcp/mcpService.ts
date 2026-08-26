@@ -11,7 +11,8 @@ import { abortable } from '#/_base/utils/abort';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -55,7 +56,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentLoopService loop: IAgentLoopService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -72,9 +73,11 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       await next();
     });
     this._register(
-      toolExecutor.onWillExecuteTool((event) => {
-        event.waitUntil(this.waitForInitialLoad(event.signal));
-      }),
+      activateToolExecutorWhenReady(this.agentLifecycle, this.scopeContext, (executor) =>
+        executor.onWillExecute((event) => {
+          event.waitUntil(this.waitForInitialLoad(event.signal));
+        }),
+      ),
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {

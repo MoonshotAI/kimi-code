@@ -16,7 +16,6 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
@@ -34,6 +33,7 @@ import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 
 import { stubContextMemory } from '../../features/contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire, type StubLoopOptions } from '../loop/stubs';
+import { lifecycleWithToolExecutor } from '../../features/toolExecutor/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { SteerStepRequest } from '#/agent/prompt/promptStepRequests';
 
@@ -99,11 +99,18 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentBlobService, noopBlob);
       reg.define(IEventDispatcher, EventDispatcherService);
-      reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
-      reg.defineInstance(IAgentLifecycleService, lifecycleWithReminder(reminder, context));
+      const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+      reg.defineInstance(
+        IAgentLifecycleService,
+        lifecycleWithToolExecutor(
+          stubToolExecutor(),
+          lifecycleWithReminder(reminder, context),
+          agentScope.agentContext,
+        ),
+      );
       reg.define(IAgentPromptService, AgentPromptService);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
       reg.definePartialInstance(ISessionMetadata, {
@@ -112,7 +119,6 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
       });
       reg.definePartialInstance(IEventService, { publish: () => {} });
       reg.definePartialInstance(ISessionContext, { sessionId: 'test-session' });
-      const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
       reg.defineInstance(IAgentScopeContext, agentScope);
       reg.definePartialInstance(IFileService, { get: intake.get });
       reg.definePartialInstance(ISessionMediaStore, { materialize: intake.materialize });

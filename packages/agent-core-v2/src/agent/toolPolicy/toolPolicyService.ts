@@ -6,7 +6,7 @@ import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAge
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IConfigService } from '#/app/config/config';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -25,19 +25,20 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     @IConfigService private readonly config: IConfigService,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
     this._register(
-      toolExecutor.registerToolCallGuard(({ name, source }) => {
-        const active =
-          name === SELECT_TOOLS_TOOL_NAME
-            ? this.isToolActiveForDisclosure(name, source)
-            : this.isToolActive(name, source);
-        return active
-          ? undefined
-          : `Tool "${name}" is disabled by the active tool policy`;
-      }),
+      activateToolExecutorWhenReady(this.manager, this.scopeContext, (executor) =>
+        executor.registerToolCallGuard(({ name, source }) => {
+          const active =
+            name === SELECT_TOOLS_TOOL_NAME
+              ? this.isToolActiveForDisclosure(name, source)
+              : this.isToolActive(name, source);
+          return active
+            ? undefined
+            : `Tool "${name}" is disabled by the active tool policy`;
+        }),
+      ),
     );
   }
 

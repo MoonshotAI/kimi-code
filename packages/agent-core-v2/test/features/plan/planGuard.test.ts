@@ -12,17 +12,16 @@ import type {
   PermissionMode,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-} from '#/agent/permissionPolicy/types';
+} from '#/features/toolExecutor/permissionTypes';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { AgentPlanService } from '#/features/plan/planService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/agent/toolExecutor/toolHooks';
+} from '#/features/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -34,7 +33,11 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { registerTestAgentWireServices } from '../../wire/stubs';
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import {
+  lifecycleWithToolExecutor,
+  stubToolExecutorEvents,
+  type ToolExecutorEventStubs,
+} from '../toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 const SESSION_DIR = '/session';
@@ -176,15 +179,16 @@ describe('AgentPlanService plan-guard listener', () => {
         });
         reg.defineInstance(
           IAgentLifecycleService,
-          lifecycleWithReminder(
+          lifecycleWithToolExecutor(
+            executorEvents.executor,
+            lifecycleWithReminder(
             createReminderStub(),
             stubContextMemory(),
             stubUsage(),
             stubPermissionModeRuntime(() => mode),
-          ),
+          )),
         );
         reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
-        reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentStateService, new AgentStateService());
@@ -211,9 +215,13 @@ describe('AgentPlanService plan-guard listener', () => {
     if (!permissionStandInRegistered) {
       permissionStandInRegistered = true;
       disposables.add(
-        executorEvents.executor.onBeforeExecuteTool(() => {
-          permissionRan = true;
-        }),
+        executorEvents.executor.participateExecution(
+          'permissionGate',
+          () => {
+            permissionRan = true;
+          },
+          'postPolicy',
+        ),
       );
     }
     return executorEvents.fireBeforeExecute(ctx);

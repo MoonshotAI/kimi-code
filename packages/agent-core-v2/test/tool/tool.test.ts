@@ -104,6 +104,8 @@ import {
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
+import { AgentToolExecutor, toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { stubToolExecutorEvents } from '../features/toolExecutor/stubs';
 import { stubPermissionModeRuntime } from '../features/permissionMode/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
@@ -446,6 +448,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
         return adoptedManaged.runtimeSet.resolve(definition);
       }
+      if (definition === AgentToolExecutor) return stubToolExecutorEvents().executor;
       if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => 'manual');
       if (definition === AgentProfile) {
         return handles.get(agent.agentId)?.accessor.get(AgentProfile as never);
@@ -540,6 +543,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentLlmRequester,
           provider: llmRequesterAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentToolExecutor,
+          provider: toolExecutorAgentRuntimeProvider,
           generation: 1,
           active: true,
         },

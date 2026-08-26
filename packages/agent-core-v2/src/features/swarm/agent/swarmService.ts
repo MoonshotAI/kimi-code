@@ -4,8 +4,8 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -25,7 +25,6 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IAgentLifecycleService manager: IAgentLifecycleService,
     @IEventBus eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -49,23 +48,25 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
-        const agentSwarmCount = event.toolCalls.filter(
-          (toolCall) => toolCall.name === 'AgentSwarm',
-        ).length;
-        if (agentSwarmCount === 0 || (agentSwarmCount === 1 && event.toolCalls.length === 1)) {
-          return;
-        }
-        event.veto(
-          denyToolExecution(
-            this.toolApproval.formatDenyMessage(
-              agentSwarmCount > 1
-                ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
-                : mixedAgentSwarmDeniedMessage(),
+      activateToolExecutorWhenReady(manager, this.agentCtx, (executor) =>
+        executor.participateExecution('swarm', (event) => {
+          const agentSwarmCount = event.toolCalls.filter(
+            (toolCall) => toolCall.name === 'AgentSwarm',
+          ).length;
+          if (agentSwarmCount === 0 || (agentSwarmCount === 1 && event.toolCalls.length === 1)) {
+            return;
+          }
+          event.veto(
+            denyToolExecution(
+              this.toolApproval.formatDenyMessage(
+                agentSwarmCount > 1
+                  ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
+                  : mixedAgentSwarmDeniedMessage(),
+              ),
             ),
-          ),
-        );
-      }),
+          );
+        }),
+      ),
     );
   }
 

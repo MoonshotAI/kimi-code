@@ -72,7 +72,7 @@ import type {
   ToolCallStarted,
   ToolProgress,
   ToolResultEvent,
-} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+} from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
 import { resolve } from 'pathe';
 
 import {

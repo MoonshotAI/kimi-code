@@ -4,7 +4,7 @@ import type { AgentConfigData, AgentConfigUpdateData } from '#/features/profile/
 import type { AgentContextData, ContextMessage } from '#/features/contextMemory/types';
 import type { GoalChange, GoalSnapshot } from '#/features/goal/types';
 import type { PermissionApprovalResultRecord } from '#/features/permissionRules/types';
-import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionData, PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import type { PlanData } from '#/features/plan/plan';
 import type { ToolInfo } from '#/tool/toolContract';
 import type { UsageStatus } from '#/agent/usage/usage';

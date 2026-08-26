@@ -6,7 +6,7 @@ import {
   type ExitPlanModeInput,
 } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';

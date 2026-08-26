@@ -1,5 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
@@ -30,9 +31,10 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
+import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { toKimiErrorPayload } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -73,7 +75,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -138,9 +140,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private registerListeners(): void {
     this.registerPermissionHooks();
 
-    this.registerToolHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
+    this._register(
+      activateToolExecutorWhenReady(this.manager, this.scopeContext, (executor) =>
+        this.registerToolHooks(executor),
+      ),
     );
+
 
     this.registerPromptHooks(
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPromptService)),
@@ -161,21 +166,22 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
-    this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+  private registerToolHooks(executor: ToolExecutorRuntime): IDisposable {
+    const registrations: IDisposable[] = [
+      executor.participateExecution('externalHooks', async (event) => {
         const reason = await this.runPreToolUse(event);
         if (reason !== undefined) {
           event.veto(denyToolExecution(reason));
         }
       }),
-    );
-    this._register(
-      toolExecutor.hooks.onDidExecuteTool.register('externalHooks', async (ctx, next) => {
+      executor.registerDidExecuteHook('externalHooks', async (ctx, next) => {
         this.notifyPostToolUse(ctx);
         await next();
       }),
-    );
+    ];
+    return toDisposable(() => {
+      for (const registration of registrations.splice(0)) registration.dispose();
+    });
   }
 
   private registerPermissionHooks(): void {

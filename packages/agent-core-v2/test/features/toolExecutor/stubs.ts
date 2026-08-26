@@ -1,0 +1,121 @@
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { AsyncEmitter, Event, type IWaitUntilData } from '#/_base/event';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type {
+  MissingToolDescriber,
+  ToolCallGuard,
+  ToolDidExecuteHook,
+  ToolExecutionParticipationOrder,
+  ToolExecutionResult,
+  ToolExecutionVetoListener,
+  ToolExecutorExecuteOptions,
+  UnavailableToolDescriber,
+} from '#/features/toolExecutor/toolExecutor';
+import type {
+  BeforeExecuteDecision,
+  ResolvedToolExecutionHookContext,
+  ToolDidExecuteContext,
+  WillExecuteToolEvent,
+} from '#/features/toolExecutor/toolHooks';
+import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { BeforeToolExecuteBus } from '#/features/toolExecutor/internal/beforeToolExecute';
+import type { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
+import { TOOL_DEDUPE_PARTICIPANT } from '#/features/toolExecutor/toolExecutor';
+import type { ToolCall } from '#/kosong/contract/message';
+import { OrderedHookSlot } from '#/hooks';
+
+export interface ToolExecutorEventStubs {
+  readonly executor: ToolExecutorRuntime;
+  readonly beforeBus: BeforeToolExecuteBus;
+  readonly didExecuteSlot: OrderedHookSlot<ToolDidExecuteContext>;
+  fireBeforeExecute(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<BeforeExecuteDecision | undefined>;
+  fireWillExecute(
+    data: IWaitUntilData<WillExecuteToolEvent>,
+    signal: AbortSignal,
+  ): Promise<void>;
+}
+
+export function stubToolExecutorEvents(input: {
+  readonly execute?: (
+    calls: ToolCall[],
+    options: ToolExecutorExecuteOptions,
+  ) => AsyncIterable<ToolExecutionResult>;
+} = {}): ToolExecutorEventStubs {
+  const beforeBus = new BeforeToolExecuteBus();
+  const willEmitter = new AsyncEmitter<WillExecuteToolEvent>();
+  const didExecuteSlot = new OrderedHookSlot<ToolDidExecuteContext>();
+  didExecuteSlot.register(TOOL_DEDUPE_PARTICIPANT, async (_ctx, next) => {
+    await next();
+  });
+  const executor = {
+    execute: input.execute ?? (async function* () {}),
+    onWillExecute: willEmitter.event,
+    onDidExecute: Event.None,
+    participateExecution: (
+      name: string,
+      listener: Parameters<BeforeToolExecuteBus['register']>[1],
+      order?: ToolExecutionParticipationOrder,
+    ) => beforeBus.register(name, listener, order),
+    registerDidExecuteHook: (
+      name: string,
+      hook: (ctx: ToolDidExecuteContext, next: (ctx?: ToolDidExecuteContext) => Promise<void>) => void | Promise<void>,
+      order?: ToolExecutionParticipationOrder,
+    ) =>
+      didExecuteSlot.register(
+        name,
+        hook,
+        order === 'postPolicy' ? {} : { before: TOOL_DEDUPE_PARTICIPANT },
+      ),
+    registerToolCallGuard: (_guard: ToolCallGuard): IDisposable => toDisposable(() => {}),
+    registerUnavailableToolDescriber: (_describer: UnavailableToolDescriber): IDisposable =>
+      toDisposable(() => {}),
+    registerMissingToolDescriber: (_describer: MissingToolDescriber): IDisposable =>
+      toDisposable(() => {}),
+  } as unknown as ToolExecutorRuntime;
+  return {
+    executor,
+    beforeBus,
+    didExecuteSlot,
+    fireBeforeExecute: (context) => beforeBus.fireBeforeExecute(context),
+    fireWillExecute: (data, signal) => willEmitter.fireAsync(data, signal),
+  };
+}
+
+export function runtimeFromPipeline(pipeline: ToolExecutorPipeline): ToolExecutorRuntime {
+  return {
+    execute: (calls: ToolCall[], options: ToolExecutorExecuteOptions) =>
+      pipeline.execute(calls, options),
+    onWillExecute: pipeline.onWillExecute,
+    onDidExecute: pipeline.onDidExecute,
+    participateExecution: (name: string, listener: ToolExecutionVetoListener, order?: ToolExecutionParticipationOrder) =>
+      pipeline.beforeExecuteBus.register(name, listener, order),
+    registerDidExecuteHook: (name: string, hook: ToolDidExecuteHook, order?: ToolExecutionParticipationOrder) =>
+      pipeline.registerDidExecuteHook(name, hook, order),
+    registerToolCallGuard: (guard: ToolCallGuard) => pipeline.registerToolCallGuard(guard),
+    registerUnavailableToolDescriber: (describer: UnavailableToolDescriber) =>
+      pipeline.registerUnavailableToolDescriber(describer),
+    registerMissingToolDescriber: (describer: MissingToolDescriber) =>
+      pipeline.registerMissingToolDescriber(describer),
+  } as unknown as ToolExecutorRuntime;
+}
+
+export function lifecycleWithToolExecutor(
+  executor: ToolExecutorRuntime,
+  inner?: IAgentLifecycleService,
+  firedScopeContext?: AgentContext,
+): IAgentLifecycleService {
+  return {
+    resolve: (agent: unknown, definition: unknown) => {
+      if (definition === AgentToolExecutor) return executor;
+      return inner?.resolve(agent as never, definition as never);
+    },
+    handleOf: (agentId: string) => inner?.handleOf(agentId) ?? ({}),
+    onDidCreateScope: (listener: (event: { context: AgentContext }) => void) => {
+      if (firedScopeContext !== undefined) listener({ context: firedScopeContext });
+      return inner?.onDidCreateScope(listener as never) ?? toDisposable(() => {});
+    },
+  } as unknown as IAgentLifecycleService;
+}

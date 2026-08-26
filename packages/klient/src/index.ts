@@ -155,4 +155,4 @@ export type {
   McpServerTestTarget,
 } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
+export type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
