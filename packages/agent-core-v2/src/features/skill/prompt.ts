@@ -1,5 +1,5 @@
 import { escapeXml } from '#/_base/utils/xml-escape';
-import { promptMetadataTextFromText } from '#/agent/prompt/promptMetadataText';
+import { promptMetadataTextFromText } from '#/features/prompt/promptMetadataText';
 import type { SkillSource } from '#/features/skill/catalog/types';
 
 import type { SkillActivationInput } from './skill';

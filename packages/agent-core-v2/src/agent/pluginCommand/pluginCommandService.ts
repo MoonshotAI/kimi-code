@@ -8,12 +8,13 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { promptMetadataTextFromText } from '#/agent/prompt/promptMetadataText';
+import { AgentPrompt, type PromptRuntime } from '#/features/prompt/promptAgentRuntime';
+import { promptMetadataTextFromText } from '#/features/prompt/promptMetadataText';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import {
   IAgentPluginCommandService,
@@ -26,13 +27,17 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
 
   constructor(
     @IPluginService private readonly plugins: IPluginService,
-    @IAgentPromptService private readonly promptService: IAgentPromptService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) { }
+
+  private prompt(): PromptRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentPrompt);
+  }
 
   async activate(payload: ActivatePluginCommandPayload): Promise<void> {
     const commands = await this.plugins.listPluginCommands();
@@ -65,7 +70,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
         trigger: origin.trigger,
       }),
     );
-    await this.promptService.enqueue({ message: {
+    await this.prompt().enqueue({ message: {
       role: 'user',
       content: [{ type: 'text', text: expanded }],
       toolCalls: [],

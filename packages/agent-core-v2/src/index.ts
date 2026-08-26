@@ -734,10 +734,26 @@ export {
   ProfileRuntime,
 } from '#/features/profile/profileAgentRuntime';
 import '#/features/profile/profileFeature';
-export * from '#/agent/prompt/prompt';
-export * from '#/agent/prompt/promptOps';
-export * from '#/agent/prompt/promptService';
-export * from '#/agent/prompt/promptMetadataText';
+export { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+export {
+  type PromptAdmission,
+  type PromptAdmissionReservation,
+  type PromptBeforeSubmitHook,
+  type PromptCompletion,
+  type PromptHandle,
+  type PromptInput,
+  type PromptQueueSnapshot,
+  type PromptRuntime,
+  type PromptSnapshot,
+  type PromptState,
+  type PromptSubmitContext,
+  type PromptSubmitInput,
+  type PromptSubmitResult,
+} from '#/features/prompt/prompt';
+export * from '#/features/prompt/promptOps';
+export * from '#/features/prompt/promptEvents';
+export * from '#/features/prompt/promptMetadataText';
+import '#/features/prompt/promptFeature';
 export * from '#/agent/replayBuilder/types';
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 export * from '#/agent/undo/undo';

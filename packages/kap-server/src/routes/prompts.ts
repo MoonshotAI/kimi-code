@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 
 import {
   IBootstrapService,
@@ -7,7 +8,6 @@ import {
   AgentProfile,
   type ProfileRuntime,
   IAgentToolPolicyService,
-  IAgentPromptService,
   agentContextOf,
   AgentSkill,
   IAuthSummaryService,
@@ -20,11 +20,9 @@ import {
   isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
   ProfileError,
-  type PromptHandle,
+  type PromptAdmissionReservation,
   type PromptQueueSnapshot,
-  type PromptReservation,
   type PromptWithSkillsResult,
-  reservePrompt,
   ISessionContext,
   resumeSessionById,
   ITelemetryService,
@@ -111,7 +109,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
-    prompt: agent.accessor.get(IAgentPromptService),
+    prompt: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt),
     skill: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentSkill),
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
@@ -221,8 +219,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       const { session_id } = req.params;
       let preparedMedia: PromptMediaPreparation | undefined;
-      let reservation: PromptReservation | undefined;
       let enqueued = false;
+      let reservation: PromptAdmissionReservation | undefined;
       try {
         await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
         const session = await resolveSession(core, session_id);
@@ -243,7 +241,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           session.accessor.get(ISessionMediaStore),
         );
         const resolved = await resolvePromptFromSession(session, req.body.agent_id);
-        reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
+        reservation =
+          req.body.prompt_id === undefined
+            ? undefined
+            : resolved.prompt.reserveAdmission(req.body.prompt_id);
         await resolved.auth.ensureReady();
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
@@ -327,29 +328,38 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           );
           return;
         }
-        await applyPromptMetadataUpdate({
-          metadata: session.accessor.get(ISessionMetadata),
-          eventService: core.accessor.get(IEventService),
-          sessionId: session_id,
-        }, promptMetadataTextFromContentParts(parts));
-        const handle = await reservation.submit({
-          role: 'user',
+        if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+          await applyPromptMetadataUpdate({
+            metadata: session.accessor.get(ISessionMetadata),
+            eventService: core.accessor.get(IEventService),
+            sessionId: session_id,
+          }, promptMetadataTextFromContentParts(parts));
+        }
+        reservation?.dispose();
+        const result = await resolved.prompt.submit({
           content: parts,
-          toolCalls: [],
           origin: { kind: 'user' },
+          promptId: reservation?.id ?? req.body.prompt_id,
         });
         enqueued = true;
-        const staging = preparedMedia;
-        void Promise.race([handle.launched, handle.completion]).then(
-          () => staging?.discard(),
-          () => staging?.discard(),
+        const settlement = watchPromptSettlements(resolved.events);
+        settlement.settle(result.promptId, () => preparedMedia?.discard());
+        reply.send(
+          okEnvelope(
+            {
+              prompt_id: result.promptId,
+              user_message_id: result.promptId,
+              status: result.state,
+              content: projectPromptContentParts(parts),
+              created_at: result.createdAt,
+            },
+            req.id,
+          ),
         );
-        reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
+        reservation?.dispose();
         if (!enqueued) await preparedMedia?.discard();
         sendMappedError(reply, req, error);
-      } finally {
-        reservation?.dispose();
       }
     },
   );
@@ -458,10 +468,6 @@ function projectPromptList(snapshot: PromptQueueSnapshot) {
     active: snapshot.active === undefined ? null : projectPromptSnapshot(snapshot.active),
     queued: snapshot.pending.map(projectPromptSnapshot),
   };
-}
-
-function projectPromptHandle(handle: PromptHandle) {
-  return projectPromptSnapshot(handle);
 }
 
 export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][number]) {

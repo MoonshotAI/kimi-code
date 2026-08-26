@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AgentCron,
+  AgentPrompt,
   AgentGoal,
   IAgentLifecycleService,
   ISessionPermissionModeService,
   AgentProfile,
-  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
@@ -147,23 +147,7 @@ function makeFakeHarness() {
         }),
       },
     ],
-    [
-      IAgentPromptService,
-      {
-        enqueue: vi.fn(async () => {
-          // Emit a native assistant delta on the main agent bus, then complete.
-          for (const listener of [...eventListeners]) {
-            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
-          }
-          return {
-            launched: Promise.resolve({
-              id: 1,
-              result: Promise.resolve({ type: 'completed' }),
-            }),
-          };
-        }),
-      },
-    ],
+    
     [IAgentTaskService, { list: vi.fn(() => []) }],
     [
       IAgentScopeContext,
@@ -172,23 +156,36 @@ function makeFakeHarness() {
   ]);
   const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const cron = { getNextFireTime: vi.fn(() => null) };
+  const promptEnqueue = vi.fn(async () => {
+    // Emit a native assistant delta on the main agent bus, then complete.
+    for (const listener of [...eventListeners]) {
+      listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
+    }
+    return {
+      launched: Promise.resolve({
+        id: 1,
+        result: Promise.resolve({ type: 'completed' }),
+      }),
+    };
+  });
+  const agentLifecycle = {
+    list: vi.fn(() => []),
+    handleOf: vi.fn((): unknown => undefined),
+    resolve: vi.fn((_context: unknown, capability: unknown) => {
+      if (capability === AgentGoal) return goal;
+      if (capability === AgentCron) return cron;
+      if (capability === AgentProfile) return profile;
+      if (capability === AgentPrompt) return { enqueue: promptEnqueue };
+      throw new Error('unexpected capability');
+    }),
+  };
+  agentServices.set(IAgentLifecycleService, agentLifecycle);
   const agent = fakeScope('main', agentServices);
+  agentLifecycle.handleOf.mockReturnValue(agent);
 
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
-    [
-      IAgentLifecycleService,
-      {
-        list: vi.fn(() => []),
-        handleOf: vi.fn(() => agent),
-        resolve: vi.fn((_context: unknown, capability: unknown) => {
-          if (capability === AgentGoal) return goal;
-          if (capability === AgentCron) return cron;
-          if (capability === AgentProfile) return profile;
-          throw new Error('unexpected capability');
-        }),
-      },
-    ],
+    [IAgentLifecycleService, agentLifecycle],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -261,7 +258,7 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices, appServices, profileState };
+  return { app, agent, session, agentServices, appServices, profileState, promptEnqueue };
 }
 
 describe('runV2Print', () => {
@@ -278,15 +275,14 @@ describe('runV2Print', () => {
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices, promptEnqueue } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const promptService = agentServices.get(IAgentPromptService) as { enqueue: ReturnType<typeof vi.fn> };
-    expect(promptService.enqueue).toHaveBeenCalledWith({
+    expect(promptEnqueue).toHaveBeenCalledWith({
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'say hello' }],
@@ -411,7 +407,7 @@ describe('runV2Print', () => {
     await writeFile(agentFile, '---\nname: broken\n---\n\nbody\n');
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices, promptEnqueue } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });

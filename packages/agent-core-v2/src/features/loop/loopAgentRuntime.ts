@@ -4,21 +4,12 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { LoopControlToken } from './internal/loop';
 import {
-  defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { AgentLoopLogic } from './internal/loopLogic';
 import { registerLoopControl, type LoopDurableState } from './internal/access';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IConfigService } from '#/app/config/config';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { IAgentStateService } from '#/agent/state/agentState';
-import type { AgentLoopStatus } from './internal/loop';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '#/features/loop/turnOps';
 import { AgentLoop, type LoopRuntime } from './loop';
 import type { LoopResult, LoopStatus, TurnEndedEvent, TurnStartedEvent } from './loop';
@@ -83,10 +74,6 @@ class AgentLoopRuntime implements LoopRuntime {
     await this.loop.settled();
     return this.lastResult;
   }
-}
-
-function statusOf(status: AgentLoopStatus): LoopStatus {
-  return status.state === 'running' ? 'running' : 'idle';
 }
 
 interface LoopActorContext {

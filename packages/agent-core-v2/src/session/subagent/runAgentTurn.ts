@@ -6,7 +6,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { LoopControlToken, type Turn, type TurnResult } from '#/features/loop/internal/loop';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -35,7 +35,7 @@ export async function runAgentTurn(
   options: RunAgentTurnOptions,
 ): Promise<AgentRunHandle> {
   options.signal.throwIfAborted();
-  const promptService = target.accessor.get(IAgentPromptService);
+  const promptService = target.accessor.get(IAgentLifecycleService).resolve(agentContextOf(target), AgentPrompt);
   const turn =
     request.kind === 'prompt'
       ? await (await promptService.enqueue({ message: {
@@ -124,7 +124,7 @@ async function distillSummary(
   if (policy === undefined) return summary;
   if (isSummaryAdequate(summary, policy)) return summary;
 
-  const promptService = target.accessor.get(IAgentPromptService);
+  const promptService = target.accessor.get(IAgentLifecycleService).resolve(agentContextOf(target), AgentPrompt);
   for (let attempt = 0; attempt < policy.retries; attempt++) {
     const turn = await (await promptService.enqueue({ message: {
       role: 'user',

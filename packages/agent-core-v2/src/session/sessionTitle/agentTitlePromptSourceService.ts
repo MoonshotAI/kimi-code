@@ -2,11 +2,11 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
-} from '#/agent/prompt/promptMetadataText';
+} from '#/features/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -24,9 +24,8 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   private readonly context: ContextMemoryRuntime;
 
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
-    @IAgentPromptService private readonly prompt: IAgentPromptService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
   }
@@ -90,7 +89,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   }
 
   private combinedMessages(): ContextMessage[] {
-    const queue = this.prompt.list();
+    const queue = this.manager.resolve(this.scopeContext.agentContext, AgentPrompt).list();
     const all = [...this.context.get()];
     if (queue.active !== undefined) all.push(queue.active.message);
     for (const item of queue.pending) all.push(item.message);

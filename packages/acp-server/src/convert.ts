@@ -84,7 +84,7 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readon
  * is passed through unchanged.
  *
  * This is NOT duplicated by the engine: agent-core-v2's prompt pipeline
- * (`agent/prompt/promptService.ts`) only *extracts* pre-existing compression
+ * (`features/prompt/internal/promptDomain.ts`) only *extracts* pre-existing compression
  * captions from user text (rerouting them to system reminders) — it never
  * gates or compresses images at the prompt entry, so the edge ingestion point
  * owns the step.

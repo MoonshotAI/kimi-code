@@ -8,7 +8,7 @@
  *   - creates / resumes a session and its main agent via native services,
  *   - subscribes to the main agent's per-agent `IEventBus` and renders the
  *     native `Event2` stream (payloads are already v1-protocol-shaped),
- *   - drives a turn through `IAgentPromptService.enqueue()` and awaits
+ *   - drives a turn through `AgentPrompt.enqueue()` and awaits
  *     `Turn.result` for authoritative completion,
  *   - applies the print-mode background policy (config-driven, v1-aligned:
  *     `exit` / `drain` / `steer`) before exiting.
@@ -20,12 +20,12 @@ import { readFile } from 'node:fs/promises';
 
 import {
   AgentCron,
+  AgentPrompt,
   AgentGoal,
   IAgentLifecycleService,
   ISessionPermissionModeService,
   AgentProfile,
   type ProfileRuntime,
-  IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -446,7 +446,10 @@ async function runNativeTurn(
     if (event.type === 'turn.ended') turnEndings.push(event as TurnEnded);
   });
   try {
-    const handle = await agent.accessor.get(IAgentPromptService).enqueue({
+    const handle = await agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentPrompt)
+      .enqueue({
       message: {
         role: 'user',
         content: [{ type: 'text', text: prompt }],

@@ -24,10 +24,10 @@ import type { WarningIssued } from '@moonshot-ai/agent-core-v2/features/profile/
 import type {
   PromptAborted,
   PromptCompleted,
+  PromptQueued,
   PromptSteered,
-} from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/agent/prompt/promptOps';
-import type { PromptQueued } from '@moonshot-ai/agent-core-v2/agent/prompt/promptService';
+} from '@moonshot-ai/agent-core-v2/features/prompt/promptEvents';
+import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/features/prompt/promptOps';
 import type {
   ShellCompleted,
   ShellOutput,

@@ -14,13 +14,12 @@
  *    a full REST refresh; nothing is resynced from the socket itself.
  *
  * Rendering is turn-granular (turn → step → frame) and typed entirely by the
- * transcript data model. Prompts/cancels go through the `IAgentPromptService`
+ * transcript data model. Prompts/cancels go through the `agentPromptService`
  * / `agentLoopService` channels
  * over the debug RPC surface (`/api/v1/debug`); the running indicator
  * derives from transcript state (`meta.activity` / running turns).
  */
 
-import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import {
   ISessionQuestionService,
@@ -564,11 +563,13 @@ export function ChatView({
     setInput('');
     setSendError(null);
     try {
-      await klient
-        .session(sessionId)
-        .agent(agentId)
-        .service(IAgentPromptService)
-        .submit({ input: [{ type: 'text', text }] });
+      await (
+        klient.session(sessionId).agent(agentId).service('agentPromptService') as {
+          submit(payload: { input: readonly { type: 'text'; text: string }[] }): Promise<
+            { turn_id: number } | undefined
+          >;
+        }
+      ).submit({ input: [{ type: 'text', text }] });
       trail?.recordEvent('prompt', text, state);
     } catch (error) {
       setSendError(error);

@@ -1,4 +1,3 @@
-import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
 import { defineAgentRuntimeContract } from '#/agent/runtime/agentRuntime';
 export type { LoopRunResult } from './internal/loop';

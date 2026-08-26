@@ -4,7 +4,8 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { lifecycleWithPrompt, stubPromptRuntime } from '../../features/prompt/stubs';
+import type { PromptQueueSnapshot } from '#/features/prompt/prompt';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -41,7 +42,7 @@ describe('AgentTitlePromptSource', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let liveMessages: readonly ContextMessage[];
-  let queue: ReturnType<IAgentPromptService['list']>;
+  let queue: PromptQueueSnapshot;
 
   beforeEach(() => {
     liveMessages = [];
@@ -51,16 +52,18 @@ describe('AgentTitlePromptSource', () => {
       additionalServices: (reg) => {
         reg.defineInstance(
           IAgentLifecycleService,
-          lifecycleWithReminder(
-            createReminderStub(),
-            { get: () => liveMessages } as unknown as ContextMemoryRuntime,
+          lifecycleWithPrompt(
+            stubPromptRuntime({ list: () => queue }),
+            lifecycleWithReminder(
+              createReminderStub(),
+              { get: () => liveMessages } as unknown as ContextMemoryRuntime,
+            ),
           ),
         );
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
         );
-        reg.definePartialInstance(IAgentPromptService, { list: () => queue });
         reg.define(IAgentTitlePromptSource, AgentTitlePromptSourceService);
       },
     });

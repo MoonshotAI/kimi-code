@@ -105,6 +105,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { AgentToolExecutor, toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
 import { stubToolExecutorEvents } from '../features/toolExecutor/stubs';
 import { stubPermissionModeRuntime } from '../features/permissionMode/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -127,6 +128,9 @@ import {
   AgentLlmRequester,
   llmRequesterAgentRuntimeProvider,
 } from '#/features/llmRequester/llmRequesterAgentRuntime';
+import { AgentLoop } from '#/features/loop/loop';
+import { loopAgentRuntimeProvider } from '#/features/loop/loopAgentRuntime';
+import type { AgentRuntimeDefinitionRecord } from '#/agent/runtime/agentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -267,15 +271,117 @@ interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentSer
   ): void;
 }
 
+const adoptedRuntimeRecords: readonly AgentRuntimeDefinitionRecord[] = [
+  {
+    definition: AgentContextMemory,
+    provider: contextMemoryAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentReminder,
+    provider: reminderAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentTodo,
+    provider: todoAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentInteraction,
+    provider: interactionAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentCron,
+    provider: cronAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentGoal,
+    provider: goalAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentSkill,
+    provider: skillAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentTokenCounting,
+    provider: tokenCountingAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentPermissionMode,
+    provider: permissionModeAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentUsage,
+    provider: usageAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentPermissionRules,
+    provider: permissionRulesAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentProfile,
+    provider: profileAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentLlmRequester,
+    provider: llmRequesterAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentLoop,
+    provider: loopAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentToolExecutor,
+    provider: toolExecutorAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
+    definition: AgentPrompt,
+    provider: promptAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+];
+
 function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): AgentLifecycleStub {
   let lifecycle: AgentLifecycleStub;
   let created = 0;
   const stateByAgentId = new Map<string, AgentStateService>();
   const profileByAgentId = new Map<string, string>();
   const handles = new Map<string, IAgentScopeHandle>();
+  const stubHandles = new WeakSet<IAgentScopeHandle>();
   const servicesByAgentId = new Map(options.handleServices);
   const contextsByAgentId = new Map<string, AgentContext>();
-  let adoptedManaged: ManagedAgent | undefined;
+  const adoptedManageds = new Map<string, ManagedAgent>();
+  const runtimeBackedAgents = new Set<string>();
+  let primaryManaged: ManagedAgent | undefined;
   const publishedEvents: Event2[] = [];
   const contextFor = (agentId: string): AgentContext => {
     let context = contextsByAgentId.get(agentId);
@@ -285,111 +391,117 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     }
     return context;
   };
-  const handle = (agentId: string): IAgentScopeHandle => ({
-    id: agentId,
-    kind: LifecycleScope.Agent,
-    accessor: {
-      get: (serviceId) => {
-        const service = servicesByAgentId.get(agentId)?.get(serviceId);
-        if (service !== undefined) return service as never;
-        if (serviceId === IAgentLifecycleService) return lifecycle as never;
-        if (serviceId === ISessionSubagentService) return lifecycle as never;
-        if (serviceId === IAgentScopeContext) {
-          return {
-            _serviceBrand: undefined,
-            agentId,
-            agentContext: contextFor(agentId),
-            scope: (subKey?: string) => subKey ?? '',
-          } as never;
-        }
-        if (serviceId === (AgentProfile as unknown)) {
-          return {
-            data: () => ({ profileName: profileByAgentId.get(agentId) }),
-            update: () => {},
-            republishStatus: () => {},
-            effectiveThinkingLevel: () => 'off',
-            activeTools: () => [],
-          } as never;
-        }
-        if (serviceId === LoopControlToken) {
-          return {
-            _serviceBrand: undefined,
-            status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
-          } as never;
-        }
-        if (serviceId === ISessionPermissionModeService) {
-          return {
-            _serviceBrand: undefined,
-            mode: () => 'manual',
-            configured: () => true,
-            setMode: () => {},
-            setModeAndBroadcast: () => {},
-          } as never;
-        }
-        if (serviceId === IAgentToolRegistryService) {
-          return {
-            _serviceBrand: undefined,
-            register: () => ({ dispose: () => {} }),
-          } as never;
-        }
-        if (serviceId === IAgentUserToolService) {
-          return {
-            _serviceBrand: undefined,
-            list: () => [],
-            inheritUserTools: () => {},
-            register: () => {},
-            unregister: () => {},
-          } as never;
-        }
-        if (serviceId === IEventBus) {
-          return {
-            _serviceBrand: undefined,
-            publish: (event: Event2) => {
-              publishedEvents.push(event);
-            },
-            subscribe: () => noopDisposable(),
-          } as never;
-        }
-        if (serviceId === IWireService) {
-          return {
-            _serviceBrand: undefined,
-            hooks: createHooks(['onDidRestore']),
-            dispatch: () => {},
-            replay: async () => {},
-            flush: async () => {},
-            getModel: () => [],
-            subscribe: () => noopDisposable(),
-            onEmission: () => noopDisposable(),
-          } as never;
-        }
-        if (serviceId === IEventDispatcher) {
-          return {
-            _serviceBrand: undefined,
-            hooks: createHooks(['onDidRestore']),
-            dispatch: (event: Event2) => {
-              publishedEvents.push(event);
-              return Promise.resolve();
-            },
-            history: () => [],
-            checkpointDepth: () => 0,
-            undo: () => {},
-            restore: () => Promise.resolve(),
-            flush: () => Promise.resolve(),
-          } as never;
-        }
-        if (serviceId === IAgentStateService) {
-          let state = stateByAgentId.get(agentId);
-          if (state === undefined) {
-            state = new AgentStateService();
-            stateByAgentId.set(agentId, state);
+  const handle = (agentId: string): IAgentScopeHandle => {
+    const scoped: IAgentScopeHandle = {
+      id: agentId,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: (serviceId) => {
+          const service = servicesByAgentId.get(agentId)?.get(serviceId);
+          if (service !== undefined) return service as never;
+          if (serviceId === IAgentLifecycleService) return lifecycle as never;
+          if (serviceId === ISessionSubagentService) return lifecycle as never;
+          if (serviceId === IAgentScopeContext) {
+            return {
+              _serviceBrand: undefined,
+              agentId,
+              agentContext: contextFor(agentId),
+              scope: (subKey?: string) => subKey ?? '',
+            } as never;
           }
-          return state as never;
-        }
-        return undefined as never;
+          if (serviceId === (AgentProfile as unknown)) {
+            return {
+              data: () => ({ profileName: profileByAgentId.get(agentId) }),
+              update: () => {},
+              republishStatus: () => {},
+              effectiveThinkingLevel: () => 'off',
+              activeTools: () => [],
+            } as never;
+          }
+          if (serviceId === LoopControlToken) {
+            return {
+              _serviceBrand: undefined,
+              status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+              onDidStartTurn: () => ({ dispose: () => {} }),
+              onDidEndTurn: () => ({ dispose: () => {} }),
+            } as never;
+          }
+          if (serviceId === ISessionPermissionModeService) {
+            return {
+              _serviceBrand: undefined,
+              mode: () => 'manual',
+              configured: () => true,
+              setMode: () => {},
+              setModeAndBroadcast: () => {},
+            } as never;
+          }
+          if (serviceId === IAgentToolRegistryService) {
+            return {
+              _serviceBrand: undefined,
+              register: () => ({ dispose: () => {} }),
+            } as never;
+          }
+          if (serviceId === IAgentUserToolService) {
+            return {
+              _serviceBrand: undefined,
+              list: () => [],
+              inheritUserTools: () => {},
+              register: () => {},
+              unregister: () => {},
+            } as never;
+          }
+          if (serviceId === IEventBus) {
+            return {
+              _serviceBrand: undefined,
+              publish: (event: Event2) => {
+                publishedEvents.push(event);
+              },
+              subscribe: () => noopDisposable(),
+            } as never;
+          }
+          if (serviceId === IWireService) {
+            return {
+              _serviceBrand: undefined,
+              hooks: createHooks(['onDidRestore']),
+              dispatch: () => {},
+              replay: async () => {},
+              flush: async () => {},
+              getModel: () => [],
+              subscribe: () => noopDisposable(),
+              onEmission: () => noopDisposable(),
+            } as never;
+          }
+          if (serviceId === IEventDispatcher) {
+            return {
+              _serviceBrand: undefined,
+              hooks: createHooks(['onDidRestore']),
+              dispatch: (event: Event2) => {
+                publishedEvents.push(event);
+                return Promise.resolve();
+              },
+              history: () => [],
+              checkpointDepth: () => 0,
+              undo: () => {},
+              restore: () => Promise.resolve(),
+              flush: () => Promise.resolve(),
+            } as never;
+          }
+          if (serviceId === IAgentStateService) {
+            let state = stateByAgentId.get(agentId);
+            if (state === undefined) {
+              state = new AgentStateService();
+              stateByAgentId.set(agentId, state);
+            }
+            return state as never;
+          }
+          return undefined as never;
+        },
       },
-    },
-    dispose: () => {},
-  });
+      dispose: () => {},
+    };
+    stubHandles.add(scoped);
+    return scoped;
+  };
   lifecycle = {
     _serviceBrand: undefined,
     hooks: {
@@ -445,122 +557,50 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     handleOf: vi.fn((agentId: string) => handles.get(agentId)),
     list: vi.fn(() => [...handles.keys()].map((agentId) => contextFor(agentId))),
     resolve: vi.fn(((agent, definition) => {
-      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
-        return adoptedManaged.runtimeSet.resolve(definition);
+      const managed = adoptedManageds.get(agent.agentId);
+      if (managed !== undefined && runtimeBackedAgents.has(agent.agentId)) {
+        return managed.runtimeSet.resolve(definition);
       }
+      const scoped = handles.get(agent.agentId);
       if (definition === AgentToolExecutor) return stubToolExecutorEvents().executor;
+      if (definition === AgentPrompt) {
+        return { list: () => ({ active: undefined, pending: [] }) };
+      }
+      if (definition === AgentLoop) {
+        const state = scoped?.accessor.get(LoopControlToken)?.status?.().state;
+        return { status: () => (state === 'running' ? 'running' : 'idle') };
+      }
       if (definition === AgentPermissionMode) return stubPermissionModeRuntime(() => 'manual');
       if (definition === AgentProfile) {
-        return handles.get(agent.agentId)?.accessor.get(AgentProfile as never);
+        return scoped?.accessor.get(AgentProfile as never);
       }
       throw new Error('unexpected resolve');
     }) as IAgentLifecycleService['resolve']),
     inspect: vi.fn((agent) => {
-      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
+      const managed = adoptedManageds.get(agent.agentId);
+      if (managed !== undefined) {
         return {
           identity: { agentId: agent.agentId, generation: agent.generation },
-          contributions: adoptedManaged.runtimeSet.inspect(),
+          contributions: managed.runtimeSet.inspect(),
         };
       }
       throw new Error('unexpected inspect');
     }),
     adopt: vi.fn((adopted) => {
       const adoptedHandle = adopted as IAgentScopeHandle;
+      if (!stubHandles.has(adoptedHandle)) runtimeBackedAgents.add(adoptedHandle.id);
       handles.set(adoptedHandle.id, adoptedHandle);
-      adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
-        {
-          definition: AgentContextMemory,
-          provider: contextMemoryAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentReminder,
-          provider: reminderAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentTodo,
-          provider: todoAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentInteraction,
-          provider: interactionAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentCron,
-          provider: cronAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentGoal,
-          provider: goalAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentSkill,
-          provider: skillAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentTokenCounting,
-          provider: tokenCountingAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentPermissionMode,
-          provider: permissionModeAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentUsage,
-          provider: usageAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentPermissionRules,
-          provider: permissionRulesAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentProfile,
-          provider: profileAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentLlmRequester,
-          provider: llmRequesterAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentToolExecutor,
-          provider: toolExecutorAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-      ]);
-      return adoptedManaged.context;
+      const managed = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, adoptedRuntimeRecords);
+      if (primaryManaged === undefined) primaryManaged = managed;
+      adoptedManageds.set(adoptedHandle.id, managed);
+      return managed.context;
     }),
     attachRuntimes: vi.fn(() => {
-      adoptedManaged?.attachDurableRuntimes();
+      primaryManaged?.attachDurableRuntimes();
     }),
     restoreRuntimes: vi.fn(async (agent) => {
-      const managed = adoptedManaged;
-      if (managed === undefined || managed.context.agentId !== agent.agentId) return;
+      const managed = adoptedManageds.get(agent.agentId);
+      if (managed === undefined) return;
       await managed.runtimeSet.restore();
     }),
     broadcastPermissionMode: vi.fn(),
@@ -2300,6 +2340,8 @@ describe('Agent tool execution contract', () => {
           {
             _serviceBrand: undefined,
             status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),
+            onDidStartTurn: () => ({ dispose: () => {} }),
+            onDidEndTurn: () => ({ dispose: () => {} }),
           },
         ],
       ]),

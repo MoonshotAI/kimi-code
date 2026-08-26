@@ -12,7 +12,6 @@ import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/comm
 import type { ContextMemoryRuntime } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
-import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
@@ -28,7 +27,7 @@ import type { ScopedCaller } from './session.js';
 
 // Wire-type aliases derived through the engine service interfaces (keeps
 // klient free of protocol-package imports).
-export type PromptLaunchResult = Awaited<ReturnType<IAgentPromptService['submit']>>;
+export type PromptLaunchResult = { readonly turn_id: number } | undefined;
 export type PromptWithSkillsInput = Parameters<SkillRuntime['promptWithSkills']>[0];
 export type PromptWithSkillsResult = Awaited<ReturnType<SkillRuntime['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;

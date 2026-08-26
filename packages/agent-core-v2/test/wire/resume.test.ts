@@ -16,7 +16,7 @@ import {
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { getLoopDurableState } from '#/features/loop/internal/access';
 import {
   createAgentTaskPersistence,
@@ -547,7 +547,7 @@ describe('Agent resume', () => {
         'agent-seen0000',
         'already delivered summary',
       );
-      const steer = vi.spyOn(ctx.get(IAgentPromptService), 'steer');
+      const steer = vi.spyOn(ctx.resolve(AgentPrompt), 'steer');
 
       await ctx.restorePersisted();
       expect(
@@ -636,7 +636,7 @@ describe('Agent resume', () => {
         status: 'completed',
       });
       await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
-      const steer = vi.spyOn(ctx.get(IAgentPromptService), 'steer');
+      const steer = vi.spyOn(ctx.resolve(AgentPrompt), 'steer');
 
       await ctx.restorePersisted();
 

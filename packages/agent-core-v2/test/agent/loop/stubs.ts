@@ -15,6 +15,8 @@ export type StubLoop = LoopControlToken & {
   readonly queue: StepRequestQueue;
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
+  readonly onDidStartTurn: (listener: (turnId: number) => void) => { dispose(): void };
+  readonly onDidEndTurn: (listener: (ended: { readonly turnId: number; readonly result: TurnResult }) => void) => { dispose(): void };
   startTurn(): Turn;
   settleActive(result?: TurnResult): void;
   drainNextBatch(context: { append(...messages: ContextMessage[]): void }): StepRequestBatch | undefined;
@@ -56,6 +58,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   };
   const stub: StubLoop = {
     hooks, queue, launches, cancels, startTurn,
+    onDidStartTurn: () => ({ dispose: () => {} }),
+    onDidEndTurn: () => ({ dispose: () => {} }),
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
     enqueue(request, enqueueOptions) {
       let turn = active;

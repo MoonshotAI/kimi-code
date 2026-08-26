@@ -25,6 +25,9 @@ import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/sc
 import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
 import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
+import type { PromptSubmitResult } from '@moonshot-ai/agent-core-v2/features/prompt/prompt';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
 import type {
   InteractionKind,
@@ -114,6 +117,38 @@ function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown
     recordModelToolActivation: (origin: SkillActivationOrigin) => {
       skill().recordModelToolActivation(origin);
     },
+  };
+}
+
+/**
+ * `agentPromptService` stays on the wire after the engine moved the prompt
+ * kernel into a per-agent runtime: the view forwards to the agent's resolved
+ * `AgentPrompt` facade through the session's agent lifecycle, keeping the
+ * legacy `submit` / `submitSteer` payloads and `{ turn_id }` results.
+ */
+function agentPromptServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const manager = agent.accessor.get(IAgentLifecycleService);
+  const prompt = () => manager.resolve(agentContextOf(agent), AgentPrompt);
+  const launchResult = (result: PromptSubmitResult): { turn_id: number } | undefined =>
+    result.turnId === undefined ? undefined : { turn_id: result.turnId };
+  return {
+    submit: (payload: { input: readonly ContentPart[]; disabledTools?: readonly string[]; promptId?: string }) =>
+      prompt()
+        .submit({
+          content: payload.input,
+          origin: { kind: 'user' },
+          promptId: payload.promptId,
+          disabledTools: payload.disabledTools,
+        })
+        .then(launchResult),
+    submitSteer: (payload: { input: readonly ContentPart[] }) =>
+      prompt()
+        .submit({
+          content: payload.input,
+          origin: { kind: 'user' },
+          admission: 'currentTurn',
+        })
+        .then(launchResult),
   };
 }
 
@@ -285,6 +320,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return agentProfileServiceView(resolved.like as IAgentScopeHandle);
+    }
+    if (service === 'agentPromptService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentPromptServiceView(resolved.like as IAgentScopeHandle);
     }
     if (service === 'agentLoopService') {
       if (resolved.kind !== 'agent') {

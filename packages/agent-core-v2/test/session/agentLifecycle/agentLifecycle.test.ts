@@ -89,7 +89,10 @@ import { permissionRulesAgentRuntimeProvider } from '#/features/permissionRules/
 import type { ToolExecutorDomain } from '#/features/toolExecutor/internal/domain';
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { LoopControlToken } from '#/features/loop/internal/loop';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
+import type { PromptRuntime } from '#/features/prompt/prompt';
+import { defineAgentRuntimeProvider } from '#/agent/runtime/agentRuntime';
+import { stubToolExecutor } from '../../agent/loop/stubs';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -195,6 +198,12 @@ function stubBlobPassThrough(ix: TestInstantiationService): void {
   } satisfies IAgentBlobService);
 }
 
+const stubToolExecutorRuntimeProvider = defineAgentRuntimeProvider(AgentToolExecutor, {
+  id: 'toolExecutor',
+  eager: true,
+  createApi: () => stubToolExecutor(),
+});
+
 describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -205,7 +214,8 @@ describe('AgentLifecycleService', () => {
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<LoopControlToken['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<LoopControlToken['settled']>>;
-  let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
+  let promptDrain: ReturnType<typeof vi.fn<PromptRuntime['drain']>>;
+  let withdrawStubToolExecutor: () => void = () => {};
 
   beforeEach(() => {
     _clearAgentToolContributionsForTests();
@@ -333,11 +343,6 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       settled: loopSettled,
     } as unknown as LoopControlToken);
-    promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
-    ix.stub(IAgentPromptService, {
-      _serviceBrand: undefined,
-      drain: promptDrain,
-    } as unknown as IAgentPromptService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
@@ -433,6 +438,18 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       compacting: null,
     } as unknown as IAgentFullCompactionService);
+    withdrawStubToolExecutor = ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-stub-tool-executor',
+      new Ledger('test-stub-tool-executor'),
+      stubToolExecutorRuntimeProvider,
+    );
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-prompt',
+      new Ledger('test-prompt'),
+      promptAgentRuntimeProvider,
+    );
     ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
       'test-reminder',
@@ -679,6 +696,8 @@ describe('AgentLifecycleService', () => {
   it('remove stops the agent background tasks before disposal', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
+    promptDrain = vi.fn<PromptRuntime['drain']>(async () => {});
+    vi.spyOn(svc.resolve(main, AgentPrompt), 'drain').mockImplementation(promptDrain);
 
     await svc.remove(main);
 
@@ -692,14 +711,15 @@ describe('AgentLifecycleService', () => {
     const drainStarted = new Promise<void>((resolve) => {
       markDrainStarted = resolve;
     });
-    promptDrain.mockImplementationOnce(() => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    promptDrain = vi.fn<PromptRuntime['drain']>(async () => {});
+    vi.spyOn(svc.resolve(main, AgentPrompt), 'drain').mockImplementation(() => {
       markDrainStarted();
       return new Promise<void>((resolve) => {
         releaseDrain = resolve;
       });
     });
-    const svc = ix.get(IAgentLifecycleService);
-    const main = await svc.create({ agentId: 'main' });
     const disposed: string[] = [];
     disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
 
@@ -772,6 +792,7 @@ describe('AgentLifecycleService', () => {
       onDidChange: () => ({ dispose: () => {} }),
     } as unknown as IAgentRuntimeService);
     ix.stub(IGitService, {} as unknown as IGitService);
+    withdrawStubToolExecutor();
     ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
       'test-tool-executor',

@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 
 import {
   AgentLoop,
+  AgentPrompt,
   IAgentLifecycleService,
-  IAgentPromptService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
@@ -354,8 +354,10 @@ export class TranscriptService {
     const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId);
-    const promptService = agent === undefined ? undefined : agent.accessor.get(IAgentPromptService);
-    const queue = promptService?.list();
+    const lifecycle = agent === undefined ? undefined : agent.accessor.get(IAgentLifecycleService);
+    const queue = agent === undefined || lifecycle === undefined
+      ? undefined
+      : lifecycle.resolve(agentContextOf(agent), AgentPrompt).list();
     if (queue === undefined) return [];
     const ops: TranscriptOperation[] = [];
     if (queue.active !== undefined) {

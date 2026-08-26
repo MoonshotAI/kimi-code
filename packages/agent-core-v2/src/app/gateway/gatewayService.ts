@@ -9,7 +9,8 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 
 import { IRestGateway, IWSGateway } from './gateway';
@@ -48,7 +49,8 @@ export class RestGateway implements IRestGateway {
     agentId: string,
     input: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
-    const handle = await this.agent(sessionId, agentId).accessor.get(IAgentPromptService).enqueue({
+    const agent = this.agent(sessionId, agentId);
+    const handle = await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt).enqueue({
       message: {
         role: 'user',
         content: [{ type: 'text', text: input }],
@@ -64,7 +66,8 @@ export class RestGateway implements IRestGateway {
     agentId: string,
     content: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
-    const service = this.agent(sessionId, agentId).accessor.get(IAgentPromptService);
+    const agent = this.agent(sessionId, agentId);
+    const service = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt);
     const queued = await service.enqueue({ message: {
       role: 'user',
       content: [{ type: 'text', text: content }],

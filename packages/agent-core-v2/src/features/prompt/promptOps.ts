@@ -2,7 +2,6 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { defineState } from '#/state/state';
 
 const promptAcceptedSchema = z.object({
   agentId: z.string(),
@@ -21,10 +20,3 @@ export interface PromptAccepted {
   readonly promptId: string;
   readonly content?: unknown;
 }
-
-export const promptAdmissionKey = defineState('promptAdmission', (): Map<string, true> => new Map())
-  .replayable({ schema: z.map(z.string(), z.literal(true)) })
-  .on(PromptAccepted, (state, event) => {
-    if (state.has(event.promptId)) return state;
-    state.set(event.promptId, true);
-  });

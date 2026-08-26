@@ -1,6 +1,5 @@
 import {
   IAgentLifecycleService,
-  IAgentPromptService,
   ISessionContext,
   ISessionMetadata,
   IWorkspaceService,
@@ -8,8 +7,10 @@ import {
   resumeSessionById,
   type IAgentScopeHandle,
   type Scope,
+  agentContextOf,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { ensureMainAgent } from '../transport/mainAgent';
@@ -151,7 +152,10 @@ async function assembleSnapshot(
 function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | undefined {
   if (main === undefined) return undefined;
   try {
-    return main.accessor.get(IAgentPromptService).list().active?.id;
+    return main.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(main), AgentPrompt)
+      .list().active?.id;
   } catch {
     return undefined;
   }

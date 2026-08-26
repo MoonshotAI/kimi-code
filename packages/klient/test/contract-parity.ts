@@ -27,7 +27,6 @@ import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/age
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
 import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
-import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
@@ -626,9 +625,9 @@ const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, A
 // facade calls, so the assertions track the exact methods the contract
 // mirrors; facade-only payload shapes (cancel / setPermission / plan / task /
 // command) derive from the `AgentFacade` input types.
-type PromptPayload = Parameters<IAgentPromptService['submit']>[0];
-type PromptLaunchResult = NonNullable<Awaited<ReturnType<IAgentPromptService['submit']>>>;
-type SteerPayload = Parameters<IAgentPromptService['submitSteer']>[0];
+type PromptPayload = { input: readonly ContentPart[]; disabledTools?: readonly string[]; promptId?: string };
+type PromptLaunchResult = { turn_id: number };
+type SteerPayload = { input: readonly ContentPart[] };
 type ActivateSkillPayload = Parameters<SkillRuntime['activate']>[0];
 type PromptWithSkillsPayload = Parameters<SkillRuntime['promptWithSkills']>[0];
 type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];

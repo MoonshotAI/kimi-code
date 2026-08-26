@@ -11,7 +11,6 @@ import {
   IEventBus,
   IAgentLifecycleService,
   AgentProfile,
-  IAgentPromptService,
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
@@ -26,6 +25,7 @@ import {
   getLiveSessionById,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { emptySessionUsage } from '../src/protocol/session';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -63,12 +63,12 @@ describe('server-v2 snapshot route enrichment', () => {
           IAgentLifecycleService,
           {
             resolve: (_agent: unknown, definition: unknown) =>
-              definition === AgentProfile ? profile : { get: () => [] },
+              definition === AgentProfile
+                ? profile
+                : definition === AgentPrompt
+                  ? { list: () => ({ active: { id: promptId }, pending: [] }) }
+                  : { get: () => [] },
           },
-        ],
-        [
-          IAgentPromptService,
-          { list: () => ({ active: { id: promptId }, pending: [] }) },
         ],
         [IWireService, { flush: async () => {} }],
         [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],

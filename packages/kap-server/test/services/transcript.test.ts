@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import {
   AgentInteraction,
   AgentLoop,
+  AgentPrompt,
   IAgentLifecycleService,
   IAgentScopeContext,
   IAgentTaskService,
@@ -2408,6 +2409,7 @@ describe('bindSessionTranscript', () => {
 
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
+    private readonly loopStatuses = new Map<string, unknown>();
     private readonly kernels = new Map<
       string,
       { context: AgentContext; kernel: FakeInteractionKernel }
@@ -2451,6 +2453,13 @@ describe('bindSessionTranscript', () => {
       context: AgentContext,
       definition: Definition,
     ): RuntimeOf<Definition> {
+      if (definition === AgentPrompt) {
+        return { list: () => ({ active: undefined, pending: [] }) } as RuntimeOf<Definition>;
+      }
+      if (definition === AgentLoop) {
+        const loopStatus = this.loopStatuses.get(context.agentId) as { state?: string } | undefined;
+        return { status: () => loopStatus?.state === 'running' ? 'running' : 'idle' } as RuntimeOf<Definition>;
+      }
       if (definition !== AgentInteraction) throw new Error('unsupported runtime');
       for (const handle of this.handles.values()) {
         if (handle.context === context) return handle.kernel as RuntimeOf<Definition>;
@@ -2485,6 +2494,7 @@ describe('bindSessionTranscript', () => {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
+            if (token === IAgentLifecycleService) return this;
             if (token === AgentLoop) {
               return { status: () => (opts?.loopStatus as { state?: string })?.state === 'running' ? 'running' : 'idle' };
             }
@@ -2495,6 +2505,7 @@ describe('bindSessionTranscript', () => {
           },
         },
       };
+      this.loopStatuses.set(id, opts?.loopStatus);
       this.handles.set(id, handle);
       for (const cb of this.createHandlers) cb(handle.context);
       return handle;

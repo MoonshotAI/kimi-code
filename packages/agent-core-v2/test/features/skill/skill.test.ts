@@ -4,13 +4,16 @@ import { createControlledPromise } from '@antfu/utils';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { AgentSkill, SkillRuntime } from '#/features/skill/skillAgentRuntime';
+import { AgentLoop } from '#/features/loop/loop';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import type { PromptRuntime } from '#/features/prompt/prompt';
+import { stubPromptRuntime } from '../prompt/stubs';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -70,6 +73,42 @@ function fakeTurn(): Turn {
   };
 }
 
+
+function skillPromptRuntime(prompted: ContextMessage[]): PromptRuntime {
+  return stubPromptRuntime({
+    enqueue: ({ message }) => {
+      prompted.push(message);
+      return Promise.resolve({
+        id: 'prompted',
+        userMessageId: 'prompted',
+        createdAt: new Date(0).toISOString(),
+        state: 'running',
+        message,
+        launched: Promise.resolve(fakeTurn()),
+        completion: Promise.resolve({ promptId: 'prompted', result: undefined, state: 'completed' }),
+      });
+    },
+    inject: (message) => {
+      prompted.push(message);
+      return Promise.resolve(fakeTurn());
+    },
+  });
+}
+
+function skillLifecycle(prompted: ContextMessage[]): IAgentLifecycleService {
+  return {
+    resolve: (_agent: unknown, definition: unknown) => {
+      if (definition === AgentPrompt) return skillPromptRuntime(prompted);
+      if (definition === AgentLoop) {
+        return { status: () => 'idle' as const };
+      }
+      throw new Error(`unexpected runtime resolve: ${String(definition)}`);
+    },
+    handleOf: () => ({}),
+    onDidCreateScope: () => ({ dispose: () => {} }),
+  } as unknown as IAgentLifecycleService;
+}
+
 function createSkillRuntime(ix: TestInstantiationService): SkillRuntime {
   const scope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
   const context: AgentRuntimeContext<null> = {
@@ -107,12 +146,7 @@ describe('SkillRuntime', () => {
     prompted = [];
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IAgentPromptService, {
-          enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
-          inject: (message: ContextMessage) => { prompted.push(message); return Promise.resolve(fakeTurn()); },
-          retry: () => Promise.resolve(undefined),
-          clear: () => {},
-        });
+        reg.defineInstance(IAgentLifecycleService, skillLifecycle(prompted));
         reg.definePartialInstance(LoopControlToken, {
           status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
         });
@@ -194,12 +228,7 @@ describe('SkillTool', () => {
     prompted = [];
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IAgentPromptService, {
-          enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
-          inject: (message: ContextMessage) => { prompted.push(message); return Promise.resolve(fakeTurn()); },
-          retry: () => Promise.resolve(undefined),
-          clear: () => {},
-        });
+        reg.defineInstance(IAgentLifecycleService, skillLifecycle(prompted));
         reg.definePartialInstance(LoopControlToken, {
           status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
         });

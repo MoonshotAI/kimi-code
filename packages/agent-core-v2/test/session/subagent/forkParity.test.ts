@@ -6,7 +6,8 @@ import { Event } from '#/_base/event';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/features/contextMemory/openToolExchange';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
@@ -162,7 +163,7 @@ describe('fork subagent first-request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     ctx.mockNextResponse({ type: 'text', text: 'parent final answer' });
 
-    const handle = await parent.accessor.get(IAgentPromptService).enqueue({
+    const handle = await parent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(parent), AgentPrompt).enqueue({
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'start the parity probe' }],

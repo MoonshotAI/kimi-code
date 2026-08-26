@@ -1,6 +1,6 @@
 import type { IEventService } from '#/app/event/event';
 
-import { titleFromPromptMetadataText } from '#/agent/prompt/promptMetadataText';
+import { titleFromPromptMetadataText } from '#/features/prompt/promptMetadataText';
 
 import type { ISessionMetadata, SessionTitleKind } from './sessionMetadata';
 import { SessionMetaUpdated } from './sessionMetaEvents';

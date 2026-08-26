@@ -6,7 +6,7 @@ import { defineState } from '#/state/state';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
@@ -74,8 +74,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentPromptService private readonly promptService: IAgentPromptService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -242,7 +241,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   }
 
   private notifyBackgrounded(output: string): void {
-    void this.promptService.inject({
+    void this.manager.resolve(this.scopeContext.agentContext, AgentPrompt).inject({
       role: 'user',
       content: [{ type: 'text', text: output }],
       toolCalls: [],

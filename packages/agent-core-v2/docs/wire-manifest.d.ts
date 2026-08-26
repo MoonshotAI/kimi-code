@@ -55,7 +55,7 @@
 //   plan.revision                      plan                             src/features/plan/planOps.ts
 //   plugin.session_start               pluginSessionStartSnapshot       src/agent/plugin/agentPluginOps.ts
 //   profile.bind                       (none)                           src/features/profile/profileOps.ts
-//   prompt.accepted                    promptAdmission                  src/agent/prompt/promptOps.ts
+//   prompt.accepted                    (none)                           src/features/prompt/promptOps.ts
 //   runtime.set_binding                runtimeBinding                   src/agent/runtimeBinding/runtimeBindingOps.ts
 //   staleGuard.cleared                 staleGuard                       src/features/staleGuard/staleGuardOps.ts
 //   staleGuard.recorded                staleGuard                       src/features/staleGuard/staleGuardOps.ts
@@ -505,8 +505,8 @@ interface ProfileBindPayload {
 }
 
 /**
- * states: promptAdmission
- * owner: src/agent/prompt/promptOps.ts
+ * states: (none)
+ * owner: src/features/prompt/promptOps.ts
  */
 interface PromptAcceptedPayload {
   _name: 'prompt.accepted';

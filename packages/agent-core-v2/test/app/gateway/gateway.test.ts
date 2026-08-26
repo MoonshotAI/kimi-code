@@ -13,11 +13,13 @@ import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ILogService } from '#/_base/log/log';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import type { PromptRuntime } from '#/features/prompt/prompt';
+import { stubPromptRuntime } from '../../features/prompt/stubs';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { LoopControlToken } from '#/features/loop/internal/loop';
-import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 
@@ -52,30 +54,21 @@ describe('RestGateway', () => {
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
 
-    const promptService: IAgentPromptService = {
-      _serviceBrand: undefined,
-      enqueue: ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); },
-      submit: () => Promise.resolve(undefined),
-      submitSteer: () => Promise.resolve(undefined),
-      steer: () => Promise.resolve([]),
-      list: () => ({ active: undefined, pending: [] }),
-      abort: () => true,
-      drain: () => Promise.resolve(),
-      inject: () => Promise.resolve(undefined),
-      retry: () => Promise.resolve(undefined),
-      clear: () => {},
-      hooks: createHooks(['onBeforeSubmitPrompt']) as IAgentPromptService['hooks'],
-    };
+    const promptRuntime: PromptRuntime = stubPromptRuntime({
+      enqueue: ({ message }) => {
+        promptCalls.push(message);
+        return Promise.resolve({
+          id: 'p',
+          userMessageId: 'p',
+          createdAt: new Date(0).toISOString(),
+          state: 'running',
+          message,
+          launched: Promise.resolve(undefined),
+          completion: Promise.resolve({ promptId: 'p', result: undefined, state: 'completed' }),
+        });
+      },
+    });
 
-    const agentHandle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: makeAccessor([
-        [IAgentPromptService, promptService],
-        [LoopControlToken, turnService],
-      ]),
-      dispose: () => {},
-    };
     const agentContext = stubAgentContext('main', 1);
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
@@ -87,7 +80,8 @@ describe('RestGateway', () => {
       fork: () => Promise.resolve(agentContext),
       get: (agentId: string) => (agentId === 'main' ? agentContext : undefined),
       list: () => [agentContext],
-      resolve: () => {
+      resolve: (_agent: unknown, definition: unknown) => {
+        if (definition === AgentPrompt) return promptRuntime;
         throw new Error('not supported in this test');
       },
       inspect: () => {
@@ -98,6 +92,16 @@ describe('RestGateway', () => {
       handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
       adopt: () => agentContext,
       attachRuntimes: () => {},
+    } as unknown as IAgentLifecycleService;
+    const agentHandle: IAgentScopeHandle = {
+      id: 'main',
+      kind: LifecycleScope.Agent,
+      accessor: makeAccessor([
+        [LoopControlToken, turnService],
+        [IAgentLifecycleService, agents],
+        [IAgentScopeContext, { agentContext }],
+      ]),
+      dispose: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
+import { promptMetadataTextFromContentParts } from '#/features/prompt/promptMetadataText';
 import {
   applyPromptMetadataUpdate,
   type PromptMetadataUpdateTarget,

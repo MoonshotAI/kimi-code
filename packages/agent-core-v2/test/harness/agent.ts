@@ -47,12 +47,7 @@ import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type AgentConfigData } from '#/features/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
-import type {
-  PromptLaunchResult,
-  PromptPayload,
-  SteerPayload,
-} from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/features/contextMemory/types';
@@ -362,15 +357,25 @@ type RpcPromise<T> = Promise<T> & {
   reject(reason?: unknown): void;
 };
 
+interface PromptRpcPayload {
+  readonly input: readonly ContentPart[];
+  readonly disabledTools?: readonly string[];
+  readonly promptId?: string;
+}
+interface SteerRpcPayload {
+  readonly input: readonly ContentPart[];
+}
+type PromptLaunchRpcResult = { readonly turn_id: number } | undefined;
+
 interface AgentRpcPassthroughAPI {
-  prompt: (payload: PromptPayload) => Promisable<PromptLaunchResult | undefined>;
+  prompt: (payload: PromptRpcPayload) => Promisable<PromptLaunchRpcResult>;
   promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptWithSkillsResult>;
-  steer: (payload: SteerPayload) => Promisable<PromptLaunchResult | undefined>;
+  steer: (payload: SteerRpcPayload) => Promisable<PromptLaunchRpcResult>;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
   setPermission: (payload: SetPermissionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
-  activateSkill: (payload: SkillActivationInput) => Promisable<PromptLaunchResult>;
+  activateSkill: (payload: SkillActivationInput) => Promisable<{ turn_id: number }>;
   activatePluginCommand: (payload: ActivatePluginCommandPayload) => Promisable<void>;
   listCommands: (payload: EmptyPayload) => readonly AgentCommandInfo[];
   runCommand: (payload: RunCommandPayload) => Promisable<void>;
@@ -1700,7 +1705,7 @@ export class AgentTestContext {
   }
 
   clearContext(): void {
-    this.get(IAgentPromptService).clear();
+    this.resolve(AgentPrompt).clear();
   }
 
   async undoHistory(count: number): Promise<number> {
@@ -2152,9 +2157,24 @@ export class AgentTestContext {
 
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
-      prompt: (payload) => this.get(IAgentPromptService).submit(payload),
+      prompt: async (payload) => {
+        const result = await this.resolve(AgentPrompt).submit({
+          content: payload.input,
+          origin: { kind: 'user' },
+          promptId: payload.promptId,
+          disabledTools: payload.disabledTools,
+        });
+        return result.turnId === undefined ? undefined : { turn_id: result.turnId };
+      },
       promptWithSkills: (payload) => this.resolve(AgentSkill).promptWithSkills(payload),
-      steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
+      steer: async (payload) => {
+        const result = await this.resolve(AgentPrompt).submit({
+          content: payload.input,
+          origin: { kind: 'user' },
+          admission: 'currentTurn',
+        });
+        return result.turnId === undefined ? undefined : { turn_id: result.turnId };
+      },
       cancel: (payload) => this.get(LoopControlToken).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
@@ -2201,7 +2221,7 @@ export class AgentTestContext {
         void tasks.stop(payload.taskId, payload.reason);
       },
       detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
-      clearContext: () => this.get(IAgentPromptService).clear(),
+      clearContext: () => this.resolve(AgentPrompt).clear(),
       createGoal: (payload) => this.resolve(AgentGoal).createGoal(payload),
       getGoal: () => this.resolve(AgentGoal).getGoal(),
       pauseGoal: () => this.resolve(AgentGoal).pauseGoal(),

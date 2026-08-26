@@ -39,7 +39,7 @@ import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/r
 import '#/agent/runtimeBinding/runtimeBindingService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { IWireService } from '#/wire/wire';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -434,7 +434,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
-    const prompt = handle.accessor.get(IAgentPromptService);
+    const prompt = managed.runtimeSet.resolve(AgentPrompt);
     for (const turnId of loop.status().pendingTurnIds) {
       loop.cancel(turnId, reason);
     }

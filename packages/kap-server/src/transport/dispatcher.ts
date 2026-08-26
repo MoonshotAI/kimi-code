@@ -2,11 +2,16 @@ import {
   ErrorCodes,
   IAgentLifecycleService,
   Error2,
+  agentContextOf,
   getLiveSessionById,
+  type ContentPart,
+  type IAgentScopeHandle,
   type IScopeHandle,
+  type PromptSubmitResult,
   type Scope,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 
 import type { ScopeKind } from './channel';
 import { resolveAnyScopedServiceId } from './channelRegistry';
@@ -51,6 +56,40 @@ export async function resolveScope(
   }
 }
 
+interface PromptSubmitWirePayload {
+  readonly input: readonly ContentPart[];
+  readonly disabledTools?: readonly string[];
+  readonly promptId?: string;
+}
+
+function promptLaunchWireResult(result: PromptSubmitResult): { turn_id: number } | undefined {
+  return result.turnId === undefined ? undefined : { turn_id: result.turnId };
+}
+
+function agentPromptServiceView(agent: IAgentScopeHandle): object {
+  const prompt = () =>
+    agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt);
+  return {
+    submit: async (payload: PromptSubmitWirePayload) =>
+      promptLaunchWireResult(
+        await prompt().submit({
+          content: payload.input,
+          origin: { kind: 'user' },
+          promptId: payload.promptId,
+          disabledTools: payload.disabledTools,
+        }),
+      ),
+    submitSteer: async (payload: { readonly input: readonly ContentPart[] }) =>
+      promptLaunchWireResult(
+        await prompt().submit({
+          content: payload.input,
+          origin: { kind: 'user' },
+          admission: 'currentTurn',
+        }),
+      ),
+  };
+}
+
 export async function resolveService(
   core: Scope,
   scopeKind: ScopeKind,
@@ -59,6 +98,15 @@ export async function resolveService(
   lookup: ChannelLookup = (name) => resolveAnyScopedServiceId(core, name),
 ): Promise<object> {
   const scope = await resolveScope(core, scopeKind, params);
+  if (serviceName === 'agentPromptService') {
+    if (scopeKind !== 'agent') {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `service not available in ${scopeKind} scope: ${serviceName}`,
+      );
+    }
+    return agentPromptServiceView(scope as IAgentScopeHandle);
+  }
   if (scope === undefined) {
     throw new Error2(
       ErrorCodes.SESSION_NOT_FOUND,

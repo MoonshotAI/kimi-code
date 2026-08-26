@@ -6,10 +6,9 @@ import type {
   SkillActivationOrigin,
 } from '#/features/contextMemory/types';
 import { AgentLoop } from '#/features/loop/loop';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Turn } from '#/features/loop/internal/loop';
-import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
-import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
+import { AgentPrompt, type PromptRuntime } from '#/features/prompt/promptAgentRuntime';
+import { promptMetadataTextFromContentParts } from '#/features/prompt/promptMetadataText';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -19,7 +18,7 @@ import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
@@ -38,7 +37,7 @@ import { SkillActivated } from './skillOps';
 export class SkillRuntime {
   constructor(private readonly context: AgentRuntimeContext<null>) {}
 
-  async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
+  async activate(input: SkillActivationInput): Promise<{ turn_id: number }> {
     const catalog = this.context.get(ISessionSkillCatalog);
     await catalog.ready;
     const skill = catalog.catalog.getSkill(input.name);
@@ -126,34 +125,32 @@ export class SkillRuntime {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const prompt = this.context.get(IAgentPromptService);
-    const reservation = reservePrompt(prompt);
-    try {
-      const handle = await reservation.submit({
-        role: 'user',
-        content: [...prepared.map((activation) => activation.part), ...input.input],
-        toolCalls: [],
-        origin: {
-          kind: 'user',
-          skillActivations: prepared.map((activation) => activation.entry),
-        },
-      });
-      if (handle.state === 'pending') {
-        return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
-      }
-      const turn = await handle.launched;
-      if (turn === undefined && handle.state !== 'blocked') {
-        throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
-      }
-      return {
-        turn_id: turn?.id,
-        prompt_id: handle.id,
-        created_at: handle.createdAt,
-        state: handle.state === 'blocked' ? 'blocked' : 'running',
-      };
-    } finally {
-      reservation.dispose();
+    const handle = await this.prompt().submitMessage({
+      role: 'user',
+      content: [...prepared.map((activation) => activation.part), ...input.input],
+      toolCalls: [],
+      origin: {
+        kind: 'user',
+        skillActivations: prepared.map((activation) => activation.entry),
+      },
+    });
+    if (handle.state === 'pending') {
+      return { prompt_id: handle.id, created_at: handle.createdAt, state: 'queued' };
     }
+    const turn = await handle.launched;
+    if (turn === undefined && handle.state !== 'blocked') {
+      throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
+    }
+    return {
+      turn_id: turn?.id,
+      prompt_id: handle.id,
+      created_at: handle.createdAt,
+      state: handle.state === 'blocked' ? 'blocked' : 'running',
+    };
+  }
+
+  private prompt(): PromptRuntime {
+    return this.context.get(IAgentLifecycleService).resolve(this.context.agent, AgentPrompt);
   }
 
   recordModelToolActivation(origin: SkillActivationOrigin): void {
@@ -236,7 +233,7 @@ export class SkillRuntime {
       toolCalls: [],
       origin,
     };
-    const prompt = this.context.get(IAgentPromptService);
+    const prompt = this.context.get(IAgentLifecycleService).resolve(this.context.agent, AgentPrompt);
     if (this.context.get(IAgentLifecycleService).resolve(this.context.agent, AgentLoop).status() === 'running') {
       return prompt.inject(message);
     }

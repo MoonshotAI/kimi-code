@@ -19,7 +19,7 @@ import {
   TurnStepStarted,
 } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
-import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
+import { RetryStepRequest } from '#/features/prompt/internal/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';

@@ -18,11 +18,9 @@ import { LoopControlToken, type AfterStepContext } from '#/features/loop/interna
 import { ContinuationStepRequest } from '#/features/loop/internal/stepRequest';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
-import {
-  IAgentPromptService,
-  type PromptSubmitContext,
-} from '#/agent/prompt/prompt';
-import { PromptQueued } from '#/agent/prompt/promptService';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import type { PromptSubmitContext } from '#/features/prompt/prompt';
+import { PromptQueued } from '#/features/prompt/promptEvents';
 import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
@@ -147,9 +145,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
 
 
-    this.registerPromptHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPromptService)),
-    );
+    this.registerPromptHooks();
 
     this.registerTurnHooks();
 
@@ -199,9 +195,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerPromptHooks(prompt: IAgentPromptService): void {
+  private registerPromptHooks(): void {
     this._register(
-      prompt.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
+      this.manager.resolve(this.scopeContext.agentContext, AgentPrompt).registerBeforeSubmitHook('externalHooks', async (ctx, next) => {
         if (await this.runPromptSubmitHook(ctx)) {
           ctx.block = true;
           return;

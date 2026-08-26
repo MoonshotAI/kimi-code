@@ -6,7 +6,7 @@ import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/features
 import { AgentLoop } from '#/features/loop/loop';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { Turn } from '#/features/loop/internal/loop';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -177,7 +177,7 @@ function deliverFire(
   const buffered = runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentLoop).status() === 'running';
   let launched: Promise<unknown>;
   try {
-    launched = runtime.get(IAgentPromptService).inject(message);
+    launched = runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentPrompt).inject(message);
   } catch (error) {
     debugLog(runtime, `steer threw for task ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
     return Promise.resolve(false);
@@ -435,7 +435,7 @@ export class CronRuntime {
       toolCalls: [],
       origin,
     };
-    void this.runtime.get(IAgentPromptService).inject(message).catch(() => {});
+    void this.runtime.get(IAgentLifecycleService).resolve(this.runtime.agent, AgentPrompt).inject(message).catch(() => {});
     telemetryOf(this.runtime).track2(CRON_MISSED, { count: tasks.length });
     return undefined;
   }

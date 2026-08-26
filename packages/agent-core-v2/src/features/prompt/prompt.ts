@@ -1,14 +1,28 @@
-import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import type { Turn, TurnResult } from '#/features/loop/internal/loop';
 import type { ContentPart } from '#/kosong/contract/message';
-import type { Hooks } from '#/hooks';
 
-export interface PromptSubmitContext {
-  readonly promptMessage: ContextMessage;
-  readonly isSteer: boolean;
-  block: boolean;
+export type PromptOrigin = {
+  readonly kind: 'user' | 'skill' | 'system';
+  readonly sourceId?: string;
+};
+
+export type PromptAdmission = 'newTurn' | 'currentTurn';
+
+export interface PromptSubmitInput {
+  readonly content: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+  readonly admission?: PromptAdmission;
+  readonly promptId?: string;
+  readonly disabledTools?: readonly string[];
+}
+
+export interface PromptSubmitResult {
+  readonly promptId: string;
+  readonly createdAt: string;
+  readonly state: 'queued' | 'running' | 'blocked';
+  readonly turnId?: number;
 }
 
 export interface PromptInput {
@@ -49,40 +63,26 @@ export interface PromptQueueSnapshot {
   readonly pending: readonly PromptSnapshot[];
 }
 
-export interface PromptPayload {
-  readonly input: readonly ContentPart[];
-  readonly disabledTools?: readonly string[];
-  readonly promptId?: string;
+export interface PromptSubmitContext {
+  readonly promptMessage: ContextMessage;
+  readonly isSteer: boolean;
+  block: boolean;
 }
 
-export interface SteerPayload {
-  readonly input: readonly ContentPart[];
-}
+export type PromptBeforeSubmitHook = (
+  context: PromptSubmitContext,
+  next: (context?: PromptSubmitContext) => Promise<void>,
+) => void | Promise<void>;
 
-export interface PromptLaunchResult {
-  readonly turn_id: number;
-}
-
-export interface PromptReservation extends IDisposable {
+export interface PromptAdmissionReservation extends IDisposable {
   readonly id: string;
-  submit(message: ContextMessage): Promise<PromptHandle>;
 }
 
-export const promptAdmission = Symbol('promptAdmission');
-
-type PromptAdmissionHook = (promptId?: string) => PromptReservation;
-
-export function reservePrompt(service: IAgentPromptService, promptId?: string): PromptReservation {
-  return (service as IAgentPromptService & { [promptAdmission]: PromptAdmissionHook })[
-    promptAdmission
-  ](promptId);
-}
-
-export interface IAgentPromptService {
-  readonly _serviceBrand: undefined;
+export interface PromptRuntime {
+  submit(input: PromptSubmitInput): Promise<PromptSubmitResult>;
+  reserveAdmission(promptId?: string): PromptAdmissionReservation;
+  submitMessage(message: ContextMessage): Promise<PromptHandle>;
   enqueue(input: PromptInput): Promise<PromptHandle>;
-  submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-  submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined>;
   list(): PromptQueueSnapshot;
   steer(promptIds: readonly string[]): Promise<readonly PromptHandle[]>;
   abort(promptId: string, reason?: Error): boolean;
@@ -90,7 +90,5 @@ export interface IAgentPromptService {
   inject(message: ContextMessage): Promise<Turn | undefined>;
   retry(): Promise<Turn | undefined>;
   clear(): void;
-  readonly hooks: Hooks<{ onBeforeSubmitPrompt: PromptSubmitContext }>;
+  registerBeforeSubmitHook(name: string, hook: PromptBeforeSubmitHook): IDisposable;
 }
-
-export const IAgentPromptService = createDecorator<IAgentPromptService>('agentPromptService');

@@ -17,8 +17,8 @@ import {
 } from '#/features/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { LoopControlToken } from '#/features/loop/internal/loop';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { promptMetadataTextFromContentParts } from '#/features/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventService } from '#/app/event/event';
@@ -56,8 +56,7 @@ export class AgentConversationUndoService
   constructor(
     @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
-    @IAgentPromptService private readonly prompt: IAgentPromptService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentConversationUndoParticipantRegistry
     private readonly participants: IAgentConversationUndoParticipantRegistry,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -222,7 +221,7 @@ export class AgentConversationUndoService
 
   private async reconcileLastPrompt(): Promise<void> {
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) return;
-    const pending = this.prompt.list().pending.at(-1);
+    const pending = this.manager.resolve(this.agentCtx.agentContext, AgentPrompt).list().pending.at(-1);
     let lastPrompt = pending === undefined
       ? undefined
       : promptMetadataTextFromContentParts(pending.message.content);

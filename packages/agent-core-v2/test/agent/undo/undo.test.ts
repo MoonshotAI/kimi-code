@@ -12,7 +12,7 @@ import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import { AgentLoop } from '#/features/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
@@ -449,7 +449,7 @@ describe('AgentConversationUndoService', () => {
     await metadata.ready;
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
-    const list = vi.spyOn(ctx.get(IAgentPromptService), 'list').mockReturnValue({
+    const list = vi.spyOn(ctx.resolve(AgentPrompt), 'list').mockReturnValue({
       active: undefined,
       pending: [
         {

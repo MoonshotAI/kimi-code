@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 48 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 46 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -76,8 +76,6 @@
 //     plan                                            src/features/plan/planOps.ts
 //     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     pluginSessionStartSnapshot                      src/agent/plugin/agentPluginOps.ts
-//     prompt.launching                                src/agent/prompt/promptService.ts
-//     promptAdmission                                 src/agent/prompt/promptOps.ts
 //     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
 //     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
@@ -1032,11 +1030,6 @@ export interface AgentStateSnapshot {
   };
   // src/agent/plugin/agentPluginService.ts
   'agentPlugin.sessionStartRefreshPending': boolean;
-  // src/agent/prompt/promptOps.ts
-  // replayable · durable — folds: PromptAccepted
-  'promptAdmission': Map<string, true>;
-  // src/agent/prompt/promptService.ts
-  'prompt.launching': boolean;
   // src/agent/runtimeBinding/runtimeBindingOps.ts
   // replayable · durable — folds: RuntimeSetBinding
   'runtimeBinding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
