@@ -118,6 +118,10 @@ export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/agent-core-v2
 export function kimiCodePluginMarketplaceUrl(): string {
   return `${kimiCodeCdnBase()}/plugins/marketplace.json`;
 }
+// Bound on each background "latest release" lookup when the TUI fills in
+// marketplace versions. Without it a stalled connection to github.com hangs
+// the version phase for undici's default header timeout (300s).
+export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.
 export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];

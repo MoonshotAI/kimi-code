@@ -35,6 +35,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentBinding,
+  resolveSubagentThinking,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -279,12 +280,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
 
     let createdContext: AgentContext;
     try {
-      if (binding !== undefined) this.modelCatalog.get(binding.model);
+      const model = binding === undefined ? undefined : this.modelCatalog.get(binding.model);
       createdContext = await this.agentLifecycle.create({
         binding: {
           profile: TOWER_WORKER_PROFILE,
           model: binding?.model,
-          thinking: binding?.thinking,
+          thinking: resolveSubagentThinking(this.config, model, binding?.thinking),
         },
         labels: subagentLabels(this.callerAgentId),
       });
@@ -324,7 +325,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     };
   }
 
-  /** Briefings are code-assembled — the tower LLM only supplies `instructions`. */
   private async buildPrompt(
     args: TowerSpawnToolInput,
     store: TowerStore,
@@ -405,4 +405,3 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     );
   }
 }
-

@@ -9,14 +9,14 @@ import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigService } from '#/app/config/config';
 import type { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -60,20 +60,6 @@ function createContextStub(): IAgentContextMemoryService {
     get: () => [],
     splice: () => undefined,
   } as unknown as IAgentContextMemoryService;
-}
-
-function createInjectorStub(): IAgentContextInjectorService {
-  return {
-    _serviceBrand: undefined,
-    register: () => noopDisposable(),
-  } as unknown as IAgentContextInjectorService;
-}
-
-function createSystemReminderStub(): IAgentSystemReminderService {
-  return {
-    _serviceBrand: undefined,
-    appendSystemReminder: () => ({}),
-  } as unknown as IAgentSystemReminderService;
 }
 
 function createTelemetryStub(): ITelemetryService {
@@ -141,8 +127,10 @@ function buildHost(key: string): GoalHost {
     onDidRecord: Event.None,
   } as unknown as ISessionUsageService);
   ix.stub(IAgentContextMemoryService, createContextStub());
-  ix.stub(IAgentContextInjectorService, createInjectorStub());
-  ix.stub(IAgentSystemReminderService, createSystemReminderStub());
+  ix.stub(
+    IAgentLifecycleService,
+    lifecycleWithReminder(createReminderStub()),
+  );
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());

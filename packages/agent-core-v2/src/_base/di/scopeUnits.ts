@@ -22,7 +22,7 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
   const foldLedger = new Ledger(`scope-units:${kind}`);
   container.anchorKernelEntry((reason) => foldLedger.teardown(reason), `scope-units:${kind}`);
 
-  const materialized = new Map<number, () => void>();
+  const materialized = new Map<number, () => void | Promise<void>>();
 
   const materialize = (record: StoredRecord): void => {
     const recipe = record.value as ServiceRecipe;
@@ -32,7 +32,7 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
       if (isClassRecipe(recipe)) {
         const instance = host.constructService(recipe, undefined) as Partial<IDisposable>;
         unitLedger.register(() => {
-          instance.dispose?.();
+          return instance.dispose?.();
         }, `unit:${name}`);
       } else {
         const facade = new FiberRuntime(
@@ -57,23 +57,23 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
     }
 
     let retracted = false;
-    const retract = (): void => {
+    const retract = (): void | Promise<void> => {
       if (retracted) {
-        return;
+        return undefined;
       }
       retracted = true;
       materialized.delete(record.id);
-      void unitLedger.teardown('unload');
+      return unitLedger.teardown('unload');
     };
     if (!record.providerBook.isActive) {
-      retract();
+      void retract();
       return;
     }
     record.providerBook.register(() => {
-      retract();
+      void retract();
     }, `scope-units:${kind}`);
     foldLedger.register(() => {
-      retract();
+      return retract();
     }, `record:${name}`);
     materialized.set(record.id, retract);
   };
@@ -92,7 +92,7 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
     }
     for (const [id, retract] of Array.from(materialized)) {
       if (!seen.has(id)) {
-        retract();
+        void retract();
       }
     }
   };

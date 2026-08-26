@@ -16,7 +16,7 @@ import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { IAppStateService } from '#/app/state/appState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';

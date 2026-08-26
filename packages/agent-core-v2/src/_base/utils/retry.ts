@@ -13,12 +13,16 @@ export interface RetryErrorFields {
   readonly statusCode?: number;
 }
 
+export function retryBackoffDelay(attemptIndex: number): number {
+  const base = Math.min(BASE_DELAY_MS * Math.pow(RETRY_FACTOR, attemptIndex), MAX_DELAY_MS);
+  return base + Math.random() * JITTER_FACTOR * base;
+}
+
 export function retryBackoffDelays(maxAttempts: number): number[] {
   const count = Math.max(maxAttempts - 1, 0);
   const delays: number[] = [];
   for (let i = 0; i < count; i += 1) {
-    const base = Math.min(BASE_DELAY_MS * Math.pow(RETRY_FACTOR, i), MAX_DELAY_MS);
-    delays.push(base + Math.random() * JITTER_FACTOR * base);
+    delays.push(retryBackoffDelay(i));
   }
   return delays;
 }

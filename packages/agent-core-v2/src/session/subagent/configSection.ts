@@ -10,7 +10,12 @@ import {
   type IConfigService,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
-import type { IModelCatalog } from '#/kosong/model/catalog';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import type { IModelCatalog, Model } from '#/kosong/model/catalog';
+import {
+  declaredDefaultEffortForModel,
+  type ThinkingConfig,
+} from '#/kosong/model/thinking';
 
 import { SECONDARY_MODEL_FLAG_ID } from './flag';
 
@@ -240,7 +245,7 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: forcedModel };
+    return { model: forcedModel, thinking: section.defaultEffort };
   }
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     return { model: own.modelAlias, thinking: own.thinkingLevel };
@@ -279,7 +284,17 @@ export function resolveSubagentBinding(
       { details: { model: choice, availableModels: available } },
     );
   }
-  return { model: choice };
+  return { model: choice, thinking: section?.defaultEffort };
+}
+
+export function resolveSubagentThinking(
+  config: IConfigService,
+  model: Model | undefined,
+  explicit: string | undefined,
+): string | undefined {
+  if (explicit !== undefined) return explicit;
+  if (config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false) return undefined;
+  return declaredDefaultEffortForModel(model);
 }
 
 export function buildSubagentModelDescriptions(

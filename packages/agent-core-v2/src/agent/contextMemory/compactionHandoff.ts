@@ -1,6 +1,6 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/kosong/contract/tokens';
 import type { ContentPart } from '#/kosong/contract/message';
-import { wrapSystemReminder } from '#/agent/systemReminder/systemReminder';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 

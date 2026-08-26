@@ -384,7 +384,7 @@ describe("Webview thinking effort parity with the TUI", () => {
     expect(boundary.saveConfig).not.toHaveBeenCalled();
   });
 
-  it("does not seed future sessions with the model's top declared tier", () => {
+  it("seeds the top tier when it is the model's delivered default", () => {
     boundary.saveConfig.mockResolvedValue({ ok: true });
     useSettingsStore.getState().initModels(MODELS, "reasoning", false);
 
@@ -392,6 +392,128 @@ describe("Webview thinking effort parity with the TUI", () => {
 
     expect(useSettingsStore.getState().thinkingEffort).toBe("high");
     expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "reasoning", thinking: true, effort: "high" });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBe("high");
+  });
+
+  it("does not seed a pick above the model's delivered default", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels([
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        provider: "managed:kimi-code",
+        capabilities: ["thinking"],
+        support_efforts: ["low", "high", "max"],
+        default_effort: "low",
+      },
+    ], "reasoning", false);
+
+    useSettingsStore.getState().selectThinkingEffort("high");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "reasoning", thinking: true, effort: "high" });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBeUndefined();
+  });
+
+  it("does not seed the top tier when the model declares no default", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels([
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        provider: "managed:kimi-code",
+        capabilities: ["thinking"],
+        support_efforts: ["low", "high"],
+      },
+    ], "reasoning", false);
+
+    useSettingsStore.getState().selectThinkingEffort("high");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "reasoning", thinking: true, effort: "high" });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBeUndefined();
+  });
+
+  const SWITCH_MODELS = [
+    {
+      id: "seeded",
+      name: "Seeded",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+      support_efforts: ["low", "medium"],
+      default_effort: "medium",
+    },
+    {
+      id: "max-default",
+      name: "Max Default",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+      support_efforts: ["low", "max"],
+      default_effort: "max",
+    },
+  ];
+
+  it("updates the seed when a model switch persists the derived effort", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels(SWITCH_MODELS, "seeded", true, "medium");
+
+    // "medium" is unsupported here, so the switch derives the model default
+    // "max"; with the delivered default at the top tier the host persists it.
+    useSettingsStore.getState().updateModel("max-default");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("max");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({
+      model: "max-default",
+      thinking: true,
+      effort: "max",
+      effortChanged: true,
+    });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBe("max");
+  });
+
+  it("rolls the seed back when the model-switch save fails", async () => {
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().initModels(SWITCH_MODELS, "seeded", true, "medium");
+
+    useSettingsStore.getState().updateModel("max-default");
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBe("max");
+
+    rejectSave(new Error("config.toml is read-only"));
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().defaultThinkingEffort).toBe("medium");
+    });
+  });
+
+  it("leaves the seed alone when the switch re-confirms the active effort", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    // No persisted effort: the seed starts undefined and the session derives
+    // "max" from the model default.
+    useSettingsStore.getState().initModels([
+      ...SWITCH_MODELS,
+      {
+        id: "max-default-b",
+        name: "Max Default B",
+        provider: "managed:kimi-code",
+        capabilities: ["thinking"],
+        support_efforts: ["low", "max"],
+        default_effort: "max",
+      },
+    ], "max-default", true);
+
+    // The derived effort equals the active one, so the host leaves the stored
+    // preference untouched — the seed must not invent one either.
+    useSettingsStore.getState().updateModel("max-default-b");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("max");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({
+      model: "max-default-b",
+      thinking: true,
+      effort: "max",
+      effortChanged: false,
+    });
     expect(useSettingsStore.getState().defaultThinkingEffort).toBeUndefined();
   });
 

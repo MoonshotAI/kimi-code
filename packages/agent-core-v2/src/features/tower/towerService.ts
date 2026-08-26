@@ -2,7 +2,8 @@ import { join } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -53,7 +54,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @ISessionManager private readonly sessions: ISessionManager,
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentContextMemoryService context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
   ) {
@@ -95,7 +96,11 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         );
       }),
     );
-    this._register(new TowerModeInjection(injector, this, context, this.flags));
+    this._register(
+      activateReminderWhenReady(agentLifecycle, this.agentCtx, (reminder) =>
+        new TowerModeInjection(reminder, this, context, this.flags),
+      ),
+    );
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (this.flags.enabled(TOWER_FLAG_ID)) return;

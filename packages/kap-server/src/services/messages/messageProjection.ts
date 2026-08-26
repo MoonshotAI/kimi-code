@@ -90,14 +90,6 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   return base;
 }
 
-/**
- * Prompt content (engine kosong parts) → the v1 wire `messageContentSchema`
- * shape. Shared by every prompt-queue surface — the REST prompt list, the
- * `prompt.steered` session event, and the transcript prompt entity — so a
- * self-contained daemon-ref media part projects back to
- * `{ kind: 'session_media', file_id }`: neither the transient App upload nor
- * the internal `kimi-file://` URL becomes the stored read-model contract.
- */
 export function projectPromptContentParts(content: readonly ContentPart[]): MessageContent[] {
   const parts: MessageContent[] = [];
   for (const part of content) {

@@ -1,10 +1,10 @@
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -28,7 +28,6 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IInstantiationService instantiation: IInstantiationService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -37,7 +36,11 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     super();
     this.agentState.contributeState(permissionModeKey);
     this.agentState.contributeState(permissionModeConfiguredKey);
-    this._register(instantiation.createInstance(PermissionModeInjection, this));
+    this._register(
+      activateReminderWhenReady(this.agentLifecycle, this.scopeContext, (reminder) =>
+        new PermissionModeInjection(this, reminder, this.agentState),
+      ),
+    );
   }
 
   get mode(): PermissionMode {

@@ -39,7 +39,7 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
+import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -70,10 +70,10 @@ import {
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IAgentActivityView } from '#/agent/activityView/activityView';
-import { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
+import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
@@ -208,7 +208,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
-      handle.dispose();
+      void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
@@ -282,7 +282,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.pluginAgentProfileLoader.ready,
       ]);
     } catch (error) {
-      handle.dispose();
+      void handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
     }
@@ -364,7 +364,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.announceCreated({ sessionId, handle, source: 'resume' });
     } catch (error) {
       this.sessions.delete(sessionId);
-      handle.dispose();
+      void handle.dispose();
       throw error;
     }
     return handle;
@@ -387,7 +387,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.appendLogStore.drainRetirements();
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
-    handle.dispose();
+    void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
   }
@@ -408,7 +408,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
-    handle.dispose();
+    void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
   }
@@ -589,7 +589,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       if (target !== undefined) {
         try {
-          target.dispose();
+          void target.dispose();
         } catch {
         }
       }

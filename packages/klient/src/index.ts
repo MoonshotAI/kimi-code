@@ -142,7 +142,7 @@ export type {
   Interaction,
   InteractionKind,
 } from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
-export type { SkillSummary } from '@moonshot-ai/agent-core-v2/app/skillCatalog/types';
+export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type {
   GlobalMcpServerConfig,
   McpManagedServer,

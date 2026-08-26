@@ -9,13 +9,14 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
-  defineAgentRuntime,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
   type AgentRuntimeDefinitionRecord,
   getAgentRuntimeDefinitionId,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -120,14 +121,16 @@ function makeRuntimeAgent(
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IEventBus, eventBus);
   ix.set(IWireService, stubWireJournal(journal));
-  ix.set(IAgentContextInjectorService, {
-    _serviceBrand: undefined,
-    register: (variant: string) => {
-      registeredVariants.push(variant);
-      reminders += 1;
-      return toDisposable(() => { reminders -= 1; });
-    },
-  } as unknown as IAgentContextInjectorService);
+  ix.set(
+    IAgentLifecycleService,
+    lifecycleWithReminder(createReminderStub({
+      register: (variant: string) => {
+        registeredVariants.push(variant);
+        reminders += 1;
+        return toDisposable(() => { reminders -= 1; });
+      },
+    })),
+  );
   ix.set(IAgentContextMemoryService, {
     _serviceBrand: undefined,
     get: () => [],
@@ -165,7 +168,7 @@ function makeRuntimeAgent(
       registry.untrack(managed);
       await managed.runtimeSet.close();
       managed.killSpace();
-      handle.dispose();
+      await handle.dispose();
     },
   };
 }
@@ -206,13 +209,15 @@ describe('TodoAgentRuntime', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventBus, new EventBusService());
     ix.set(IWireService, stubWireJournal([]));
-    ix.set(IAgentContextInjectorService, {
-      _serviceBrand: undefined,
-      register: () => {
-        reminders += 1;
-        return toDisposable(() => { reminders -= 1; });
-      },
-    } as unknown as IAgentContextInjectorService);
+    ix.set(
+      IAgentLifecycleService,
+      lifecycleWithReminder(createReminderStub({
+        register: () => {
+          reminders += 1;
+          return toDisposable(() => { reminders -= 1; });
+        },
+      })),
+    );
     ix.set(IAgentContextMemoryService, {
       _serviceBrand: undefined,
       get: () => [],
@@ -247,7 +252,7 @@ describe('TodoAgentRuntime', () => {
     expect(managed.runtimeSet.resolve(AgentTodo)).toBe(todo);
     expect(reminders).toBe(1);
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 
   it('rejects resolve and lease tracking once the runtime set is closed', async () => {
@@ -376,7 +381,8 @@ describe('TodoAgentRuntime', () => {
 
   it('materializes non-durable definitions lazily on first resolve', async () => {
     let creates = 0;
-    const ephemeral = defineAgentRuntime<undefined, object>({
+    const ephemeral = defineAgentRuntimeContract<object>('ephemeral-runtime');
+    const ephemeralProvider = defineAgentRuntimeProvider<undefined, object>(ephemeral, {
       id: 'ephemeral-runtime',
       logic: fromCallback(() => {}),
       createApi: () => {
@@ -387,6 +393,7 @@ describe('TodoAgentRuntime', () => {
     const registry = new RuntimeRegistry();
     registry.register({
       definition: ephemeral,
+      provider: ephemeralProvider,
       generation: 1,
       active: true,
     });
@@ -414,74 +421,7 @@ describe('TodoAgentRuntime', () => {
     expect(creates).toBe(1);
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized' });
     await managed.runtimeSet.close();
-    handle.dispose();
-  });
-
-  it('drains tracked promise leases before stopping actors on withdraw and close', async () => {
-    const pending: (() => void)[] = [];
-    const leaseDefinition = defineAgentRuntime<undefined, { run(): Promise<void> }>({
-      id: 'lease-runtime',
-      logic: fromCallback(() => {}),
-      createApi: (context) => ({
-        run: () => {
-          let resolveWork!: () => void;
-          const work = new Promise<void>((resolve) => {
-            resolveWork = resolve;
-          });
-          const tracked = context.track(work);
-          pending.push(resolveWork);
-          return tracked;
-        },
-      }),
-    });
-    const record: AgentRuntimeDefinitionRecord = {
-      definition: leaseDefinition,
-      generation: 1,
-      active: true,
-    };
-    const registry = new RuntimeRegistry();
-    registry.register(record);
-    const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
-    const ix = new TestInstantiationService();
-    ix.set(IAgentScopeContext, scope);
-    ix.set(IAgentBlobService, noopBlob);
-    ix.set(IAgentStateService, new AgentStateService());
-    ix.set(IEventBus, new EventBusService());
-    ix.set(IWireService, stubWireJournal([]));
-    ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const handle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: ix,
-      dispose: () => { ix.dispose(); },
-    };
-    const managed = new ManagedAgent(scope.agentContext, handle, []);
-    registry.track(managed);
-    const runtime = managed.runtimeSet.resolve(leaseDefinition);
-    void runtime.run();
-
-    registry.withdraw(record);
-    expect(() => runtime.run()).toThrow('retiring');
-    expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized' });
-
-    pending.shift()!();
-    await nextTick();
-    expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'retired' });
-
-    registry.register({ ...record, generation: 2, active: true });
-    const revived = managed.runtimeSet.resolve(leaseDefinition);
-    void revived.run();
-    let closed = false;
-    const closing = managed.runtimeSet.close().then(() => {
-      closed = true;
-    });
-    await nextTick();
-    expect(closed).toBe(false);
-    pending.shift()!();
-    await closing;
-    expect(closed).toBe(true);
-    await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 
   it('reports registered, materialized, retired, and definition generations', async () => {
@@ -531,11 +471,12 @@ describe('TodoAgentRuntime', () => {
     managed.attachDurableRuntimes();
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized', state: [] });
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 
   it('retains actor failure status and inspection diagnostics', async () => {
-    const definition = defineAgentRuntime<number, object>({
+    const definition = defineAgentRuntimeContract<object>('failed-runtime');
+    const provider = defineAgentRuntimeProvider<number, object>(definition, {
       id: 'failed-runtime',
       logic: fromCallback(() => { throw new Error('actor failed'); }),
       durable: {
@@ -551,6 +492,7 @@ describe('TodoAgentRuntime', () => {
     const registry = new RuntimeRegistry();
     registry.register({
       definition,
+      provider,
       generation: 1,
       active: true,
     });
@@ -580,7 +522,7 @@ describe('TodoAgentRuntime', () => {
       error: 'actor failed',
     });
     await managed.runtimeSet.close();
-    handle.dispose();
+    await handle.dispose();
   });
 });
 

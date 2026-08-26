@@ -51,7 +51,6 @@ import {
   type AgentRuntimeDefinition,
   type AgentRuntimeDefinitionRecord,
   type AgentRuntimeSnapshot,
-  getAgentRuntimeContract,
   getAgentRuntimeDefinitionId,
   type RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
@@ -131,7 +130,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private registerContribution(contribution: AgentRuntimeContribution, override: boolean): void {
     if (this.contributions.has(contribution)) return;
-    const definition = getAgentRuntimeContract(contribution);
+    const definition = contribution.contract;
     const id = getAgentRuntimeDefinitionId(definition);
     const generation = (this.recordGenerations.get(id) ?? 0) + 1;
     this.recordGenerations.set(id, generation);
@@ -223,6 +222,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     eventBus?.activateAgent(agent);
     let managed: ManagedAgent | undefined;
     let didCreate = false;
+    let finalizerArmed = false;
     try {
       const handle = createScopedChildHandle(
         this.instantiation,
@@ -238,13 +238,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             }],
           ],
           configureContainer: (container) => {
+            container.anchorKernelFinalizer(() => {
+              eventBus?.deactivateAgent(agent);
+            }, 'agent-event-bus-deactivate');
+            finalizerArmed = true;
             this.adopt({
               id: agentId,
               kind: LifecycleScope.Agent,
               accessor: {
                 get: (id) => container.invokeFunction((accessor) => accessor.get(id)),
               },
-              dispose: () => { container.dispose(); },
+              dispose: () => container.disposeAsync(),
             });
             managed = this.roster.get(agentId);
           },
@@ -275,10 +279,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         await managed.runtimeSet.close().catch(() => undefined);
         managed.killSpace();
         try {
-          managed.handle.dispose();
+          await managed.handle.dispose();
         } catch { }
       }
-      eventBus?.deactivateAgent(agent);
+      if (!finalizerArmed) eventBus?.deactivateAgent(agent);
       if (didCreate) this.onDidCloseEmitter.fire(agent);
       throw error;
     }
@@ -447,10 +451,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
     await managed.runtimeSet.close();
     managed.killSpace();
-    handle.dispose();
-    this.instantiation.invokeFunction((accessor) =>
-      (accessor.get(ISessionEventBus) as ISessionEventBus | undefined)?.deactivateAgent(agent),
-    );
+    await handle.dispose();
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
     this.onDidCloseEmitter.fire(agent);
   }

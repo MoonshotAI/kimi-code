@@ -12,7 +12,8 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompacti
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -105,6 +106,32 @@ export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
 }
 export interface PromptQueued extends PromptQueuedPayload {}
 
+export interface PromptSubmittedPayload {
+  readonly agentId: string;
+  readonly promptId: string;
+  readonly userMessageId: string;
+  readonly status: 'running' | 'queued';
+  readonly content: ContentPart[];
+  readonly createdAt: string;
+}
+
+export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {
+  static override readonly type = 'prompt.submitted';
+  static override readonly observable = true;
+}
+export interface PromptSubmitted extends PromptSubmittedPayload {}
+
+export interface PromptStartedPayload {
+  readonly agentId: string;
+  readonly promptId: string;
+}
+
+export class PromptStarted extends AgentEvent2<PromptStartedPayload> {
+  static override readonly type = 'prompt.started';
+  static override readonly observable = true;
+}
+export interface PromptStarted extends PromptStartedPayload {}
+
 interface Deferred<T> { readonly promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void }
 interface Record extends PromptSnapshot {
   state: PromptState;
@@ -150,7 +177,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
@@ -169,6 +196,10 @@ export class AgentPromptService implements IAgentPromptService {
       await this.deliverToolResult(ctx);
       await next();
     });
+  }
+
+  private reminder(): ReminderRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
   }
 
   private get launching(): boolean {
@@ -200,7 +231,11 @@ export class AgentPromptService implements IAgentPromptService {
         submitted = true;
         this.reservedPromptIds.delete(id);
         await this.dispatcher.dispatch(
-          new PromptAccepted({ agentId: this.scopeContext.agentId, promptId: id }),
+          new PromptAccepted({
+            agentId: this.scopeContext.agentId,
+            promptId: id,
+            content: stripBundledSkillBlocks(message),
+          }),
         );
         return this.enqueue({ id, message });
       },
@@ -227,16 +262,15 @@ export class AgentPromptService implements IAgentPromptService {
       completion: completionDeferred.promise,
     };
     this.pending.push(record);
-    if (this.active === undefined && !this.launching) {
-      if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') {
-        this.publishQueued(record);
-        return record.handle;
-      }
-      void this.startNext();
-      await Promise.race([record.launchedDeferred.promise, record.completionDeferred.promise]);
-    } else {
+    const idle = this.active === undefined && !this.launching;
+    const queued = !idle || (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running');
+    this.publishSubmitted(record, queued ? 'queued' : 'running');
+    if (queued) {
       this.publishQueued(record);
+      return record.handle;
     }
+    void this.startNext();
+    await Promise.race([record.launchedDeferred.promise, record.completionDeferred.promise]);
     return record.handle;
   }
 
@@ -327,7 +361,7 @@ export class AgentPromptService implements IAgentPromptService {
       removed.push({ item, index });
       this.pending.splice(index, 1);
     }
-    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
+    const request = new SteerStepRequest(rerouted, captions, this.reminder(), (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.scopeContext.agentId,
@@ -376,7 +410,7 @@ export class AgentPromptService implements IAgentPromptService {
   async inject(message: ContextMessage): Promise<Turn | undefined> {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
     await this.materializeDaemonRefs(rerouted);
-    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
+    const request = new SteerStepRequest(rerouted, captions, this.reminder(), (materialized) => {
       void this.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.scopeContext.agentId,
@@ -409,9 +443,10 @@ export class AgentPromptService implements IAgentPromptService {
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
-      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminders)).assigned).turn;
+      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminder())).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
+      this.publishStarted(item);
       void turn.result.then((result) => this.settle(item, result));
     } catch {
       item.state = 'failed';
@@ -465,8 +500,7 @@ export class AgentPromptService implements IAgentPromptService {
   private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
     const ownerPromptId = message.id ?? newMessageId();
     for (const caption of captions) {
-      this.reminders.appendSystemReminder(caption, {
-        kind: 'injection',
+      this.reminder().notify(caption, {
         variant: 'image_compression',
         ownerPromptId,
       });
@@ -482,6 +516,14 @@ export class AgentPromptService implements IAgentPromptService {
   private publishQueued(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
     void this.dispatcher.dispatch(new PromptQueued({ agentId: this.scopeContext.agentId, promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
+  }
+  private publishSubmitted(record: Record, status: 'running' | 'queued'): void {
+    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
+    void this.dispatcher.dispatch(new PromptSubmitted({ agentId: this.scopeContext.agentId, promptId: record.id, userMessageId: record.userMessageId, status, content: stripBundledSkillBlocks(record.message), createdAt: record.createdAt }));
+  }
+  private publishStarted(record: Record): void {
+    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
+    void this.dispatcher.dispatch(new PromptStarted({ agentId: this.scopeContext.agentId, promptId: record.id }));
   }
   private publishAborted(promptId: string): void { void this.dispatcher.dispatch(new PromptAborted({ agentId: this.scopeContext.agentId, promptId, abortedAt: new Date().toISOString() })); }
 }

@@ -31,13 +31,6 @@ import type { PromptSubmission } from '../protocol/rest-prompt';
 
 type WireContent = PromptSubmission['content'];
 
-/**
- * Fail fast on stale or mis-kinded file references before anything
- * session-scoped happens: a bad `file_id` (unknown, or a real file used with
- * the wrong media kind, e.g. a PDF submitted as a video) must reject the
- * request without creating the prompt agent and without touching the
- * session's model/thinking/permission.
- */
 export async function assertPromptFileRefs(content: WireContent, store: IFileService): Promise<void> {
   for (const part of content) {
     if (part.type === 'file') {
@@ -49,11 +42,6 @@ export async function assertPromptFileRefs(content: WireContent, store: IFileSer
   }
 }
 
-/**
- * Fail fast on stale `session_media` references: a file id with no canonical
- * copy in this session must reject the request before anything is resolved
- * or mutated.
- */
 export async function assertPromptSessionMediaRefs(
   content: WireContent,
   store: ISessionMediaStore,
@@ -83,42 +71,16 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
 }
 
 export interface ResolvePromptMediaOptions {
-  /**
-   * Lazily resolve the session's media-originals dir for persisting the
-   * pre-compression bytes of inline base64 images. Only invoked when an image
-   * was actually compressed; a failure or undefined result falls back to the
-   * shared temp-dir cache.
-   */
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
-  /**
-   * Lazily resolve the session's attachments dir for materializing arbitrary
-   * file uploads (and image bytes the provider rejects) into a path the model
-   * can open with the Read tool. A failure or undefined result falls back to
-   * the shared cache dir.
-   */
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
-  /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: ITelemetryService;
 }
 
 export interface PromptMediaPreparation {
   readonly content: WireContent;
-  /**
-   * Delete the transient daemon uploads this preparation created (the
-   * compressed re-save). Call on failure, or after the engine has either
-   * materialized the Session-owned copy or terminally rejected the prompt.
-   */
   readonly discard: () => Promise<void>;
 }
 
-/**
- * Resolve a wire content list's media/file references into their final wire
- * form: uploaded files materialize to a session-local path notice, images are
- * format-gated and compressed, and image/video uploads enter context as bare
- * internal `kimi-file://` references. The preparation's `content` is the
- * input array unchanged when nothing needed resolving; `discard` rolls back
- * or releases the daemon uploads the preparation created after intake.
- */
 export async function resolvePromptMediaFiles(
   input: WireContent,
   store: IFileService,

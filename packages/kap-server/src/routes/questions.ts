@@ -267,7 +267,6 @@ function buildItem(item: QuestionItem, itemIdx: number): ProtocolQuestionItem {
   return out;
 }
 
-/** In-process request + interaction metadata → protocol wire shape. */
 export function toWireQuestion(
   interaction: Interaction,
   sessionId: string,

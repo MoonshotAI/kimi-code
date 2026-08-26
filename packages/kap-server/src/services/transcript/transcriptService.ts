@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IAgentPromptService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
@@ -12,7 +13,9 @@ import {
   followSessionLifecycles,
   getLiveSessionById,
   isTowerFeatureAssembled,
+  isUndoAnchor,
   reduceContextTranscript,
+  type ContextMessage,
   type IDisposable,
   type Scope,
   type SessionMeta,
@@ -27,6 +30,7 @@ import {
   groupMessagesIntoSnapshot,
   isPlainAgentId,
   type AgentDescriptor,
+  type ActivityMeta,
   type AgentTranscript,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
@@ -37,6 +41,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import { readWireRecords } from './wireRecords';
+import { projectPromptContentParts } from '../messages/messageProjection';
 import {
   bindSessionTranscript,
   descriptorFromMeta,
@@ -69,14 +74,11 @@ interface AgentOpsJournal {
   batches: { seq: number; ops: TranscriptOperation[] }[];
 }
 
-/** Retained op batches per agent; older batches evict (catch-up turns incomplete). */
 export const TRANSCRIPT_OPS_JOURNAL_CAPACITY = 2000;
 
-/** Catch-up view over one agent's journal: batches with seq > sinceSeq, oldest first. */
 export interface TranscriptOpsCatchup {
   readonly batches: readonly { seq: number; ops: readonly TranscriptOperation[] }[];
   readonly latestSeq: number;
-  /** false when the journal no longer reaches back to sinceSeq — the caller must do a full refresh. */
   readonly complete: boolean;
 }
 
@@ -86,7 +88,6 @@ export class TranscriptService {
     string,
     Set<(event: TranscriptChangeEvent, seq: number) => void>
   >();
-  /** Debounced post-turn heals: `${sessionId}:${agentId}` → pending ordinals + timer. */
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
 
   constructor(private readonly deps: TranscriptServiceDeps) {
@@ -102,10 +103,6 @@ export class TranscriptService {
     });
   }
 
-  /**
-   * Get (or create + bind) the transcript store for a session that is live in
-   * this process. Returns `undefined` when the session is not in memory.
-   */
   forSessionLive(sessionId: string): TranscriptStore | undefined {
     const existing = this.live.get(sessionId);
     if (existing !== undefined) {
@@ -144,23 +141,10 @@ export class TranscriptService {
     return store;
   }
 
-  /**
-   * Resolves when the session's initial history backfill has landed (or
-   * immediately when the session has no live store). Full-read consumers
-   * (REST route, WS subscribe) await this so the first answer carries the
-   * established main-agent transcript.
-   */
   async whenReady(sessionId: string): Promise<void> {
     await this.live.get(sessionId)?.ready;
   }
 
-  /**
-   * Ensure one agent's persisted history is replayed into the live store
-   * (idempotent per agent; the main agent is already covered by the initial
-   * backfill). Awaited by full-read consumers for the `agent_id` they serve,
-   * so any agent's transcript — including subagents that are not
-   * materialized in this process — comes back established.
-   */
   async ensureAgentHistory(sessionId: string, agentId: string): Promise<void> {
     if (agentId === MAIN_AGENT_ID) return this.whenReady(sessionId);
     const entry = this.live.get(sessionId);
@@ -177,7 +161,6 @@ export class TranscriptService {
     }
   }
 
-  /** Initial backfill: main-agent history + the full roster from session metadata. */
   private async backfillMain(sessionId: string, store: TranscriptStore): Promise<void> {
     await this.backfillAgent(sessionId, store, MAIN_AGENT_ID);
     if (this.live.get(sessionId)?.store !== store) return;
@@ -191,13 +174,6 @@ export class TranscriptService {
     }
   }
 
-  /**
-   * Replay one agent's persisted wire records into its transcript. Everything
-   * is an idempotent upsert (never `reset`), so live ops arriving while the
-   * records are read from disk survive the merge; turn ordinals assigned by
-   * the rebuild are 0-based like the engine's, so future live turns continue
-   * without colliding.
-   */
   private async backfillAgent(sessionId: string, store: TranscriptStore, agentId: string): Promise<void> {
     let snapshot: AgentTranscriptSnapshot | undefined;
     try {
@@ -218,7 +194,8 @@ export class TranscriptService {
         (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
-      if (overlay !== undefined) ops.push(overlay);
+      if (overlay !== undefined) ops.push(overlay, { op: 'meta.merge', meta: { activity: 'turn' } });
+      ops.push(...this.livePromptBackfill(sessionId, agentId));
       const result = transcript.apply(ops);
       if (result.gap !== undefined) {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
@@ -239,15 +216,6 @@ export class TranscriptService {
     }
   }
 
-  /**
-   * Subscribe to the session's mapped-op stream (one shared subscription per
-   * session — the broadcaster fans grades out against it). These are the
-   * projector-mapped ops, not the store's accepted ops; see
-   * `bindSessionTranscript` for why. Each batch carries its per-agent seq
-   * (consecutive from 1; 0 only when the session has no live entry, which a
-   * registered listener cannot observe). Returns `undefined` when the session
-   * is not live (caller skips streaming for cold sessions).
-   */
   onSessionOps(
     sessionId: string,
     listener: (event: TranscriptChangeEvent, seq: number) => void,
@@ -281,12 +249,6 @@ export class TranscriptService {
     }
   }
 
-  /**
-   * Append one dispatched batch to its agent's journal and assign the next
-   * consecutive seq. Journaling happens before the fan-out (and regardless of
-   * listeners), so the watermark always covers every dispatched batch. Returns
-   * 0 when the session has no live entry — the journal dies with the store.
-   */
   private journalOps(sessionId: string, event: TranscriptChangeEvent): number {
     const entry = this.live.get(sessionId);
     if (entry === undefined) return 0;
@@ -301,25 +263,11 @@ export class TranscriptService {
     return seq;
   }
 
-  /**
-   * Watermark for one agent: the seq of its latest dispatched op batch (0 when
-   * nothing was dispatched — or the session is not live, cold sessions having
-   * no journal).
-   */
   getSeqWatermark(sessionId: string, agentId: string): number {
     const journal = this.live.get(sessionId)?.opsJournals.get(agentId);
     return journal === undefined ? 0 : journal.nextSeq - 1;
   }
 
-  /**
-   * Point-to-point catch-up: the journaled batches with seq > `sinceSeq`,
-   * oldest first. `complete` is true only when every batch in
-   * (sinceSeq, latestSeq] is retained — a sinceSeq ahead of the watermark
-   * (stale cursor from a dead journal incarnation) or one the bounded journal
-   * has already evicted yields `complete: false`, telling the caller to fall
-   * back to a full refresh. Returns `undefined` when the session is not live
-   * (cold sessions have no journal).
-   */
   getOpsSince(
     sessionId: string,
     agentId: string,
@@ -335,11 +283,6 @@ export class TranscriptService {
     return { batches, latestSeq, complete };
   }
 
-  /**
-   * Live (projector-mapped) op batches: fan out, then watch for terminal
-   * turns to heal. Backfill batches go through `dispatchOps` directly so a
-   * replayed history cannot retrigger heals.
-   */
   private handleLiveOps(sessionId: string, event: TranscriptChangeEvent): void {
     this.dispatchOps(sessionId, event);
     for (const op of event.ops) {
@@ -366,14 +309,6 @@ export class TranscriptService {
     this.healTimers.set(key, { ordinals, timer });
   }
 
-  /**
-   * A backfill rebuilds every turn as 'completed' — the cold grouping cannot
-   * see in-flight work. When the agent's loop is actually mid-turn, re-assert
-   * the active turn's header as 'running' AFTER the snapshot ops (its cold
-   * 'completed' header would otherwise win, even over a live running header
-   * the projector already wrote). Live header fields win, then the
-   * snapshot's. Returns `undefined` only when the loop is idle.
-   */
   private liveTurnOverlay(
     sessionId: string,
     agentId: string,
@@ -408,14 +343,41 @@ export class TranscriptService {
     };
   }
 
-  /**
-   * Re-read the agent's persisted history and merge the ended turn(s) back
-   * into the live store. The projector attaches to the bus at bind time, so
-   * text streamed (and persisted) before that is missing from its frames; by
-   * the time a turn ends, its records are complete on disk. The merge is
-   * deliberately conservative (`healTurnOps`): live state wins everywhere
-   * except the one regression being healed — truncated text/thinking frames.
-   */
+  private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
+    const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService)
+      .handleOf(agentId);
+    const promptService = agent === undefined ? undefined : agent.accessor.get(IAgentPromptService);
+    const queue = promptService?.list();
+    if (queue === undefined) return [];
+    const ops: TranscriptOperation[] = [];
+    if (queue.active !== undefined) {
+      ops.push({
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: queue.active.id,
+          status: 'running',
+          userMessageId: queue.active.userMessageId,
+          content: projectPromptContentParts(queue.active.message.content),
+          createdAt: queue.active.createdAt,
+        },
+      });
+    }
+    for (const pending of queue.pending) {
+      ops.push({
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: pending.id,
+          status: 'queued',
+          userMessageId: pending.userMessageId,
+          content: projectPromptContentParts(pending.message.content),
+          createdAt: pending.createdAt,
+        },
+      });
+    }
+    return ops;
+  }
+
   private async healEndedTurns(
     sessionId: string,
     agentId: string,
@@ -456,13 +418,6 @@ export class TranscriptService {
     this.dispatchOps(sessionId, { agentId, ops });
   }
 
-  /**
-   * Roster for a cold session, read from the persisted session metadata
-   * (`<sessionDir>/state.json`) and mapped like the live seeding
-   * (`descriptorFromMeta`). Returns `undefined` when the session is unknown
-   * to the index; an unreadable or missing metadata file yields an empty
-   * roster (best-effort — transcripts work without descriptors).
-   */
   async readColdRoster(sessionId: string): Promise<AgentDescriptor[] | undefined> {
     const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
@@ -481,12 +436,6 @@ export class TranscriptService {
     );
   }
 
-  /**
-   * Rebuild one agent's transcript snapshot for a cold session from its
-   * persisted wire records. Returns `undefined` when the session is unknown to
-   * the index; a known session without wire records for the agent yields an
-   * empty snapshot.
-   */
   async readColdSnapshot(
     sessionId: string,
     agentId: string = MAIN_AGENT_ID,
@@ -515,8 +464,54 @@ export class TranscriptService {
       throw error;
     }
     const messages = [...reduceContextTranscript(records).entries];
-    const base = groupMessagesIntoSnapshot(messages);
-    const snapshot = foldWireRecordFacts(records, base);
+    const taskOriginTurnTaskIds = new Set<string>();
+    const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
+    let anchorFloor = 0;
+    let sawTurnPrompt = false;
+    for (const record of records) {
+      if (record.type === 'context.undo') {
+        const count = typeof record['count'] === 'number' ? (record['count'] as number) : 0;
+        for (let i = 0; i < count && anchorStack.length > anchorFloor; i++) {
+          const popped = anchorStack.pop()!;
+          taskOriginTurnTaskIds.clear();
+          for (const id of popped.taskIdsSnapshot) taskOriginTurnTaskIds.add(id);
+        }
+        continue;
+      }
+      if (record.type === 'context.clear') {
+        anchorFloor = anchorStack.length;
+        continue;
+      }
+      if (record.type === 'context.append_message') {
+        const message = (record as { message?: ContextMessage }).message;
+        if (message !== undefined && isUndoAnchor(message)) {
+          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds) });
+        }
+        continue;
+      }
+      if (record.type !== 'turn.prompt') continue;
+      sawTurnPrompt = true;
+      const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
+      if (origin === undefined) continue;
+      if (
+        (origin.kind === 'task' || origin.kind === 'background_task') &&
+        typeof origin.taskId === 'string'
+      ) {
+        taskOriginTurnTaskIds.add(origin.taskId);
+      }
+    }
+    const base = groupMessagesIntoSnapshot(
+      messages,
+      sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
+    );
+    const folded = foldWireRecordFacts(records, base);
+    const status = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService)
+      .handleOf(agentId)
+      ?.accessor.get(IAgentLoopService)
+      .status();
+    const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
+    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);
     if (
@@ -541,7 +536,6 @@ export class TranscriptService {
     return this.deps.core.accessor.get(ISessionManager).get(owner) === undefined;
   }
 
-  /** Dispose the live store + binding for a session (session closed / server shutdown). */
   dropSession(sessionId: string): void {
     this.opsListeners.delete(sessionId);
     for (const [key, pending] of this.healTimers) {
@@ -557,24 +551,6 @@ export class TranscriptService {
   }
 }
 
-/**
- * Flatten a snapshot into idempotent upsert ops (turn/step/frame upserts,
- * standalone items, tasks, meta). Deliberately never a `reset`: upserts merge
- * by id and keep ordinal order, so the backfill cannot clobber live ops that
- * landed while the records were being read. Global attachment entities flatten
- * too — without them a backfilled turn's `attachmentIds` would dangle.
- *
- * Standalone items (markers / taskrefs) carry a `beforeTurn` placement anchor:
- * the reducer's standalone path is append-only, so without an anchor a
- * historical marker replayed after live turns arrived would land past them.
- * The anchor is the ordinal of the snapshot turn directly following the item
- * (trailing items anchor past the last snapshot turn, which is where the
- * engine's next live turn lands); a turn-anchored insert places the item
- * before the first turn with `ordinal >= beforeTurn`.
- *
- * `turnOps` customizes the per-turn flattening (the backfill passes a
- * live-first merge; the default flattens wholesale for cold reads).
- */
 export function snapshotToOps(
   snapshot: AgentTranscriptSnapshot,
   turnOps: (turn: TranscriptTurn) => TranscriptOperation[] = snapshotTurnOps,
@@ -612,7 +588,6 @@ export function snapshotToOps(
   return ops;
 }
 
-/** One snapshot turn flattened wholesale (the cold / unseen-turn path). */
 export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
   const { steps, ...header } = turn;
@@ -648,28 +623,6 @@ function supersededColdAttachmentIds(
   return superseded;
 }
 
-/**
- * Merge one persisted (snapshot) turn back into the live store after the turn
- * ended — the post-turn heal for mid-turn attaches:
- *   - turn the live store never saw: taken wholesale;
- *   - header: the snapshot is authoritative for origin/prompt (it reads the
- *     persisted user message, which a mid-turn-attached projector missed);
- *     the live header wins on state, timestamps, and attachment ids (its
- *     `{turnId}.att<N>` entities are already projected — swapping in the
- *     snapshot's cold `att_<n>` ids would churn the references and orphan
- *     the live entities);
- *   - steps the live turn never saw: taken wholesale from the snapshot;
- *   - existing steps: text/thinking frames are re-emitted only when the
- *     persisted text is longer and the kind matches (a fresh live frame may
- *     still be ahead of a lagging flush); tool frames are re-emitted when
- *     the live step lacks the frame or the live frame lacks the outcome the
- *     persisted one carries (a tool.result dropped in the attach race is
- *     otherwise unrecoverable until a cold rebuild) — live-only extras
- *     (display / agentRefs / approvalId) are preserved on the emitted frame;
- *   - interactions are never re-emitted: they are global entities (not step
- *     content), are not persisted as context messages, and the live kernel
- *     bridge is always richer.
- */
 export function healTurnOps(
   snapshotTurn: TranscriptTurn,
   liveTurn: TranscriptTurn | undefined,

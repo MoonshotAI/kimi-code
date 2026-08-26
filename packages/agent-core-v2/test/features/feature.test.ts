@@ -22,7 +22,11 @@ import { ConfigSectionContribution } from '#/app/config/configSectionContributio
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
-import { AgentRuntimeContributionPoint, defineAgentRuntime } from '#/agent/runtime/agentRuntime';
+import {
+  AgentRuntimeContributionPoint,
+  defineAgentRuntimeContract,
+  defineAgentRuntimeProvider,
+} from '#/agent/runtime/agentRuntime';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
@@ -169,7 +173,8 @@ describe('Feature — built-in capability assembly (src/features)', () => {
       state: { initial: () => 0, schema: z.custom<number>() },
       events: [],
     });
-    const runtime = defineAgentRuntime<number, object>({
+    const runtimeContract = defineAgentRuntimeContract<object>('test-feature.runtime');
+    const runtime = defineAgentRuntimeProvider<number, object>(runtimeContract, {
       id: 'test-feature.runtime',
       logic: fromTransition(
         (_state: number, event: { readonly type: 'commit'; readonly state: number }) => event.state,

@@ -23,13 +23,6 @@ export function okEnvelope<T>(data: T, requestId: string): Envelope<T> {
   return { code: 0, msg: 'success', data, request_id: requestId };
 }
 
-/**
- * Build an error envelope. When `stack` is provided it is surfaced verbatim on
- * the wire so operators can see where a thrown error originated; when omitted
- * (or `undefined`) the field is absent and the wire shape stays byte-identical
- * to the original `{ code, msg, data: null, request_id }` — `JSON.stringify`
- * drops `undefined` properties, so callers that have no stack are unaffected.
- */
 export function errEnvelope(
   code: number,
   msg: string,

@@ -14,7 +14,7 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { reminderAgentRuntimeProvider, AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -101,9 +101,10 @@ import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
-import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
+import { AgentSkill, skillAgentRuntimeProvider } from '#/features/skill/skillAgentRuntime';
 
 const signal = new AbortController().signal;
 
@@ -279,12 +280,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             scope: (subKey?: string) => subKey ?? '',
           } as never;
         }
-        if (serviceId === IAgentContextInjectorService) {
-          return {
-            _serviceBrand: undefined,
-            register: () => ({ dispose: () => {} }),
-          } as never;
-        }
         if (serviceId === IAgentContextMemoryService) {
           return {
             _serviceBrand: undefined,
@@ -454,6 +449,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       handles.set(adoptedHandle.id, adoptedHandle);
       adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
         {
+          definition: AgentReminder,
+          provider: reminderAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
           definition: AgentTodo,
           provider: todoAgentRuntimeProvider,
           generation: 1,
@@ -461,6 +462,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         },
         {
           definition: AgentInteraction,
+          provider: interactionAgentRuntimeProvider,
           generation: 1,
           active: true,
         },
@@ -473,6 +475,12 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentGoal,
           provider: goalAgentRuntimeProvider,
+          generation: 1,
+          active: true,
+        },
+        {
+          definition: AgentSkill,
+          provider: skillAgentRuntimeProvider,
           generation: 1,
           active: true,
         },
@@ -3851,6 +3859,7 @@ describe('Agent tools', () => {
     });
 
     it('routes registered user tools through tool.call request/response', async () => {
+      await ctx.restoreRuntimes();
       ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
       expect(
@@ -3861,11 +3870,14 @@ describe('Agent tools', () => {
       ).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "agentId": "main", "mode": "auto", "time": "<time>" }
         [wire] tools.register_user_tool    { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "agentId": "main", "time": "<time>" }
-        [wire] prompt.accepted             { "agentId": "main", "promptId": "<msg-1>", "time": "<time>" }
+        [wire] prompt.accepted             { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up moon" } ], "time": "<time>" }
+        [emit] prompt.accepted             { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up moon" } ] }
+        [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
         [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon" }
         [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
+        [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 1, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } } ] }
         [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
         [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
@@ -3939,11 +3951,14 @@ describe('Agent tools', () => {
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 176 }
         [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
         [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
-        [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "time": "<time>" }
+        [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "time": "<time>" }
+        [emit] prompt.accepted                { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ] }
+        [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "createdAt": "<time>" }
         [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "time": "<time>" }
         [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "origin": { "kind": "user" }, "prompt": "Can you still use Lookup?" }
         [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
         [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
+        [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
         [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" }, "time": "<time>" }
         [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>" }
         [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }

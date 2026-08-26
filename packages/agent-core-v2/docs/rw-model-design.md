@@ -88,7 +88,9 @@
 - V3 resume 期 signal 靠 `emitLive` 隐式压制（skill/swarm）——"这个 signal 发不发
   得出去"取决于调用时相位，调用点看不出来。
 - V4 `IEventService` payload 无类型、事件名裸字符串、同一事件两处发布者。
-- V5 `prompt.submitted` 协议里存在但无人发；`AsyncEmitter/handleVetos` 是死代码。
+- V5 `prompt.submitted` 曾长期只存在于协议而无人发，现已由 `AgentPromptService`
+  在提交时发出（排队/运行以 `status` 区分，启动时再发 `prompt.started`）；
+  `AsyncEmitter/handleVetos` 是死代码。
 
 **回环与相位**
 - L1 订阅者回写链真实存在且无统一约束：turn.onEnded→goal 续跑→再 launch turn；
@@ -211,8 +213,8 @@ replaying ──(日志折叠完)──▶ ready ──(首个 live commit)─�
 各写一次**，且违规是响声（throw）不是静默。
 
 > 今天"resume 里合法地想写"的场景（goal 的 fork reminder 每次 restore 重新
-> 生成）改由 **context injector**（已存在的 `IAgentContextInjectorService`）或
-> ready 相位的一次性 Effect 承担——派生内容本来就不该伪装成回放副作用。
+> 生成）改由 **AgentReminder** Runtime 的 `register` provider 或 ready 相位的
+> 一次性 Effect 承担——派生内容本来就不该伪装成回放副作用。
 > `postRestoring` 窗口取消：task 磁盘对账、cron 启动等归入 ready 时刻的
 > 一次性 Effect。
 

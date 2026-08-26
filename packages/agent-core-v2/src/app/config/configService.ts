@@ -367,7 +367,6 @@ export class ConfigService extends Disposable implements IConfigService {
     return [...this.diagnosticsList];
   }
 
-  /** Append a diagnostic, skipping exact duplicates (rebuilds re-run the same checks). */
   private pushDiagnostic(diagnostic: ConfigDiagnostic): void {
     const duplicate = this.diagnosticsList.some(
       (existing) =>

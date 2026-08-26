@@ -77,7 +77,7 @@ const SNAPSHOT_VISIBLE_TOOLS = [
   'ExitPlanMode',
 ] as const;
 const LARGE_MCP_TOOL = 'mcp__srv__large';
-const EXACT_COMPACTION_REFRESH_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
+const EXACT_COMPACTION_PROFILE: ResolvedAgentProfile = normalizeAgentProfile({
   name: 'exact-compaction-refresh',
   systemPrompt: (context) =>
     [
@@ -351,7 +351,7 @@ describe('FullCompaction', () => {
     hook.dispose();
   });
 
-  it('refreshes the active profile system prompt after compaction without resetting active tools', async () => {
+  it('keeps the active profile system prompt frozen after compaction without resetting active tools', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-home-'));
     const workDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-work-'));
     try {
@@ -363,14 +363,12 @@ describe('FullCompaction', () => {
       );
       ctx.configureRuntimeModel(CATALOGUED_PROVIDER, CATALOGUED_MODEL_CAPABILITIES);
       const profile = ctx.get(IAgentProfileService);
-      await profile.applyProfile(EXACT_COMPACTION_REFRESH_PROFILE);
+      await profile.applyProfile(EXACT_COMPACTION_PROFILE);
       profile.update({ activeToolNames: ['Read'] });
 
-      expect(profile.data().systemPrompt).toBe(
-        exactCompactionRefreshPrompt(workDir, 'old project instructions'),
-      );
+      const before = profile.data().systemPrompt;
+      expect(before).toBe(exactCompactionPrompt(workDir, 'old project instructions'));
 
-      const refreshSpy = vi.spyOn(profile, 'refreshSystemPrompt');
       writeFileSync(join(workDir, 'AGENTS.md'), 'new project instructions', 'utf-8');
       ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
       ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
@@ -380,10 +378,7 @@ describe('FullCompaction', () => {
       await ctx.rpc.beginCompaction({});
       await completed;
 
-      expect(refreshSpy).toHaveBeenCalledTimes(1);
-      expect(profile.data().systemPrompt).toBe(
-        exactCompactionRefreshPrompt(workDir, 'new project instructions'),
-      );
+      expect(profile.data().systemPrompt).toBe(before);
       expect(profile.getActiveToolNames()).toEqual(['Read']);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
@@ -668,6 +663,59 @@ describe('FullCompaction', () => {
         trace_id: 'trace-compact-1',
       }),
     });
+    await ctx.expectResumeMatches();
+  });
+
+  it('retries any compaction request error indefinitely when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new APIStatusError(400, 'endpoint broken', null, 1);
+      if (attempts === 2) throw new APIStatusError(404, 'model not found', null, 1);
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(attempts).toBe(3);
+    await ctx.expectResumeMatches();
+  });
+
+  it('lets context overflow reach compaction shrink instead of retrying when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new APIContextOverflowError(400, 'context length exceeded');
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(attempts).toBe(2);
     await ctx.expectResumeMatches();
   });
 
@@ -3081,7 +3129,7 @@ function countEvents(events: ReturnType<TestAgentContext['newEvents']>, type: st
   }).length;
 }
 
-function exactCompactionRefreshPrompt(workDir: string, agentsMd: string): string {
+function exactCompactionPrompt(workDir: string, agentsMd: string): string {
   return [
     `cwd:${workDir}`,
     'os:Linux',
@@ -3412,6 +3460,7 @@ describe('goal reminder re-injection after full compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
+    await ctx.restoreRuntimes();
     await ctx.resolve(AgentGoal).createGoal({ objective: GOAL_OBJECTIVE });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);

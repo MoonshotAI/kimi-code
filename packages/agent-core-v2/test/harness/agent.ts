@@ -25,7 +25,7 @@ import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import '#/agent/contextInjector/contextInjectorService';
+import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentCron } from '#/features/cron/cronAgentRuntime';
@@ -37,10 +37,10 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
-import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionSkillCatalogData } from '#/session/sessionSkillCatalog/skillCatalogData';
+import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
@@ -90,8 +90,8 @@ interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
 interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
-import { IAgentSkillService, type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/agent/skill/skill';
-import { AgentSkillService } from '#/agent/skill/skillService';
+import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
+import { AgentSkill } from '#/features/skill/skillAgentRuntime';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { RuntimeLease } from '#/runtime/runtime';
@@ -112,7 +112,7 @@ import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import { summarizeSkill, type SkillCatalog } from '#/app/skillCatalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
@@ -230,7 +230,7 @@ import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IHostClock } from '#/os/interface/hostClock';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
 
@@ -770,10 +770,7 @@ export function skillServices(
   input: ISessionSkillCatalog | SkillCatalog,
 ): TestAgentServiceOverride {
   const catalogService = isSessionSkillCatalog(input) ? input : createSessionSkillCatalog(input);
-  return [
-    sessionService(ISessionSkillCatalog, catalogService),
-    agentService(IAgentSkillService, new SyncDescriptor(AgentSkillService)),
-  ];
+  return [sessionService(ISessionSkillCatalog, catalogService)];
 }
 
 function isSessionSkillCatalog(
@@ -1387,7 +1384,6 @@ export class AgentTestContext {
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
-            reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
             const agentStateService = new TestAgentStateService(
               this.session.accessor.get(ISessionStateService),
@@ -1608,7 +1604,6 @@ export class AgentTestContext {
     cron.list();
     void plan.status();
 
-    this.get(IAgentSkillService);
     this.get(IAgentUserToolService);
     this.get(IAgentLLMRequesterService);
     this.get(IAgentFullCompactionService);
@@ -2117,7 +2112,7 @@ export class AgentTestContext {
       get agentsMdPaths() {
         return current.paths;
       },
-      onDidChange: Event.None as Event<void>,
+      onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
     };
   }
 
@@ -2194,14 +2189,14 @@ export class AgentTestContext {
   private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
     return {
       prompt: (payload) => this.get(IAgentPromptService).submit(payload),
-      promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
+      promptWithSkills: (payload) => this.resolve(AgentSkill).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
       cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
         this.get(IAgentPermissionModeService).setModeAndBroadcast(payload.mode),
       cancelCompaction: () => this.get(IAgentFullCompactionService).cancel(),
-      activateSkill: (payload) => this.get(IAgentSkillService).activate(payload),
+      activateSkill: (payload) => this.resolve(AgentSkill).activate(payload),
       activatePluginCommand: (payload) =>
         this.get(IAgentPluginCommandService).activate(payload),
       listCommands: () => this.get(IAgentCommandService).list(),

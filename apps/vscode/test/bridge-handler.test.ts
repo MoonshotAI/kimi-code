@@ -293,6 +293,36 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     });
   });
 
+  it("resolves the fallback-profile default effort with the provider type", async () => {
+    // claude-latest declares efforts but no default; the Anthropic fallback
+    // profile only matches when the provider type joins the resolution.
+    host.harness.getConfig.mockResolvedValueOnce({
+      defaultModel: "custom/claude",
+      providers: {
+        custom: { type: "anthropic", apiKey: "test-key" },
+      },
+      models: {
+        "custom/claude": {
+          provider: "custom",
+          model: "claude-latest",
+          supportEfforts: ["low", "medium", "high", "xhigh", "max"],
+        },
+      },
+    });
+
+    const result = await bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1");
+
+    expect(result).toMatchObject({
+      result: {
+        models: [{
+          id: "custom/claude",
+          support_efforts: ["low", "medium", "high", "xhigh", "max"],
+          default_effort: "high",
+        }],
+      },
+    });
+  });
+
   it("does not expose the session storage path when listing sessions", async () => {
     host.harness.listSessions.mockResolvedValueOnce([
       {
@@ -502,7 +532,7 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     });
   });
 
-  it("keeps the model's top declared tier session-only", async () => {
+  it("keeps a pick above the model's delivered default session-only", async () => {
     mockConfig();
 
     await bridge.handle(
@@ -512,6 +542,42 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
 
     expect(host.harness.setConfig).toHaveBeenCalledWith({
       defaultModel: "kimi/reasoning",
+      thinking: { enabled: true },
+    });
+  });
+
+  it("persists the top tier when the model's delivered default is the top tier", async () => {
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "kimi/reasoning",
+      models: { "kimi/reasoning": { ...effortModel, defaultEffort: "max" } },
+    } as never);
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "max" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "kimi/reasoning",
+      thinking: { enabled: true, effort: "max" },
+    });
+  });
+
+  it("keeps an xhigh pick session-only when the default comes from the Anthropic profile inference", async () => {
+    // claude-opus-4-7 declares no efforts; the profile inference supplies
+    // [low, medium, high, xhigh, max] and resolves the default to "high".
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "custom/claude",
+      models: { "custom/claude": { provider: "custom", model: "claude-opus-4-7" } },
+    } as never);
+
+    await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "custom/claude", thinking: true, effort: "xhigh" } },
+      "view-1",
+    );
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      defaultModel: "custom/claude",
       thinking: { enabled: true },
     });
   });

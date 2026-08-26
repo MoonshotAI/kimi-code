@@ -272,6 +272,7 @@ function toWireTask(
     status,
     created_at: createdIso,
     started_at: createdIso,
+    run_in_background: info.detached ?? true,
   };
   if (info.endedAt !== null && info.endedAt !== undefined) {
     base.completed_at = new Date(info.endedAt).toISOString();

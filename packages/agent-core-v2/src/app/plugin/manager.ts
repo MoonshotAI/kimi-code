@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { HookDef } from '#/features/externalHooks/internal/types';
-import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
-import type { SkillDiscoveryResult } from '#/app/skillCatalog/skillDiscovery';
-import type { SkillRoot } from '#/app/skillCatalog/types';
+import { discoverFileSkills } from '#/features/skill/catalog/fileSkillDiscovery';
+import type { SkillDiscoveryResult } from '#/features/skill/catalog/skillDiscovery';
+import type { SkillRoot } from '#/features/skill/catalog/types';
 import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 

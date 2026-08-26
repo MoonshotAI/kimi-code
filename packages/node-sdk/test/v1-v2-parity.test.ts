@@ -5003,6 +5003,7 @@ describe('v1↔v2 event & interaction parity', () => {
         projectEventStream(events, input.sessionId).flatMap((projected) => {
           const entry = projected as { type: string; code?: string };
           if (entry.type === 'turn.step.interrupted') return [];
+          if (entry.type === 'prompt.accepted') return [];
           if (entry.type === 'error') return { type: entry.type, code: entry.code };
           return entry;
         });

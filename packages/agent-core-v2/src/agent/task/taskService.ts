@@ -25,7 +25,8 @@ import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -238,7 +239,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
@@ -291,8 +292,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      injector.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
-        this.activeBackgroundTaskReminder(),
+      activateReminderWhenReady(agentLifecycle, this.scopeContext, (reminder) =>
+        reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
+          this.activeBackgroundTaskReminder(),
+        ),
       ),
     );
   }

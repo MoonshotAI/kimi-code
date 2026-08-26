@@ -38,6 +38,7 @@ interface TaskWire {
   agent_id?: string;
   subagent_type?: string;
   parent_tool_call_id?: string;
+  run_in_background?: boolean;
 }
 
 interface ListWire {
@@ -231,6 +232,23 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(byId.get(questionId)?.subagent_type).toBeUndefined();
     expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
     expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
+  });
+
+  it('reports run_in_background from the task detached flag', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    const backgroundId = tasks.registerTask(fakeTask('agent'));
+    const foregroundId = tasks.registerTask(fakeTask('agent'), { detached: false });
+    await flush();
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${id}/tasks`);
+    expect(body.code).toBe(0);
+    const byId = new Map(body.data.items.map((t) => [t.id, t]));
+    expect(byId.get(backgroundId)?.run_in_background).toBe(true);
+    expect(byId.get(foregroundId)?.run_in_background).toBe(false);
+
+    const single = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${foregroundId}`);
+    expect(single.body.data.run_in_background).toBe(false);
   });
 
   it('filters the list by wire status', async () => {

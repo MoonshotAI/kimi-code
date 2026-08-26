@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginManager } from '#/app/plugin/manager';
 
-import { stubSkill } from '../skillCatalog/stubs';
+import { stubSkill } from '../../features/skill/catalog/stubs';
 
 async function isolatedTmpdir(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'kimi-isolated-tmp-'));

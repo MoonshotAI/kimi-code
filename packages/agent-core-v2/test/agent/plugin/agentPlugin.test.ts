@@ -14,10 +14,10 @@ import type {
   PluginMutationSummary,
   PluginReloadEvent,
 } from '#/app/plugin/types';
-import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
-import { summarizeSkill } from '#/app/skillCatalog/types';
-import type { SkillDefinition } from '#/app/skillCatalog/types';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { summarizeSkill } from '#/features/skill/catalog/types';
+import type { SkillDefinition } from '#/features/skill/catalog/types';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 
 import { agentService, appService, createTestAgent, skillServices, type TestAgentContext } from '../../harness';
 import { stubPluginService } from '../../app/plugin/stubs';
@@ -47,6 +47,7 @@ function messageText(message: { readonly content: readonly { readonly type: stri
 }
 
 async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
+  await ctx.restoreRuntimes();
   await ctx.get(IAgentLoopService).hooks.onWillBeginStep.run({
     turnId: 0,
     step: 1,
@@ -294,6 +295,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
     );
     ctx.get(IAgentPluginService);
+    await ctx.restoreRuntimes();
 
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });

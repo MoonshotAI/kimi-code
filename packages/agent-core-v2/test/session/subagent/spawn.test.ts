@@ -18,6 +18,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { RuntimeLease } from '#/runtime/runtime';
@@ -50,6 +51,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let callerData: ProfileData;
   let profiles: AgentProfile[];
   let modelIds: Set<string>;
+  let modelMeta: Map<string, Partial<Model>>;
   let caller: IAgentScopeHandle;
   let createdHandles: Map<string, IAgentScopeHandle>;
   let createAgent: ReturnType<typeof vi.fn>;
@@ -120,6 +122,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       }),
     ];
     modelIds = new Set(['main-model']);
+    modelMeta = new Map();
     callerPermissionMode = { mode: 'auto', setMode: vi.fn() };
     createdPermissionMode = { mode: 'manual', setMode: vi.fn() };
     callerUserTools = userToolsStub();
@@ -202,7 +205,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
             { details: { model: alias } },
           );
         }
-        return { id: alias } as Model;
+        return { id: alias, ...modelMeta.get(alias) } as Model;
       },
     } as unknown as IModelCatalog);
     ix.stub(ISessionContext, { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext);
@@ -317,6 +320,162 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
     expect(error.message).toContain('Model "provider/bad" is not configured in config.toml.');
     expect(error.message).toContain('comes from [secondary_model.models]');
+  });
+
+  it('passes [secondary_model].default_effort as the explicit subagent thinking', async () => {
+    modelIds.add('provider/fast');
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast model' },
+          defaultEffort: 'max',
+        },
+        thinking: { enabled: false },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan).toEqual({
+      profileName: 'coder',
+      model: 'provider/fast',
+      thinking: 'max',
+      fork: false,
+    });
+  });
+
+  it('prefers [secondary_model].default_effort over the bound model default_effort', async () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'high',
+    });
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast model' },
+          defaultEffort: 'max',
+        },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan.thinking).toBe('max');
+  });
+
+  it('falls back to the bound model default_effort when the section declares none', async () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    });
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast model' },
+        },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan.thinking).toBe('max');
+  });
+
+  it('leaves thinking unset for global resolution when thinking is disabled', async () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    });
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast model' },
+        },
+        thinking: { enabled: false },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan.thinking).toBeUndefined();
+  });
+
+  it('leaves the subagent thinking unset when the bound model declares no valid default_effort', async () => {
+    modelIds.add('provider/fast');
+    modelMeta.set('provider/fast', {
+      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'max',
+    });
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/fast',
+          models: { 'provider/fast': 'fast model' },
+        },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan.thinking).toBeUndefined();
+  });
+
+  it('passes [secondary_model].default_effort with the forced model', async () => {
+    modelIds.add('provider/fast');
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          force: true,
+          defaultModel: 'provider/fast',
+          defaultEffort: 'max',
+        },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan).toEqual({
+      profileName: 'coder',
+      model: 'provider/fast',
+      thinking: 'max',
+      fork: false,
+    });
+  });
+
+  it('inherits the caller model and thinking when the secondary-model experiment is off', async () => {
+    const svc = service({
+      [SECONDARY_MODEL_SECTION]: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast model' },
+        defaultEffort: 'max',
+      },
+    });
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan).toEqual({
+      profileName: 'coder',
+      model: 'main-model',
+      thinking: 'high',
+      fork: false,
+    });
   });
 
   it('skips the allowlist check when forking', async () => {
