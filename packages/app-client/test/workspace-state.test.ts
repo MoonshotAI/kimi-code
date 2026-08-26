@@ -165,6 +165,7 @@ function createState(): ExtendedState {
     connection: 'connected',
     permission: 'manual',
     thinking: 'high',
+    draftThinkingExplicit: false,
     thinkingBySession: {},
     pendingThinkingBySession: {},
     planModeBySession: {},
@@ -949,11 +950,31 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     const deps = skillDeps(activateSkill);
     const state = createState();
     state.thinking = 'max';
+    state.draftThinkingExplicit = true;
     const ws = useWorkspaceState(state, deps);
 
     await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
     expect(state.thinkingBySession['sess_new']).toBe('max');
+  });
+
+  it('does NOT seed an inherited (non-explicit) draft level into the new session', async () => {
+    // rawState.thinking can hold a resolved default the user never touched
+    // (draftThinkingExplicit stays false). Freezing that into thinkingBySession
+    // would make the new session stop tracking config/catalog changes the
+    // moment it's created — leave it unseeded so the session's own resolution
+    // (thinkingLevelForSession) keeps computing it fresh, same as before any
+    // session existed.
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const state = createState();
+    state.thinking = 'max';
+    state.draftThinkingExplicit = false;
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    expect(state.thinkingBySession['sess_new']).toBeUndefined();
   });
 
   it('captures the draft thinking pick before the creation awaits', async () => {
@@ -969,6 +990,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     const deps = skillDeps(activateSkill);
     const state = createState();
     state.thinking = 'max';
+    state.draftThinkingExplicit = true;
     const ws = useWorkspaceState(state, deps);
 
     const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
@@ -1043,6 +1065,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     const persistSessionProfile2 = vi.fn().mockResolvedValue(true);
     const state2 = createState();
     state2.thinking = 'max';
+    state2.draftThinkingExplicit = true;
     const base = skillDeps(activateSkill2);
     const deps2: UseWorkspaceStateDeps = {
       ...base,
@@ -1078,6 +1101,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     const deps = skillDeps(activateSkill);
     const state = createState();
     state.thinking = 'max';
+    state.draftThinkingExplicit = true;
     deps.upsertSessionSorted = vi.fn((s) => {
       state.sessions = [s, ...state.sessions.filter((x) => x.id !== s.id)];
     });
@@ -1105,6 +1129,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     const deps = { ...skillDeps(activateSkill), persistSessionProfile };
     const state = createState();
     state.thinking = 'max';
+    state.draftThinkingExplicit = true;
     const ws = useWorkspaceState(state, deps);
 
     const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');

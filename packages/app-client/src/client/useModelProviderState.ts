@@ -17,6 +17,7 @@ import {
   levelDeclaredBy,
   markThinkingPending,
   thinkingLevelForModelSwitch,
+  thinkingLevelFromConfig,
 } from '@moonshot-ai/app-core/lib';
 import type { ActivityState } from '@moonshot-ai/app-core/client/types';
 import type { ExtendedState, PromptAttachment } from './types';
@@ -141,12 +142,23 @@ export function useModelProviderState(
   }
 
   /**
-   * The level a session should run at: the session's OWN daemon-reported level
-   * (thinkingBySession — fed by /status folds and explicit picks) when the
-   * model still declares it, else the model's catalog default. Per-session
-   * state wins so a session keeps the level it actually ran with — picking
-   * 'high' in one session must not retroactively change another session that
-   * ran 'max'.
+   * The level a session should run at.
+   *
+   * An existing entry (thinkingBySession — fed by /status folds and explicit
+   * picks) wins when the model still declares it; if the model no longer
+   * declares it (a catalog refresh dropped that effort out from under an
+   * already-running session), fall back to the MODEL's own catalog default —
+   * never the daemon-wide config default, which is the new-session default,
+   * not "what an existing session should renormalize to".
+   *
+   * No entry at all — sessionId is a draft (null) or a session that has never
+   * been assigned a level — applies the daemon-wide config.thinking default
+   * (same resolution the Settings picker itself displays) before the
+   * catalog default.
+   *
+   * Per-session state wins over both fallbacks so a session keeps the level
+   * it actually ran with — picking 'high' in one session must not
+   * retroactively change another session that ran 'max'.
    */
   function thinkingLevelForSession(
     sessionId: string | null | undefined,
@@ -156,8 +168,10 @@ export function useModelProviderState(
       sessionId === null || sessionId === undefined
         ? undefined
         : rawState.thinkingBySession[sessionId];
-    if (sessionLevel !== undefined && levelDeclaredBy(model, sessionLevel)) return sessionLevel;
-    return defaultThinkingLevelFor(model);
+    if (sessionLevel !== undefined) {
+      return levelDeclaredBy(model, sessionLevel) ? sessionLevel : defaultThinkingLevelFor(model);
+    }
+    return thinkingLevelFromConfig(rawState.config?.thinking, model) ?? defaultThinkingLevelFor(model);
   }
 
   /** thinkingLevelForSession by session + model id, for prompt submission
@@ -206,19 +220,61 @@ export function useModelProviderState(
     if (level !== undefined && sid !== null && sid !== undefined) {
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: level };
       markThinkingPending(rawState, sid);
+    } else if (sid === null || sid === undefined) {
+      // No-session draft: thinkingBySession has no id to key this pick under
+      // (see draftThinkingExplicit's own doc) — record explicitness directly
+      // so passive re-resolution (resolveActiveThinking) knows to leave it
+      // alone, and createDraftSession() knows to actually seed it.
+      rawState.draftThinkingExplicit = level !== undefined;
     }
     return level;
   }
 
+  /** Re-resolve rawState.thinking for the active session/model right now —
+   *  shared by the watcher below and loadModels(). A no-op while a no-session
+   *  draft holds an EXPLICIT pick (draftThinkingExplicit) still valid for
+   *  whatever model is currently active — thinkingBySession has no id to key
+   *  that pick under while there is no session, so rawState.thinking is its
+   *  only home, and passive re-resolution must not clobber it. But the
+   *  protection is conditional on the pick still applying: if the draft's
+   *  model changed underneath it with no explicit setModel() switch (Settings'
+   *  own default model, a catalog refresh dropping the effort) the old pick
+   *  may not even be valid for the new model — drop "explicit" and let it
+   *  re-resolve fresh, same as an actual switch already does. Landing on a
+   *  REAL session unconditionally clears the flag: it is scoped to the
+   *  CURRENT draft only — otherwise browsing into an existing session and
+   *  back to a fresh draft would let that session's level (now sitting in
+   *  rawState.thinking) masquerade as an explicit pick for the NEW draft. */
+  function resolveActiveThinking(): void {
+    const sid = rawState.activeSessionId;
+    const model = modelById(currentModelId());
+    if (sid === null || sid === undefined) {
+      if (rawState.draftThinkingExplicit) {
+        // Model not loaded yet: nothing to invalidate against — keep
+        // protecting rather than treating catalog latency as a model change.
+        if (model === undefined) return;
+        if (rawState.thinking !== undefined && levelDeclaredBy(model, rawState.thinking)) return;
+        rawState.draftThinkingExplicit = false;
+      }
+    } else if (rawState.draftThinkingExplicit) {
+      rawState.draftThinkingExplicit = false;
+    }
+    if (model === undefined) return;
+    rawState.thinking = thinkingLevelForSession(sid, model);
+  }
+
   // The displayed level tracks the ACTIVE session, and the active session or
   // its model can change WITHOUT a picker action: switching sessions, the
-  // snapshot adopting another session, a /status fold arriving late, or the
-  // catalog/default arriving late. Re-resolve on any of these so a pick made
-  // for one session/model is never submitted to — or rendered on — another (a
-  // foreign level used to leave the composer showing nothing selected with no
-  // way to switch). The picker paths (setThinking/setModel) apply the same
-  // resolution synchronously, so the watcher's re-resolution after them is an
-  // idempotent no-op.
+  // snapshot adopting another session, a /status fold arriving late, the
+  // catalog/default arriving late, or the daemon-wide config default changing
+  // (Settings' own picker, or any other config write). Re-resolve on any of
+  // these so a pick made for one session/model is never submitted to — or
+  // rendered on — another, and an inherited (non-explicit) draft keeps
+  // tracking the config default right up to its first prompt. The picker
+  // paths (setThinking/setModel) apply the same resolution synchronously, so
+  // the watcher's re-resolution after them is an idempotent no-op — and for
+  // an explicit draft pick specifically, resolveActiveThinking's own guard
+  // above makes it a no-op regardless of what triggered it.
   watch(
     [
       () => rawState.activeSessionId,
@@ -227,12 +283,9 @@ export function useModelProviderState(
         const sid = rawState.activeSessionId;
         return sid === null || sid === undefined ? undefined : rawState.thinkingBySession[sid];
       },
+      () => rawState.config?.thinking,
     ],
-    () => {
-      const model = modelById(currentModelId());
-      if (model === undefined) return;
-      rawState.thinking = thinkingLevelForSession(rawState.activeSessionId, model);
-    },
+    resolveActiveThinking,
   );
 
   /** Load models (cached — call again to force refresh) */
@@ -240,13 +293,11 @@ export function useModelProviderState(
     try {
       store.setModels(await api.listModels());
       // Resolve the active session's level: its own daemon-reported level when
-      // still declared, else the model's catalog default. Always re-resolved
-      // (not just when unset) so a level carried over from another model can't
-      // outlive the catalog refresh that makes it invalid.
-      const active = modelById(currentModelId());
-      if (active !== undefined) {
-        rawState.thinking = thinkingLevelForSession(rawState.activeSessionId, active);
-      }
+      // still declared, else the config default, else the model's catalog
+      // default. Always re-resolved (not just when unset) so a level carried
+      // over from another model can't outlive the catalog refresh that makes
+      // it invalid.
+      resolveActiveThinking();
     } catch (err) {
       pushOperationFailure('loadModels', err);
     }
@@ -281,16 +332,29 @@ export function useModelProviderState(
       : undefined;
     const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
     // On a real switch, pre-select the target model's catalog default (see
-    // thinkingLevelForModelSwitch); re-selecting keeps the live level.
-    const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch);
+    // thinkingLevelForModelSwitch); re-selecting keeps the live level. The
+    // daemon-wide config default only applies to a NEW-SESSION draft (no sid
+    // yet, below) — it is the new-session default, not "whatever an existing,
+    // already-running session's thinking should reset to on a model swap".
+    const nextThinking = thinkingLevelForModelSwitch(
+      targetModel,
+      prevThinking,
+      isSwitch,
+      sid ? undefined : rawState.config?.thinking,
+    );
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
       // In-memory only: a model switch is not a thinking pick, so nothing is
       // persisted beyond the in-memory level (a derived default would otherwise
-      // masquerade as an explicit choice later).
+      // masquerade as an explicit choice later). A real switch's resulting
+      // level is a freshly computed default for the target model, not the
+      // user's choice — draftThinkingExplicit resets so it keeps tracking
+      // config/catalog changes; re-selecting the SAME model leaves the level
+      // (and its explicitness) untouched.
       store.setDraftModel(modelId);
       rawState.thinking = nextThinking;
+      if (isSwitch) rawState.draftThinkingExplicit = false;
       return true;
     }
     // Optimistic: show the chosen model immediately, but remember the previous

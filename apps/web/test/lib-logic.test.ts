@@ -28,6 +28,7 @@ import {
   levelDeclaredBy,
   modelThinkingAvailability,
   segmentsFor,
+  thinkingLevelFromConfig,
   thinkingLevelToConfig,
 } from '@moonshot-ai/app-core/lib';
 import type { AppMessage, AppModel, AppTask } from '../src/api/types';
@@ -862,6 +863,28 @@ describe('modelThinking', () => {
     it('persists concrete levels as-is when the model levels are unknown', () => {
       expect(thinkingLevelToConfig('max')).toEqual({ enabled: true, effort: 'max' });
       expect(thinkingLevelToConfig('ultra')).toEqual({ enabled: true, effort: 'ultra' });
+    });
+  });
+
+  describe('thinkingLevelFromConfig', () => {
+    it('returns undefined for a missing or malformed section', () => {
+      expect(thinkingLevelFromConfig(undefined, effortModel())).toBeUndefined();
+      expect(thinkingLevelFromConfig(null, effortModel())).toBeUndefined();
+      expect(thinkingLevelFromConfig('nonsense', effortModel())).toBeUndefined();
+    });
+    it('resolves off only when the model can actually be turned off', () => {
+      expect(thinkingLevelFromConfig({ enabled: false }, effortModel())).toBe('off');
+      expect(
+        thinkingLevelFromConfig({ enabled: false }, effortModel({ capabilities: ['thinking', 'always_thinking'] })),
+      ).toBeUndefined();
+    });
+    it('resolves a stored effort only when the model still declares it', () => {
+      expect(thinkingLevelFromConfig({ enabled: true, effort: 'low' }, effortModel())).toBe('low');
+      expect(thinkingLevelFromConfig({ enabled: true, effort: 'ultra' }, effortModel())).toBeUndefined();
+      expect(thinkingLevelFromConfig({ effort: 'low' }, booleanModel())).toBeUndefined();
+    });
+    it('returns undefined when enabled is true with no effort', () => {
+      expect(thinkingLevelFromConfig({ enabled: true }, effortModel())).toBeUndefined();
     });
   });
 });

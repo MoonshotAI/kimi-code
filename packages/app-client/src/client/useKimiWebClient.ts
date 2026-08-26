@@ -367,6 +367,7 @@ const rawState: ExtendedState = reactive({
   // and the active-session watcher in useModelProviderState) — the per-session
   // map below starts empty and is fed by /status folds.
   thinking: undefined,
+  draftThinkingExplicit: false,
   thinkingBySession: {},
   pendingThinkingBySession: {},
   // The daemon fact starts empty and is fed by /status folds + the

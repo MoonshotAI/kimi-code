@@ -49,6 +49,7 @@ function createWorkspaceState() {
     gitStatusBySession: {},
     hiddenWorkspaceRoots: [],
     thinking: DRAFT_PICK_LEVEL as string | undefined,
+    draftThinkingExplicit: true,
     thinkingBySession: {} as Record<string, string>,
     pendingThinkingBySession: {} as Record<string, number>,
     planModeBySession: {} as Record<string, boolean>,

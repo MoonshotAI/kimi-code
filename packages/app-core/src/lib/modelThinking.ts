@@ -130,6 +130,31 @@ export function thinkingLevelToConfig(
 }
 
 /**
+ * Inverse of thinkingLevelToConfig: resolve the daemon's `[thinking]` config
+ * section into a level valid for a given model, or `undefined` when the
+ * config has no usable preference for THIS model — an unvalidated raw
+ * `effort` (or an `enabled: false` the model can't honor, e.g. an
+ * always-thinking model) must not leak in; the caller falls back to
+ * defaultThinkingLevelFor in that case. `thinking` is read defensively
+ * (daemon JSON, not narrowed by the type system at the call site).
+ */
+export function thinkingLevelFromConfig(
+  thinking: unknown,
+  model: ModelThinkingInfo | undefined,
+): ThinkingLevel | undefined {
+  if (!thinking || typeof thinking !== 'object') return undefined;
+  const { enabled, effort } = thinking as { enabled?: boolean; effort?: string };
+  // enabled: false is a terminal branch, even when the model can't honor it
+  // (an always-thinking model has no 'off' segment): a leftover `effort` from
+  // a PREVIOUS model must not resurface as this model's level just because
+  // the disable itself couldn't apply — undefined correctly falls through to
+  // the model's own default.
+  if (enabled === false) return levelDeclaredBy(model, 'off') ? 'off' : undefined;
+  if (typeof effort === 'string' && levelDeclaredBy(model, effort)) return effort;
+  return undefined;
+}
+
+/**
  * Thinking level to use when the user picks a model in the switcher.
  * Mirrors the TUI model picker: re-selecting the current model keeps the live
  * level untouched (including "no preference"). Switching onto a different model
@@ -140,11 +165,12 @@ export function thinkingLevelForModelSwitch(
   model: ModelThinkingInfo | undefined,
   currentLevel: ThinkingLevel | undefined,
   isSwitch: boolean,
+  configThinking?: unknown,
 ): ThinkingLevel | undefined {
   // Target model unknown (catalog not loaded yet): keep the current level
   // as-is rather than guessing at capabilities.
   if (!isSwitch || model === undefined) return currentLevel;
-  return defaultThinkingLevelFor(model);
+  return thinkingLevelFromConfig(configThinking, model) ?? defaultThinkingLevelFor(model);
 }
 
 // Monotonic source for pending-write tokens: token (not level) equality

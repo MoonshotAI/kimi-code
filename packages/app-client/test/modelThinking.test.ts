@@ -20,6 +20,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
   thinkingLevelForModelSwitch,
+  thinkingLevelFromConfig,
   thinkingLevelToConfig,
 } from '@moonshot-ai/app-core/lib';
 import type { ModelThinkingInfo } from '@moonshot-ai/app-core/lib';
@@ -174,6 +175,17 @@ describe('modelThinking', () => {
       expect(thinkingLevelForModelSwitch(undefined, undefined, true)).toBeUndefined();
     });
 
+    it('prefers the daemon-wide config default over the catalog default on a switch', () => {
+      expect(
+        thinkingLevelForModelSwitch(effortModel, 'off', true, { enabled: true, effort: 'low' }),
+      ).toBe('low');
+    });
+
+    it('falls back to the catalog default when the target model does not declare the config level', () => {
+      expect(
+        thinkingLevelForModelSwitch(booleanModel, 'off', true, { enabled: true, effort: 'low' }),
+      ).toBe('on');
+    });
   });
 
   describe('effectiveThinkingLevel', () => {
@@ -269,6 +281,41 @@ describe('modelThinking', () => {
       expect(thinkingLevelToConfig('ultra')).toEqual({ enabled: true, effort: 'ultra' });
     });
   });
+
+  describe('thinkingLevelFromConfig', () => {
+    it('returns undefined for a missing or malformed section', () => {
+      expect(thinkingLevelFromConfig(undefined, effortModel)).toBeUndefined();
+      expect(thinkingLevelFromConfig(null, effortModel)).toBeUndefined();
+      expect(thinkingLevelFromConfig('nonsense', effortModel)).toBeUndefined();
+    });
+
+    it('resolves off only when the model can actually be turned off', () => {
+      expect(thinkingLevelFromConfig({ enabled: false }, effortModel)).toBe('off');
+      // always-on models never declare off — a stale enabled:false from a
+      // different model must not blank out the control.
+      expect(thinkingLevelFromConfig({ enabled: false }, alwaysOnModel)).toBeUndefined();
+    });
+
+    it('never falls through to a leftover effort once enabled is false', () => {
+      // enabled:false is terminal even when the model can't honor "off": a
+      // stale effort from a PREVIOUS model that this always-on model happens
+      // to also declare must not resurface just because the disable itself
+      // couldn't apply.
+      expect(thinkingLevelFromConfig({ enabled: false, effort: 'max' }, maxOnlyModel)).toBeUndefined();
+    });
+
+    it('resolves a stored effort only when the model still declares it', () => {
+      expect(thinkingLevelFromConfig({ enabled: true, effort: 'low' }, effortModel)).toBe('low');
+      // A foreign effort left over from a different model is ignored, not
+      // force-applied.
+      expect(thinkingLevelFromConfig({ enabled: true, effort: 'ultra' }, effortModel)).toBeUndefined();
+      expect(thinkingLevelFromConfig({ effort: 'low' }, booleanModel)).toBeUndefined();
+    });
+
+    it('returns undefined when enabled is true with no effort — caller falls back to the model default', () => {
+      expect(thinkingLevelFromConfig({ enabled: true }, effortModel)).toBeUndefined();
+    });
+  });
 });
 
 describe('useModelProviderState thinking on model selection', () => {
@@ -316,6 +363,9 @@ describe('useModelProviderState thinking on model selection', () => {
   function createState(options: {
     activeSession?: Pick<AppSession, 'id' | 'model'>;
     defaultModel: string;
+    /** GET /config's `thinking` section — omit to mirror "config not loaded /
+     *  no daemon-wide preference set". */
+    configThinking?: { enabled?: boolean; effort?: string };
   }): ExtendedState {
     return {
       activeSessionId: options.activeSession?.id ?? null,
@@ -334,6 +384,7 @@ describe('useModelProviderState thinking on model selection', () => {
       // The real ExtendedState always carries a permission mode; the skill
       // activation pre-write reads it for the retry payload.
       permission: 'auto',
+      config: options.configThinking ? { thinking: options.configThinking } : null,
     } as ExtendedState;
   }
 
@@ -406,6 +457,38 @@ describe('useModelProviderState thinking on model selection', () => {
 
   it('enables the default effort when switching from a different model', async () => {
     const state = createState({ defaultModel: booleanAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(state.thinking).toBe('high');
+  });
+
+  it('prefers the daemon-wide config default over the catalog default when switching the draft model', async () => {
+    // A new-session draft (no active session) has no session-scoped daemon
+    // call to persist through — setModel's own thinkingLevelForModelSwitch
+    // must apply the config fallback itself, not just thinkingLevelForSession.
+    const state = createState({
+      defaultModel: booleanAppModel.id,
+      configThinking: { enabled: true, effort: 'low' },
+    });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(state.thinking).toBe('low');
+  });
+
+  it('uses the target model catalog default, not the config default, when switching models in an active session', async () => {
+    // config.thinking is the NEW-SESSION default — an existing, already-
+    // running session switching models is a different action and must keep
+    // resetting to the target model's own catalog default, same as before
+    // the config fallback existed.
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+      configThinking: { enabled: true, effort: 'low' },
+    });
     const provider = createModelProvider(state);
 
     await provider.setModel(effortAppModel.id);
@@ -511,6 +594,67 @@ describe('useModelProviderState thinking on model selection', () => {
     await provider.loadModels();
 
     expect(state.thinking).toBe('high');
+  });
+
+  it('re-resolves the config default once config lands after loadModels() during boot', async () => {
+    // load()'s boot sequence always finishes loadModels() before loadConfig()
+    // starts (see useWorkspaceState.load()) — the first resolution here is
+    // necessarily config-blind. The watcher's own rawState.config source
+    // picks the default up as soon as it lands, no special-cased call needed.
+    const state = reactive(createState({ defaultModel: effortAppModel.id })) as ExtendedState;
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+    expect(state.thinking).toBe('high'); // config not "loaded" yet — catalog default
+
+    state.config = { thinking: { enabled: true, effort: 'low' } } as ExtendedState['config'];
+    await nextTick();
+
+    expect(state.thinking).toBe('low');
+  });
+
+  it('applies the daemon-wide config default for a session with no level of its own', async () => {
+    // A genuinely new session (no thinkingBySession entry yet) must honor
+    // config.thinking — this is the value the Settings picker itself shows,
+    // and until this fallback existed the client silently ignored it in favor
+    // of the catalog default.
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+      configThinking: { enabled: true, effort: 'low' },
+    });
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(state.thinking).toBe('low');
+  });
+
+  it('ignores a config default the active model does not declare', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+      configThinking: { enabled: true, effort: 'low' },
+    });
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(state.thinking).toBe('on');
+  });
+
+  it('prefers the session own level over the config default', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+      configThinking: { enabled: true, effort: 'low' },
+    });
+    state.thinkingBySession = { 'session-1': 'max' };
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(state.thinking).toBe('max');
   });
 
   it('drops a session level the active model does not declare', async () => {
@@ -642,6 +786,127 @@ describe('useModelProviderState thinking on model selection', () => {
     provider.setThinking('max');
 
     expect(state.thinkingBySession['session-1']).toBe('max');
+  });
+
+  it('keeps an explicit new-session-draft pick when config reloads', async () => {
+    // A no-session draft has nowhere to record an explicit pick besides
+    // rawState.thinking itself (thinkingBySession is keyed by session id) —
+    // draftThinkingExplicit is what lets the config watch source stay safe:
+    // it must not blindly recompute and overwrite an explicit pick just
+    // because config reloaded, related or not.
+    const state = reactive(createState({ defaultModel: effortAppModel.id })) as ExtendedState;
+    const provider = createModelProvider(state);
+
+    provider.setThinking('off');
+    expect(state.thinking).toBe('off');
+
+    state.config = { thinking: { enabled: true, effort: 'low' } } as ExtendedState['config'];
+    await nextTick();
+
+    expect(state.thinking).toBe('off');
+  });
+
+  it('updates an INHERITED new-session-draft level when the Settings default changes', async () => {
+    // The counterpart to the test above: a draft the user has NOT explicitly
+    // touched must keep tracking config.thinking live — e.g. the user sits on
+    // an empty composer, opens Settings, and changes the default — so its
+    // first prompt uses whatever the default currently is, not whatever it
+    // happened to be when the draft was first shown.
+    const state = reactive(createState({ defaultModel: effortAppModel.id })) as ExtendedState;
+    const provider = createModelProvider(state);
+    await provider.loadModels();
+    expect(state.thinking).toBe('high'); // catalog default, nothing explicit yet
+
+    state.config = { thinking: { enabled: true, effort: 'low' } } as ExtendedState['config'];
+    await nextTick();
+    expect(state.thinking).toBe('low');
+
+    // A second, different Settings change keeps landing too.
+    state.config = { thinking: { enabled: false } } as ExtendedState['config'];
+    await nextTick();
+    expect(state.thinking).toBe('off');
+  });
+
+  it('clears an explicit draft pick after visiting an existing session and back', async () => {
+    // draftThinkingExplicit is scoped to the CURRENT draft only. Without
+    // resetting it on landing on a real session, browsing into an existing
+    // session (which overwrites rawState.thinking with THAT session's level)
+    // and back to a fresh draft would let the visited session's level
+    // masquerade as an explicit pick for the new draft, and get seeded into
+    // whatever session is created from it.
+    const state = reactive(
+      createState({ defaultModel: effortAppModel.id }),
+    ) as ExtendedState;
+    const provider = createModelProvider(state);
+
+    provider.setThinking('max');
+    expect(state.thinking).toBe('max');
+    expect(state.draftThinkingExplicit).toBe(true);
+
+    // The user opens an existing session running a different model/level.
+    state.sessions = [{ id: 'session-1', model: booleanAppModel.id } as AppSession];
+    state.thinkingBySession = { 'session-1': 'on' };
+    state.activeSessionId = 'session-1';
+    await nextTick();
+    expect(state.thinking).toBe('on');
+    expect(state.draftThinkingExplicit).toBe(false);
+
+    // Back to a fresh draft: the visited session's level must not stick
+    // around as if it were an explicit pick for this new draft.
+    state.activeSessionId = null;
+    await nextTick();
+    expect(state.thinking).toBe('high'); // effortAppModel's own catalog default
+    expect(state.draftThinkingExplicit).toBe(false);
+  });
+
+  it('re-resolves an explicit draft pick when the underlying model changes passively', async () => {
+    // The draft's effective model can change with no setModel() call at all —
+    // Settings changing the default model, or a catalog refresh. An explicit
+    // pick that no longer applies to the new model (here: 'low' is not a
+    // segment of a boolean model) must not stay frozen just because it was
+    // once explicit; it should re-resolve fresh, same as an actual switch.
+    const state = reactive(
+      createState({ defaultModel: effortAppModel.id }),
+    ) as ExtendedState;
+    const provider = createModelProvider(state);
+
+    provider.setThinking('low');
+    expect(state.thinking).toBe('low');
+    expect(state.draftThinkingExplicit).toBe(true);
+
+    state.defaultModel = booleanAppModel.id; // e.g. Settings' own default-model change
+    await nextTick();
+
+    expect(state.thinking).toBe('on'); // booleanAppModel's own catalog default
+    expect(state.draftThinkingExplicit).toBe(false);
+  });
+
+  it('keeps protecting an explicit draft pick the new model still declares', async () => {
+    // Counterpart to the test above: if the new model happens to declare the
+    // same level, the explicit pick is still meaningful and must survive.
+    const lowHighAppModel: AppModel = {
+      id: 'provider/low-high-model',
+      provider: 'provider',
+      model: 'low-high-model',
+      maxContextSize: 128_000,
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+    };
+    const state = reactive(
+      createState({ defaultModel: effortAppModel.id }),
+    ) as ExtendedState;
+    const provider = createModelProvider(state);
+    modelsStore().setModels([...modelsStore().models, lowHighAppModel]);
+
+    provider.setThinking('low');
+    expect(state.draftThinkingExplicit).toBe(true);
+
+    state.defaultModel = lowHighAppModel.id; // also declares 'low'
+    await nextTick();
+
+    expect(state.thinking).toBe('low');
+    expect(state.draftThinkingExplicit).toBe(true);
   });
 
   it('does not write the global thinking config for the loadModels default pin', async () => {

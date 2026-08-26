@@ -1379,6 +1379,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Check auth readiness and global config (separate calls — defensive)
       if (!firstLoad) await checkAuth();
       await loadConfig();
+      // loadModels() above always resolves rawState.thinking BEFORE config is
+      // available (it runs earlier in this same Promise.all/await sequence),
+      // so that first resolution is necessarily config-blind — but
+      // useModelProviderState's own watcher has rawState.config as a source
+      // and re-resolves as soon as this assignment lands, so nothing further
+      // is needed here.
 
       // Load workspaces first (registered + derived, each with a session_count),
       // then fetch only the first page of sessions per workspace. This replaces
@@ -1702,12 +1708,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Claim the pending entry-point intent up front: the internal selectSession
     // below must not report it again as a resume.
     const sessionSource = consumeSessionIntent('sidebar');
-    // Capture the draft thinking level BEFORE any await: a concurrent session
-    // switch during creation re-resolves rawState.thinking for the other
-    // active session, which would otherwise seed the new session with that
-    // session's effort. Seeded into the new session's own entry below, the
-    // first prompt/skill submits the pick and the daemon profile follows.
+    // Capture the draft thinking level (and whether it was an EXPLICIT pick)
+    // BEFORE any await: a concurrent session switch during creation
+    // re-resolves rawState.thinking for the other active session, which would
+    // otherwise seed the new session with that session's effort. An explicit
+    // pick is seeded into the new session's own entry below, so the first
+    // prompt/skill submits it and the daemon profile follows; an INHERITED
+    // (non-explicit) value is deliberately left unseeded so the new session's
+    // first resolution still picks up the daemon-wide default fresh, rather
+    // than freezing in whatever was showing the moment the draft happened to
+    // be created.
     const draftThinking = rawState.thinking;
+    const draftThinkingExplicit = rawState.draftThinkingExplicit;
     const api = getKimiWebApi();
     let workspaceIdForCreate: string | undefined;
     let cwdForCreate = ws.root;
@@ -1736,11 +1748,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Seed BEFORE selectSession: the thinking watcher re-resolves from the new
     // session's own entry the moment the active session changes.
     const sid = session.id;
-    if (draftThinking !== undefined) {
+    if (draftThinking !== undefined && draftThinkingExplicit) {
       rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: draftThinking };
       // The daemon hasn't seen this pick yet — shield it from stale folds.
       markThinkingPending(rawState, sid);
     }
+    // The draft is consumed either way — the next empty composer starts
+    // inheriting fresh, not still "explicit" from this one.
+    rawState.draftThinkingExplicit = false;
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
     track('session_created', { kind: 'new', source: sessionSource });
     // NOTE: do NOT mark this session known-empty. Unlike "open a new empty

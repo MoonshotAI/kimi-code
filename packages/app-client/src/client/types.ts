@@ -105,6 +105,20 @@ export interface ExtendedState extends KimiClientState {
    *  stored per-model pick, else its catalog default — undefined only
    *  transiently before that, so display and submission always agree. */
   thinking: ThinkingLevel | undefined;
+  /** Whether `thinking` is the user's EXPLICIT pick for the current no-session
+   *  draft (setThinking with no active session) rather than a passively
+   *  resolved default (model switch, catalog/config landing, the loadModels
+   *  pin). Meaningful only while `activeSessionId` is unset (null or
+   *  undefined — production code uses undefined, tests often use null) —
+   *  once a session exists, `thinkingBySession` is the source of truth and
+   *  this is moot. Gates two things: passive re-resolution (resolveActiveThinking,
+   *  driven by the watcher and loadModels()) must not overwrite an explicit
+   *  draft pick, and createDraftSession() must not freeze an INHERITED draft
+   *  value into the new session's thinkingBySession entry — only an explicit
+   *  one, so an inherited value keeps tracking config/catalog changes right
+   *  up to the session's first prompt instead of going stale the moment it's
+   *  seeded. */
+  draftThinkingExplicit: boolean;
   /** The session's own thinking level as reported by the daemon (GET
    *  /sessions/{id}/status `thinking_level` and WS `agent.status.updated`),
    *  keyed by session id. Per-session state wins over the per-model
