@@ -317,11 +317,12 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
 }
 
 /**
- * Convert a tool message into a list of Google GenAI parts.
+ * Convert a tool message into a Google GenAI part.
  *
- * Returns a `functionResponse` part carrying the text output, followed by
- * independent media parts (`inlineData` / `fileData`) for any image/audio/video
- * content in the tool result. This preserves multimodal tool outputs so the
+ * Returns a single `functionResponse` part carrying the text output, with media
+ * parts (`inlineData` / `fileData`) for any image/audio/video content in the
+ * tool result nested inside `functionResponse.parts` — the Gemini 3+ multimodal
+ * function response contract. This preserves multimodal tool outputs so the
  * next Gemini/Vertex turn can see them — returning only the text would silently
  * drop media and break tool chains that rely on images or audio.
  */
@@ -363,11 +364,11 @@ function toolMessageToFunctionResponseParts(
     functionResponse: {
       name: toolCallIdToName(message.toolCallId, toolNameById),
       response: { output: textOutput },
-      parts: [],
+      parts: mediaParts,
     },
   };
 
-  return [functionResponsePart, ...mediaParts];
+  return [functionResponsePart];
 }
 
 export function messagesToGoogleGenAIContents(messages: Message[]): GoogleContent[] {
@@ -463,8 +464,8 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
         }
 
         // Pack all tool results into a single user Content.
-        // Each tool result may expand to multiple parts (functionResponse +
-        // media parts for image/audio/video outputs).
+        // Each tool result yields one functionResponse part with media nested
+        // inside its own `parts`.
         const parts: GooglePart[] = [];
         for (const toolMsg of sortedToolMessages) {
           parts.push(...toolMessageToFunctionResponseParts(toolMsg, toolNameById));

@@ -344,8 +344,9 @@ describe('GoogleGenAIChatProvider', () => {
     });
 
     it('keeps trailing user text before a multimodal tool-result Content when merging', () => {
-      // A tool result carrying media yields [functionResponse, inlineData];
-      // the reorder must still put a following user text part first.
+      // A tool result carrying media yields one functionResponse part with
+      // inlineData nested inside its `parts`; the reorder must still put a
+      // following user text part first.
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_img',
@@ -518,7 +519,7 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
-    it('tool message with image_url result yields functionResponse + inline data part', () => {
+    it('tool message with image_url result yields functionResponse with nested inline data', () => {
       const messages: Message[] = [
         {
           role: 'assistant',
@@ -544,34 +545,33 @@ describe('GoogleGenAIChatProvider', () => {
 
       const contents = messagesToGoogleGenAIContents(messages);
 
-      // Should have assistant Content + one user Content with 2 parts
+      // Should have assistant Content + one user Content with a single
+      // functionResponse part carrying the media nested inside its own `parts`.
       expect(contents).toHaveLength(2);
       const userContent = contents[1] as unknown as {
         role: string;
         parts: Array<Record<string, unknown>>;
       };
       expect(userContent.role).toBe('user');
-      expect(userContent.parts.length).toBeGreaterThanOrEqual(2);
+      expect(userContent.parts).toHaveLength(1);
 
-      const fnResp = userContent.parts.find((p) => 'functionResponse' in p) as
-        | { functionResponse: { name: string; response: { output: string } } }
-        | undefined;
-      expect(fnResp).toMatchObject({
+      const fnResp = userContent.parts[0] as {
         functionResponse: {
-          name: 'fetch_image',
-          response: { output: 'Found image:' },
-        },
+          name: string;
+          response: { output: string };
+          parts: Array<{ inlineData: { mimeType: string; data: string } }>;
+        };
+      };
+      expect(fnResp.functionResponse).toMatchObject({
+        name: 'fetch_image',
+        response: { output: 'Found image:' },
       });
-
-      const inlineData = userContent.parts.find((p) => 'inlineData' in p) as
-        | { inlineData: { mimeType: string; data: string } }
-        | undefined;
-      expect(inlineData).toMatchObject({
-        inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' },
-      });
+      expect(fnResp.functionResponse.parts).toEqual([
+        { inlineData: { mimeType: 'image/png', data: 'iVBORw0KGgo=' } },
+      ]);
     });
 
-    it('tool message with audio_url and video_url results yields independent parts', () => {
+    it('tool message with audio_url and video_url results yields nested fileData parts', () => {
       const messages: Message[] = [
         {
           role: 'assistant',
@@ -604,19 +604,19 @@ describe('GoogleGenAIChatProvider', () => {
         parts: Array<Record<string, unknown>>;
       };
       expect(userContent.role).toBe('user');
-      // functionResponse + audio + video
-      expect(userContent.parts).toHaveLength(3);
+      // Single functionResponse part with audio + video nested inside its `parts`.
+      expect(userContent.parts).toHaveLength(1);
 
-      const fnResp = userContent.parts.find((p) => 'functionResponse' in p) as
-        | { functionResponse: { response: { output: string } } }
-        | undefined;
-      expect(fnResp).toMatchObject({
-        functionResponse: { response: { output: 'Got audio and video:' } },
+      const fnResp = userContent.parts[0] as {
+        functionResponse: {
+          response: { output: string };
+          parts: Array<{ fileData: { fileUri: string; mimeType: string } }>;
+        };
+      };
+      expect(fnResp.functionResponse).toMatchObject({
+        response: { output: 'Got audio and video:' },
       });
-
-      const fileDataParts = userContent.parts.filter((p) => 'fileData' in p) as Array<{
-        fileData: { fileUri: string; mimeType: string };
-      }>;
+      const fileDataParts = fnResp.functionResponse.parts;
       expect(fileDataParts).toHaveLength(2);
       const mimeTypes = fileDataParts.map((p) => p.fileData.mimeType).toSorted();
       expect(mimeTypes).toEqual(['audio/mpeg', 'video/mp4']);

@@ -312,11 +312,11 @@ function toolMessageToFunctionResponseParts(
     functionResponse: {
       name: toolCallIdToName(message.toolCallId, toolNameById),
       response: { output: textOutput },
-      parts: [],
+      parts: mediaParts,
     },
   };
 
-  return [functionResponsePart, ...mediaParts];
+  return [functionResponsePart];
 }
 
 export function messagesToGoogleGenAIContents(messages: Message[]): GoogleContent[] {
