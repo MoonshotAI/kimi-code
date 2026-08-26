@@ -67,6 +67,27 @@ describe('turnKey lastEnded', () => {
     expect(s.lastEnded?.reason).toBe('completed');
   });
 
+  it('clears the stored outcome when an undo rewinds the turn it describes', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed', durationMs: 10 }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled', durationMs: 10 }));
+    expect(s.lastEnded?.reason).toBe('cancelled');
+    s = fold(s, new ContextUndo({ agentId: 'main', count: 1 }));
+    expect(s.anchorTurnIds).toEqual([0]);
+    expect(s.lastEnded).toBeUndefined();
+  });
+
+  it('keeps the stored outcome when an undo rewinds only later turns', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed', durationMs: 10 }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new ContextUndo({ agentId: 'main', count: 1 }));
+    expect(s.lastEnded).toMatchObject({ turnId: 0, reason: 'completed' });
+  });
+
   it('starts without a stored outcome', () => {
     expect(turnKey.initial().lastEnded).toBeUndefined();
   });

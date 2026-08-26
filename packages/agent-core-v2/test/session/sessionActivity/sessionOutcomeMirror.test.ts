@@ -17,6 +17,7 @@ import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { ContextUndone } from '#/agent/undo/undoService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -262,6 +263,22 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     ended('completed');
     activityBackfill(9, 'failed');
     expect(writes).toEqual(['completed']);
+  });
+
+  it('clears the persisted outcome when an undo rewinds the turn', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('cancelled', 'user_cancelled');
+    expect(writes).toEqual(['cancelled']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 1 }));
+    expect(writes).toEqual(['cancelled', undefined]);
+  });
+
+  it('an undo with no stored outcome writes nothing', async () => {
+    lifecycle.addMain();
+    await tick();
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1 }));
+    expect(writes).toEqual([]);
   });
 
   it('reattaches when the main agent is disposed and recreated', async () => {

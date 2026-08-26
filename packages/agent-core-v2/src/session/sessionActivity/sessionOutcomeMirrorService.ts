@@ -5,6 +5,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { ContextUndone } from '#/agent/undo/undoService';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -76,6 +77,11 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     subscription.add(
       bus.subscribe(TurnStarted, () => {
         this.turnStartedHere = true;
+        this.write(undefined);
+      }),
+    );
+    subscription.add(
+      bus.subscribe(ContextUndone, () => {
         this.write(undefined);
       }),
     );
