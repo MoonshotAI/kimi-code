@@ -210,6 +210,43 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
   });
 
+  it('reports the real before/after file content as fileSnapshot', async () => {
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('alpha beta'),
+      writeText: vi.fn().mockResolvedValue(undefined),
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.fileSnapshot).toEqual({
+      path: '/tmp/a.txt',
+      before: 'alpha beta',
+      after: 'alpha gamma',
+    });
+  });
+
+  it('marks fileSnapshot truncated instead of shipping oversized content', async () => {
+    const big = 'x'.repeat(200 * 1024);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(`${big} beta`),
+      writeText: vi.fn().mockResolvedValue(undefined),
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/big.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.fileSnapshot).toEqual({ path: '/tmp/big.txt', truncated: true });
+  });
+
   it('executes against the selected runtime filesystem instead of the App filesystem', async () => {
     const runtimeWrite = vi.fn().mockResolvedValue(undefined);
     const { fs: runtimeFs } = createSpiedEditFs({

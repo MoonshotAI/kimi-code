@@ -114,6 +114,17 @@ export const toolResultEventSchema = z.object({
   synthetic: z.boolean().optional(),
 });
 
+export const fileEditSnapshotEventSchema = z.object({
+  type: z.literal('file.edit_snapshot'),
+  time: z.number().optional(),
+  turnId: z.number(),
+  toolCallId: z.string(),
+  path: z.string(),
+  before: z.string().nullable().optional(),
+  after: z.string().optional(),
+  truncated: z.boolean().optional(),
+});
+
 export const promptCompletedEventSchema = z.object({
   type: z.literal('prompt.completed'),
   time: z.number().optional(),
@@ -216,6 +227,7 @@ export interface AgentEventPayloads {
   'tool.call.delta': z.infer<typeof toolCallDeltaEventSchema>;
   'tool.progress': z.infer<typeof toolProgressEventSchema>;
   'tool.result': z.infer<typeof toolResultEventSchema>;
+  'file.edit_snapshot': z.infer<typeof fileEditSnapshotEventSchema>;
   'prompt.completed': z.infer<typeof promptCompletedEventSchema>;
   'prompt.aborted': z.infer<typeof promptAbortedEventSchema>;
   'compaction.started': z.infer<typeof compactionStartedEventSchema>;
@@ -241,6 +253,12 @@ export const agentEvents = {
   'tool.call.delta': { kind: 'stream', name: 'events', type: 'tool.call.delta', schema: toolCallDeltaEventSchema },
   'tool.progress': { kind: 'stream', name: 'events', type: 'tool.progress', schema: toolProgressEventSchema },
   'tool.result': { kind: 'stream', name: 'events', type: 'tool.result', schema: toolResultEventSchema },
+  'file.edit_snapshot': {
+    kind: 'stream',
+    name: 'events',
+    type: 'file.edit_snapshot',
+    schema: fileEditSnapshotEventSchema,
+  },
   'prompt.completed': { kind: 'stream', name: 'events', type: 'prompt.completed', schema: promptCompletedEventSchema },
   'prompt.aborted': { kind: 'stream', name: 'events', type: 'prompt.aborted', schema: promptAbortedEventSchema },
   'compaction.started': {

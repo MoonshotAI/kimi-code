@@ -850,6 +850,16 @@ export interface ToolResultEvent {
   readonly synthetic?: boolean;
 }
 
+export interface FileEditSnapshotEvent {
+  readonly type: 'file.edit_snapshot';
+  readonly turnId: number;
+  readonly toolCallId: string;
+  readonly path: string;
+  readonly before?: string | null;
+  readonly after?: string;
+  readonly truncated?: boolean;
+}
+
 export interface SubagentSpawnedEvent {
   readonly type: 'subagent.spawned';
   readonly subagentId: string;
@@ -1037,6 +1047,7 @@ export type AgentEvent =
   | ShellStartedEvent
   | ShellCompletedEvent
   | ToolResultEvent
+  | FileEditSnapshotEvent
   | ToolListUpdatedEvent
   | McpServerStatusEvent
   | SubagentSpawnedEvent
@@ -1801,6 +1812,16 @@ export const toolResultEventSchema = z.object({
   synthetic: z.boolean().optional(),
 }) satisfies z.ZodType<ToolResultEvent>;
 
+export const fileEditSnapshotEventSchema = z.object({
+  type: z.literal('file.edit_snapshot'),
+  turnId: z.number(),
+  toolCallId: z.string(),
+  path: z.string(),
+  before: z.string().nullable().optional(),
+  after: z.string().optional(),
+  truncated: z.boolean().optional(),
+}) satisfies z.ZodType<FileEditSnapshotEvent>;
+
 export const subagentSpawnedEventSchema = z.object({
   type: z.literal('subagent.spawned'),
   subagentId: z.string(),
@@ -1976,6 +1997,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   shellStartedEventSchema,
   shellCompletedEventSchema,
   toolResultEventSchema,
+  fileEditSnapshotEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,
   subagentSpawnedEventSchema,
