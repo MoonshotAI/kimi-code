@@ -985,7 +985,7 @@ describe('AgentTranscriptProjector', () => {
         description: 'scan the repo',
         swarmIndex: 0,
         runInBackground: false,
-        model: 'kimi-k3-highspeed',
+        model: 'example-model',
         thinkingEffort: 'high',
       }),
     );
@@ -1002,7 +1002,7 @@ describe('AgentTranscriptProjector', () => {
       agentId: 'agent-0',
       description: 'scan the repo',
       detached: false,
-      model: 'kimi-k3-highspeed',
+      model: 'example-model',
       thinkingEffort: 'high',
     });
   });
