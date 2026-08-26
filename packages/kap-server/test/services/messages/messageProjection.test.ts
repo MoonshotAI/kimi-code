@@ -115,9 +115,10 @@ describe('toProtocolMessage', () => {
       toolCalls: [],
     };
 
-    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'text', text: '[video:ms://prov-7]' },
-    ]);
+    const content = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content;
+    expect(content).toEqual([{ type: 'text', text: '[video unavailable]' }]);
+    expect(JSON.stringify(content)).not.toContain('ms://');
+    expect(JSON.stringify(content)).not.toContain('prov-7');
   });
 
   it('degrades a non-renderable image url scheme to a text placeholder', () => {
@@ -127,9 +128,10 @@ describe('toProtocolMessage', () => {
       toolCalls: [],
     };
 
-    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'text', text: '[image:ms://prov-9]' },
-    ]);
+    const content = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content;
+    expect(content).toEqual([{ type: 'text', text: '[image unavailable]' }]);
+    expect(JSON.stringify(content)).not.toContain('ms://');
+    expect(JSON.stringify(content)).not.toContain('prov-9');
   });
 
   it('appends assistant tool calls as tool_use parts with parsed input', () => {
@@ -208,17 +210,20 @@ describe('toProtocolMessage', () => {
       toolCallId: 'call_video',
     };
 
-    expect(toProtocolMessage(SESSION_ID, 0, result, 0).content).toEqual([
+    const content = toProtocolMessage(SESSION_ID, 0, result, 0).content;
+    expect(content).toEqual([
       {
         type: 'tool_result',
         tool_call_id: 'call_video',
         output: [
           { type: 'text', text: '<video path="/tmp/clip.mp4">' },
-          { type: 'text', text: '[video:ms://prov-7]' },
+          { type: 'text', text: '[video unavailable]' },
           { type: 'text', text: '</video>' },
         ],
       },
     ]);
+    expect(JSON.stringify(content)).not.toContain('ms://');
+    expect(JSON.stringify(content)).not.toContain('prov-7');
   });
 
   it('marks failed tool results with is_error', () => {

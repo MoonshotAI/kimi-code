@@ -16,7 +16,7 @@ function isRenderableMediaUrl(url: string): boolean {
 }
 
 function mediaPlaceholderText(kind: 'image' | 'video' | 'audio', url: string): string {
-  return `[${kind}:${url}]`;
+  return isRenderableMediaUrl(url) ? `[${kind}:${url}]` : `[${kind} unavailable]`;
 }
 
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
