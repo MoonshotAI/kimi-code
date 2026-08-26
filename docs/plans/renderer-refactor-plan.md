@@ -111,6 +111,7 @@
 | P17 | `packages/app-components` 第一批：支撑模块 + 79 个零差异组件下沉 | 2026-08-25 | #355 / #357 |
 | P18 | 组件 telemetry 走 contracts 缝（4 文件收口，不下沉）+ 8 个 provide key InjectionKey 化 + facade 死 provide 删除 | 2026-08-25 | #369 |
 | P20 | OpenInMenu 统一 + OpenInService 注入缝（web 不实现） | 2026-08-26 | #382 |
+| P22 | DesignSystemView 收敛 desktop 单份正本 + `.chat-header` 反穿迁组件 | 2026-08-26 | #385 |
 
 **待执行（P14–P35）**：
 
@@ -121,7 +122,6 @@
 | P16 | connection store + SessionRuntime 容器化（原一期 P15 扩大；先补测试保护网 P33） | 大 | P15 |
 | P19 | Composer 壳合一 + 下沉（web ProseMirror 迁移已完成） | 中 | P17 |
 | P21 | Sidebar 拆分（StatusTabs/SessionList/WorkspaceDirectory + 单一 DnD） | 中 | P17 |
-| P22 | DesignSystemView 收敛 desktop 单份正本 + App.vue 全局样式反穿清除 | 小 | — |
 | P23 | 滚动引擎提取 `useTranscriptScroll`（原一期 P17 前半，虚拟化前置） | 大 | — |
 | P24 | drilling 消除：Composer 链 + ConversationPane 收敛 + App.vue 瘦身（原一期 P16 扩大） | 大 | P14–P16 |
 | P25 | Composer 拆分（keymap / 折叠状态机 / menu 测量 composable 化） | 中 | P19 |
@@ -204,7 +204,9 @@
 - 3 个手写弹窗换 app-ui `Menu`；
 - 拆分后随批下沉 app-components。
 
-### P22 — DesignSystemView 单源化 + App.vue 样式纪律
+### P22 — DesignSystemView 单源化 + App.vue 样式纪律 ✅ 已完成（2026-08-26，#385）
+
+> 落地：web 副本（3005 行）删除，web Sidebar 的长按 logo 彩蛋入口（async 组件 + ErrorBoundary 挂载 + pointer handlers）随之移除、点击回归纯 blink；canonical 保持 desktop 单份（应用内 overlay 不受影响）；AGENTS.md 表述改为「desktop 单份正本，不再双端同步」。`.chat-header` 的 sidebar-collapsed padding 反穿从两端 App.vue 全局块迁入两端 ChatHeader scoped（`:global(.app…)` 形态，windows/fullscreen 变体随行）；`:has()` 的 drag-region 暂停组（.chat-header/.side .ch/PanelHeader 三对象）确属跨组件，按代码注释留在 App.vue。实测：web 折叠侧栏后 header padding-left 16px → 78px 正确生效。
 
 DesignSystemView（~3000 行 ×2，已漂移 75 行）**不下沉**——它 import 了 app-client 的 icons 与产品组件（DockIconPicker / WorkingIndicator 等），移入 app-ui 会造成 app-ui ↔ app-client 循环依赖。改为收敛为 **desktop 单份正本**：canonical 仍是 `apps/desktop/src/renderer/views/DesignSystemView.vue`，删除 web 侧副本，AGENTS.md 中设计规范「两端同步」的表述随本阶段同步改写。App.vue 无 scoped 全局样式块中对 `.chat-header` 的反穿改为组件内样式或 token。
 
