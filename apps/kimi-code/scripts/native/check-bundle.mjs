@@ -20,6 +20,9 @@ const optionalRuntimeRequires = new Set([
   'fast-json-stringify/lib/validator',
   'utf-8-validate',
 ]);
+// Native bindings that stay external on purpose: installNativeModuleHook
+// resolves them from the SEA native-asset cache (or node_modules outside SEA).
+const handledNativeRuntimeRequires = new Set(['@napi-rs/keyring']);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
 
 function executableLines(text) {
@@ -37,7 +40,9 @@ function checkBundle(bundlePath, { worker = false } = {}) {
   if (!existsSync(bundlePath)) return [`bundle does not exist: ${bundlePath}`];
   const text = readFileSync(bundlePath, 'utf-8');
   const errors = [];
-  const allowedExternal = worker ? new Set() : optionalRuntimeRequires;
+  const allowedExternal = worker
+    ? new Set()
+    : new Set([...optionalRuntimeRequires, ...handledNativeRuntimeRequires]);
   const allowedRelative = worker ? new Set() : optionalRelativeRuntimeRequires;
 
   const checkSpecifier = (specifier, kind) => {

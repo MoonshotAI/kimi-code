@@ -40,6 +40,7 @@ import { maybeRelaunchWithStagedNativeUpdate } from './cli/update/native-swap';
 import { createKimiCodeHostIdentity, getVersion } from './cli/version';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
+import { installKeyringBackend } from './native/keyring';
 import { installMinidbTextBuildWorker } from './native/minidb-worker';
 import { installKapSearchWorker } from './native/search-worker';
 import { installNativeModuleHook } from './native/module-hook';
@@ -170,6 +171,11 @@ function bootstrap(): void {
   // invalid proxy URL is reported and ignored rather than aborting startup.
   installGlobalProxyDispatcher();
   installNativeModuleHook();
+  // Register the OS keychain as an OAuth token-store backend. Whether it is
+  // actually used is gated inside packages/oauth (experimental opt-in,
+  // KIMI_DISABLE_KEYRING, capability probe); a load failure only warns and
+  // the file store stays in charge.
+  installKeyringBackend();
   // Best-effort SEA worker installation. Diagnostics are trace-only and avoid
   // exposing the user's cache path; failure keeps MiniDb's bounded inline mode.
   const workerInstall = installMinidbTextBuildWorker();

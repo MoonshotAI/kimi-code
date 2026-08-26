@@ -1,7 +1,11 @@
+import { getRegisteredKeyringBackend, isKeyringOptedIn } from '@moonshot-ai/kimi-code-oauth';
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
+import { createKeyringMcpOAuthStore } from '#/app/mcpConfig/keyringMcpOAuthStore';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
@@ -40,8 +44,15 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
 
   private readonly delegate: McpOAuthStore;
 
-  constructor(@IAtomicDocumentStore docs: IAtomicDocumentStore) {
-    this.delegate = createMcpOAuthStore(docs);
+  constructor(
+    @IAtomicDocumentStore docs: IAtomicDocumentStore,
+    @ILogService log: ILogService,
+  ) {
+    const backend = getRegisteredKeyringBackend();
+    this.delegate =
+      backend !== undefined && isKeyringOptedIn()
+        ? createKeyringMcpOAuthStore(backend.api, createMcpOAuthStore(docs), log)
+        : createMcpOAuthStore(docs);
   }
 
   read<T>(key: string): Promise<T | undefined> {

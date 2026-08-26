@@ -18,7 +18,27 @@ export type {
 export { tokenFromWire, tokenToWire } from './types';
 
 export type { TokenStorage } from './storage';
-export { FileTokenStorage } from './storage';
+export { assertValidTokenName, FileTokenStorage } from './storage';
+
+export type {
+  KeyringApi,
+  KeyringEntry,
+  KeyringOperation,
+  KeyringStorageObserver,
+  RegisteredKeyringBackend,
+  ResolveTokenStorageDeps,
+} from './keyring-storage';
+export {
+  getRegisteredKeyringBackend,
+  isKeyringOptedIn,
+  KEYRING_PROBE_SERVICE,
+  KEYRING_SERVICE,
+  KeyringTokenStorage,
+  keyringServiceForCredentialsDir,
+  registerKeyringBackend,
+  resolveTokenStorage,
+  unregisterKeyringBackend,
+} from './keyring-storage';
 
 export type { DevicePollResult, RefreshOptions } from './oauth';
 export { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';

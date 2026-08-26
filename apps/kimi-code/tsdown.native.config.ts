@@ -16,7 +16,7 @@ const builtins = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
 ]);
-const optionalNativeDependencies = new Set(['cpu-features']);
+const optionalNativeDependencies = new Set(['cpu-features', '@napi-rs/keyring']);
 
 function shouldAlwaysBundle(id: string): boolean {
   if (builtins.has(id) || id.startsWith('node:')) return false;
