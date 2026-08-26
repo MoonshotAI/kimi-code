@@ -47,19 +47,20 @@ export function turnPromptAttachments(
   input: readonly ContentPart[],
 ): TurnStartedPayload['promptAttachments'] {
   const attachments: { kind: 'image' | 'video' | 'audio'; fileId: string }[] = [];
-  const sessionMediaFileId = (url: string, id: string | undefined): string | undefined => {
-    if (id === undefined) return undefined;
-    return parseDaemonFileUrl(url)?.fileId === id ? id : undefined;
+  const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
+    const fileId = parseDaemonFileUrl(url)?.fileId;
+    if (id === undefined) return fileId;
+    return fileId === id ? id : undefined;
   };
   for (const part of input) {
     if (part.type === 'image_url') {
-      const fileId = sessionMediaFileId(part.imageUrl.url, part.imageUrl.id);
+      const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'image', fileId });
     } else if (part.type === 'video_url') {
-      const fileId = sessionMediaFileId(part.videoUrl.url, part.videoUrl.id);
+      const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'video', fileId });
     } else if (part.type === 'audio_url') {
-      const fileId = sessionMediaFileId(part.audioUrl.url, part.audioUrl.id);
+      const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
     }
   }

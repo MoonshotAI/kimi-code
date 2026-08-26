@@ -1,7 +1,12 @@
 import { produce } from 'immer';
 import { describe, expect, it } from 'vitest';
 
-import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
+import {
+  ContextAppendLoopEvent,
+  ContextApplyCompaction,
+  ContextClear,
+  ContextUndo,
+} from '#/agent/contextMemory/contextEvents';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { FoldContext } from '#/state/state';
 import {
@@ -64,6 +69,64 @@ describe('turnKey lastEnded', () => {
 
   it('starts without a stored outcome', () => {
     expect(turnKey.initial().lastEnded).toBeUndefined();
+  });
+});
+
+describe('turnKey anchorTurnIds', () => {
+  const cronOrigin = {
+    kind: 'cron_job',
+    jobId: 'j1',
+    cron: '0 9 * * *',
+    recurring: true,
+    coalescedCount: 0,
+    stale: false,
+  } as const;
+
+  it('records undo-anchor prompt turns and skips non-anchor turns', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: cronOrigin }));
+    s = fold(
+      s,
+      new TurnPrompt({
+        agentId: 'main',
+        input: [],
+        origin: {
+          kind: 'plugin_command',
+          activationId: 'a1',
+          pluginId: 'p',
+          commandName: 'c',
+          trigger: 'user-slash',
+        },
+      }),
+    );
+    expect(s.anchorTurnIds).toEqual([0, 2]);
+  });
+
+  it('assigns the consumed id before cancelled-queued skips', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnCancel({ agentId: 'main', turnId: 1, target: 'queued' }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    expect(s.anchorTurnIds).toEqual([0, 2]);
+  });
+
+  it('drops trailing anchors on context.undo and resets on compaction and clear', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new ContextUndo({ agentId: 'main', count: 1 }));
+    expect(s.anchorTurnIds).toEqual([0]);
+
+    s = fold(
+      s,
+      new ContextApplyCompaction({ agentId: 'main', summary: 'summary', compactedCount: 2 }),
+    );
+    expect(s.anchorTurnIds).toEqual([]);
+
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new ContextClear({ agentId: 'main' }));
+    expect(s.anchorTurnIds).toEqual([]);
   });
 });
 
