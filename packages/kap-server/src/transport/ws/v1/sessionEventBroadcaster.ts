@@ -49,7 +49,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import { toWireApproval } from '../../../routes/approvals';
-import { toWireQuestion } from '../../../routes/questions';
+import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
