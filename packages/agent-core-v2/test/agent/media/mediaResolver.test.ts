@@ -16,7 +16,7 @@ import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test'
 import { ILogService } from '#/_base/log/log';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import { AgentMediaResolverService, VIDEO_INPUT_UNSUPPORTED_NOTE, VIDEO_UPLOAD_FAILED_NOTE } from '#/agent/media/mediaResolverService';
+import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -42,6 +42,11 @@ const VIDEO_UNAVAILABLE_TEXT = '[video omitted: the uploaded file is no longer a
 const VIDEO_TAG = '<video path="/cache/file_abc.mp4"></video>';
 const IMAGE_TAG = '<image path="/cache/file_abc.png"></image>';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
+
+const VIDEO_INPUT_UNSUPPORTED_NOTE =
+  'The current model cannot receive video input; only the file path is shown.';
+const VIDEO_UPLOAD_FAILED_NOTE =
+  'The video could not be uploaded for the model; only the file path is shown.';
 
 function notedVideoTag(canonical: string, note: string): string {
   return `<video path="${canonical}"></video>\n${note}`;
@@ -341,9 +346,14 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it('memoizes the path-tag degrade on an auth failure instead of re-uploading every step', async () => {
+  it('retries the upload on a later step after an auth failure instead of freezing the tag', async () => {
+    let uploadCalls = 0;
     const upload = vi.fn(async (): Promise<VideoURLPart> => {
-      throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+      uploadCalls += 1;
+      if (uploadCalls === 1) {
+        throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+      }
+      return msPart('prov-1');
     });
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
@@ -356,18 +366,9 @@ describe('AgentMediaResolverService video strategy', () => {
       text: notedVideoTag(canonical, VIDEO_UPLOAD_FAILED_NOTE),
     });
 
-    const again = await res.resolve([message], req);
-    expect(firstPart(again)).toEqual(firstPart(failed));
-    expect(upload).toHaveBeenCalledTimes(1);
-
-    const fresh = resolver(
-      new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
-      sessionDir,
-    );
-    const recovered = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    const out = await fresh.resolve([message], requester({ uploadVideo: recovered }));
-    expect(firstPart(out)).toEqual(msPart('prov-1'));
-    expect(recovered).toHaveBeenCalledTimes(1);
+    const retried = await res.resolve([message], req);
+    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
   });
 
   it('rethrows a cancelled upload without memoizing the fallback', async () => {

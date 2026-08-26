@@ -38,9 +38,9 @@ const IMAGE_UNAVAILABLE_TEXT =
 const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_MEMO_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
-export const VIDEO_INPUT_UNSUPPORTED_NOTE =
+const VIDEO_INPUT_UNSUPPORTED_NOTE =
   'The current model cannot receive video input; only the file path is shown.';
-export const VIDEO_UPLOAD_FAILED_NOTE =
+const VIDEO_UPLOAD_FAILED_NOTE =
   'The video could not be uploaded for the model; only the file path is shown.';
 
 const textEncoder = new TextEncoder();
@@ -198,11 +198,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   private async memoedOutcome(ref: DaemonFileRef, memoed: ContentPart): Promise<ContentPart> {
     if (memoed.type !== 'text') return memoed;
-    const tag = matchSingleMediaPathTag(memoed.text);
+    const newlineAt = memoed.text.indexOf('\n');
+    const head = newlineAt === -1 ? memoed.text : memoed.text.slice(0, newlineAt);
+    const suffix = newlineAt === -1 ? '' : memoed.text.slice(newlineAt);
+    const tag = matchSingleMediaPathTag(head);
     if (tag === undefined) return memoed;
     const path = await this.displayPath(ref);
     if (path === undefined || path === tag.path) return memoed;
-    return { type: 'text', text: buildMediaPathTag(tag.kind, path) };
+    return { type: 'text', text: `${buildMediaPathTag(tag.kind, path)}${suffix}` };
   }
 
   private async resolveVideoUncached(
@@ -268,18 +271,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           memoize: true,
         };
       }
-      const authFailure = isVideoUploadAuthError(error);
       this.log.warn('video upload failed; degrading the video to a path tag', {
         file_id: ref.fileId,
         provider_type: model.providerType ?? model.protocol,
         protocol: model.protocol,
-        auth_failure: authFailure,
+        auth_failure: isVideoUploadAuthError(error),
         error_message: error instanceof Error ? error.message : String(error),
       });
-      return {
-        part: videoTag(tagPath, VIDEO_UPLOAD_FAILED_NOTE),
-        memoize: authFailure,
-      };
+      return { part: videoTag(tagPath, VIDEO_UPLOAD_FAILED_NOTE), memoize: false };
     }
   }
 

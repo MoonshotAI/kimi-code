@@ -15,6 +15,10 @@ function isRenderableMediaUrl(url: string): boolean {
   return /^(https?:|data:|blob:)/i.test(url);
 }
 
+function mediaPlaceholderText(kind: 'image' | 'video' | 'audio', url: string): string {
+  return `[${kind}:${url}]`;
+}
+
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
   switch (part.type) {
     case 'text':
@@ -32,10 +36,10 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
       }
       return isRenderableMediaUrl(part.imageUrl.url)
         ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
-        : { type: 'text', text: `[image:${part.imageUrl.url}]` };
+        : { type: 'text', text: mediaPlaceholderText('image', part.imageUrl.url) };
     }
     case 'audio_url':
-      return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
+      return { type: 'text', text: mediaPlaceholderText('audio', part.audioUrl.url) };
     case 'video_url': {
       const ref = parseDaemonFileUrl(part.videoUrl.url);
       if (ref !== undefined) {
@@ -43,7 +47,7 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
       }
       return isRenderableMediaUrl(part.videoUrl.url)
         ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
-        : { type: 'text', text: `[video:${part.videoUrl.url}]` };
+        : { type: 'text', text: mediaPlaceholderText('video', part.videoUrl.url) };
     }
   }
 }
@@ -57,7 +61,7 @@ function sanitizeToolMediaPart(part: ContentPart): ContentPart {
     part.type === 'image_url' ? part.imageUrl : part.type === 'video_url' ? part.videoUrl : part.audioUrl;
   if (isRenderableMediaUrl(holder.url)) return part;
   const kind = part.type === 'image_url' ? 'image' : part.type === 'video_url' ? 'video' : 'audio';
-  return { type: 'text', text: `[${kind}:${holder.url}]` };
+  return { type: 'text', text: mediaPlaceholderText(kind, holder.url) };
 }
 
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
