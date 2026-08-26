@@ -969,6 +969,77 @@ describe('ProviderManager prompt cache key', () => {
     }
   });
 
+  it('omits the prompt cache key for OpenAI providers on custom base URLs', () => {
+    for (const type of ['openai', 'openai_responses'] as const) {
+      const manager = new ProviderManager({
+        promptCacheKey: 'session-test',
+        config: {
+          defaultModel: 'gpt-alias',
+          providers: {
+            openai: {
+              type,
+              apiKey: 'sk-compat',
+              baseUrl: 'https://openai-compatible.example.test/v1',
+            },
+          },
+          models: {
+            'gpt-alias': {
+              provider: 'openai',
+              model: 'gpt-runtime',
+              maxContextSize: 200000,
+            },
+          },
+        },
+      });
+      const resolved = manager.resolveProviderConfig('gpt-alias');
+
+      // Strictly-validating OpenAI-compatible endpoints reject the unknown
+      // `prompt_cache_key` field with a 400, so it must stay official-only.
+      const kwargs = (resolved.provider as { generationKwargs?: Record<string, unknown> })
+        .generationKwargs;
+      expect(kwargs?.['prompt_cache_key']).toBeUndefined();
+    }
+  });
+
+  it('keeps the prompt cache key when the base URL targets the official OpenAI API', () => {
+    for (const type of ['openai', 'openai_responses'] as const) {
+      for (const baseUrl of [
+        'https://api.openai.com/v1',
+        'https://eu.api.openai.com/v1',
+        undefined,
+      ]) {
+        const manager = new ProviderManager({
+          promptCacheKey: 'session-test',
+          config: {
+            defaultModel: 'gpt-alias',
+            providers: {
+              openai: {
+                type,
+                apiKey: 'sk-openai',
+                baseUrl,
+              },
+            },
+            models: {
+              'gpt-alias': {
+                provider: 'openai',
+                model: 'gpt-runtime',
+                maxContextSize: 200000,
+              },
+            },
+          },
+        });
+        const resolved = manager.resolveProviderConfig('gpt-alias');
+
+        expect(resolved.provider).toMatchObject({
+          type,
+          generationKwargs: {
+            prompt_cache_key: 'session-test',
+          },
+        });
+      }
+    }
+  });
+
   it('reads the current config when constructed with a function', () => {
     let sharedConfig: KimiConfig = { providers: {} };
     const manager = new ProviderManager({
