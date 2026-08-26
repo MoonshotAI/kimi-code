@@ -18,11 +18,17 @@ export async function readWorkspaceTrust(
   root: string,
 ): Promise<boolean> {
   try {
-    for (const candidate of ancestorRoots(root)) {
-      const record = await readOwnRecord(docs, candidate);
+    const own = await readOwnRecord(docs, root);
+    if (own !== undefined) return own.trusted !== false;
+    let current = canonicalWorkspaceRoot(root);
+    while (true) {
+      const parent = dirname(current);
+      const next = canonicalWorkspaceRoot(parent);
+      if (next === current) return false;
+      const record = await readOwnRecord(docs, next);
       if (record !== undefined) return record.trusted !== false;
+      current = next;
     }
-    return false;
   } catch {
     return false;
   }
