@@ -29,6 +29,18 @@ describe('stdio MCP working directory resolution', () => {
   });
 });
 
+/**
+ * Errors that prove the transport close was fully processed: once the SDK's
+ * `_onclose` ran, new requests are rejected with 'Not connected' and pending
+ * ones with 'Connection closed'. Anything else (e.g. EPIPE from a racy stdin
+ * write) can fire before the child's exit is observed and is not proof of
+ * death.
+ */
+function isPostCloseTransportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Not connected') || message.includes('Connection closed');
+}
+
 describe('StdioMcpClient', () => {
   it('rejects unsupported executor at construction time', () => {
     expect(
@@ -254,32 +266,42 @@ describe('StdioMcpClient', () => {
       const reply = await client.callTool('exit_after_reply', {});
       expect(reply.isError).toBe(false);
       // Wait deterministically for the child to actually exit. The fixture
-      // writes `banner\n` to stderr sync-before `process.exit`, so observing
-      // the banner is proof the exit syscall has been issued.
+      // flushes `banner\n` to stderr before calling `process.exit`, so
+      // observing the banner is proof the exit syscall has been issued.
       const exitDeadline = Date.now() + 5000;
       while (Date.now() < exitDeadline && !client.stderrSnapshot().includes(banner)) {
         await new Promise((r) => setTimeout(r, 5));
       }
       expect(client.stderrSnapshot()).toContain(banner);
-      // Drain probe: send a fresh request that the dead transport must
-      // reject. Once it does, we know the SDK has processed `_onclose`,
-      // which means our hook has already populated `pendingUnexpectedClose`.
-      // This is what gives us a buffer to replay — registering the listener
-      // first would intercept the close as a live fire instead.
+      // Drain probe: keep probing until a request fails with an error that is
+      // only possible AFTER the transport close was fully processed — the
+      // SDK's `_onclose` synchronously invokes our `onclose` hook (buffering
+      // `pendingUnexpectedClose`) before any rejection can reach this loop.
+      // A plain stdin write error (e.g. EPIPE) can win the race against the
+      // child's exit notification and says nothing about close processing, so
+      // it must not end the loop. This is what gives us a buffer to replay —
+      // registering the listener first would intercept the close as a live
+      // fire instead.
       const drainDeadline = Date.now() + 5000;
       let transportConfirmedDead = false;
       while (Date.now() < drainDeadline) {
         try {
           await client.callTool('echo', { text: 'probe' });
-        } catch {
-          transportConfirmedDead = true;
-          break;
+        } catch (error) {
+          if (isPostCloseTransportError(error)) {
+            transportConfirmedDead = true;
+            break;
+          }
         }
         await new Promise((r) => setTimeout(r, 10));
       }
       expect(transportConfirmedDead).toBe(true);
       // `pendingUnexpectedClose` is set; registering the listener must
-      // invoke it synchronously inside the call.
+      // invoke it synchronously inside the call. The replayed reason's
+      // `stderr` is a snapshot taken at close time, which can race the
+      // delivery of the child's final stderr chunk, so its content is not
+      // asserted here — the tail itself is covered by the `stderrSnapshot`
+      // assertion above.
       let received: { stderr?: string } | undefined;
       let syncedOnRegister = false;
       client.onUnexpectedClose((reason) => {
@@ -287,7 +309,7 @@ describe('StdioMcpClient', () => {
         received = { stderr: reason.stderr };
       });
       expect(syncedOnRegister).toBe(true);
-      expect(received?.stderr ?? '').toContain(banner);
+      expect(received).toBeDefined();
     } finally {
       await client.close();
     }
