@@ -311,6 +311,25 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     expect(writes).toEqual([]);
   });
 
+  it('keeps the persisted outcome when an undo rewinds only a later turn', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('cancelled', 'user_cancelled', 1);
+    expect(writes).toEqual(['cancelled']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
+    expect(writes).toEqual(['cancelled']);
+  });
+
+  it('tracks the narrated turn across equal outcomes for the undo range check', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('completed', undefined, 1);
+    ended('completed', undefined, 2);
+    expect(writes).toEqual(['completed']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
+    expect(writes).toEqual(['completed', undefined]);
+  });
+
   it('clears a stale persisted outcome when the replayed wire has no ended turn', async () => {
     const stale = host.child(LifecycleScope.Session, 'session-stale', [
       stubPair(ISessionMetadata, {

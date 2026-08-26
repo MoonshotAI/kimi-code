@@ -21,6 +21,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
   declare readonly _serviceBrand: undefined;
 
   private lastPersisted: SessionTurnOutcome | undefined;
+  private lastPersistedTurnId: number | undefined;
   private adopted = false;
   private turnStartedHere = false;
   private mainSubscription: DisposableStore | undefined;
@@ -74,15 +75,15 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     subscription.add(
       bus.subscribe(TurnEnded, (event) => {
         if (event.reason === 'completed') {
-          this.write('completed');
+          this.write('completed', { turnId: event.turnId });
           return;
         }
         if (event.reason === 'failed' || event.reason === 'blocked') {
-          this.write('failed');
+          this.write('failed', { turnId: event.turnId });
           return;
         }
         if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
-          this.write('cancelled');
+          this.write('cancelled', { turnId: event.turnId });
         }
       }),
     );
@@ -93,7 +94,14 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
       }),
     );
     subscription.add(
-      bus.subscribe(ContextUndone, () => {
+      bus.subscribe(ContextUndone, (event) => {
+        if (
+          event.fromTurnId !== undefined &&
+          this.lastPersistedTurnId !== undefined &&
+          this.lastPersistedTurnId < event.fromTurnId
+        ) {
+          return;
+        }
         this.write(undefined);
       }),
     );
@@ -103,9 +111,9 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
         if (this.lastPersisted !== undefined) return;
         const reason = event.lastTurn?.reason;
         if (reason === 'completed' || reason === 'cancelled') {
-          this.write(reason, { touchUpdatedAt: false });
+          this.write(reason, { touchUpdatedAt: false, turnId: event.lastTurn?.turnId });
         } else if (reason === 'failed' || reason === 'blocked') {
-          this.write('failed', { touchUpdatedAt: false });
+          this.write('failed', { touchUpdatedAt: false, turnId: event.lastTurn?.turnId });
         }
       }),
     );
@@ -116,21 +124,36 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     if (this.lastPersisted === undefined) return;
     if (this.turnStartedHere) return;
     if (!agentStates.has(turnKey)) return;
-    if (agentStates.get(turnKey).lastEnded !== undefined) return;
-    this.write(undefined, { touchUpdatedAt: false });
+    const lastEnded = agentStates.get(turnKey).lastEnded;
+    if (lastEnded === undefined) {
+      this.write(undefined, { touchUpdatedAt: false });
+      return;
+    }
+    if (this.lastPersistedTurnId === undefined) this.lastPersistedTurnId = lastEnded.turnId;
   }
 
   private write(
     outcome: SessionTurnOutcome | undefined,
-    opts?: { readonly touchUpdatedAt?: boolean },
+    opts?: { readonly touchUpdatedAt?: boolean; readonly turnId?: number },
   ): void {
-    if (outcome === this.lastPersisted) return;
+    if (outcome === this.lastPersisted) {
+      if (opts?.turnId !== undefined) this.lastPersistedTurnId = opts.turnId;
+      return;
+    }
     this.adopted = true;
     const previous = this.lastPersisted;
+    const previousTurnId = this.lastPersistedTurnId;
     this.lastPersisted = outcome;
-    void this.metadata.update({ lastTurnReason: outcome }, opts).catch(() => {
-      if (this.lastPersisted === outcome) this.lastPersisted = previous;
-    });
+    this.lastPersistedTurnId =
+      outcome === undefined ? undefined : (opts?.turnId ?? this.lastPersistedTurnId);
+    void this.metadata
+      .update({ lastTurnReason: outcome }, { touchUpdatedAt: opts?.touchUpdatedAt })
+      .catch(() => {
+        if (this.lastPersisted === outcome) {
+          this.lastPersisted = previous;
+          this.lastPersistedTurnId = previousTurnId;
+        }
+      });
   }
 }
 
