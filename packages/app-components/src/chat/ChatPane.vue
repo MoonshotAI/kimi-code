@@ -19,7 +19,7 @@ import MediaThumb from './MediaThumb.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import SelectionActionBubble from './SelectionActionBubble.vue';
 import { Icon, Kbd, Spinner, Button, Tooltip } from '@moonshot-ai/app-ui';
-import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { useConfirmDialog, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard, formatMessageTime } from '@moonshot-ai/app-core/lib';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { selectionOwnedByRoot, selectionQuoteAnchor, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
@@ -42,6 +42,8 @@ import type { AssistantFold, AssistantRenderBlock, TurnFileChange } from '@moons
 const { t } = useI18n();
 
 const { confirm } = useConfirmDialog();
+
+const { turnFolding } = useTurnFolding();
 
 onUnmounted(() => {
   if (copiedTimer !== null) {
@@ -1004,7 +1006,10 @@ function assistantFold(turn: ChatTurn): AssistantFold {
     keep their usual collapsed-by-default behavior. */
 function assistantVisibleBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const fold = assistantFold(turn);
-  return props.inspector ? flattenAssistantFold(fold) : fold.visible;
+  // The Advanced "消息自动折叠" switch takes the same flatten path when off:
+  // no TurnFold row is mounted, and notification cards keep their source
+  // order instead of punching out of the folded prefix.
+  return props.inspector || !turnFolding.value ? flattenAssistantFold(fold) : fold.visible;
 }
 
 /** The sourceIndex of the turn's live tail block while it streams; null for
@@ -1241,7 +1246,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <span>{{ t('conversation.goal.continuation') }}</span>
         </div>
         <TurnFold
-          v-if="!inspector && assistantFold(turn).folded.length > 0"
+          v-if="!inspector && turnFolding && assistantFold(turn).folded.length > 0"
           :items="assistantFold(turn).folded"
           mobile
           :streaming-tail-index="streamingTailIndex(turn)"

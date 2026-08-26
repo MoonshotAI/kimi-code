@@ -24,3 +24,5 @@ export * from './useAuxiliaryTranscripts';
 export * from './useMainTranscripts';
 export * from './useMainTranscriptHost';
 export * from './useSelectionQuoteBubble';
+export * from './useTurnFolding';
+export * from './useActivityRunFolding';

@@ -30,6 +30,7 @@ import {
   thinkingLevelToConfig,
 } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
+import { useActivityRunFolding, useTurnFolding } from '@moonshot-ai/app-client';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import { Badge, Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/app-ui';
 
@@ -38,6 +39,11 @@ const { t } = useI18n();
 // 实验室开关：多标签页侧边栏（app-core 单例，sidebar / 会话行 / toast 共用）。
 // web 无 telemetry——与 onNotifyChange 等本地 handler 一样只写偏好。
 const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
+
+// 高级开关：消息折叠。两个开关各自独立（app-client 单例，各管各的层级）——
+// 消息自动折叠默认关（回合工作过程始终平铺）；工具调用汇总默认开（现状）。
+const { turnFolding, setTurnFolding } = useTurnFolding();
+const { activityRunFolding, setActivityRunFolding } = useActivityRunFolding();
 
 function onSidebarTabsChange(on: boolean): void {
   setSidebarTabs(on);
@@ -913,6 +919,37 @@ function archiveTime(iso: string): string {
                 <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
               </span>
               <Button variant="secondary" size="sm" @click="exportLog">{{ t('settings.exportLogBtn') }}</Button>
+            </div>
+            </div>
+          </section>
+
+          <!-- 消息折叠：两个独立开关，各管一个折叠层级。消息自动折叠默认关（回合
+               工作过程始终平铺，不出现折叠行）；工具调用汇总默认开（现状，
+               结束后折回摘要行）。 -->
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.messageFolding') }}</h3>
+            <div class="settings-group">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.turnFolding') }}
+                <span class="hint">{{ t('settings.turnFoldingHint') }}</span>
+              </span>
+              <Switch
+                :model-value="turnFolding"
+                :label="t('settings.turnFolding')"
+                @update:model-value="setTurnFolding"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.activityRunFolding') }}
+                <span class="hint">{{ t('settings.activityRunFoldingHint') }}</span>
+              </span>
+              <Switch
+                :model-value="activityRunFolding"
+                :label="t('settings.activityRunFolding')"
+                @update:model-value="setActivityRunFolding"
+              />
             </div>
             </div>
           </section>

@@ -18,12 +18,17 @@
      run) reopens it. The expanded body is the items flat, in order: thinking
      rows and tool rows, each with its own in-row details intact.
 
+     The Advanced "工具调用汇总" switch (useActivityRunFolding, default ON)
+     gates the whole mechanism: with the summary off the row never renders
+     and the items stay expanded inline, exactly like an opened run.
+
      TODO(P2): hover preview — folded and idle, lingering ~400ms floats a
      mini list of the latest 4 items (prototype v1-log-card.html ?peek). -->
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon } from '@moonshot-ai/app-ui';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
+import { useActivityRunFolding } from '@moonshot-ai/app-client/composables';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
 import { formatDuration, toolStackKey } from '@moonshot-ai/app-components';
@@ -81,8 +86,11 @@ const runStatus = computed<'running' | 'error' | 'done'>(() => {
 
 // The default applies only at mount; manual toggles stick.
 const open = ref(runStatus.value === 'running');
-// Inspector mode pins the body open no matter what the fold state says.
-const effectiveOpen = computed(() => props.forceOpen || open.value);
+// Inspector mode pins the body open no matter what the fold state says. So
+// does the Advanced "工具调用汇总" switch when off — with the summary
+// disabled the row is not rendered at all.
+const { activityRunFolding } = useActivityRunFolding();
+const effectiveOpen = computed(() => props.forceOpen || !activityRunFolding.value || open.value);
 
 const pinScroll = inject(PinScrollKey, () => {});
 const headEl = ref<HTMLElement | null>(null);
@@ -139,6 +147,13 @@ watch(
   },
   { immediate: true },
 );
+
+// Flipping the advanced switch re-applies the default: re-enabling the
+// summary collapses every settled run (a running one folds when it
+// settles); disabling it forces every body open via effectiveOpen above.
+watch(activityRunFolding, () => {
+  open.value = runStatus.value === 'running';
+});
 
 function toggle(): void {
   if (props.forceOpen) return;
@@ -209,6 +224,7 @@ function isThinkingStreaming(item: ActivityItem): boolean {
   <div class="activity-run" :class="{ open: effectiveOpen }">
     <component
       :is="forceOpen ? 'div' : 'button'"
+      v-if="forceOpen || activityRunFolding"
       ref="headEl"
       class="ar-head"
       :class="{ 'is-static': forceOpen }"

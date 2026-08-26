@@ -12,7 +12,7 @@ import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, ManagedUserInfo, ThinkingLevel } from '../../api/types';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
+import { useActivityRunFolding, useConfirmDialog, useTurnFolding } from '@moonshot-ai/app-client/composables';
 import {
   commitLevel,
   effectiveThinkingLevel,
@@ -30,6 +30,10 @@ const { t } = useI18n();
 
 // A stacked global confirm (e.g. sign-out) owns Escape while it's open.
 const { isConfirmOpen } = useConfirmDialog();
+
+// 折叠开关：与桌面端设置 → 高级 → 消息折叠 同款（app-client 单例，移动端窄屏同样生效）。
+const { turnFolding, setTurnFolding } = useTurnFolding();
+const { activityRunFolding, setActivityRunFolding } = useActivityRunFolding();
 
 const client = useKimiWebClient();
 
@@ -343,6 +347,22 @@ function onLogout(): void {
           @update:model-value="emit('setFontScale', $event as FontScale)"
         />
       </div>
+
+      <!-- 折叠开关（同桌面端设置 → 高级 → 消息折叠） -->
+      <button type="button" class="srow" role="switch" :aria-checked="turnFolding" @click="setTurnFolding(!turnFolding)">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('settings.turnFolding') }}</span>
+          <span class="srow-sub">{{ t('settings.turnFoldingHint') }}</span>
+        </span>
+        <span class="toggle" :class="{ on: turnFolding }" aria-hidden="true" />
+      </button>
+      <button type="button" class="srow" role="switch" :aria-checked="activityRunFolding" @click="setActivityRunFolding(!activityRunFolding)">
+        <span class="srow-main">
+          <span class="srow-label">{{ t('settings.activityRunFolding') }}</span>
+          <span class="srow-sub">{{ t('settings.activityRunFoldingHint') }}</span>
+        </span>
+        <span class="toggle" :class="{ on: activityRunFolding }" aria-hidden="true" />
+      </button>
 
       <!-- Server version -->
       <div v-if="serverVersion" class="srow read-only">
