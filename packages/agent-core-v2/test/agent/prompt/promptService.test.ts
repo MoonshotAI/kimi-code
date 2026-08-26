@@ -11,6 +11,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnSteer } from '#/agent/loop/turnOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService, PromptQueued, PromptStarted, PromptSteered, PromptSubmitted } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -200,6 +201,28 @@ describe('AgentPromptService', () => {
     const handles = await prompt.steer([two.id, one.id]);
     expect(handles.map((item) => item.id)).toEqual([one.id, two.id]);
     loop.drainNextBatch(context);
+  });
+
+  it('publishes turn.steer at materialize time without altering the wire payload shape', async () => {
+    const { prompt, context, loop, eventBus } = harness();
+    const events: TurnSteer[] = [];
+    eventBus.subscribe(TurnSteer, (event) => events.push(event));
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({ message: message('one') });
+    const two = await prompt.enqueue({ message: message('two') });
+
+    await prompt.steer([two.id, one.id]);
+    loop.drainNextBatch(context);
+    await Promise.resolve();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.input).toEqual([
+      { type: 'text', text: 'one' },
+      { type: 'text', text: 'two' },
+    ]);
+    expect(events[0]).not.toHaveProperty('messageId');
+    expect(events[0]).not.toHaveProperty('promptIds');
   });
 
   it('aborts pending prompts and settles completion', async () => {

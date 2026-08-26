@@ -51,6 +51,7 @@ const turnSteerSchema = z.object(turnInputShape);
 export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = turnSteerSchema;
 }
 export interface TurnSteer {

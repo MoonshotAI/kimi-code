@@ -14,6 +14,7 @@ export interface TextFrame {
   readonly text: string;
   readonly attachmentIds?: readonly AttachmentId[];
   readonly taskId?: TaskId;
+  readonly promptIds?: readonly string[];
 }
 
 export interface ThinkingFrame {

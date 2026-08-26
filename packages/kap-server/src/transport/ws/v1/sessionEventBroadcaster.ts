@@ -1153,6 +1153,7 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'prompt.completed',
   'prompt.aborted',
   'prompt.steered',
+  'turn.steer',
   'event.question.requested',
   'event.question.dismissed',
   'event.question.answered',

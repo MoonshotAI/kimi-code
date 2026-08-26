@@ -465,6 +465,7 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
+    const steeredContents = new Map<string, number>();
     const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
@@ -489,6 +490,14 @@ export class TranscriptService {
         }
         continue;
       }
+      if (record.type === 'turn.steer') {
+        const input = record['input'];
+        if (Array.isArray(input)) {
+          const key = JSON.stringify(input);
+          steeredContents.set(key, (steeredContents.get(key) ?? 0) + 1);
+        }
+        continue;
+      }
       if (record.type !== 'turn.prompt') continue;
       sawTurnPrompt = true;
       const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
@@ -502,7 +511,7 @@ export class TranscriptService {
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
+      sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
     );
     const folded = foldWireRecordFacts(records, base);
     const status = getLiveSessionById(this.deps.core.accessor, sessionId)

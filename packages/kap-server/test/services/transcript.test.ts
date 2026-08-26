@@ -1900,6 +1900,197 @@ describe('AgentTranscriptProjector', () => {
     ]);
   });
 
+  it('projects turn.steer as a user frame at the next step start, pairing promptIds from prompt.steered', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 3, step: 1 }));
+    feed(ev({ type: 'turn.step.completed', turnId: 3, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'steered in' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'steered in' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    expect(turnOps('t3', tx.getItems()).steps).toHaveLength(1);
+
+    feed(ev({ type: 'turn.step.started', turnId: 3, step: 2 }));
+    const turn = turnOps('t3', tx.getItems());
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+      promptIds: ['p2'],
+    });
+  });
+
+  it('projects turn.steer into the running step immediately, with daemon media as attachments', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: ProjectorBusEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 4, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 4, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2', 'p3'],
+        content: [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png' },
+          },
+        ],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png' },
+          },
+        ],
+        origin: { kind: 'user' },
+      }),
+    );
+
+    const attachmentOp = ops.find((op) => op.op === 'attachment.upsert');
+    expect(attachmentOp).toMatchObject({
+      attachment: { mediaType: 'image/*', source: { kind: 'session_media', fileId: 'f_img9' } },
+    });
+    const frame = turnOps('t4', tx.getItems()).steps[0]?.frames[0];
+    expect(frame).toMatchObject({ kind: 'text', role: 'user', text: 'look at this', promptIds: ['p2', 'p3'] });
+    expect(frame?.kind === 'text' ? frame.attachmentIds : undefined).toEqual([
+      attachmentOp?.op === 'attachment.upsert' ? attachmentOp.attachment.attachmentId : undefined,
+    ]);
+  });
+
+  it('ignores turn.steer for non-user origins and for turns that are not running', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 5, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 5, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'backgrounded output' }],
+        origin: { kind: 'injection', variant: 'shell_command_backgrounded' },
+      }),
+    );
+    expect(turnOps('t5', tx.getItems()).steps[0]?.frames).toHaveLength(0);
+
+    feed(ev({ type: 'turn.step.completed', turnId: 5, step: 1 }));
+    feed(ev({ type: 'turn.ended', turnId: 5, reason: 'completed' }));
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'too late' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    expect(
+      turnOps('t5', tx.getItems()).steps.flatMap((step) => step.frames),
+    ).toHaveLength(0);
+  });
+
+  it('flushes a pending steer into the last step when the turn ends before the next step', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 6, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 6, step: 1 }));
+    feed(ev({ type: 'turn.step.completed', turnId: 6, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'last word' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'last word' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 6, reason: 'cancelled', interruptReason: 'user_cancelled' }));
+
+    const turn = turnOps('t6', tx.getItems());
+    const lastStep = turn.steps.at(-1);
+    expect(lastStep?.frames.at(-1)).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'last word',
+      promptIds: ['p2'],
+    });
+  });
+
+  it('buffers turn.steer seen before the projector ever saw turn.started (mid-turn attach)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: ProjectorBusEvent): void => {
+      ops.push(...projector.map(event));
+    };
+
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'steered mid-attach' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'steered mid-attach' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    expect(ops).toHaveLength(2);
+    expect(ops.every((op) => op.op === 'prompt.upsert')).toBe(true);
+
+    feed(ev({ type: 'turn.step.started', turnId: 3, step: 2 }));
+    const frameOp = ops.find((op) => op.op === 'frame.upsert');
+    expect(frameOp).toMatchObject({
+      turnId: 't3',
+      stepId: 't3.2',
+      frame: { kind: 'text', role: 'user', text: 'steered mid-attach', promptIds: ['p2'] },
+    });
+  });
+
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
     const service = new TranscriptService({
       homeDir: '/nonexistent-home',
@@ -2118,6 +2309,36 @@ describe('AgentTranscriptProjector', () => {
       expect(
         turn.steps.flatMap((step) => step.frames).some((f) => f.kind === 'text' && f.role === 'user'),
       ).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot folds a steered user message into its turn instead of opening a new one', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 2000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'steered in' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 4000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      const turn = turns[0];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.steps).toHaveLength(2);
+      expect(turn.steps[1]?.frames[0]).toMatchObject({
+        kind: 'text',
+        role: 'user',
+        text: 'steered in',
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }

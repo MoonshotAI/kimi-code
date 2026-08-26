@@ -498,6 +498,88 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
   });
 
+  it('folds a user message whose content matches a turn.steer record into the current turn as a user frame', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+    );
+
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+    });
+  });
+
+  it('keeps a trailing steered message visible by appending it to the last step', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+    );
+
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const lastStep = turn.steps.at(-1);
+    expect(lastStep?.frames.at(-1)).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+    });
+  });
+
+  it('flushes a pending steer into the closing turn when a new turn opens before any reply', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'user', content: [{ type: 'text', text: 'next question' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+    );
+
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns).toHaveLength(2);
+    const first = turns[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    expect(first.steps.at(-1)?.frames.at(-1)).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+    });
+    const second = turns[1];
+    if (second?.kind !== 'turn') throw new Error('expected turn');
+    expect(second.prompt).toBe('next question');
+  });
+
+  it('still opens its own turn for a mid-conversation user message unknown to the steer map', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'plain follow-up' }], toolCalls: [], origin: { kind: 'user' } },
+      ],
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+    );
+
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'turn']);
+  });
+
   it('stops folded notification text before child output blocks', () => {
     const xml = [
       '<notification id="task:task-9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task-9">',

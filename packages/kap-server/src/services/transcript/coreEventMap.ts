@@ -7,7 +7,7 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { ContentPart, ContextUndone, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -17,7 +17,7 @@ import type {
   TurnStepInterrupted,
   TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
@@ -99,6 +99,7 @@ type PromptStartedEvent = { readonly type: 'prompt.started' } & PromptStarted;
 type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptCompleted;
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
 type PromptSteeredEvent = { readonly type: 'prompt.steered' } & PromptSteered;
+type TurnSteerEvent = { readonly type: 'turn.steer' } & TurnSteer;
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
@@ -135,6 +136,7 @@ export type ProjectorBusEvent =
   | PromptCompletedEvent
   | PromptAbortedEvent
   | PromptSteeredEvent
+  | TurnSteerEvent
   | ({ readonly type: 'hook.result' } & HookResult)
   | ({ readonly type: 'skill.activated' } & SkillActivated)
   | ({ readonly type: 'plugin_command.activated' } & PluginCommandActivated)
@@ -185,8 +187,11 @@ export class AgentTranscriptProjector {
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
+  private pendingSteers: { input: readonly ContentPart[]; promptIds: readonly string[] | undefined }[] = [];
+  private unpairedSteerPromptIds: string[][] = [];
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
+  private attachmentOrdinal = 0;
   private openText: OpenTextFrame | undefined;
   private openThinking: OpenTextFrame | undefined;
   private readonly toolFrames = new Map<string, ToolFrameRecord>();
@@ -294,6 +299,8 @@ export class AgentTranscriptProjector {
         return this.onPromptAborted(event);
       case 'prompt.steered':
         return this.onPromptSteered(event);
+      case 'turn.steer':
+        return this.onTurnSteered(event);
       case 'hook.result':
         return [this.markerOp('hook', restOf(event))];
       case 'skill.activated':
@@ -356,6 +363,7 @@ export class AgentTranscriptProjector {
     };
     this.currentStep = undefined;
     this.pendingTaskNotifications = [];
+    this.pendingSteers = [];
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
@@ -379,6 +387,12 @@ export class AgentTranscriptProjector {
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
+    if (this.currentStep !== undefined) {
+      for (const pending of this.pendingSteers) {
+        this.steerUserFrame(ops, turnId, this.currentStep.stepId, pending.input, pending.promptIds);
+      }
+    }
+    this.pendingSteers = [];
     const prev =
       this.currentTurn?.turnId === turnId ? this.currentTurn : this.lookups?.turn?.(turnId);
     const state = mapTurnEndState(event.reason);
@@ -442,6 +456,7 @@ export class AgentTranscriptProjector {
       startedAt: nowIso(),
     };
     this.frameOrdinal = 0;
+    this.attachmentOrdinal = 0;
     this.openText = undefined;
     this.openThinking = undefined;
     const ops: TranscriptOperation[] = [{ op: 'step.upsert', turnId, step: this.currentStep }];
@@ -460,6 +475,10 @@ export class AgentTranscriptProjector {
       });
     }
     this.pendingTaskNotifications = [];
+    for (const pending of this.pendingSteers) {
+      this.steerUserFrame(ops, turnId, stepId, pending.input, pending.promptIds);
+    }
+    this.pendingSteers = [];
     return ops;
   }
 
@@ -1335,6 +1354,7 @@ export class AgentTranscriptProjector {
       steeredAt: event.steeredAt,
     }));
     ops.push({ op: 'prompt.upsert', prompt: active });
+    this.unpairedSteerPromptIds.push([...event.promptIds]);
     for (const promptId of event.promptIds) {
       const steered = this.upsertPrompt(promptId, (prev) => ({
         promptId,
@@ -1348,6 +1368,62 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'prompt.upsert', prompt: steered });
     }
     return ops;
+  }
+
+  private onTurnSteered(event: TurnSteerEvent): TranscriptOperation[] {
+    const origin = event.origin;
+    if (origin?.kind !== 'user') return [];
+    const turn = this.currentTurn;
+    if (turn !== undefined && turn.state !== 'running') return [];
+    const skip = origin.skillActivations?.length ?? 0;
+    const input = skip > 0 ? event.input.slice(skip) : event.input;
+    const step = this.currentStep;
+    if (step !== undefined && step.state === 'running') {
+      const ops: TranscriptOperation[] = [];
+      this.steerUserFrame(ops, step.turnId, step.stepId, input, this.unpairedSteerPromptIds.shift());
+      return ops;
+    }
+    this.pendingSteers.push({ input, promptIds: this.unpairedSteerPromptIds.shift() });
+    return [];
+  }
+
+  private steerUserFrame(
+    ops: TranscriptOperation[],
+    turnId: string,
+    stepId: string,
+    input: readonly ContentPart[],
+    promptIds: readonly string[] | undefined,
+  ): void {
+    const texts: string[] = [];
+    const attachmentIds: string[] = [];
+    for (const part of input) {
+      if (part.type === 'text') {
+        texts.push(part.text);
+        continue;
+      }
+      const ref = daemonFileRefFromPart(part);
+      if (ref === undefined) continue;
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${stepId}.att${++this.attachmentOrdinal}`,
+        mediaType: `${ref.kind}/*`,
+        source: { kind: 'session_media', fileId: ref.ref.fileId },
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
+    }
+    ops.push({
+      op: 'frame.upsert',
+      turnId,
+      stepId,
+      frame: {
+        kind: 'text',
+        frameId: `${stepId}.f${++this.frameOrdinal}`,
+        role: 'user',
+        text: texts.join(''),
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        promptIds,
+      },
+    });
   }
 
   private upsertPrompt(
