@@ -34,7 +34,7 @@
 
 结论：track 缝做完后 4 文件**全部留 app 侧**，native-todos 的分叉面登记同步更新（track 不再构成分叉）。
 
-### 2.3 裸 provide key 的 provide / inject 矩阵（8 个——初查 5 个，codex review 后全量普查补 3 个）
+### 2.3 裸 provide key 的 provide / inject 矩阵（8 个——初查 5 个，评审复核后全量普查补 3 个）
 
 | key | provide 方 | inject 方 | 类型 |
 |---|---|---|---|
@@ -77,7 +77,7 @@ key 落位：`ResolveImageKey` 放 **app-core/contracts**（与 `ResolveImage` �
    export const SubagentEffortKey: InjectionKey<(effort: string | undefined) => string | undefined> = Symbol('subagentEffort');
    ```
 2. provide/inject 全部改指 key（约 30 处：两端 App.vue ×4、两端 ConversationPane ×6、包内 SideChatPanel / AgentDetailPanel / FilePreview / ToolDisclosure / AgentTool / ChatPane / ThinkingBlock / TurnFold / ActivityRun / SwarmTool / SubagentGrid / TasksPane、app-markdown Markdown.vue）；inject 的默认值参数保留。
-3. 命名沿用 camelCase Symbol 描述（与 KimiWebClientFacadeKey 既有风格一致）；普查方法教训：泛型 inject 的字符串 key 不能用 `inject\([^)]*'key'` 之类的窄模式搜，要按 key 名全仓扫（初查漏了 SwarmTool / SubagentGrid / TasksPane / ChatPane / ThinkingBlock / TurnFold / ActivityRun / Markdown.vue，codex review 兜住）。
+3. 命名沿用 camelCase Symbol 描述（与 KimiWebClientFacadeKey 既有风格一致）；普查方法教训：泛型 inject 的字符串 key 不能用 `inject\([^)]*'key'` 之类的窄模式搜，要按 key 名全仓扫（初查漏了 SwarmTool / SubagentGrid / TasksPane / ChatPane / ThinkingBlock / TurnFold / ActivityRun / Markdown.vue，评审兜住）。
 
 ### 工作 3：facade 死 provide 删除
 

@@ -2892,34 +2892,12 @@ function openPr(url: string): void {
   --panel-head-inset: calc((var(--panel-head-h) - var(--icon-button-sm)) / 2);
 }
 
-/* Sidebar collapsed (desktop): the conversation header pads left so its
-   content clears the floating sidebar toggle (.sidebar-toggle-btn) and the
-   new-chat shortcut (.new-chat-btn) beside it — plus the macOS traffic lights
-   on desktop builds. Animated in step with the sidebar width transition.
-   Cross-component rule (ChatHeader renders the header), so it lives in this
-   global block. */
-.app:not(.mobile) .chat-header {
-  transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.app.sidebar-collapsed .chat-header {
-  padding-left: 78px;
-}
-.app.sidebar-collapsed.windows-desktop .chat-header {
-  padding-left: var(--space-4);
-}
-.app.sidebar-collapsed.macos-desktop .chat-header {
-  padding-left: 146px;
-}
-/* Full-screen follow-up to the rule above: with the traffic lights hidden the
-   buttons shift to the window edge (toggle at 16px, new-chat at 42px), so the
-   header padding falls back to the non-mac collapsed value. */
-.app.fullscreen.sidebar-collapsed.macos-desktop .chat-header {
-  padding-left: 78px;
-}
 /* The session admin page's head occupies the same top strip as the
    conversation header — same clearance while the sidebar is collapsed
    (Windows needs none: its toggle lives in the global titlebar). Only the
-   head pads: the page body (filters + table) always spans the full pane. */
+   head pads: the page body (filters + table) always spans the full pane.
+   (The .chat-header clearance rules moved into ChatHeader's scoped styles,
+   P22.) */
 .app.sidebar-collapsed .session-admin .sa-head {
   padding-left: 78px;
 }

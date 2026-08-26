@@ -38,7 +38,7 @@
 - 一期拆解期顺手修复清单残余（2026-08-25 复核仍在）：`useTaskPoller.ts` 整表替换（~:74）、`errorName`/`errorMessage` 双份、`PersistSessionProfilePatch` 双定义、facade 死 provide（`KimiWebClientFacadeKey` 有 provide 零 inject）。
 
 **B. 组件层双端分叉（一期未覆盖的最大债）**
-- 共享组件 2026-08-25 复测（`components/` + `views/` 同名 .vue）：**73 个零真实差异**（33 个字节级相同 + 40 个只差首行 provenance 注释）+ 30 个真实分叉 + 2 个 web 独有，可零逻辑改动下沉的部分两端各维护一份。
+- 共享组件 2026-08-25 复测（`components/` + `views/` 同名 .vue）：~~73 个零真实差异~~ **已随 P17 全量下沉 `@moonshot-ai/app-components`（79 个 .vue：73 零差异 + 4 解锁 + 2 试点，#355/#357）**；剩余 25 个真实分叉（track 缝 4 个归 P18、Composer 归 P19、OpenInMenu 归 P20 等）+ 2 个 web 独有 + 9 个 desktop 独有。
 - 真实分叉的最大来源是 **telemetry 内联调用**（`import { track }` 撒在 15 个组件文件里）——P6 建的 ProductTracker 注入组件层没用上（组件侧 `contracts.track` 使用为 0）；其次 v-if 包裹的原生块（合理）。
 - 08-20 登记的三条行为级漂移，复测两条已修复（web Composer 已迁 app-composer 的 ProseMirror、`command` emit 已补 `skillName`）；`ApprovalCard` 两端仍有 106 行差异（iOS 视口修复等只在一端）。`AttachmentChip.vue` 两端已删除。
 - **CI 无任何防漂移检查**；kimi-code 仓 `apps/kimi-web` 第三份冻结副本仍在。
@@ -50,7 +50,7 @@
 
 **D. Vue 现代化欠账**
 - `defineModel` 0 次 vs 22 个文件手写 modelValue 对（app-ui 全部表单控件）；`defineSlots` 0 次（36 个插槽口无类型）；`useTemplateRef` 0 次（319 个字符串模板 ref）；facade 返回装 ref 的普通对象字面量 → 模板 `.value` 汤（App.vue 188 处，desktop，2026-08-25 复测）；`onWatcherCleanup` 0 次；AbortController 0 次（247 处监听器手工配对）。
-- `ProviderForm.vue:340` 可编辑可删除表单行用 index 作 key——**真 bug**（2026-08-25 复核仍在）。
+- ~~`ProviderForm.vue:340` 可编辑可删除表单行用 index 作 key——**真 bug**~~（已随 P13 #350 修复：WeakMap 稳定行 key）。
 
 **E. 数据层与协议（#279 主线 transcript 迁移后重写，2026-08-25）**
 - #279 已完成 Phase 0–3：主对话消息流改由 transcript 协议驱动，`messagesBySession` 切片与 `agentEventProjector`/`eventReducer` 的消息路径已删除（两文件保留，只剩全局事件 / agent 生命周期 / BTW 侧聊）；`frameClassifier` 仍在，但只分类上述剩余帧。
@@ -107,19 +107,19 @@
 | P10 | models store | 2026-08-18 | 同上 |
 | P11 | approvals store | 2026-08-18 | 同上 |
 | P12 | files store | 2026-08-18 | 同上 |
+| P13 | 护栏与快赢批次（build job / 错误边界 / ProviderForm key / provenance 注释清理） | 2026-08-25 | #345 / #346 / #348 / #350 |
+| P17 | `packages/app-components` 第一批：支撑模块 + 79 个零差异组件下沉 | 2026-08-25 | #355 / #357 |
+| P18 | 组件 telemetry 走 contracts 缝（4 文件收口，不下沉）+ 8 个 provide key InjectionKey 化 + facade 死 provide 删除 | 2026-08-25 | #369 |
+| P20 | OpenInMenu 统一 + OpenInService 注入缝（web 不实现） | 2026-08-26 | #382 |
 
-**待执行（P13–P35）**：
+**待执行（P14–P35）**：
 
 | PR | 阶段 | 规模 | 依赖 |
 |---|---|---|---|
-| P13 | 护栏与快赢批次（build job / 错误边界 / ProviderForm key / provenance 注释清理） | 中 | — |
 | P14 | workspace store（原一期 P13 原样承接） | 中 | — |
 | P15 | prompt store（原一期 P14 原样承接） | 中 | P14 |
 | P16 | connection store + SessionRuntime 容器化（原一期 P15 扩大；先补测试保护网 P33） | 大 | P15 |
-| P17 | `packages/app-components` 第一批：零差异组件文件机械下沉（73 个，按当日重测） | 中 | P13 |
-| P18 | 组件 telemetry 走 ProductTracker + provide 纪律清理 | 中 | P17 |
 | P19 | Composer 壳合一 + 下沉（web ProseMirror 迁移已完成） | 中 | P17 |
-| P20 | OpenInMenu 注入式 catalog provider 统一 | 中 | P17 |
 | P21 | Sidebar 拆分（StatusTabs/SessionList/WorkspaceDirectory + 单一 DnD） | 中 | P17 |
 | P22 | DesignSystemView 收敛 desktop 单份正本 + App.vue 全局样式反穿清除 | 小 | — |
 | P23 | 滚动引擎提取 `useTranscriptScroll`（原一期 P17 前半，虚拟化前置） | 大 | — |
@@ -136,11 +136,13 @@
 | P34 | kap-server utilityProcess 隔离评估 + POC | 中 | — |
 | P35 | 收尾：约定核对（原一期 P18）+ kimi-web 第三副本删除推动 + 3.6/Vapor 评估 | 小 | 全部 |
 
-**并行线**：线 ① P14→P15→P16（god object 收尾，一期主线）；线 ② P17→P18/P19/P20/P21（组件下沉）+ P22（DesignSystemView 单源化，无下沉依赖）；线 ③ P23→P30（滚动与性能）；线 ④ P26/P28/P29（现代化与协议）。P13 与 P33 先行，四条线之后可并行推进。
+**并行线**：线 ① P14→P15→P16（god object 收尾，一期主线）；线 ② P18/P19/P20/P21（组件下沉，P17 已落地）+ P22（DesignSystemView 单源化，无下沉依赖）；线 ③ P23→P30（滚动与性能）；线 ④ P26/P28/P29（现代化与协议）。P13 已完成；P33 与线 ① 线 ② 可并行推进。
 
 ## 4. 阶段明细
 
-### P13 — 护栏与快赢批次
+### P13 — 护栏与快赢批次 ✅ 已完成（2026-08-25）
+
+> 落地：#345（provenance 注释清理）/ #346（CI build job）/ #348（错误边界三件套）/ #350（快赢批次：ProviderForm WeakMap 行 key、useTaskPoller pollGate computed、open-external scheme 白名单、删死 channel onMenu/kimi:menu）。CI drift guard 上了又撤（决策见下）。评审三条有效意见已修（AsyncLoadError 删除、DesignSystemView/SettingsDialog 边界补 closable、trace.ts 加 vue:error 常驻导出）。
 
 先上护栏再动工，防止治理期间新债继续产生。可拆 3-4 个小 PR：
 
@@ -164,7 +166,9 @@
 
 验收：一期标准模板 + P33 新保护网全绿 + 浏览器实测双端断线重连冒烟。
 
-### P17 — app-components 第一批：机械下沉
+### P17 — app-components 第一批：机械下沉 ✅ 已完成（2026-08-25）
+
+> 落地：#355（包骨架 + 10 个支撑模块 + 2 个 riv 资产 + KimiMascot/KimiDoodle 试点；`toolMeta`/`activitySummary` 改走 app-client deps `t` 缝，barrel 补 `getKimiWebApi`/`t` 导出）/ #357（77 个 .vue + toolRegistry 全量下沉，−23.7k 行副本；SessionRow/ThinkingBlock/ToolDisclosure 经 `contracts.track` 缝解锁，SelectionActionBubble 注释中立化；新增 `./support` 纯模块子路径供 node 测试；check-style 豁免键全量重挂 `app-components/` 前缀）。实施文档：`docs/plans/2026-08-25-p17-app-components-batch1.md`。验收：五件套（test 3782→3805 随 main 涨 / typecheck / lint / check:style 基线 25 零新增 / build）+ 双端冒烟巡检（web 17 面：多标签侧栏/transcript/工具链/搜索/设置/供应商表单/admin 页/亮暗色；desktop：原生终端 PTY、设置 desktop 专属区、OpenIn pill）全绿。P18 范围因此缩小：SessionRow/ThinkingBlock/ToolDisclosure 的 track 缝已在本阶段做完。
 
 - 新建 `packages/app-components`（deps：app-ui / app-client / app-core / app-i18n / app-markdown；peer vue）。**先定包名与依赖面再动工**（参照本计划 P4 的教训：两端 package.json 必须显式声明 workspace 依赖；约束条目随本阶段更新 AGENTS.md，不等收尾）。
 - 下沉零差异文件（2026-08-25 复测 73 个：字节一致 33 + 仅首行 40；执行时以当日重测清单为准）：`tool-calls/`（16/17）、`dialogs/`、`admin/`、`mobile/MobileTopBar`、`debug/` 等，git mv 保历史，两端 import 批量改指包。
@@ -172,7 +176,9 @@
 
 验收：五件套 + 双端全量页面人工巡检一遍（这是组件层第一次大搬家）。
 
-### P18 — 组件 telemetry 走 ProductTracker + provide 纪律
+### P18 — 组件 telemetry 走 ProductTracker + provide 纪律 ✅ 已完成（2026-08-25，#369）
+
+> 落地：track 缝 4 文件收口（desktop 16 处 + web 镜像 12 处）；**8 个**裸 provide key InjectionKey 化（初查 5 个，评审复核后全量普查补 `resolveAgentModel`/`resolveAgentTaskState`/`resolveSwarmMembers` 及多处漏转 inject；`ResolveImageKey` 落 app-core/contracts 与接口同处）；`KimiWebClientFacadeKey` 死 provide 删除（文件 + 双端 provide）。
 
 - 组件内 `import { track }` 全部改走 `contracts.track`（P6 registry 已就绪，web no-op 即现状）：~~ChatHeader / ApprovalCard / SessionRow / UserMenu / Sidebar 的 diff 因此归零，随改随下沉~~（**2026-08-25 执行修正**：SessionRow 已随 P17 做掉；剩余 4 文件的分叉主体是 OpenIn/终端/keymap/statusTab 等已登记真实分叉，track 只占小头——本阶段只做缝收口，**4 文件均不下沉**，由 P19–P21 结构性统一承接；web 镜像仅限共享代码路径的调用：ChatHeader 9 + UserMenu 3，ApprovalCard/Sidebar 的 desktop 专属路径调用不移植）。实施文档：`docs/plans/2026-08-25-p18-track-seam-and-injection-keys.md`。
 - 5 个裸字符串 provide key 全部 `InjectionKey<T>` 化（进 `app-client/contracts`）；`KimiWebClientFacadeKey` 删除死 provide（零 inject 实证，类型本身也零引用，整文件删除）。
@@ -185,9 +191,11 @@
 - Composer 壳合一后下沉 app-components；编辑器内核两端已同为 app-composer，无需再抽象 `ComposerEditor` 接口，残留差异按规范文档规则「包内分支，不再整文件分叉」收口。
 - 与 P25 的边界：P19 只做「两端合一 + 下沉」，拆分在 P25 做（先合一再拆，拆解只做一次）。
 
-### P20 — OpenInMenu 注入式统一
+### P20 — OpenInMenu 注入式统一 ✅ 已完成（2026-08-26，#382）
 
-定义 `OpenInService`（catalog 列表 + 执行 + 图标解析）InjectionKey：web 实现 = daemon `availableApps` + 现有回退；desktop 实现 = `listNativeOpenInApps` + 图标 map，**探测不到原生桥时返回空 catalog、UI 隐藏整个 Open In 入口——这就是既定降级**，不回退 daemon 路径。props 形态两端已近乎一致，分叉只是数据源。合一后下沉。
+> 落地：`OpenInServiceKey`（catalog/open/icon）注入缝；OpenInMenu 以 desktop pill 为正本下沉 app-components（catalog 改从服务加载、空 catalog 自隐藏）；默认目标持久化三件套随包 `lib/openInTarget.ts` 单源（pill↔设置页同 tick 同步）；ChatHeader/WorkspaceHome 的 OpenIn 分叉块消失。**用户决策：web 端不实现**（不注册 daemon 服务、不挂载 UI；初版「注册但不挂载」实现已删）；启用要点留档实施文档。修正主计划口径：「props 近乎一致」已过时（desktop pill 重写后 324 行整文件分叉）、web 从未挂载过该组件（死代码删除）。评审处置：分段 pill 登记为第五个结构性例外（AGENTS.md + 两端 DesignSystemView）。
+
+定义 `OpenInService`（catalog 列表 + 执行 + 图标解析）InjectionKey：~~web 实现 = daemon `availableApps` + 现有回退~~（**2026-08-26 用户决策：web 不实现**）；desktop 实现 = `listNativeOpenInApps` + 图标 map，**探测不到原生桥时返回空 catalog、UI 隐藏整个 Open In 入口——这就是既定降级**，不回退 daemon 路径。~~props 形态两端已近乎一致，分叉只是数据源。~~合一后下沉。
 
 ### P21 — Sidebar 拆分
 
@@ -323,7 +331,7 @@ kimi-code 仓的 `apps/kimi-web` 是第三份冻结副本，明显漂移（2026-
 
 - 产物：`docs/specs/2026-08-01-renderer-architecture.md`（目标架构、归属矩阵、注入缝、平台分叉规则、组件化标准、store 规范、迁移期纪律、PR 验收模板）。
 - 文档引用的反例已在代码中逐一核实：四个裸字符串 provide key（`pinScroll` / `resolveImage` / `resolveAgentTaskId` / `resolveSwarmMembers`）、`MobileSwitcherSheet` 复制 `SessionRow`、`ServerAuthDialog` 硬编码字符串。
-- 2026-08-05 按 Codex review（#184，7 条 P2）修订总计划与规范：① AGENTS.md / apps/web 约定的更新从 P18 拆到约束实际变化的阶段（P4 放行 app-client 依赖、P8 解除 no-Pinia），P18 降为一致性核对；② P3 删除"t 注入顺带修复切语言不更新"的过度承诺（注入只影响新事件，正经修法是存 key/params 或重投影，列为已知问题）；③ P4 补"注入缝先行"（`useTerminal`/`useFilePreview` 等依赖 app api 单例或 vue-i18n，非纯移动）与两端 package.json 必须声明 app-client/pinia；④ P5 修正 iconsDir 推导建议（exports map 下 `import.meta.resolve('…/package.json')` 会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，需显式 export）；⑤ spec 归属矩阵澄清 config 只下沉纯 builder，runtime config 留两端接线层；⑥ 台账 P1 条目在代码 PR 合并前标「进行中」，避免后续执行者误判基线。
+- 2026-08-05 按评审意见（#184，7 条 P2）修订总计划与规范：① AGENTS.md / apps/web 约定的更新从 P18 拆到约束实际变化的阶段（P4 放行 app-client 依赖、P8 解除 no-Pinia），P18 降为一致性核对；② P3 删除"t 注入顺带修复切语言不更新"的过度承诺（注入只影响新事件，正经修法是存 key/params 或重投影，列为已知问题）；③ P4 补"注入缝先行"（`useTerminal`/`useFilePreview` 等依赖 app api 单例或 vue-i18n，非纯移动）与两端 package.json 必须声明 app-client/pinia；④ P5 修正 iconsDir 推导建议（exports map 下 `import.meta.resolve('…/package.json')` 会抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`，需显式 export）；⑤ spec 归属矩阵澄清 config 只下沉纯 builder，runtime config 留两端接线层；⑥ 台账 P1 条目在代码 PR 合并前标「进行中」，避免后续执行者误判基线。
 - 无 changeset（纯文档）。
 
 ### P1 — 已完成（2026-08-05 开 PR；2026-08-11 #185 合入 main squash 20964142）

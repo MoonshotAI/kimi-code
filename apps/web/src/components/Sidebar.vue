@@ -2,7 +2,7 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { visibleOpenGroups } from '@moonshot-ai/app-core/lib';
@@ -24,7 +24,6 @@ import {
   looksLikeFolderDrag,
 } from '@moonshot-ai/app-core/lib';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
-import { ErrorBoundary } from '@moonshot-ai/app-components';
 import { SearchSessionsDialog } from '@moonshot-ai/app-components';
 import RcDeviceSwitcher from './RcDeviceSwitcher.vue';
 import UserMenu from './UserMenu.vue';
@@ -1059,45 +1058,13 @@ function blinkOnce(): void {
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
 
-// Logo long-press easter-egg: holding the Kimi mark for 1 second opens the
-// design system as a full-screen overlay. A short click still just blinks.
-// Pointer capture keeps the hold alive even if the pointer drifts off the mark.
-const DesignSystemView = defineAsyncComponent({
-  loader: () => import('../views/DesignSystemView.vue'),
-  timeout: 30_000,
-});
-const showDesignSystem = ref(false);
-const EGG_HOLD_MS = 1000;
-let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
-let logoLongPressed = false;
-
-function onLogoPointerDown(event: PointerEvent): void {
-  logoLongPressed = false;
-  clearTimeout(logoPressTimer);
-  (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-  logoPressTimer = setTimeout(() => {
-    logoLongPressed = true;
-    showDesignSystem.value = true;
-  }, EGG_HOLD_MS);
-}
-
-function onLogoPointerUp(event: PointerEvent): void {
-  clearTimeout(logoPressTimer);
-  const el = event.currentTarget as HTMLElement;
-  if (el.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId);
-}
-
+// A short click on the logo just blinks (the long-press design-system egg was
+// retired with the web copy of DesignSystemView, P22).
 function onLogoClick(): void {
-  if (logoLongPressed) {
-    logoLongPressed = false;
-    return;
-  }
   blinkOnce();
 }
 
-onBeforeUnmount(() => {
-  clearTimeout(logoPressTimer);
-});
+
 </script>
 
 <template>
@@ -1130,7 +1097,7 @@ onBeforeUnmount(() => {
                  .ch-eyes/.ch-eye classes hook the shared idle look/blink
                  keyframes in style.css (the eyes are mask cutouts, so animating
                  them moves the transparent holes). -->
-            <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+            <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick">
               <defs>
                 <mask id="kimiEyes" maskUnits="userSpaceOnUse">
                   <rect x="0" y="0" width="32" height="22" fill="#fff" />
@@ -1719,9 +1686,6 @@ onBeforeUnmount(() => {
          which breaks v-show on the host (Vue can't apply display:none to a
          Fragment). Teleport still renders to body regardless of placement. -->
     <Teleport to="body">
-      <ErrorBoundary v-if="showDesignSystem" fullscreen closable @close="showDesignSystem = false">
-        <DesignSystemView @close="showDesignSystem = false" />
-      </ErrorBoundary>
     </Teleport>
   </aside>
 </template>

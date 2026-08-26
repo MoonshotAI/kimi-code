@@ -487,6 +487,30 @@ function toggleTerminalPanel(): void {
 .chat-header.macos-desktop input {
   -webkit-app-region: no-drag;
 }
+/* Sidebar-collapsed clearance (moved from App.vue's unscoped global block,
+   P22): the header pads left so its content clears the floating sidebar
+   toggle (.sidebar-toggle-btn) and the new-chat shortcut (.new-chat-btn)
+   beside it — plus the macOS traffic lights on desktop builds. Animated in
+   step with the sidebar width transition. (Whole selector wrapped in :global:
+   the functional form drops any descendant outside its argument.) */
+:global(.app:not(.mobile) .chat-header) {
+  transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+:global(.app.sidebar-collapsed .chat-header) {
+  padding-left: 78px;
+}
+:global(.app.sidebar-collapsed.windows-desktop .chat-header) {
+  padding-left: var(--space-4);
+}
+:global(.app.sidebar-collapsed.macos-desktop .chat-header) {
+  padding-left: 146px;
+}
+/* Full-screen follow-up: with the traffic lights hidden the buttons shift to
+   the window edge (toggle at 16px, new-chat at 42px), so the padding falls
+   back to the non-mac collapsed value. */
+:global(.app.fullscreen.sidebar-collapsed.macos-desktop .chat-header) {
+  padding-left: 78px;
+}
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
 .ch-ws { color: var(--color-text-muted); font-size: var(--text-base); font-weight: var(--weight-medium); flex: none; }
 .ch-sep { color: var(--color-text-faint); flex: none; }
