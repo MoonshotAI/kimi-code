@@ -383,14 +383,16 @@ export class BashTool implements IBashTool {
     scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
+    const detachedByUser = scenario === 'foreground_detached_by_user' ? 'detached_by_user: true\n' : '';
     const metadata =
       `task_id: ${taskId}\n` +
       `pid: ${String(proc.pid)}\n` +
       `description: ${description}\n` +
       `status: ${status}\n` +
+      detachedByUser +
       `automatic_notification: true\n` +
       this.nextStepLines(scenario) +
-      'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
+      'human_shell_hint: The task is visible in the background-task panel.';
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
