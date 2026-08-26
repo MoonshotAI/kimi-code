@@ -150,7 +150,7 @@ function resetHint(row: UsageRow): string {
           <span class="pu-label">{{ t('settings.planUsage.boosterBalance') }}</span>
         </span>
         <span class="pu-value">
-          {{ money(wallet.balanceCents, wallet.currency) }}<span class="pu-value-sub"> / {{ money(wallet.totalCents, wallet.currency) }}</span>
+          {{ money(wallet.balanceCents, wallet.currency) }}
         </span>
       </div>
     </div>
