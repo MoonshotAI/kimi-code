@@ -231,12 +231,12 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
 }
 
 /** Accepted range for `/compact-threshold`; the engine re-validates authoritatively. */
-const COMPACT_THRESHOLD_MIN = 0.25;
+const COMPACT_THRESHOLD_MIN = 0.05;
 const COMPACT_THRESHOLD_MAX = 0.99;
 /** Built-in auto-compaction trigger ratio used when neither override nor config sets one. */
 const COMPACT_THRESHOLD_DEFAULT = 0.85;
 const COMPACT_THRESHOLD_USAGE =
-  'Usage: /compact-threshold [<ratio 0.25-0.99>|off] — with no argument, shows the current value.';
+  'Usage: /compact-threshold [<ratio 0.05-0.99>|off] — with no argument, shows the current value.';
 
 export async function handleCompactThresholdCommand(
   host: SlashCommandHost,

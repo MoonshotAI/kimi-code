@@ -362,7 +362,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'compact-threshold',
     aliases: [],
-    description: 'Show or set the per-session auto-compaction trigger ratio (0.25-0.99)',
+    description: 'Show or set the per-session auto-compaction trigger ratio (0.05-0.99)',
     priority: 80,
     argumentHint: '[<ratio>|off]',
     // Reading the effective threshold is always safe; changing it mid-turn

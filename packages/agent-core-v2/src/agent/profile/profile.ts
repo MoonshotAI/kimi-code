@@ -93,7 +93,7 @@ export interface ApplyProfileOptions {
  * `[loop_control] compaction_trigger_ratio` config value and to the
  * session-scoped override set through `setCompactionTriggerRatio`.
  */
-export const COMPACTION_TRIGGER_RATIO_MIN = 0.25;
+export const COMPACTION_TRIGGER_RATIO_MIN = 0.05;
 
 /** Highest accepted auto-compaction trigger ratio. */
 export const COMPACTION_TRIGGER_RATIO_MAX = 0.99;

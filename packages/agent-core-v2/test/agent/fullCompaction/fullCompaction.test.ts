@@ -1732,6 +1732,75 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('completes auto compaction when the blocked turn is cancelled', async () => {
+    const compactionRequested = deferred<void>();
+    const releaseCompaction = deferred<void>();
+    let llmCallCount = 0;
+    const generate: GenerateFn = async () => {
+      llmCallCount += 1;
+      if (llmCallCount === 1) {
+        compactionRequested.resolve();
+        await releaseCompaction.promise;
+        return textResult('Auto compacted summary.');
+      }
+      throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
+    ctx.appendExchange(2, 'old user two', 'old assistant two', 200);
+    ctx.appendExchange(3, 'recent user three', 'recent assistant three', 950_000);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Answer after compacting' }] });
+    await compactionRequested.promise;
+    ctx.rpc.cancel({});
+    releaseCompaction.resolve();
+
+    const events = await ctx.untilTurnEnd();
+    expect(countEvents(events, 'compaction.cancelled')).toBe(0);
+    expect(countEvents(events, 'full_compaction.complete')).toBe(1);
+    expect(eventIndex(events, 'full_compaction.complete')).toBeLessThan(
+      eventIndex(events, 'turn.ended'),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('freezes the turn while a low-threshold auto compaction runs after a step', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1_000_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 30_000);
+
+    await ctx.rpc.setCompactionTriggerRatio({ ratio: 0.05 });
+
+    ctx.mockNextResponse({ type: 'text', text: `big answer ${'y'.repeat(220_000)}` });
+    ctx.mockNextResponse({ type: 'text', text: 'Low threshold compacted summary.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'grow the context' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.started',
+        args: expect.objectContaining({ trigger: 'auto' }),
+      }),
+    );
+    expect(countEvents(events, 'compaction.cancelled')).toBe(0);
+    expect(countEvents(events, 'full_compaction.complete')).toBe(1);
+    expect(eventIndex(events, 'full_compaction.complete')).toBeLessThan(
+      eventIndex(events, 'turn.ended'),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('attributes background auto compaction to the turn that started it', async () => {
     const compactionRequested = deferred<void>();
     const releaseCompaction = deferred<void>();
@@ -2189,15 +2258,15 @@ describe('FullCompaction', () => {
     });
     // ~30% used (300k of a 1M window) plus the ~30k-token pending prompt
     // crosses a 0.3 session override, but stays far below the built-in
-    // 0.85 default and the 0.85 block ratio — only the override can fire,
-    // and the answer runs before the (non-blocking) compaction.
+    // 0.85 default — only the override can fire. Auto compaction now always
+    // blocks the step, so the compaction request runs before the answer.
     ctx.appendExchange(1, 'old user one', 'old assistant one', 300_000);
     const pendingPrompt = `override-pending-verbatim:${'x'.repeat(120_000)}`;
 
     await ctx.rpc.setCompactionTriggerRatio({ ratio: 0.3 });
 
-    ctx.mockNextResponse({ type: 'text', text: 'I can answer the override pending prompt.' });
     ctx.mockNextResponse({ type: 'text', text: 'Override compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer the override pending prompt.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: pendingPrompt }] });
     const events = await ctx.untilTurnEnd();
 
@@ -2209,15 +2278,15 @@ describe('FullCompaction', () => {
         args: expect.objectContaining({ trigger: 'auto' }),
       }),
     );
-    // Answer first (non-blocking path), then the compaction request — which
-    // must summarize the oversized pending prompt.
+    // Compaction first (blocking), then the answer over the compacted
+    // context — both must see the oversized pending prompt.
     expect(ctx.llmCalls).toHaveLength(2);
-    const [answerCall, compactionCall] = ctx.llmCalls;
-    expect(
-      answerCall?.history.map(messageText).some((text) => text.includes('override-pending-verbatim')),
-    ).toBe(true);
+    const [compactionCall, answerCall] = ctx.llmCalls;
     expect(
       compactionCall?.history.map(messageText).some((text) => text.includes('override-pending-verbatim')),
+    ).toBe(true);
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('override-pending-verbatim')),
     ).toBe(true);
   });
 

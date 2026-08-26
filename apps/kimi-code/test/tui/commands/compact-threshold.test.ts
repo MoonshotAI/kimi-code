@@ -89,18 +89,18 @@ describe('handleCompactThresholdCommand', () => {
     expect(host.showError).not.toHaveBeenCalled();
   });
 
-  it('accepts the new 0.25 minimum boundary', async () => {
+  it('accepts the new 0.05 minimum boundary', async () => {
     const { host, session } = makeHost();
 
-    await handleCompactThresholdCommand(host, '0.25');
+    await handleCompactThresholdCommand(host, '0.05');
 
-    expect(session.setCompactionTriggerRatio).toHaveBeenCalledWith(0.25);
+    expect(session.setCompactionTriggerRatio).toHaveBeenCalledWith(0.05);
   });
 
-  it('rejects values below 0.25 without touching the session', async () => {
+  it('rejects values below 0.05 without touching the session', async () => {
     const { host, session } = makeHost();
 
-    await handleCompactThresholdCommand(host, '0.1');
+    await handleCompactThresholdCommand(host, '0.04');
 
     expect(session.setCompactionTriggerRatio).not.toHaveBeenCalled();
     expect(host.showError).toHaveBeenCalledTimes(1);

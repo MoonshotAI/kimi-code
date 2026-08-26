@@ -196,8 +196,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }),
     );
     this._register(
-      this.loopService.hooks.onDidFinishStep.register('full-compaction', async (_ctx, next) => {
-        await this.afterStep();
+      this.loopService.hooks.onDidFinishStep.register('full-compaction', async (ctx, next) => {
+        await this.afterStep(ctx.signal, ctx.turnId);
         await next();
       }),
     );
@@ -555,15 +555,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private async beforeStep(signal: AbortSignal, turnId?: number): Promise<void> {
     this.activeTurnId = turnId;
     this.checkAutoCompaction();
-    if (this.strategy.shouldBlock(this.tokenCountWithPending())) {
+    if (this._compacting !== null || this.strategy.shouldBlock(this.tokenCountWithPending())) {
       await this.block(signal, turnId);
     }
   }
 
-  private async afterStep(): Promise<void> {
+  private async afterStep(signal?: AbortSignal, turnId?: number): Promise<void> {
     this.consecutiveOverflowCompactions = 0;
-    if (this.strategy.checkAfterStep) {
-      this.checkAutoCompaction(false);
+    if (this.strategy.checkAfterStep && this.checkAutoCompaction(false)) {
+      await this.block(signal, turnId);
     }
   }
 
@@ -610,6 +610,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private propagateBlockingAbort(active: ActiveCompaction, signal: AbortSignal | undefined): void {
+    if (active.trigger === 'auto') return;
     signal?.addEventListener(
       'abort',
       () => {

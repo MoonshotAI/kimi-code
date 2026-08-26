@@ -25,7 +25,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -228,9 +228,9 @@ beforeEach(() => {
 afterEach(() => disposables.dispose());
 
 describe('AgentProfileService.setCompactionTriggerRatio', () => {
-  it('rejects values below 0.25 (the widened minimum)', () => {
-    expect(() => svc.setCompactionTriggerRatio(0.24)).toThrow(ProfileError);
-    expect(() => svc.setCompactionTriggerRatio(0.2499)).toThrow(ProfileError);
+  it('rejects values below 0.05 (the widened minimum)', () => {
+    expect(() => svc.setCompactionTriggerRatio(0.04)).toThrow(ProfileError);
+    expect(() => svc.setCompactionTriggerRatio(0.0499)).toThrow(ProfileError);
   });
 
   it('rejects values above 0.99 and non-finite values', () => {
@@ -239,9 +239,9 @@ describe('AgentProfileService.setCompactionTriggerRatio', () => {
     expect(() => svc.setCompactionTriggerRatio(Number.POSITIVE_INFINITY)).toThrow(ProfileError);
   });
 
-  it('accepts the boundary values 0.25 and 0.99', () => {
-    svc.setCompactionTriggerRatio(0.25);
-    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.25);
+  it('accepts the boundary values 0.05 and 0.99', () => {
+    svc.setCompactionTriggerRatio(0.05);
+    expect(svc.getCompactionTriggerRatioOverride()).toBe(0.05);
     svc.setCompactionTriggerRatio(0.99);
     expect(svc.getCompactionTriggerRatioOverride()).toBe(0.99);
   });
@@ -294,8 +294,8 @@ describe('AgentProfileService compaction trigger ratio precedence', () => {
     expect(svc.getCompactionTriggerRatioOverride()).toBeUndefined();
   });
 
-  it('respects a config value at the new 0.25 minimum', () => {
-    configValues['loopControl'] = { compactionTriggerRatio: 0.25 };
-    expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.25);
+  it('respects a config value at the new 0.05 minimum', () => {
+    configValues['loopControl'] = { compactionTriggerRatio: 0.05 };
+    expect(svc.resolveModelContext().compactionTriggerRatio).toBe(0.05);
   });
 });
