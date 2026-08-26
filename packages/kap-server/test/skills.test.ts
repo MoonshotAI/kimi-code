@@ -329,6 +329,27 @@ describe('server-v2 /api/v1 skills', () => {
         type: 'text',
         text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — open it with the Read tool`,
       });
+
+      const transcript = await getJson<{
+        items: Array<{ kind: string; attachmentIds?: string[] }>;
+        attachments: Array<{
+          attachmentId: string;
+          mediaType: string;
+          name?: string;
+          size?: number;
+          source?: unknown;
+        }>;
+      }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+      const transcriptAttachments = transcript.body.data.attachments;
+      expect(transcriptAttachments).toHaveLength(1);
+      expect(transcriptAttachments[0]).toMatchObject({
+        mediaType: 'application/octet-stream',
+        name: 'note.txt',
+        size: noteBytes.length,
+      });
+      expect(transcriptAttachments[0]).not.toHaveProperty('source');
+      const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
+      expect(turn?.attachmentIds).toEqual([transcriptAttachments[0]!.attachmentId]);
     });
 
     it('rejects a relative attachment path on skill activation (40001)', async () => {

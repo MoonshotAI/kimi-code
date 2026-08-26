@@ -5,6 +5,7 @@ export interface SkillActivationInput {
   readonly name: string;
   readonly args?: string;
   readonly content?: readonly ContentPart[];
+  readonly attachments?: readonly PromptFileAttachment[];
 }
 
 export interface PromptSkillActivation {

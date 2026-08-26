@@ -833,6 +833,47 @@ describe('Agent loop', () => {
       ],
     ]);
   });
+
+  it('carries skill activation file attachments on turn.started promptAttachments', async () => {
+    const payloads: Array<TurnStarted['promptAttachments']> = [];
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      payloads.push(event.promptAttachments);
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'seen' });
+
+    const turn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'User activated the skill "check".' }],
+            toolCalls: [],
+            origin: {
+              kind: 'skill_activation',
+              activationId: 'act_1',
+              skillName: 'check',
+              trigger: 'user-slash',
+              attachments: [
+                {
+                  name: 'note.txt',
+                  mediaType: 'text/plain',
+                  size: 21,
+                  path: '/data/note.txt',
+                },
+              ],
+            },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await turn.result;
+    subscription.dispose();
+
+    expect(payloads).toEqual([
+      [{ kind: 'file', name: 'note.txt', mediaType: 'text/plain', size: 21, path: '/data/note.txt' }],
+    ]);
+  });
 });
 
 describe('turn telemetry', () => {

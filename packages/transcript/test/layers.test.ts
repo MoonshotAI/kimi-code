@@ -758,6 +758,43 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turn.attachmentIds).toEqual(['att_1']);
   });
 
+  it('folds origin file attachments on a skill activation message into path-sourced entities', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'User activated the skill "update-config".',
+          },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act_1',
+          skillName: 'update-config',
+          trigger: 'user-slash',
+          attachments: [
+            { name: 'note.txt', mediaType: 'text/plain', size: 21, path: '/data/note.txt' },
+          ],
+        } as { kind: string },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'text/plain',
+        name: 'note.txt',
+        size: 21,
+      },
+    ]);
+    const turn = snapshot.items[1];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
   it('maps persisted kimi-file media refs to attachments', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

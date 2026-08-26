@@ -395,7 +395,7 @@ interface OriginFileAttachment {
 }
 
 function originFileAttachments(message: HistoryMessage): readonly OriginFileAttachment[] {
-  if (message.origin?.kind !== 'user') return [];
+  if (message.origin?.kind !== 'user' && message.origin?.kind !== 'skill_activation') return [];
   const attachments = (message.origin as { readonly attachments?: unknown }).attachments;
   if (!Array.isArray(attachments)) return [];
   return attachments.filter(

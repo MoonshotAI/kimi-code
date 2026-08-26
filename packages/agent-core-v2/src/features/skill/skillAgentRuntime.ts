@@ -76,6 +76,7 @@ export class SkillRuntime {
         skillPath: skill.path,
         skillSource: skill.source,
         skillArgs: input.args,
+        attachments: input.attachments,
       },
       content,
     );

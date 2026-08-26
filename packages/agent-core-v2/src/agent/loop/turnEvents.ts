@@ -76,7 +76,7 @@ export function turnPromptAttachments(
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
     }
   }
-  if (origin?.kind === 'user') {
+  if (origin?.kind === 'user' || origin?.kind === 'skill_activation') {
     for (const attachment of origin.attachments ?? []) {
       attachments.push({ kind: 'file', ...attachment });
     }
