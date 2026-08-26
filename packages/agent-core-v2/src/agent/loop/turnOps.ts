@@ -146,7 +146,8 @@ export const turnKey = defineState(
       ...s,
       anchorTurnIds: s.anchorTurnIds.slice(0, Math.max(0, s.anchorTurnIds.length - e.count)),
       lastEnded:
-        lastEnded !== undefined && firstRemoved !== undefined && lastEnded.turnId >= firstRemoved
+        lastEnded !== undefined &&
+        (firstRemoved === undefined || lastEnded.turnId >= firstRemoved)
           ? undefined
           : lastEnded,
     };
