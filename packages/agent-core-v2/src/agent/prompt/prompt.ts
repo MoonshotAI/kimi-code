@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import type { Turn, TurnResult } from '#/agent/loop/loop';
+import type { Turn, TurnResult } from '#/features/loop/internal/loop';
 import type { ContentPart } from '#/kosong/contract/message';
 import type { Hooks } from '#/hooks';
 

@@ -17,7 +17,7 @@ import {
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { turnKey } from '#/agent/loop/turnOps';
+import { getLoopDurableState } from '#/features/loop/internal/access';
 import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
@@ -38,7 +38,7 @@ const MOCK_PROVIDER = {
 } as const;
 
 function turnCurrentId(ctx: ReturnType<typeof testAgent>): number {
-  return ctx.agentState.get(turnKey).nextTurnId - 1;
+  return (getLoopDurableState(ctx.agentContext)?.nextTurnId ?? 0) - 1;
 }
 
 describe('Agent resume', () => {

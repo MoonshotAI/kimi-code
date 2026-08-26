@@ -171,7 +171,7 @@ import {
   IAgentFullCompactionService,
   IAgentPluginService,
   IAgentLifecycleService,
-  IAgentLoopService,
+  AgentLoop,
   ISessionPermissionModeService,
   AgentPermissionRules,
   IAgentPluginCommandService,
@@ -1872,7 +1872,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async importContext(input: ImportContextRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     if (
-      agent.accessor.get(IAgentLoopService).status().state === 'running' ||
+      agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status() === 'running' ||
       agent.accessor.get(IAgentFullCompactionService).compacting !== null
     ) {
       throw new KimiError(

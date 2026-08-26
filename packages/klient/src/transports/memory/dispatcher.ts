@@ -23,6 +23,7 @@ import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agent
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
 import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
+import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
 import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
 import type {
@@ -284,6 +285,17 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return agentProfileServiceView(resolved.like as IAgentScopeHandle);
+    }
+    if (service === 'agentLoopService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      const agent = resolved.like as IAgentScopeHandle;
+      const runtime = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop);
+      return {
+        cancelFromUser: () => runtime.cancelByUser(),
+        status: () => runtime.status(),
+      };
     }
     const token = serviceTokens[service];
     if (token === undefined) {

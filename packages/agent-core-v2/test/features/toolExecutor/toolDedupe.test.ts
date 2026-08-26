@@ -10,7 +10,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -55,7 +55,7 @@ afterEach(() => disposables.dispose());
 
 interface Harness {
   readonly ix: TestInstantiationService;
-  readonly loop: IAgentLoopService;
+  readonly loop: LoopControlToken;
   readonly executor: ToolExecutorPipeline;
   readonly registry: IAgentToolRegistryService;
   readonly fireBefore: (
@@ -94,7 +94,7 @@ function createHarness(
       reg.defineInstance(IBootstrapService, {
         homeDir: homedir,
       } as unknown as IBootstrapService);
-      reg.defineInstance(IAgentLoopService, loop);
+      reg.defineInstance(LoopControlToken, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       registerToolResultTruncationServices(reg);

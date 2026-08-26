@@ -1,6 +1,6 @@
 import { MAX_TIMER_DELAY_MS } from '#/_base/utils/timer';
 import { ConfigTarget, type ConfigInspectValue, type IConfigService } from '#/app/config/config';
-import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
+import { LOOP_CONTROL_SECTION } from '#/features/loop/configSection';
 import { SWARM_SECTION } from '#/features/swarm/configSection';
 import { SUBAGENT_SECTION } from '#/session/subagent/configSection';
 

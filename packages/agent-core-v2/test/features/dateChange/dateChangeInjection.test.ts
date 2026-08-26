@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import {
@@ -105,14 +105,14 @@ describe('dateChangeAgentRuntime', () => {
   let ctx: TestAgentContext;
   let context: ContextMemoryRuntime;
   let clock: TestHostClock;
-  let loop: IAgentLoopService;
+  let loop: LoopControlToken;
   let profile: ProfileRuntime;
 
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent(appService(IHostClock, clock));
     context = ctx.resolve(AgentContextMemory);
-    loop = ctx.get(IAgentLoopService);
+    loop = ctx.get(LoopControlToken);
     profile = ctx.resolve(AgentProfile);
     await ctx.restoreRuntimes();
   });
@@ -220,7 +220,7 @@ describe('dateChangeAgentRuntime', () => {
       appService(IHostClock, clock),
     );
     context = ctx.resolve(AgentContextMemory);
-    loop = ctx.get(IAgentLoopService);
+    loop = ctx.get(LoopControlToken);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
 
@@ -255,7 +255,7 @@ describe('dateChangeAgentRuntime', () => {
       appService(IHostClock, clock),
     );
     context = ctx.resolve(AgentContextMemory);
-    loop = ctx.get(IAgentLoopService);
+    loop = ctx.get(LoopControlToken);
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
 
@@ -277,7 +277,7 @@ describe('dateChangeAgentRuntime', () => {
       await ctx.dispose();
       ctx = createTestAgent(appService(IHostClock, clock), hostEnvironmentServices(homeDir));
       context = ctx.resolve(AgentContextMemory);
-      loop = ctx.get(IAgentLoopService);
+      loop = ctx.get(LoopControlToken);
       profile = ctx.resolve(AgentProfile);
         await ctx.restorePersisted();
 

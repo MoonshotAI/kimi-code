@@ -13,7 +13,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { stubProfileRuntime } from '../../features/profile/stubs';
@@ -1404,7 +1404,7 @@ describe('AgentTowerService', () => {
 });
 
 async function injectDynamic(ctx: TestAgentContext): Promise<void> {
-  await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
+  await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, false);
 }
 
 function appendAssistantTurn(

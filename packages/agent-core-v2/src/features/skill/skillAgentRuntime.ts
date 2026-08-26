@@ -5,7 +5,9 @@ import type {
   ContextMessage,
   SkillActivationOrigin,
 } from '#/features/contextMemory/types';
-import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { AgentLoop } from '#/features/loop/loop';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { Turn } from '#/features/loop/internal/loop';
 import { IAgentPromptService, reservePrompt, type PromptLaunchResult } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import {
@@ -235,7 +237,7 @@ export class SkillRuntime {
       origin,
     };
     const prompt = this.context.get(IAgentPromptService);
-    if (this.context.get(IAgentLoopService).status().state === 'running') {
+    if (this.context.get(IAgentLifecycleService).resolve(this.context.agent, AgentLoop).status() === 'running') {
       return prompt.inject(message);
     }
     return (await prompt.enqueue({ message })).launched;

@@ -9,16 +9,16 @@ import type { ModelRequester, ModelRequestTiming } from '#/kosong/model/modelReq
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
-import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
+import { LoopControlToken, type Turn } from '#/features/loop/internal/loop';
+import { ContinuationStepRequest, MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import {
   AssistantDelta,
   ThinkingDelta,
   TurnStarted,
   TurnStepInterrupted,
   TurnStepStarted,
-} from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+} from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { RetryStepRequest } from '#/agent/prompt/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -38,13 +38,13 @@ type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
-  let loop: IAgentLoopService;
+  let loop: LoopControlToken;
   let profile: ProfileRuntime;
 
   beforeEach(() => {
     ctx = createTestAgent();
     void ctx.restoreRuntimes();
-    loop = ctx.get(IAgentLoopService);
+    loop = ctx.get(LoopControlToken);
     profile = ctx.resolve(AgentProfile);
   });
 
@@ -726,7 +726,7 @@ describe('Agent loop', () => {
     const queuedExtraStep = (await loop.enqueue(nextTurnMessage('queued-extra')).assigned).step;
     await started;
 
-    (loop as IAgentLoopService & { dispose(): void }).dispose();
+    (loop as LoopControlToken & { dispose(): void }).dispose();
 
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
@@ -835,7 +835,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      const localLoop = local.get(IAgentLoopService);
+      const localLoop = local.get(LoopControlToken);
       const localProfile = local.resolve(AgentProfile);
       local.configure({
         modelCapabilities: {
@@ -904,7 +904,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      const localLoop = local.get(IAgentLoopService);
+      const localLoop = local.get(LoopControlToken);
       local.resolve(AgentProfile).update({ activeToolNames: [] });
       localLoop.hooks.onDidFinishStep.register('test-continue-after-first-step', async (hookCtx, next) => {
         if (hookCtx.step === 1) {
@@ -980,7 +980,7 @@ describe('turn telemetry', () => {
       const records: TelemetryRecord[] = [];
       const local = createTestAgent({ telemetry: recordingTelemetry(records) });
       try {
-        const localLoop = local.get(IAgentLoopService);
+        const localLoop = local.get(LoopControlToken);
         let stepStarted!: () => void;
         const started = new Promise<void>((resolve) => {
           stepStarted = resolve;
@@ -1017,11 +1017,11 @@ describe('turn telemetry', () => {
 
 describe('interruption reminder', () => {
   let ctx: TestAgentContext;
-  let loop: IAgentLoopService;
+  let loop: LoopControlToken;
 
   beforeEach(() => {
     ctx = createTestAgent();
-    loop = ctx.get(IAgentLoopService);
+    loop = ctx.get(LoopControlToken);
   });
 
   afterEach(async () => {
@@ -1347,7 +1347,7 @@ describe('interruption reminder', () => {
     applyPermissionMode(local, 'yolo');
     try {
       const slowToolStarted = registerAbortableWorkTool(local);
-      const localLoop = local.get(IAgentLoopService);
+      const localLoop = local.get(LoopControlToken);
       local.mockNextResponse(
         { type: 'text', text: 'working' },
         { type: 'function', id: 'call-work-1', name: 'Work', arguments: '{}' },
@@ -1422,7 +1422,7 @@ describe('aborted step tool execution', () => {
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 60 } });
       ctx.get(IEventBus).publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
 
-      const loopService = ctx.get(IAgentLoopService);
+      const loopService = ctx.get(LoopControlToken);
       loopService.enqueue(new ContinuationStepRequest());
       const controller = new AbortController();
       const resultPromise = loopService.run({
@@ -1471,7 +1471,7 @@ describe('aborted step tool execution', () => {
 
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
-      const loopService = ctx.get(IAgentLoopService);
+      const loopService = ctx.get(LoopControlToken);
       loopService.enqueue(new ContinuationStepRequest());
       const controller = new AbortController();
       const result = loopService.run({

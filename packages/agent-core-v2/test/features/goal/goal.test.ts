@@ -3,8 +3,8 @@ import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { isUserCancellation } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
-import { TurnEnded } from '#/agent/loop/turnOps';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
+import { TurnStarted } from '#/features/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
@@ -21,13 +21,13 @@ import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProce
 import { UpdateGoalToolInputSchema } from '#/features/goal/tools/update-goal/update-goal';
 import {
   createMaxStepsExceededError,
-  IAgentLoopService,
+  LoopControlToken,
   type AfterStepContext,
   type EnqueueReceipt,
   type Step,
   type Turn,
-} from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
+} from '#/features/loop/internal/loop';
+import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import type { PermissionMode, PermissionPolicyResult } from '#/features/toolExecutor/permissionTypes';
@@ -869,7 +869,7 @@ describe('AgentGoalService core workflow hooks', () => {
     clock = new ManualGoalDeadlineScheduler();
     ctx = createTestAgent(
       appService(IGoalDeadlineScheduler, clock),
-      agentService(IAgentLoopService, loopService),
+      agentService(LoopControlToken, loopService),
     );
     applyPermissionMode(ctx, 'auto');
     context = ctx.resolve(AgentContextMemory);

@@ -3,7 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IAgentLoopContinuationService } from './loopContinuation';
-import { IAgentLoopService } from './loop';
+import { LoopControlToken } from './loop';
 import { ContinuationStepRequest } from './stepRequest';
 
 export class AgentLoopContinuationService
@@ -12,7 +12,7 @@ export class AgentLoopContinuationService
 {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAgentLoopService loop: IAgentLoopService) {
+  constructor(@LoopControlToken loop: LoopControlToken) {
     super();
     this._register(
       loop.hooks.onDidFinishStep.register('loop-continuation', async (ctx, next) => {

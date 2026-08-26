@@ -27,8 +27,8 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/features/contextMemory/types';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { LoopControlToken } from '#/features/loop/internal/loop';
+import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
@@ -243,7 +243,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,

@@ -13,7 +13,7 @@ import { ISessionPermissionModeService } from '#/session/permissionMode/sessionP
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type ProfileData } from '#/features/profile/profile';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
@@ -1180,7 +1180,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       'agent-existing',
       agentHandle('agent-existing', lifecycle, eventBus, {}, new Map([
         [
-          IAgentLoopService,
+          LoopControlToken,
           {
             _serviceBrand: undefined,
             status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),
@@ -1363,11 +1363,11 @@ function agentHandle(
           } as unknown as IAgentRuntimeBindingService;
         }
         if (serviceId === ISessionPermissionModeService) return permissionMode;
-        if (serviceId === IAgentLoopService) {
+        if (serviceId === LoopControlToken) {
           return {
             _serviceBrand: undefined,
             status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
-          } as unknown as IAgentLoopService;
+          } as unknown as LoopControlToken;
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();
         if (serviceId === IAgentScopeContext) {

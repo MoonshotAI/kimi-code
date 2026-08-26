@@ -4,7 +4,7 @@ import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import type { Hooks } from '#/hooks';
-import { LoopErrors } from './errors';
+import { LoopErrors } from '#/features/loop/internal/errors';
 import type { StepRequest } from './stepRequest';
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
@@ -136,9 +136,7 @@ export interface StepEnqueueOptions {
   readonly at?: 'head' | 'tail';
 }
 
-export interface IAgentLoopService {
-  readonly _serviceBrand: undefined;
-
+export interface LoopControl {
   enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
 
   run(options: LoopRunOptions): Promise<LoopRunResult>;
@@ -166,4 +164,7 @@ export interface IAgentLoopService {
   }>;
 }
 
-export const IAgentLoopService = createDecorator<IAgentLoopService>('agentLoopService');
+export interface LoopControlToken extends LoopControl {}
+
+export const LoopControlToken = createDecorator<LoopControlToken>('loopControl');
+

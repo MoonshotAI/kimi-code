@@ -31,7 +31,7 @@ import {
   IAgentScopeContext,
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { abortError } from '#/_base/utils/abort';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
@@ -430,7 +430,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     this.onWillCloseEmitter.fire(agent);
     const handle = managed.handle;
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
-    const loop = handle.accessor.get(IAgentLoopService);
+    const loop = handle.accessor.get(LoopControlToken);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');

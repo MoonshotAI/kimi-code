@@ -16,7 +16,7 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { createHooks } from '#/hooks';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
@@ -72,7 +72,7 @@ describe('RestGateway', () => {
       kind: LifecycleScope.Agent,
       accessor: makeAccessor([
         [IAgentPromptService, promptService],
-        [IAgentLoopService, turnService],
+        [LoopControlToken, turnService],
       ]),
       dispose: () => {},
     };

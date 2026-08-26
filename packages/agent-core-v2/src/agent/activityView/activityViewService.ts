@@ -3,7 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import {
   AssistantDelta,
   ThinkingDelta,
@@ -12,8 +12,9 @@ import {
   TurnStepStarted,
   TurnStepCompleted,
   TurnStepInterrupted,
-} from '#/agent/loop/turnEvents';
-import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
+} from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
+import { getLoopDurableState } from '#/features/loop/internal/access';
 import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
 import { ToolCallStarted, ToolResultEvent } from '#/features/toolExecutor/toolExecutorEvents';
 import {
@@ -32,7 +33,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import type { PromptOrigin } from '#/features/contextMemory/types';
-import type { TurnEndReason } from '#/agent/loop/turnEvents';
+import type { TurnEndReason } from '#/features/loop/turnEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import type {
@@ -77,7 +78,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
 
   constructor(
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -247,7 +248,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
 
   private seedLastTurnFromWire(): void {
     if (this.turn !== undefined || this.lastTurn !== undefined) return;
-    const lastEnded = this.states.get(turnKey).lastEnded;
+    const lastEnded = getLoopDurableState(this.scopeContext)?.lastEnded;
     if (lastEnded === undefined) return;
     this.lastTurn = {
       turnId: lastEnded.turnId,

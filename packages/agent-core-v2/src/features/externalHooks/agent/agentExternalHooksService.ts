@@ -14,10 +14,10 @@ import {
   type FullCompactionTask,
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
-import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopControlToken, type AfterStepContext } from '#/features/loop/internal/loop';
+import { ContinuationStepRequest } from '#/features/loop/internal/stepRequest';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import {
   IAgentPromptService,
   type PromptSubmitContext,
@@ -154,7 +154,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this.registerTurnHooks();
 
     this.registerLoopHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentLoopService)),
+      this.instantiation.invokeFunction((accessor) => accessor.get(LoopControlToken)),
     );
 
     this.registerFullCompactionHooks(
@@ -242,7 +242,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerLoopHooks(loop: IAgentLoopService): void {
+  private registerLoopHooks(loop: LoopControlToken): void {
     this._register(
       loop.hooks.onDidFinishStep.register('externalHooks', async (ctx, next) => {
         await next();

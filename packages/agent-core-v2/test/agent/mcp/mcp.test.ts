@@ -31,7 +31,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -227,7 +227,7 @@ describe('AgentMcpService', () => {
     ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
-    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(LoopControlToken, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
     wire = registerTestAgentWire(ix, 'mcp-test', {
       eventBus: ix.get(IEventBus),
@@ -298,7 +298,7 @@ describe('AgentMcpService', () => {
     });
     createService(manager, ready);
 
-    const loop = ix.get(IAgentLoopService);
+    const loop = ix.get(LoopControlToken);
     let settled = false;
     const step = loop.hooks.onWillBeginStep
       .run({ turnId: 1, step: 1, firstStepOfTurn: true, signal: new AbortController().signal })

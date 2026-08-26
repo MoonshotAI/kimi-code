@@ -28,9 +28,9 @@ import {
   IAgentScopeContext,
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
-import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopControlToken, type AfterStepContext } from '#/features/loop/internal/loop';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { PromptQueued } from '#/agent/prompt/promptService';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -320,7 +320,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), context)));
-          reg.defineInstance(IAgentLoopService, loop);
+          reg.defineInstance(LoopControlToken, loop);
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
@@ -426,7 +426,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), stubContextMemory())));
-          reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+          reg.defineInstance(LoopControlToken, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
@@ -631,7 +631,7 @@ describe('IExternalHooksRunnerService integration', () => {
             onDidReload: Event.None as IPluginService['onDidReload'],
           });
           reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), context)));
-          reg.defineInstance(IAgentLoopService, loop);
+          reg.defineInstance(LoopControlToken, loop);
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),
@@ -1165,7 +1165,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(), lifecycleWithReminder(createReminderStub(), stubContextMemory())));
-          reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+          reg.defineInstance(LoopControlToken, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onBeforeSubmitPrompt']),

@@ -10,7 +10,7 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import {
   taskServices,
   createTestAgent,
@@ -41,13 +41,13 @@ describe('task notification → main agent (real Agent instance)', () => {
   describe('live notification delivery', () => {
     let ctx: TestAgentContext;
     let background: IAgentTaskService;
-    let loop: IAgentLoopService;
+    let loop: LoopControlToken;
     let profile: ProfileRuntime;
 
     beforeEach(() => {
       ctx = createTestAgent();
       background = ctx.get(IAgentTaskService);
-      loop = ctx.get(IAgentLoopService);
+      loop = ctx.get(LoopControlToken);
       profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: [] });
     });
@@ -267,7 +267,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       const child = createTestAgent({ generate: slowToCancelGenerate });
       try {
         const childHandle = agentScopeHandle(child, 'agent-child');
-        const childLoop = child.get(IAgentLoopService);
+        const childLoop = child.get(LoopControlToken);
 
         const controller = new AbortController();
         const run = await runAgentTurn(
@@ -321,7 +321,7 @@ describe('task notification → main agent (real Agent instance)', () => {
     let sessionDir: string;
     let ctx: TestAgentContext;
     let background: TaskServiceTestManager;
-    let loop: IAgentLoopService;
+    let loop: LoopControlToken;
 
     beforeEach(async () => {
       sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-repro-'));
@@ -350,7 +350,7 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
       background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
-      loop = ctx.get(IAgentLoopService);
+      loop = ctx.get(LoopControlToken);
       const profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: [] });
     });

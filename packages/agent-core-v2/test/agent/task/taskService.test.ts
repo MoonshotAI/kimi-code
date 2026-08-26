@@ -24,7 +24,7 @@ import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import type { ContextMessage, TaskOrigin } from '#/features/contextMemory/types';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -137,7 +137,7 @@ describe('AgentTaskService', () => {
     ix.stub(IAgentToolRegistryService, {
       register: () => toDisposable(() => {}),
     });
-    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(LoopControlToken, stubLoopWithHooks());
     ix.stub(IConfigRegistry, { registerSection: () => {} });
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
@@ -274,7 +274,7 @@ describe('AgentTaskService', () => {
   });
 
   function stubLoop(): StubLoop {
-    return ix.get(IAgentLoopService) as unknown as StubLoop;
+    return ix.get(LoopControlToken) as unknown as StubLoop;
   }
 
   async function waitForCondition(condition: () => boolean): Promise<void> {
@@ -714,7 +714,7 @@ describe('AgentTaskService', () => {
       },
     });
     ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
-    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(LoopControlToken, stubLoopWithHooks());
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
     });
@@ -770,7 +770,7 @@ describe('AgentTaskService', () => {
       },
     });
     ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
-    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(LoopControlToken, stubLoopWithHooks());
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
     });

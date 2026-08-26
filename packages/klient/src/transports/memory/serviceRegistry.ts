@@ -32,7 +32,6 @@ import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/ques
 import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/features/skill/session/skillCatalog';
 import { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/sessionTitle';
 import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
-import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { ISessionPermissionModeService } from '@moonshot-ai/agent-core-v2/session/permissionMode/sessionPermissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
@@ -71,7 +70,6 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   sessionSkillCatalog: ISessionSkillCatalog,
   sessionTitleService: ISessionTitleService,
   agentPromptService: IAgentPromptService,
-  agentLoopService: IAgentLoopService,
   agentPermissionModeService: ISessionPermissionModeService,
   agentCommandService: IAgentCommandService,
   agentRuntimeBindingService: IAgentRuntimeBindingService,

@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 49 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 48 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -65,9 +65,9 @@
 //     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
-//     loop.disposing                                  src/agent/loop/loopService.ts
-//     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
-//     loop.nextReservedTurnId                         src/agent/loop/loopService.ts
+//     loop.disposing                                  src/features/loop/internal/loopLogic.ts
+//     loop.lastRequestTraceId                         src/features/loop/internal/loopLogic.ts
+//     loop.nextReservedTurnId                         src/features/loop/internal/loopLogic.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
@@ -94,7 +94,6 @@
 //     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
-//     turn                                            src/agent/loop/turnOps.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
 
 /** App-scope keys registered into IAppStateService. */
@@ -771,7 +770,7 @@ export interface AgentStateSnapshot {
     };
     readonly lastTurn?: /* ActivityLastTurnState — packages/agent-core-v2/src/agent/activityView/activityView.ts */ {
       readonly turnId: number;
-      readonly reason: /* TurnEndReason — packages/agent-core-v2/src/agent/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked';
+      readonly reason: /* TurnEndReason — packages/agent-core-v2/src/features/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked';
       readonly durationMs?: number;
       readonly at: number;
     };
@@ -783,7 +782,7 @@ export interface AgentStateSnapshot {
   };
   'activityView.lastTurn': /* ActivityLastTurnState — packages/agent-core-v2/src/agent/activityView/activityView.ts */ {
     readonly turnId: number;
-    readonly reason: /* TurnEndReason — packages/agent-core-v2/src/agent/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked';
+    readonly reason: /* TurnEndReason — packages/agent-core-v2/src/features/loop/turnEvents.ts */ 'completed' | 'cancelled' | 'failed' | 'blocked';
     readonly durationMs?: number;
     readonly at: number;
   } | undefined;
@@ -988,21 +987,6 @@ export interface AgentStateSnapshot {
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
-  // src/agent/loop/loopService.ts
-  'loop.disposing': boolean;
-  'loop.lastRequestTraceId': string | undefined;
-  'loop.nextReservedTurnId': number | undefined;
-  // src/agent/loop/turnOps.ts
-  // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, TurnCancel, TurnEnded
-  'turn': /* TurnModelState — packages/agent-core-v2/src/agent/loop/turnOps.ts */ {
-    readonly nextTurnId: number;
-    readonly cancelledTurnIds: readonly number[];
-    readonly lastEnded?: {
-      readonly turnId: number;
-      readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
-      readonly durationMs?: number;
-    };
-  };
   // src/agent/mcp/mcpDiscoveryOps.ts
   // replayable · durable — folds: McpToolsDiscovered
   'mcp.discovery': /* McpDiscoveryState — packages/agent-core-v2/src/agent/mcp/mcpDiscoveryOps.ts */ {
@@ -1177,6 +1161,10 @@ export interface AgentStateSnapshot {
   }>;
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
+  // src/features/loop/internal/loopLogic.ts
+  'loop.disposing': boolean;
+  'loop.lastRequestTraceId': string | undefined;
+  'loop.nextReservedTurnId': number | undefined;
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts

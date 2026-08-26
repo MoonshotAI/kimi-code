@@ -9,7 +9,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService, PromptQueued, PromptSteered } from '#/agent/prompt/promptService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -95,7 +95,7 @@ function harness(loopOptions: StubLoopOptions = { pendingTurnResult: true }) {
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
-      reg.defineInstance(IAgentLoopService, loop);
+      reg.defineInstance(LoopControlToken, loop);
       reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentBlobService, noopBlob);
       reg.define(IEventDispatcher, EventDispatcherService);

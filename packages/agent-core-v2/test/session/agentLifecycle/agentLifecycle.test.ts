@@ -88,7 +88,7 @@ import { toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolEx
 import { permissionRulesAgentRuntimeProvider } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import type { ToolExecutorDomain } from '#/features/toolExecutor/internal/domain';
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -203,8 +203,8 @@ describe('AgentLifecycleService', () => {
   let stopAllOnExit: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
   let loopPendingTurnIds: number[];
-  let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
-  let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
+  let loopCancel: ReturnType<typeof vi.fn<LoopControlToken['cancel']>>;
+  let loopSettled: ReturnType<typeof vi.fn<LoopControlToken['settled']>>;
   let promptDrain: ReturnType<typeof vi.fn<IAgentPromptService['drain']>>;
 
   beforeEach(() => {
@@ -304,7 +304,7 @@ describe('AgentLifecycleService', () => {
     } as IAgentMediaToolsRegistrar);
     loopActiveTurnId = undefined;
     loopPendingTurnIds = [];
-    loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
+    loopCancel = vi.fn<LoopControlToken['cancel']>((turnId) => {
       if (turnId === undefined) {
         loopActiveTurnId = undefined;
       } else {
@@ -312,12 +312,12 @@ describe('AgentLifecycleService', () => {
       }
       return true;
     });
-    loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
+    loopSettled = vi.fn<LoopControlToken['settled']>(async () => {
       if (loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0) {
         throw new Error('Agent loop did not settle');
       }
     });
-    ix.stub(IAgentLoopService, {
+    ix.stub(LoopControlToken, {
       _serviceBrand: undefined,
       hooks: {
         onWillBeginStep: { register: () => ({ dispose: () => {} }) },
@@ -332,7 +332,7 @@ describe('AgentLifecycleService', () => {
       }),
       cancel: loopCancel,
       settled: loopSettled,
-    } as unknown as IAgentLoopService);
+    } as unknown as LoopControlToken);
     promptDrain = vi.fn<IAgentPromptService['drain']>(async () => {});
     ix.stub(IAgentPromptService, {
       _serviceBrand: undefined,

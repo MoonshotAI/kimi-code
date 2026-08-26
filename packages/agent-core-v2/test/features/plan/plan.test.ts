@@ -7,7 +7,7 @@ import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import {
@@ -919,7 +919,7 @@ describe('Plan service', () => {
   }
 
   async function injectDynamic(): Promise<void> {
-    await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
+    await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, false);
   }
 });
 

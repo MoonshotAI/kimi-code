@@ -58,7 +58,7 @@ import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/features/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
 import type { ProfileSetModelResult } from '#/features/profile/profile';
 import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
@@ -196,7 +196,7 @@ import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
-import { TurnPrompt } from '#/agent/loop/turnOps';
+import { TurnPrompt } from '#/features/loop/turnOps';
 import { IModelService, type ModelsSection } from '#/kosong/model/model';
 import {
   DEFAULT_MODEL_SECTION,
@@ -2155,7 +2155,7 @@ export class AgentTestContext {
       prompt: (payload) => this.get(IAgentPromptService).submit(payload),
       promptWithSkills: (payload) => this.resolve(AgentSkill).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentPromptService).submitSteer(payload),
-      cancel: (payload) => this.get(IAgentLoopService).cancelFromUser(payload.turnId),
+      cancel: (payload) => this.get(LoopControlToken).cancelFromUser(payload.turnId),
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
         this.get(ISessionPermissionModeService).setModeAndBroadcast(this.agentContext, payload.mode),

@@ -8,9 +8,9 @@ import {
 import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { LoopControlToken } from '#/features/loop/internal/loop';
+import { ContinuationStepRequest } from '#/features/loop/internal/stepRequest';
+import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
@@ -47,7 +47,7 @@ describe('stepRetry plugin', () => {
 
   async function runTurn(turnId: number, signal?: AbortSignal) {
     void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
-    const loop = ctx.get(IAgentLoopService);
+    const loop = ctx.get(LoopControlToken);
     loop.enqueue(new ContinuationStepRequest());
     const resultPromise = loop.run({ turnId, signal });
     let settled = false;
@@ -194,7 +194,7 @@ describe('stepRetry plugin', () => {
     );
 
     void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
-    const loop = ctx.get(IAgentLoopService);
+    const loop = ctx.get(LoopControlToken);
     loop.enqueue(new ContinuationStepRequest());
     const result = await loop.run({ turnId: 1 });
 

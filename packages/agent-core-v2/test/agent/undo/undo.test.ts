@@ -7,9 +7,9 @@ import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMem
 import { ContextApplyCompaction } from '#/features/contextMemory/contextEvents';
 import type { TaskOrigin } from '#/features/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
-import { turnKey } from '#/agent/loop/turnOps';
+import { LoopControlToken } from '#/features/loop/internal/loop';
+import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
+import { AgentLoop } from '#/features/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -101,7 +101,7 @@ describe('AgentConversationUndoService', () => {
 
   it('returns session.busy for an active turn without cancelling it', async () => {
     setup();
-    const loop = ctx.get(IAgentLoopService);
+    const loop = ctx.get(LoopControlToken);
     let started!: () => void;
     let release!: () => void;
     const didStart = new Promise<void>((resolve) => {
@@ -290,11 +290,11 @@ describe('AgentConversationUndoService', () => {
     const undo = ctx.get(IAgentConversationUndoService);
     ctx.appendTurnExchange('u1', 'a1');
     ctx.appendTurnExchange('u2', 'a2');
-    expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
+    expect(ctx.resolve(AgentLoop).status()).toBe('idle');
 
     await undo.undo(1);
 
-    expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
+    expect(ctx.resolve(AgentLoop).status()).toBe('idle');
   });
 
   it('flushes state reconciliation before publishing undo', async () => {

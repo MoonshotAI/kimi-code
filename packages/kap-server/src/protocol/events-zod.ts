@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 import type {
   BundledSkillActivation,
   CompactionSummaryOrigin,
@@ -44,7 +44,7 @@ import type {
   TurnStepCompletedPayload,
   TurnStepInterruptedPayload,
   TurnStepStartedPayload,
-} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+} from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 import type {
   McpServerStatusEventPayload,
   McpServerStatusPayload,

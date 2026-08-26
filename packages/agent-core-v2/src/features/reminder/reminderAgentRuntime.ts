@@ -6,7 +6,7 @@ import { isCompactionSummaryMessage } from '#/features/contextMemory/compactionH
 import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
+import { LoopControlToken, type BeforeStepContext } from '#/features/loop/internal/loop';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -175,7 +175,7 @@ async function inject(runtime: AgentRuntimeContext<null>, isNewTurn: boolean): P
 
 const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: AgentRuntimeContext<null> } }) => {
   let compactionRearmPending = false;
-  const loop = input.runtime.get(IAgentLoopService);
+  const loop = input.runtime.get(LoopControlToken);
   const takeCompactionRearm = (): boolean => {
     const pending = compactionRearmPending;
     compactionRearmPending = false;
@@ -260,7 +260,7 @@ export class ReminderRuntime {
   }
 
   async reconcileWhenIdle(variant: string): Promise<void> {
-    const loop = this.runtime.get(IAgentLoopService);
+    const loop = this.runtime.get(LoopControlToken);
     const quiescence = loop.tryAcquireQuiescence();
     if (quiescence === undefined) return;
     try {

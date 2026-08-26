@@ -10,17 +10,17 @@ import { ContextAppendMessage } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
 import { AgentUsage } from '#/features/usage/usageAgentRuntime';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
-import { LoopErrors } from '#/agent/loop/errors';
+import { LOOP_CONTROL_SECTION, type LoopControl } from '#/features/loop/configSection';
+import { LoopErrors } from '#/features/loop/internal/errors';
 import {
-  IAgentLoopService,
+  LoopControlToken,
   type AfterStepContext,
   type BeforeStepContext,
   type EnqueueReceipt,
-} from '#/agent/loop/loop';
-import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+} from '#/features/loop/internal/loop';
+import { ContinuationStepRequest, MessageStepRequest } from '#/features/loop/internal/stepRequest';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
 import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
@@ -451,7 +451,7 @@ async function cancelGoal(context: GoalOperationContext, _input: GoalReasonInput
   const state = requireState(context);
   const snapshot = toSnapshot(context, state);
   if (state.status === 'active' && context.effects.liveTurnId !== undefined) {
-    context.runtime.get(IAgentLoopService).cancel(context.effects.liveTurnId, abortError('Goal cancelled'));
+    context.runtime.get(LoopControlToken).cancel(context.effects.liveTurnId, abortError('Goal cancelled'));
   }
   clearInternal(context, actor);
   if (actor === 'user') {
@@ -654,7 +654,7 @@ function enqueueGoalOutcomeContinuation(context: GoalOperationContext, ctx: Afte
   context.effects.goalOutcomeContinuationTurns.add(ctx.turnId);
   const maxSteps = context.runtime.get(IConfigService).get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
   if (!hasStepBudgetRemaining(maxSteps, ctx.step)) return;
-  context.runtime.get(IAgentLoopService).enqueue(new ContinuationStepRequest());
+  context.runtime.get(LoopControlToken).enqueue(new ContinuationStepRequest());
 }
 
 async function handleTurnEnded(context: GoalOperationContext,
@@ -781,7 +781,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
     kind: 'goal_continuation',
     admission: 'newTurn',
   });
-  const receipt = context.runtime.get(IAgentLoopService).enqueue(request);
+  const receipt = context.runtime.get(LoopControlToken).enqueue(request);
   const pending: PendingContinuation = { receipt, goalId };
   context.effects.pendingContinuation = pending;
   void receipt.assigned
@@ -800,7 +800,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
 
 function canLaunchContinuation(context: GoalOperationContext): boolean {
   if (context.effects.liveTurnId !== undefined || context.effects.pendingContinuation !== undefined) return false;
-  const status = context.runtime.get(IAgentLoopService).status();
+  const status = context.runtime.get(LoopControlToken).status();
   return status.state === 'idle' && !status.hasPendingRequests;
 }
 
@@ -831,7 +831,7 @@ function cancelPendingContinuation(context: GoalOperationContext,
   const cancellation = reason ?? abortError('Goal continuation cancelled');
   const aborted = pending?.receipt.abort(cancellation);
   if (pending !== undefined && !aborted && pending.turnId !== undefined) {
-    context.runtime.get(IAgentLoopService).cancel(pending.turnId, cancellation);
+    context.runtime.get(LoopControlToken).cancel(pending.turnId, cancellation);
   }
 }
 
@@ -1033,7 +1033,7 @@ function handleWallClockDeadline(context: GoalOperationContext): void {
     cancellationReason: cancellation,
   });
   if (liveTurnId !== undefined && liveTurnId !== pendingTurnId) {
-    context.runtime.get(IAgentLoopService).cancel(liveTurnId, cancellation);
+    context.runtime.get(LoopControlToken).cancel(liveTurnId, cancellation);
   }
 }
 
@@ -1260,7 +1260,7 @@ const goalEffects = fromCallback(({
         .resolve(input.runtime.agent, AgentUsage)
         .onDidRecord(handlers.usageRecorded),
     );
-    const loop = input.runtime.get(IAgentLoopService);
+    const loop = input.runtime.get(LoopControlToken);
     disposables.push(loop.hooks.onWillBeginStep.register('goal-count-turn', async (context, next) => {
       await handlers.beforeStep(context);
       await next();

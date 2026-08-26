@@ -15,12 +15,11 @@
  *
  * Rendering is turn-granular (turn → step → frame) and typed entirely by the
  * transcript data model. Prompts/cancels go through the `IAgentPromptService`
- * / `IAgentLoopService` channels
+ * / `agentLoopService` channels
  * over the debug RPC surface (`/api/v1/debug`); the running indicator
  * derives from transcript state (`meta.activity` / running turns).
  */
 
-import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import {
@@ -579,7 +578,7 @@ export function ChatView({
   const cancel = async () => {
     if (sessionId === null) return;
     try {
-      await klient.session(sessionId).agent(agentId).service(IAgentLoopService).cancelFromUser();
+      await (klient.session(sessionId).agent(agentId).service('agentLoopService') as { cancelFromUser(): Promise<void> }).cancelFromUser();
       trail?.recordEvent('cancel', undefined, state);
     } catch (error) {
       setSendError(error);

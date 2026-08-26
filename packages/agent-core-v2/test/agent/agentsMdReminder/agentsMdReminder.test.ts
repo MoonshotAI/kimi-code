@@ -45,7 +45,7 @@ import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import type { PromptOrigin } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
@@ -235,7 +235,7 @@ function createHarness(
         options.telemetry ?? recordingTelemetry(telemetryEvents),
       );
       if (options.withDedupe === true) {
-        reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+        reg.defineInstance(LoopControlToken, stubLoopWithHooks());
       }
       reg.define(IAgentAgentsMdReminderService, AgentAgentsMdReminderService);
     },
@@ -258,7 +258,7 @@ function createHarness(
     };
     const pipeline = new ToolExecutorPipeline(context);
     if (options.withDedupe === true) {
-      const loop = ix.get(IAgentLoopService);
+      const loop = ix.get(LoopControlToken);
       const dedupe = new ToolDedupePolicy(context, pipeline);
       loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
         dedupe.beginStep(ctx.turnId, ctx.step);

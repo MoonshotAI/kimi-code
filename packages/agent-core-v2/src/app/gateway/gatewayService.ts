@@ -10,7 +10,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 
 import { IRestGateway, IWSGateway } from './gateway';
 
@@ -76,7 +76,7 @@ export class RestGateway implements IRestGateway {
     return turn === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
-    this.agent(sessionId, agentId).accessor.get(IAgentLoopService).cancel(undefined, reason);
+    this.agent(sessionId, agentId).accessor.get(LoopControlToken).cancel(undefined, reason);
     return Promise.resolve();
   }
   getStatus(sessionId: string): Promise<unknown> {

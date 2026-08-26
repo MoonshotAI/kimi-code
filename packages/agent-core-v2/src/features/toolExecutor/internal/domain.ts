@@ -4,8 +4,8 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopControlToken } from '#/features/loop/internal/loop';
+import { TurnEnded } from '#/features/loop/turnOps';
 
 import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
 import {
@@ -37,7 +37,7 @@ export class ToolExecutorDomain {
 
 export const toolExecutorEffects = fromCallback(
   ({ input }: { input: ToolExecutorDomain }) => {
-    const loop = input.runtime.get(IAgentLoopService);
+    const loop = input.runtime.get(LoopControlToken);
     const disposables: IDisposable[] = [
       input.runtime.get(IEventBus).subscribe(TurnEnded, () => {
         input.dedupe.clearTurnRecords();

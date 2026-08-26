@@ -11,7 +11,7 @@ import {
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 
 export type AgentPhase =
   | { readonly kind: 'idle' }

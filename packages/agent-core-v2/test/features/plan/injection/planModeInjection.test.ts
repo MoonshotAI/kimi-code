@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -25,7 +25,7 @@ async function enterPlan(
 }
 
 async function injectDynamic(ctx: TestAgentContext): Promise<void> {
-  await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
+  await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, false);
 }
 
 function appendAssistantTurn(

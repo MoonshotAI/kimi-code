@@ -48,7 +48,7 @@ import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -81,7 +81,7 @@ import { createTestAgent } from '../../harness';
 
 const signal = new AbortController().signal;
 
-async function runInjectionBoundary(loop: IAgentLoopService): Promise<void> {
+async function runInjectionBoundary(loop: LoopControlToken): Promise<void> {
   await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, firstStepOfTurn: true, signal });
 }
 
@@ -310,7 +310,7 @@ describe('AgentSwarmService', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const loop = stubLoopWithHooks();
-    ix.stub(IAgentLoopService, loop);
+    ix.stub(LoopControlToken, loop);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     let provider: ContextInjectionProvider | undefined;
@@ -425,7 +425,7 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
@@ -441,8 +441,8 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     expect(context.get()).toHaveLength(1);
   });
@@ -452,9 +452,9 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
     swarm.exit();
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     expect(context.get()).toHaveLength(0);
   });
@@ -464,7 +464,7 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
     void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'later prompt' }],
@@ -486,9 +486,9 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('tool');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
     swarm.exit();
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     expect(context.get()).toHaveLength(0);
   });
@@ -506,7 +506,7 @@ describe('AgentSwarmService', () => {
       ],
     );
 
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     expect(swarm.isActive).toBe(true);
     expect(context.get()).toHaveLength(1);
@@ -526,7 +526,7 @@ describe('AgentSwarmService', () => {
       ],
     );
 
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     expect(swarm.isActive).toBe(false);
     expect(context.get()).toHaveLength(0);
@@ -551,7 +551,7 @@ describe('AgentSwarmService', () => {
       ],
     );
 
-    await runInjectionBoundary(ix.get(IAgentLoopService));
+    await runInjectionBoundary(ix.get(LoopControlToken));
 
     expect(swarm.isActive).toBe(true);
     expect(context.get()).toHaveLength(1);

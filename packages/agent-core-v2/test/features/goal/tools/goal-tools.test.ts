@@ -13,14 +13,14 @@ import { GetGoalTool } from '#/features/goal/tools/get-goal/getGoalTool';
 import { SetGoalBudgetTool } from '#/features/goal/tools/set-goal-budget/setGoalBudgetTool';
 import { UpdateGoalToolInputSchema } from '#/features/goal/tools/update-goal/update-goal';
 import { UpdateGoalTool } from '#/features/goal/tools/update-goal/updateGoalTool';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnStarted } from '#/features/loop/turnEvents';
 
 import {
   agentService,
@@ -37,7 +37,7 @@ const signal = new AbortController().signal;
 describe('goal tools', () => {
   let ctx: TestAgentContext;
   let goals: GoalRuntime;
-  let loopService: IAgentLoopService;
+  let loopService: LoopControlToken;
   let eventBus: IEventBus;
   let toolExecutor: ToolExecutorRuntime;
   let setGoalBudgetTool: SetGoalBudgetTool;
@@ -46,7 +46,7 @@ describe('goal tools', () => {
   beforeEach(() => {
     loopService = stubLoopWithHooks({ hasActiveTurn: true });
     ctx = createTestAgent(
-      agentService(IAgentLoopService, loopService),
+      agentService(LoopControlToken, loopService),
       agentService(IAgentSwarmService, stubAgentSwarm()),
     );
     applyPermissionMode(ctx, 'auto');

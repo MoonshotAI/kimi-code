@@ -26,7 +26,7 @@ import { ISessionPermissionModeService } from '#/session/permissionMode/sessionP
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
 import {
@@ -311,7 +311,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             activeTools: () => [],
           } as never;
         }
-        if (serviceId === IAgentLoopService) {
+        if (serviceId === LoopControlToken) {
           return {
             _serviceBrand: undefined,
             status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
@@ -2296,7 +2296,7 @@ describe('Agent tool execution contract', () => {
       'explore',
       new Map([
         [
-          IAgentLoopService,
+          LoopControlToken,
           {
             _serviceBrand: undefined,
             status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),

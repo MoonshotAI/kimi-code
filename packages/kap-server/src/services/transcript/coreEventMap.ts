@@ -16,8 +16,8 @@ import type {
   TurnStepCompleted,
   TurnStepInterrupted,
   TurnStepStarted,
-} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+} from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
+import type { TurnEnded } from '@moonshot-ai/agent-core-v2/features/loop/turnOps';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/app/event/agentEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/features/profile/profileOps';

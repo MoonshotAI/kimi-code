@@ -3,8 +3,8 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,

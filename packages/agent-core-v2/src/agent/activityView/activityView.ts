@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { PromptOrigin } from '#/features/contextMemory/types';
-import type { TurnEndReason } from '#/agent/loop/turnEvents';
+import type { TurnEndReason } from '#/features/loop/turnEvents';
 import { AgentEvent2, type AgentDomainTrait } from '#/app/event/event2';
 
 export type TurnPhase = 'running' | 'streaming' | 'tool_call' | 'retrying';

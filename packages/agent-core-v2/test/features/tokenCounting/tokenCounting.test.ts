@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentContextMemory, AgentProfile, type ContextMemoryRuntime, type ProfileRuntime } from '#/index';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { ContextAppendMessage } from '#/features/contextMemory/contextEvents';
 import {
   TokenCountingMeasured,

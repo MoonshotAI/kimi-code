@@ -16,11 +16,11 @@ import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import { unwrapErrorCause } from '#/errors';
 import {
-  IAgentLoopService,
+  LoopControlToken,
   type LoopErrorContext,
-} from '#/agent/loop/loop';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+} from '#/features/loop/internal/loop';
+import { LOOP_CONTROL_SECTION, type LoopControl } from '#/features/loop/configSection';
+import { TurnStarted } from '#/features/loop/turnEvents';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -60,7 +60,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentLoopService private readonly loopService: IAgentLoopService,
+    @LoopControlToken private readonly loopService: LoopControlToken,
     @IConfigService private readonly config: IConfigService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,

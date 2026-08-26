@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#/kosong/contract/message';
 
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
 
@@ -20,7 +20,7 @@ import { stubAgentSwarm } from '../stubs';
 type GoalServiceTestManager = GoalRuntime;
 
 async function injectDynamic(ctx: TestAgentContext, isNewTurn: boolean): Promise<void> {
-  await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, isNewTurn);
+  await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, isNewTurn);
 }
 
 async function registerLookupTool(
@@ -89,7 +89,7 @@ describe('GoalInjection content', () => {
     const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()), { persistence });
     const localGoals = local.resolve(AgentGoal) as GoalServiceTestManager;
     const localContext = local.resolve(AgentContextMemory);
-    const localLoop = local.get(IAgentLoopService) as StubLoop;
+    const localLoop = local.get(LoopControlToken) as StubLoop;
     await localGoals.createGoal({ objective: 'work' });
 
     await injectDynamic(local, true);

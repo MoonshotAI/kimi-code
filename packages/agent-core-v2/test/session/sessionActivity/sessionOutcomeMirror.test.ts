@@ -15,8 +15,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {

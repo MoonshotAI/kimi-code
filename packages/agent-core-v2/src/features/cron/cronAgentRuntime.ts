@@ -3,7 +3,9 @@ import { assign, fromCallback, sendTo, setup, type Snapshot } from 'xstate';
 
 import { IntervalTimer } from '#/_base/utils/timer';
 import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/features/contextMemory/types';
-import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { AgentLoop } from '#/features/loop/loop';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { Turn } from '#/features/loop/internal/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import {
   defineAgentRuntimeContract,
@@ -172,7 +174,7 @@ function deliverFire(
     toolCalls: [],
     origin,
   };
-  const buffered = runtime.get(IAgentLoopService).status().state === 'running';
+  const buffered = runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentLoop).status() === 'running';
   let launched: Promise<unknown>;
   try {
     launched = runtime.get(IAgentPromptService).inject(message);
@@ -268,7 +270,7 @@ async function tickCron(
 ): Promise<void> {
   await configOf(runtime).ready;
   if (cronConfigOf(runtime).disabled || runtime.getState().size === 0) return;
-  if (runtime.get(IAgentLoopService).status().state === 'running') return;
+  if (runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentLoop).status() === 'running') return;
   const now = state.clocks.wallNow();
   await Promise.all([...runtime.getState().values()].map((task) => processDue(runtime, state, task, now)));
 }

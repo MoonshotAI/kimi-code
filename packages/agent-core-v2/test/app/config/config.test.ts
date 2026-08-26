@@ -53,14 +53,14 @@ import {
   TOKEN_COUNTING_STRATEGY_ENV,
   type TokenCountingConfig,
 } from '#/features/tokenCounting/configSection';
-import '#/agent/loop/configSection';
+import '#/features/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
   LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
-} from '#/agent/loop/configSection';
+} from '#/features/loop/configSection';
 import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,

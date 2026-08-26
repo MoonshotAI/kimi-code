@@ -19,7 +19,7 @@ import {
 } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { AgentLoop } from '#/features/loop/loop';
 import {
   ToolAccesses,
   type ExecutableToolContext,
@@ -364,7 +364,7 @@ export class SubagentTool implements ISubagentTool {
         { details: { agentId, callerAgentId: this.callerAgentId } },
       );
     }
-    if (target.accessor.get(IAgentLoopService).status().state === 'running') {
+    if (this.agentLifecycle.resolve(this.agentLifecycle.adopt(target), AgentLoop).status() === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,

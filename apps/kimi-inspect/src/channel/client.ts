@@ -8,7 +8,7 @@
  *   await client.core(ISessionIndex).listRecent({});
  *   await client.workspace('wd_1').service(ISessionLifecycleService).resume('s1');
  *   await client.session('s1').service(ISessionMetadata).read();
- *   await client.session('s1').agent('main').service(IAgentLoopService).cancelFromUser();
+ *   await client.session('s1').agent('main').service('agentLoopService').cancelByUser();
  *
  * The `agent-core-v2` service token is the whole key: its type parameter `T`
  * types the returned proxy, and its decorator id (`String(id)`) is the channel

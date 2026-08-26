@@ -16,9 +16,9 @@ import {
 import { type AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
-import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { LoopControlToken, type LoopErrorContext } from '#/features/loop/internal/loop';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type ProfileModelContext } from '#/features/profile/profile';
@@ -157,7 +157,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentLoopService private readonly loopService: IAgentLoopService,
+    @LoopControlToken private readonly loopService: LoopControlToken,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();

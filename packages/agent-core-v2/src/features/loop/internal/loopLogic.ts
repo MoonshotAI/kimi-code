@@ -3,9 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
+import { Emitter } from '#/_base/event';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import {
@@ -41,10 +40,10 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
+import { LOOP_CONTROL_SECTION, type LoopControl as LoopControlConfig } from '../configSection';
 import {
   createMaxStepsExceededError,
-  IAgentLoopService,
+  type LoopControl,
   isMaxStepsExceededError,
   type AfterStepContext,
   type AgentLoopStatus,
@@ -77,8 +76,9 @@ import {
   TurnStepInterrupted,
   TurnStepStarted,
   type TurnInterruptReason,
-} from './turnEvents';
-import { TurnCancel, TurnEnded, turnKey, TurnPrompt } from './turnOps';
+} from '#/features/loop/turnEvents';
+import { TurnCancel, TurnEnded, TurnPrompt } from '#/features/loop/turnOps';
+import { getLoopDurableState } from './access';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
@@ -92,10 +92,14 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
 
-export class AgentLoopService extends Disposable implements IAgentLoopService {
-  declare readonly _serviceBrand: undefined;
+export class AgentLoopLogic extends Disposable implements LoopControl {
+  private readonly startEmitter = new Emitter<number>();
+  private readonly endEmitter = new Emitter<{ readonly turnId: number; readonly result: TurnResult }>();
 
-  readonly hooks: IAgentLoopService['hooks'] = {
+  readonly onDidStartTurn = this.startEmitter.event;
+  readonly onDidEndTurn = this.endEmitter.event;
+
+  readonly hooks: LoopControl['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
   };
@@ -131,7 +135,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ) {
     super();
     this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
-    this.states.contributeState(turnKey);
     this.states.contributeState(loopNextReservedTurnIdKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
@@ -392,7 +395,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private reserveTurnId(): number {
-    const modelNextId = this.states.get(turnKey).nextTurnId;
+    const modelNextId = getLoopDurableState(this.scopeContext)?.nextTurnId ?? 0;
     const id = Math.max(modelNextId, this.nextReservedTurnId ?? modelNextId);
     this.nextReservedTurnId = id + 1;
     return id;
@@ -491,6 +494,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
     job.turn.state = 'running';
     this.activeTurnJob = job;
+    this.startEmitter.fire(job.turn.id);
     void this.dispatcher.dispatch(
       new TurnStarted({
         agentId: this.scopeContext.agentId,
@@ -619,6 +623,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (step.state === 'queued' || step.state === 'running') step.cancel(reason);
     }
     this.activeTurnJob = undefined;
+    if (result !== undefined) this.endEmitter.fire({ turnId: turn.id, result });
     this.maybeSettle();
   }
 
@@ -707,7 +712,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         },
       };
     }
-    const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
+    const maxSteps = this.config.get<LoopControlConfig>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
     if (maxSteps !== undefined && maxSteps > 0 && runtime.steps >= maxSteps) {
       throw createMaxStepsExceededError(maxSteps);
     }
@@ -1300,10 +1305,4 @@ type LoopErrorDisposition =
   | { readonly type: 'continue' }
   | { readonly type: 'return'; readonly result: LoopRunResult };
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentLoopService,
-  AgentLoopService,
-  ScopeActivation.OnScopeCreated,
-  'loop',
-);
+

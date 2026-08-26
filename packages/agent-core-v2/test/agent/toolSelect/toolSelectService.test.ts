@@ -19,16 +19,16 @@ import { createReminderHarness, lifecycleWithReminder } from '../../features/rem
 import { stubProfileRuntime } from '../../features/profile/stubs';
 import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import {
-  IAgentLoopService,
+  LoopControlToken,
   type AfterStepContext,
   type BeforeStepContext,
   type EnqueueReceipt,
   type LoopRunResult,
   type StepEnqueueOptions,
   type Turn,
-} from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import type { StepRequest } from '#/agent/loop/stepRequest';
+} from '#/features/loop/internal/loop';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import type { StepRequest } from '#/features/loop/internal/stepRequest';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
@@ -210,10 +210,10 @@ class RecordingEventBus implements IEventBus {
   }
 }
 
-class FakeLoopService implements IAgentLoopService {
+class FakeLoopService implements LoopControlToken {
   readonly _serviceBrand = undefined;
 
-  readonly hooks: IAgentLoopService['hooks'] = {
+  readonly hooks: LoopControlToken['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
     onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
   };
@@ -314,7 +314,7 @@ function registerSharedServices(
 ): void {
   registerStateServices(reg);
   reg.defineInstance(IEventBus, eventBus);
-  reg.defineInstance(IAgentLoopService, loop);
+  reg.defineInstance(LoopControlToken, loop);
   reg.defineInstance(
     IAgentScopeContext,
     makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),

@@ -20,8 +20,8 @@ import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { LoopControlToken } from '#/features/loop/internal/loop';
+import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -261,7 +261,7 @@ function notifiedCount(ctx: TestAgentContext): number {
 async function drainNotifications(ctx: TestAgentContext): Promise<void> {
   ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
   await vi.waitFor(() => {
-    const loop = ctx.get(IAgentLoopService);
+    const loop = ctx.get(LoopControlToken);
     expect(loop.status().state).toBe('idle');
     expect(loop.hasPendingRequests()).toBe(false);
   });
@@ -545,7 +545,7 @@ describe('AgentTaskService — notification delivery', () => {
     expect(outputString(result)).toContain('status: killed');
     expect(notifiedCount(ctx)).toBe(0);
     expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-    expect(ctx.get(IAgentLoopService).hasPendingRequests()).toBe(false);
+    expect(ctx.get(LoopControlToken).hasPendingRequests()).toBe(false);
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'killed',
       terminalNotificationSuppressed: true,
@@ -583,7 +583,7 @@ describe('AgentTaskService — notification delivery', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-      expect(readerFixture.ctx.get(IAgentLoopService).hasPendingRequests()).toBe(false);
+      expect(readerFixture.ctx.get(LoopControlToken).hasPendingRequests()).toBe(false);
     } finally {
       if (readerFixture !== undefined) {
         await readerFixture.ctx.dispose();
@@ -759,7 +759,7 @@ describe('AgentTaskService — notification delivery', () => {
   it('preserves a queued notification when undo rejects an active turn', async () => {
     const fixture = createAgentTaskService();
     const { ctx, manager } = fixture;
-    const loop = ctx.get(IAgentLoopService);
+    const loop = ctx.get(LoopControlToken);
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;

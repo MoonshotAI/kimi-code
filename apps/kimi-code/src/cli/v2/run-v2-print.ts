@@ -60,12 +60,12 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
-import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnEnded } from '@moonshot-ai/agent-core-v2/features/loop/turnOps';
 import type {
   AssistantDelta,
   ThinkingDelta,
   ToolCallDelta,
-} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+} from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {

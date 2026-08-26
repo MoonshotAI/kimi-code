@@ -73,7 +73,7 @@ import {
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
-import type { LoopControl } from '#/agent/loop/configSection';
+import type { LoopControl } from '#/features/loop/configSection';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

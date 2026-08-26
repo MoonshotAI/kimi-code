@@ -6,7 +6,7 @@ import {
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';

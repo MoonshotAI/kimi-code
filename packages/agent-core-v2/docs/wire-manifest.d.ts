@@ -26,7 +26,7 @@
 
 // Index (55 record types)
 //   config.update                      (none)                           src/features/profile/profileOps.ts
-//   context.append_loop_event          turn                             src/features/contextMemory/contextEvents.ts
+//   context.append_loop_event          (none)                           src/features/contextMemory/contextEvents.ts
 //   context.append_message             plan, task.notificationDelivery  src/features/contextMemory/contextEvents.ts
 //   context.apply_compaction           plan, task.notificationDelivery  src/features/contextMemory/contextEvents.ts
 //   context.clear                      plan, task.notificationDelivery  src/features/contextMemory/contextEvents.ts
@@ -75,10 +75,10 @@
 //   tools.update_store                 (none)                           src/features/todo/todoOps.ts
 //   tower_mode.enter                   tower, tower.owner               src/features/tower/towerOps.ts
 //   tower_mode.exit                    tower, tower.owner               src/features/tower/towerOps.ts
-//   turn.cancel                        turn                             src/agent/loop/turnOps.ts
-//   turn.ended                         turn                             src/agent/loop/turnOps.ts
-//   turn.prompt                        turn                             src/agent/loop/turnOps.ts
-//   turn.steer                         turn                             src/agent/loop/turnOps.ts
+//   turn.cancel                        (none)                           src/features/loop/turnOps.ts
+//   turn.ended                         (none)                           src/features/loop/turnOps.ts
+//   turn.prompt                        (none)                           src/features/loop/turnOps.ts
+//   turn.steer                         (none)                           src/features/loop/turnOps.ts
 //   usage.record                       (none)                           src/features/usage/usageOps.ts
 
 /**
@@ -106,7 +106,7 @@ interface ConfigUpdatePayload {
 }
 
 /**
- * states: turn
+ * states: (none)
  * owner: src/features/contextMemory/contextEvents.ts
  */
 interface ContextAppendLoopEventPayload {
@@ -716,8 +716,8 @@ interface TowerModeExitPayload {
 }
 
 /**
- * states: turn
- * owner: src/agent/loop/turnOps.ts
+ * states: (none)
+ * owner: src/features/loop/turnOps.ts
  */
 interface TurnCancelPayload {
   _name: 'turn.cancel';
@@ -728,8 +728,8 @@ interface TurnCancelPayload {
 }
 
 /**
- * states: turn
- * owner: src/agent/loop/turnOps.ts
+ * states: (none)
+ * owner: src/features/loop/turnOps.ts
  */
 interface TurnEndedPayload {
   _name: 'turn.ended';
@@ -784,8 +784,8 @@ interface TurnEndedPayload {
 }
 
 /**
- * states: turn
- * owner: src/agent/loop/turnOps.ts
+ * states: (none)
+ * owner: src/features/loop/turnOps.ts
  */
 interface TurnPromptPayload {
   _name: 'turn.prompt';
@@ -796,8 +796,8 @@ interface TurnPromptPayload {
 }
 
 /**
- * states: turn
- * owner: src/agent/loop/turnOps.ts
+ * states: (none)
+ * owner: src/features/loop/turnOps.ts
  */
 interface TurnSteerPayload {
   _name: 'turn.steer';

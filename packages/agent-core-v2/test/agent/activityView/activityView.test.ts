@@ -5,9 +5,10 @@ import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded, turnKey, type TurnModelState } from '#/agent/loop/turnOps';
+import { LoopControlToken } from '#/features/loop/internal/loop';
+import { registerLoopControl, type LoopDurableState } from '#/features/loop/internal/access';
+import { TurnStarted } from '#/features/loop/turnEvents';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -74,12 +75,13 @@ let disposables: DisposableStore;
 function harness(
   seedTasks: readonly AgentTaskInfo[] = [],
   compacting: FullCompactionTask | null = null,
-  lastEnded?: TurnModelState['lastEnded'],
+  lastEnded?: LoopDurableState['lastEnded'],
 ) {
   const bus = new FakeBus();
+  let durableState: LoopDurableState = { nextTurnId: 1, cancelledTurnIds: [], lastEnded };
   const loop = {
     status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
-  } as unknown as IAgentLoopService;
+  } as unknown as LoopControlToken;
   const tasks = { list: () => seedTasks } as unknown as IAgentTaskService;
   const restoreHooks: Array<() => Promise<void>> = [];
   const dispatcher = {
@@ -95,23 +97,22 @@ function harness(
       },
     },
   } as unknown as IEventDispatcher;
-  const restore = async (ended: TurnModelState['lastEnded']): Promise<void> => {
-    agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], lastEnded: ended });
+  const restore = async (ended: LoopDurableState['lastEnded']): Promise<void> => {
+    durableState = { nextTurnId: 1, cancelledTurnIds: [], lastEnded: ended };
     for (const hook of restoreHooks) await hook();
   };
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IEventBus, bus as unknown as IEventBus);
-  ix.stub(IAgentLoopService, loop);
+  ix.stub(LoopControlToken, loop);
+  const agentContext = stubAgentContext('main', 1);
+  registerLoopControl(agentContext, loop, () => durableState);
   ix.stub(IAgentTaskService, tasks);
   ix.stub(IEventDispatcher, dispatcher);
-  const agentState = new AgentStateService();
-  agentState.contributeState(turnKey);
-  agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], lastEnded });
-  ix.set(IAgentStateService, agentState);
+  ix.stub(IAgentStateService, new AgentStateService());
   ix.stub(IAgentScopeContext, {
     _serviceBrand: undefined,
     agentId: 'main',
-    agentContext: stubAgentContext('main', 1),
+    agentContext,
     scope: (subKey?: string) => subKey ?? '',
   });
   ix.stub(IAgentFullCompactionService, {

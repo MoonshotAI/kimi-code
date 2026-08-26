@@ -16,7 +16,7 @@ import {
   isValidUndoCount,
 } from '#/features/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -54,7 +54,7 @@ export class AgentConversationUndoService
   private readonly context: ContextMemoryRuntime;
 
   constructor(
-    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentLifecycleService manager: IAgentLifecycleService,

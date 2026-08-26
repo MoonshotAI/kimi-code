@@ -13,7 +13,7 @@ import {
   IAgentActivityView,
   type AgentActivityState,
 } from '#/agent/activityView/activityView';
-import type { TurnEndReason } from '#/agent/loop/turnEvents';
+import type { TurnEndReason } from '#/features/loop/turnEvents';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import type { Interaction } from '#/features/interaction/interaction';
 import {

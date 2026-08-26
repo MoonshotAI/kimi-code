@@ -2,7 +2,7 @@ import { Service } from '#/_base/di/service';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';

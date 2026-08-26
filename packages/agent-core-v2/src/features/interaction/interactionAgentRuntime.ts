@@ -1,7 +1,7 @@
 import { assign, fromCallback, setup, type Snapshot } from 'xstate';
 
 import { Emitter, type Event } from '#/_base/event';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded } from '#/features/loop/turnOps';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,

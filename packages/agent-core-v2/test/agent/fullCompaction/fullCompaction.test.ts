@@ -37,7 +37,7 @@ import {
   type ResolvedAgentProfile,
   type ToolExecution,
 } from '#/index';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -341,11 +341,11 @@ describe('FullCompaction', () => {
 
     expect(ctx.get(IAgentFullCompactionService).begin({ source: 'manual' })).toBe(true);
     await compactionStarted;
-    expect(ctx.get(IAgentLoopService).tryAcquireQuiescence()).toBeUndefined();
+    expect(ctx.get(LoopControlToken).tryAcquireQuiescence()).toBeUndefined();
 
     release();
     await ctx.get(IAgentFullCompactionService).compacting?.promise;
-    const lease = ctx.get(IAgentLoopService).tryAcquireQuiescence();
+    const lease = ctx.get(LoopControlToken).tryAcquireQuiescence();
     expect(lease).toBeDefined();
     lease?.dispose();
     hook.dispose();
@@ -398,7 +398,7 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
     const approval = await ctx.takeApprovalRequest();
-    expect(ctx.get(IAgentLoopService).status().activeTurnId).toBeDefined();
+    expect(ctx.get(LoopControlToken).status().activeTurnId).toBeDefined();
 
     await expect(ctx.rpc.beginCompaction({})).rejects.toMatchObject({
       code: 'compaction.unable',
@@ -413,7 +413,7 @@ describe('FullCompaction', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
     approval.respond({ decision: 'rejected', selectedLabel: 'reject' });
     await ctx.untilTurnEnd();
-    expect(ctx.get(IAgentLoopService).status().activeTurnId).toBeUndefined();
+    expect(ctx.get(LoopControlToken).status().activeTurnId).toBeUndefined();
   });
 
   it('projects the compacted prefix before sending the summary request', async () => {
@@ -1759,7 +1759,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-    ctx.get(IAgentLoopService).hooks.onDidFinishStep.register(
+    ctx.get(LoopControlToken).hooks.onDidFinishStep.register(
       'test-auto-compaction',
       async (_step, next) => {
         if (!ctx.get(IAgentFullCompactionService).begin({ source: 'auto' })) {

@@ -6,8 +6,8 @@ import { promisify } from 'node:util';
 
 import {
   AgentInteraction,
+  AgentLoop,
   IAgentLifecycleService,
-  IAgentLoopService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
@@ -2485,8 +2485,8 @@ describe('bindSessionTranscript', () => {
           get: (token: unknown) => {
             if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
-            if (token === IAgentLoopService) {
-              return { status: () => opts?.loopStatus ?? { state: 'idle' } };
+            if (token === AgentLoop) {
+              return { status: () => (opts?.loopStatus as { state?: string })?.state === 'running' ? 'running' : 'idle' };
             }
             if (token === IAgentTaskService) {
               return { list: () => opts?.tasks ?? [] };

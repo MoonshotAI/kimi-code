@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

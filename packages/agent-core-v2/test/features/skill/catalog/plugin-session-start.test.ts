@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import type { LogContext, LogPayload } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -85,7 +85,7 @@ function sessionStartRuntime(input: {
 
 async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
   await ctx.restoreRuntimes();
-  await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
+  await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, false);
 }
 
 function lastReminder(ctx: ReturnType<typeof testAgent>): string {

@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -26,7 +26,7 @@ import {
 import { SkillTool } from '#/features/skill/tools/skillTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { Turn } from '#/agent/loop/loop';
+import type { Turn } from '#/features/loop/internal/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from './catalog/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
@@ -113,7 +113,7 @@ describe('SkillRuntime', () => {
           retry: () => Promise.resolve(undefined),
           clear: () => {},
         });
-        reg.definePartialInstance(IAgentLoopService, {
+        reg.definePartialInstance(LoopControlToken, {
           status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
@@ -200,7 +200,7 @@ describe('SkillTool', () => {
           retry: () => Promise.resolve(undefined),
           clear: () => {},
         });
-        reg.definePartialInstance(IAgentLoopService, {
+        reg.definePartialInstance(LoopControlToken, {
           status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');

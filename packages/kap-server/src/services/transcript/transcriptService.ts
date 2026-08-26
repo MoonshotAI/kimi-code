@@ -2,15 +2,16 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
 import {
+  AgentLoop,
   IAgentLifecycleService,
   IAgentPromptService,
   IFlagService,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
-  IAgentLoopService,
   TOWER_FLAG_ID,
   followSessionLifecycles,
+  agentContextOf,
   getLiveSessionById,
   isTowerFeatureAssembled,
   isUndoAnchor,
@@ -320,9 +321,15 @@ export class TranscriptService {
       session === undefined
         ? undefined
         : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
-    const status = agent?.accessor.get(IAgentLoopService).status();
-    if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
-    const ordinal = status.activeTurnId;
+    const status = agent === undefined
+      ? undefined
+      : agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status();
+    if (status !== 'running') return undefined;
+    const ordinal = snapshot.items.reduce(
+      (max, item) => item.kind === 'turn' ? Math.max(max, item.ordinal) : max,
+      -1,
+    );
+    if (ordinal < 0) return undefined;
     const turnId = `t${ordinal}`;
     const existing = transcript.getTurn(turnId);
     const snapshotTurn = snapshot.items.find(
@@ -505,12 +512,13 @@ export class TranscriptService {
       sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
     );
     const folded = foldWireRecordFacts(records, base);
-    const status = getLiveSessionById(this.deps.core.accessor, sessionId)
+    const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
-      .handleOf(agentId)
-      ?.accessor.get(IAgentLoopService)
-      .status();
-    const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
+      .handleOf(agentId);
+    const status = agent === undefined
+      ? undefined
+      : agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status();
+    const activity: ActivityMeta = status === 'running' ? 'turn' : 'idle';
     const snapshot = { ...folded, meta: { ...folded.meta, activity } };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);

@@ -2,7 +2,7 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { isCompactionSummaryMessage } from '#/features/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/features/contextMemory/contextEvents';
-import type { IAgentLoopService } from '#/agent/loop/loop';
+import type { LoopControlToken } from '#/features/loop/internal/loop';
 import type { IEventBus } from '#/app/event/eventBus';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import type { PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
@@ -57,7 +57,7 @@ export function lifecycleWithReminder(
 }
 
 export function createReminderHarness(
-  loop: IAgentLoopService,
+  loop: LoopControlToken,
   context: ContextMemoryRuntime,
   eventBus?: IEventBus,
 ): ReminderRuntime {

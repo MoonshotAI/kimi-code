@@ -20,7 +20,7 @@
 #   hooks                    src/features/externalHooks/configSection.ts
 #   identity                 src/app/agentIdentity/configSection.ts
 #   image                    src/agent/media/configSection.ts
-#   loopControl              src/agent/loop/configSection.ts
+#   loopControl              src/features/loop/configSection.ts
 #   mcp                      src/app/mcpConfig/configSection.ts
 #   mergeAllAvailableSkills  src/features/skill/catalog/configSection.ts
 #   modelCatalog             src/app/kosongConfig/configSection.ts
@@ -178,7 +178,7 @@ extra_skill_dirs = []
 
 # ##########################################################################
 # loopControl (config.toml: loop_control)
-#   owner: src/agent/loop/configSection.ts
+#   owner: src/features/loop/configSection.ts
 #   scope: core
 #   hooks: custom toToml · stripEnv
 #   deprecations (old key is ignored + warns; rename manually):

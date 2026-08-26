@@ -15,7 +15,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -57,7 +57,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IAgentLoopService loop: IAgentLoopService,
+    @LoopControlToken loop: LoopControlToken,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,

@@ -1,11 +1,11 @@
 import {
   ErrorCodes,
   AgentContextMemory,
+  AgentLoop,
   AgentProfile,
   IAgentLifecycleService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
-  IAgentLoopService,
   IAuthSummaryService,
   ISessionActivityView,
   ISessionBtwService,
@@ -941,7 +941,7 @@ async function undoSessionAction(
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor.get(IAgentLoopService).cancelFromUser();
+  await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).cancelByUser();
   requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }

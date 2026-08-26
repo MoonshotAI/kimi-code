@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import {
   AgentContextMemory,
   type ContextMemoryRuntime,
@@ -263,13 +263,13 @@ describe('Agent permissionMode session bridge', () => {
 describe('Agent permissionMode reminder effect', () => {
   let ctx: TestAgentContext;
   let context: ContextMemoryRuntime;
-  let loop: IAgentLoopService;
+  let loop: LoopControlToken;
   let permissionMode: PermissionModeRuntime;
 
   beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.resolve(AgentContextMemory);
-    loop = ctx.get(IAgentLoopService);
+    loop = ctx.get(LoopControlToken);
     permissionMode = ctx.resolve(AgentPermissionMode);
     await ctx.restoreRuntimes();
   });
@@ -333,7 +333,7 @@ describe('Agent permissionMode reminder effect', () => {
     const live = createTestAgent({ persistence });
     try {
       const liveContext = live.resolve(AgentContextMemory);
-      const liveLoop = live.get(IAgentLoopService);
+      const liveLoop = live.get(LoopControlToken);
       await live.restoreRuntimes();
       await live.resolve(AgentPermissionMode).changeMode('auto');
       await runWillBeginStepHooks(liveLoop);
@@ -346,7 +346,7 @@ describe('Agent permissionMode reminder effect', () => {
     const resumed = createTestAgent({ persistence, autoConfigure: false });
     try {
       const resumedContext = resumed.resolve(AgentContextMemory);
-      const resumedLoop = resumed.get(IAgentLoopService);
+      const resumedLoop = resumed.get(LoopControlToken);
       await resumed.restorePersisted();
       expect(permissionModeReminders(resumedContext)).toHaveLength(1);
 

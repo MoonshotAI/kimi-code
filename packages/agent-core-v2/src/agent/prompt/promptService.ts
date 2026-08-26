@@ -9,8 +9,8 @@ import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemo
 import { newMessageId } from '#/features/contextMemory/messageId';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/features/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
-import { TurnSteer } from '#/agent/loop/turnOps';
+import { LoopControlToken, type Turn, type TurnResult } from '#/features/loop/internal/loop';
+import { TurnSteer } from '#/features/loop/turnOps';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -154,7 +154,7 @@ export class AgentPromptService implements IAgentPromptService {
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
-    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly states: IAgentStateService,

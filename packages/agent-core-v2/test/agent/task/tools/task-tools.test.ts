@@ -31,7 +31,7 @@ import { ProcessTask, type ProcessTaskInfo } from '#/agent/tools/os/bash/process
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import { IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { stubFlag } from '../../../app/flag/stubs';
@@ -1139,7 +1139,7 @@ describe('WaitForTool (harness)', () => {
     const loop = stubLoopWithHooks();
     const ctx = createTestAgent(
       telemetryServices(recordingTelemetry(records)),
-      agentService(IAgentLoopService, loop),
+      agentService(LoopControlToken, loop),
     );
     try {
       const tasks = ctx.get(IAgentTaskService);
