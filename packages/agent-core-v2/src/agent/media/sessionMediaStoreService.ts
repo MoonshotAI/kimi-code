@@ -57,7 +57,12 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     const stored = await this.resolveStored(fileId);
     if (stored === undefined) return undefined;
     const data = await this.storage.read(this.scope, stored.key);
-    return data === undefined ? undefined : { data, name: stored.key };
+    if (data === undefined) return undefined;
+    const name =
+      stored.metadata !== undefined && extname(stored.metadata.name) !== ''
+        ? stored.metadata.name
+        : stored.key;
+    return { data, name };
   }
 
   async open(fileId: string): Promise<SessionMediaFile | undefined> {
@@ -99,7 +104,9 @@ export class SessionMediaStoreService implements ISessionMediaStore {
   private async resolveStored(
     fileId: string,
   ): Promise<{ readonly key: string; readonly metadata: SessionMediaMetadata | undefined } | undefined> {
-    const storedMetadata = await this.documents.get<unknown>(this.scope, this.metadataKey(fileId));
+    const storedMetadata = await this.documents
+      .get<unknown>(this.scope, this.metadataKey(fileId))
+      .catch(() => undefined);
     const metadata = this.isMetadataFor(storedMetadata, fileId) ? storedMetadata : undefined;
     const key =
       metadata !== undefined && (await this.storage.size(this.scope, metadata.key)) !== undefined

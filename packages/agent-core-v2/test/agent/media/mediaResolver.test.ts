@@ -458,6 +458,22 @@ describe('AgentMediaResolverService canonical session bytes', () => {
       expect(firstPart(out)).toEqual(expected);
     },
   );
+
+  it('uploads canonical session bytes under the original persisted filename', async () => {
+    const mediaStore = stubMediaStore();
+    mediaStore.read = async () => ({ data: VIDEO_BYTES, name: 'clip.mp4' });
+    const res = resolver(new Map(), undefined, mediaStore);
+    const upload = vi.fn<NonNullable<ModelRequester['uploadVideo']>>(async () => msPart('prov-1'));
+
+    const out = await res.resolve(
+      [videoMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadVideo: upload }),
+    );
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[0]).toMatchObject({ filename: 'clip.mp4' });
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+  });
 });
 
 describe('AgentMediaResolverService image strategy', () => {
