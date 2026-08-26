@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composerSchema, buildMentionInsertion, classifyMentionHref, collectSkillMentions, docToText, extendToTextblock, inlineRunStartOffset, mentionActionPath, mentionNode, parseClipboardText, parseMentionLinks, posToTextOffset, serializeClipboardSlice, serializeMention, splitMentionSegments, textOffsetToPos, textToDoc, unescapeRenderedLinkText } from '../src/composerTextDoc';
+import { composerSchema, buildMentionInsertion, classifyMentionHref, collectSkillMentions, docToText, extendToTextblock, inlineRunStartOffset, mentionActionPath, mentionNode, parseClipboardText, parseMentionLinks, posToTextOffset, quoteNode, serializeClipboardSlice, serializeMention, splitMentionSegments, textOffsetToPos, textToDoc, unescapeRenderedLinkText } from '../src/composerTextDoc';
 import { mentionHrefToPath } from '../src/mentionLinkPath';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 
@@ -109,6 +109,31 @@ describe('composerTextDoc — clipboard single-newline contract', () => {
     // The pill sits right after the 'x ' text run, at position 3.
     const slice = NodeSelection.create(state.doc, 3).content();
     expect(serializeClipboardSlice(slice)).toBe('[a.ts](src/a.ts)');
+  });
+
+  it('degrades a quote pill to blockquote + comment, padding only between real neighbors', () => {
+    // Mid-paragraph: blank lines on both sides, ONE following space eaten.
+    const mid = composerSchema.nodes.doc.create(null, [
+      composerSchema.nodes.paragraph.create(null, [
+        composerSchema.text('看 '),
+        quoteNode({ text: '引用\n第二行', source: 'src/a.ts:L1-L2', comment: '为什么' }),
+        composerSchema.text(' 吧'),
+      ]),
+    ]);
+    expect(serializeClipboardSlice(mid.slice(0, mid.content.size))).toBe(
+      '看\n\nfrom: src/a.ts:L1-L2\n> 引用\n> 第二行\n\n为什么\n\n吧',
+    );
+    // Quote ALONE in its paragraph: no invented blank lines on either side.
+    const own = composerSchema.nodes.doc.create(null, [
+      composerSchema.nodes.paragraph.create(null, composerSchema.text('前文')),
+      composerSchema.nodes.paragraph.create(null, quoteNode({ text: '引用' })),
+    ]);
+    expect(serializeClipboardSlice(own.slice(0, own.content.size))).toBe('前文\n> 引用');
+    // Quote at paragraph START: pads only after.
+    const head = composerSchema.nodes.doc.create(null, [
+      composerSchema.nodes.paragraph.create(null, [quoteNode({ text: '引用' }), composerSchema.text(' 吧')]),
+    ]);
+    expect(serializeClipboardSlice(head.slice(0, head.content.size))).toBe('> 引用\n\n吧');
   });
 });
 

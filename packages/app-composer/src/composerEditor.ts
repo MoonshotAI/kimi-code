@@ -326,21 +326,24 @@ class QuoteNodeView {
 // The quote pill's schema toDOM renders only the truncated pill label — the
 // editor's own rendering depends on that. The HTML clipboard flavor must
 // carry the FULL quote instead, or a rich-text paste target (Google Docs,
-// mail) silently drops the excerpt beyond the 24-grapheme label — and keep
-// its line boundaries (`white-space: pre-wrap`: HTML's default white-space
-// would collapse a multi-line quote into spaces). text/plain is unaffected:
-// serializeClipboardSlice already degrades to the full text.
+// mail) silently drops the excerpt beyond the 24-grapheme label — plus the
+// bundled comment (it rides the pill's attrs, invisible in the label), and
+// the provenance as a VISIBLE `from: …` header line (the data attribute
+// alone gets stripped by most rich-text targets). Line boundaries ride
+// `white-space: pre-wrap` (HTML's default white-space would collapse them).
+// text/plain carries the same parts via serializeClipboardSlice's degrade.
 // Exported for the node tests (spec shape, without a DOM).
 export const composerClipboardSerializer = new DOMSerializer(
   {
     ...DOMSerializer.nodesFromSchema(composerSchema),
     quote: (node: PMNode) => {
       const attrs = node.attrs as QuoteAttrs;
-      return [
-        'span',
-        { class: 'quote-pill', 'data-quote-text': attrs.text, style: 'white-space: pre-wrap' },
-        attrs.text,
-      ];
+      const dataAttrs: Record<string, string> = { class: 'quote-pill', 'data-quote-text': attrs.text, style: 'white-space: pre-wrap' };
+      if (typeof attrs.comment === 'string' && attrs.comment.length > 0) dataAttrs['data-quote-comment'] = attrs.comment;
+      if (typeof attrs.source === 'string' && attrs.source.length > 0) dataAttrs['data-quote-source'] = attrs.source;
+      const header = typeof attrs.source === 'string' && attrs.source.length > 0 ? `from: ${attrs.source}\n` : '';
+      const comment = typeof attrs.comment === 'string' && attrs.comment.length > 0 ? `\n${attrs.comment}` : '';
+      return ['span', dataAttrs, `${header}${attrs.text}${comment}`];
     },
   },
   DOMSerializer.marksFromSchema(composerSchema),

@@ -263,7 +263,7 @@ function openLatestPlan(): void {
 
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
-  insertQuote: (quote: string, comment?: string) => void;
+  insertQuote: (quote: string, comment?: string, source?: string) => void;
   loadAttachmentsForEdit: (atts: TurnAttachment[]) => void;
   focus: () => void;
   anyPopupOpen?: boolean;
@@ -312,9 +312,9 @@ function loadForEdit(value: string): boolean {
 
 // Same hidden-composer guard as loadForEdit: a selection quote action must not
 // report success when there is no composer to receive the pill.
-function insertQuote(quote: string, comment?: string): boolean {
+function insertQuote(quote: string, comment?: string, source?: string): boolean {
   if (!composerRef.value) return false;
-  composerRef.value.insertQuote(quote, comment);
+  composerRef.value.insertQuote(quote, comment, source);
   return true;
 }
 

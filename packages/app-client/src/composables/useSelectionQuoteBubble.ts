@@ -17,9 +17,15 @@ export interface UseSelectionQuoteBubbleOptions {
   /** The container both range ends must share (quote anchor rule) — e.g.
    *  FILE_PREVIEW_QUOTE_CONTAINER for the file preview. */
   containerSelector: string;
+  /** Optional provenance probe (file preview): computes the quote's source
+   *  string (`path[:Lx-Ly]`) from the LIVE selection — stashed at refresh
+   *  time because the comment flow's input focus collapses the selection
+   *  long before the action fires. */
+  captureSource?: (sel: Selection | null) => string | undefined;
   /** The user picked one of the bubble's exits — state and the DOM selection
-   *  are already cleared when this runs. */
-  onAction: (payload: SelectionActionPayload) => void;
+   *  are already cleared when this runs. `source` is the refresh-time
+   *  provenance capture (undefined when no captureSource probe). */
+  onAction: (payload: SelectionActionPayload, source?: string) => void;
 }
 
 export interface SelectionQuoteBubble {
@@ -49,6 +55,10 @@ export function useSelectionQuoteBubble(options: UseSelectionQuoteBubbleOptions)
   // while the DOM selection it dismissed survives — see onBubbleClose and the
   // selectionchange re-arm below.
   let dismissed = false;
+  // The refresh-time provenance capture (see captureSource): stashed while
+  // the selection is live because the comment flow's input focus collapses
+  // it long before the action fires.
+  let quoteSource: string | undefined;
 
   function refreshSelectionBubble(): void {
     // Deferred: at mouseup/keyup time the selection may not reflect the
@@ -59,7 +69,9 @@ export function useSelectionQuoteBubble(options: UseSelectionQuoteBubbleOptions)
       // shortcut) re-evaluates the STALE selection and would otherwise revive
       // the bubble — now with focus stolen, since the keyup marks the open
       // keyboard-driven.
-      selectionBubble.value = dismissed ? null : selectionQuoteAnchor(window.getSelection(), options.containerSelector);
+      const anchor = dismissed ? null : selectionQuoteAnchor(window.getSelection(), options.containerSelector);
+      selectionBubble.value = anchor;
+      quoteSource = anchor === null ? undefined : options.captureSource?.(window.getSelection());
     }, 0);
   }
 
@@ -160,8 +172,10 @@ export function useSelectionQuoteBubble(options: UseSelectionQuoteBubbleOptions)
 
   function onBubbleAction(payload: SelectionActionPayload): void {
     selectionBubble.value = null;
+    const source = quoteSource;
+    quoteSource = undefined;
     window.getSelection()?.removeAllRanges();
-    options.onAction(payload);
+    options.onAction(payload, source);
   }
 
   return { selectionBubble, selectionKeyboard, onMouseup, onPointerdown, onBubbleClose, onBubbleAction };

@@ -995,10 +995,10 @@ function focus(): void {
 }
 
 /** Insert a quote pill at the document end (selection quote actions — 划词);
-    the 评论 flow's comment rides in the same paragraph after the pill (see
-    composerEditor's insertQuote). */
-function insertQuote(quote: string, comment?: string): void {
-  editor?.insertQuote({ text: quote }, comment);
+    the 评论 flow's comment rides in the pill's attrs (see composerEditor's
+    insertQuote); a FILE-PREVIEW quote's provenance rides as `source`. */
+function insertQuote(quote: string, comment?: string, source?: string): void {
+  editor?.insertQuote({ text: quote, ...(source !== undefined && source.length > 0 ? { source } : {}) }, comment);
 }
 
 function loadAttachmentsForEdit(atts: TurnAttachment[]): void {

@@ -4,7 +4,7 @@
 // These are the pure formatters that turn the selected text into the markdown
 // quote block handed to the composer draft or the side chat, plus the submit
 // rewrite that folds a quote PILL back into that same wire form.
-import { parseQuoteLinks } from '@moonshot-ai/app-composer';
+import { encodeQuoteSourceHeader, parseQuoteLinks } from '@moonshot-ai/app-composer';
 
 /** The bubble's three exits. */
 export type SelectionActionKind = 'comment' | 'quote' | 'sidechat';
@@ -144,6 +144,94 @@ export function clampOverlayAxis(pos: number, extent: number, viewport: number, 
   return Math.min(Math.max(pos, offset + margin), Math.max(offset + margin, offset + viewport - extent - margin));
 }
 
+/** The provenance string for a FILE-PREVIEW quote: `path` alone when the
+ *  preview carries no line grid (markdown preview), `path:Lx` / `path:Lx-Ly`
+ *  when both range ends resolve to HighlightedCode's data-line rows (code /
+ *  csv / text views — the gutter is user-select:none, so a row hit always
+ *  means real content). Two degradations keep the locator honest: a view
+ *  whose rows are FORMATTED display lines (the JSON pretty-print view when
+ *  it actually rewrote the content, or markdown PREVIEW mode whose fenced
+ *  code blocks number per block — both marked data-quote-display-lines) has
+ *  line numbers that do not exist in the source file, so its quotes carry
+ *  the bare path. And both range ends get the symmetric empty-side
+ *  adjustment (the quote strips its outer newlines, so a row contributing
+ *  nothing but a line break has no real content in the excerpt): an end
+ *  point at a row's START excludes that row, and a start point at a row's
+ *  END excludes the start row. Emitted as the `from: ` header line of the
+ *  quote's wire block (chat-message quotes carry none — their source is the
+ *  conversation itself). Returns undefined for an empty path. */
+export function captureQuoteSource(sel: Selection | null, path: string): string | undefined {
+  if (path.length === 0 || sel === null || sel.isCollapsed || sel.rangeCount !== 1) return undefined;
+  const range = sel.getRangeAt(0);
+  const lineOf = (node: Node | null): { n: number; row: Element } | null => {
+    const el = typeof Element !== 'undefined' && node instanceof Element ? node : (node?.parentElement ?? null);
+    if (el === null) return null;
+    const row = closestCrossingShadow(el, '[data-line]');
+    // A view whose rows are FORMATTED display lines carries a marker —
+    // shadow-crossing like the row lookup, since a code block's content may
+    // live in a shadow root.
+    if (row === null || closestCrossingShadow(row, '[data-quote-display-lines]') !== null) return null;
+    const n = Number.parseInt(row.getAttribute('data-line') ?? '', 10);
+    return Number.isFinite(n) ? { n, row } : null;
+  };
+  const a = lineOf(range.startContainer);
+  const b = lineOf(range.endContainer);
+  if (a === null || b === null) return path;
+  const [start, end] = a.n <= b.n ? [a.n, b.n] : [b.n, a.n];
+  // Range boundaries are document-ordered, so the end row is always b's —
+  // even for a reverse drag.
+  const adjustedEnd = range.endOffset === 0 && end > start && atRowStart(b.row, range.endContainer) ? end - 1 : end;
+  const adjustedStart = atRowEnd(a.row, range.startContainer, range.startOffset) && start < adjustedEnd ? start + 1 : start;
+  return adjustedStart === adjustedEnd ? `${path}:L${adjustedStart}` : `${path}:L${adjustedStart}-L${adjustedEnd}`;
+}
+
+/** A range END at a row's very beginning contributes none of that row's
+ *  content: every ancestor step from the container up to the row has no
+ *  previous CONTENT sibling — the line-number gutters (HighlightedCode's
+ *  .hl-gutter, the CSV view's <th>) are user-select:none decoration and
+ *  never count as selected content. */
+function atRowStart(row: Element, node: Node): boolean {
+  let current: Node | null = node;
+  while (current !== null && current !== row) {
+    let sibling = current.previousSibling;
+    while (sibling !== null && isRowGutter(sibling)) sibling = sibling.previousSibling;
+    if (sibling !== null) return false;
+    current = current.parentNode;
+  }
+  return current === row;
+}
+
+/** The mirror of atRowStart for the selection's START: the point is at the
+ *  row's very end when the container offset consumes its whole content and
+ *  every ancestor step up to the row has no following CONTENT sibling. The
+ *  quote strips its leading newlines, so such a row contributes nothing but
+ *  a line break to the excerpt. */
+function atRowEnd(row: Element, node: Node, offset: number): boolean {
+  const contentLength =
+    node.nodeType === 3 // TEXT_NODE (the Node global is absent under node-env tests)
+      ? (node.nodeValue?.length ?? 0)
+      : typeof Element !== 'undefined' && node instanceof Element
+        ? (node.childNodes?.length ?? 0)
+        : 0;
+  if (offset !== contentLength) return false;
+  let current: Node | null = node;
+  while (current !== null && current !== row) {
+    let sibling = current.nextSibling;
+    while (sibling !== null && isRowGutter(sibling)) sibling = sibling.nextSibling;
+    if (sibling !== null) return false;
+    current = current.parentNode;
+  }
+  return current === row;
+}
+
+function isRowGutter(node: Node): boolean {
+  return (
+    typeof Element !== 'undefined' &&
+    node instanceof Element &&
+    (node.classList.contains('hl-gutter') || node.tagName === 'TH')
+  );
+}
+
 /** Wrap-around navigation index for a small action menu (the selection
  *  bubble's keyboard model): -1 (nothing focused) enters at the first item
  *  on ArrowDown, the last on ArrowUp. */
@@ -222,17 +310,17 @@ export function buildQuotePrompt(quote: string, comment?: string): string {
 
 /** Rewrite the QUOTE LINKS of a SUBMIT-BOUND text copy (the composer doc and
  *  the persisted draft keep the pill link form; this runs on the outgoing
- *  text only): every quote pill becomes its `> ` blockquote block
- *  (buildQuoteBlock), so the wire format is exactly what the text-era flow
- *  produced — the composer-private scheme never reaches the transcript or
- *  the model. ONE space immediately after a link is eaten: it is the
- *  insertion's caret-home separator, so a comment typed after the pill lands
- *  directly after the block's blank line (`> 引用\n\n评论`, the old
- *  buildQuotePrompt output). A pill EDITED INTO MID-LINE (text typed before
- *  it, or a Backspace-merged paragraph) gets a line break before its block:
- *  a blockquote only starts at a line head, and an inline expansion would
- *  degrade to ordinary text for both the daemon and the renderer. Anything
- *  that is not a quote link survives byte-identical. */
+ *  text only): every quote pill becomes its `> ` blockquote block with its
+ *  BUNDLED comment (buildQuotePrompt — `> 引用\n\n评论`), so the wire format
+ *  is exactly what the text-era flow produced — the composer-private scheme
+ *  never reaches the transcript or the model. ONE space immediately after a
+ *  link is eaten: it is the insertion's caret-home separator, so anything the
+ *  user typed after the pill lands directly after the block's comment. A pill
+ *  EDITED INTO MID-LINE (text typed before it, or a Backspace-merged
+ *  paragraph) gets a line break before its block: a blockquote only starts at
+ *  a line head, and an inline expansion would degrade to ordinary text for
+ *  both the daemon and the renderer. Anything that is not a quote link
+ *  survives byte-identical. */
 export function rewriteQuoteLinks(text: string): string {
   const matches = parseQuoteLinks(text);
   if (matches.length === 0) return text;
@@ -243,7 +331,11 @@ export function rewriteQuoteLinks(text: string): string {
     cursor = match.end;
     if (text[cursor] === ' ') cursor += 1;
     if (out.length > 0 && !out.endsWith('\n')) out = `${out.replace(/ +$/, '')}\n`;
-    out += buildQuoteBlock(match.attrs.text);
+    // A FILE-PREVIEW quote's provenance leads its block as a `from: …`
+    // header line (`path[:Lx-Ly]` — the chat-quote form carries none),
+    // single-line encoded (the header never splits on a newline in the path).
+    if (match.attrs.source !== undefined && match.attrs.source.length > 0) out += `from: ${encodeQuoteSourceHeader(match.attrs.source)}\n`;
+    out += buildQuotePrompt(match.attrs.text, match.attrs.comment);
   }
   out += text.slice(cursor);
   return out;

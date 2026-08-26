@@ -10,17 +10,22 @@
      pills additionally carry their open target (data-attachment-url and
      companions) when the attachments prop resolves their 1..N attId — the
      attribute is what the singleton's click routing and the pointer
-     affordance key off. -->
+     affordance key off. A wire-level `> ` BLOCKQUOTE (what the submit
+     rewrite folds every quote pill into) renders as a quote chip — the
+     same pill look as the composer's, full text on data-quote-text, so the
+     mentionTooltip singleton shows the annotated content on hover with no
+     wiring of its own. -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Slice } from 'prosemirror-model';
 import type { TurnAttachment } from '@moonshot-ai/app-core/client/types';
-import { mentionActionPath, serializeAttachment, serializeMention, splitInlineSegments, textToDoc, type AttachmentAttrs, type InlineSegment, type MentionAttrs } from './composerTextDoc';
+import { buildQuoteWireLines, encodeQuoteSourceHeader, mentionActionPath, quotePillLabel, serializeAttachment, serializeMention, serializeQuote, splitInlineSegments, splitQuoteBlocks, textToDoc, type AttachmentAttrs, type ComposerTextBlock, type InlineSegment, type MentionAttrs } from './composerTextDoc';
 import { COMPOSER_CLIPBOARD_MIME, messageCopyEntryFor, remintAttachmentLinkIds, stashComposerFlavor, type AttachmentEntry, type ComposerClipboardPayload } from './attachmentRegistry';
 import { attachmentTargetAttrs, attachmentTargetFor, type AttachmentTargetAttrs } from './attachmentTarget';
 import { mentionHrefToPath } from './mentionLinkPath';
 import { mentionIconSvg } from './mentionIcons';
 import { attachmentIconSvg } from './attachmentPill';
+import { quoteIconSvg } from './quotePill';
 import { truncateMentionName } from './mentionPill';
 
 const props = withDefaults(
@@ -52,15 +57,30 @@ const props = withDefaults(
   { interactive: true, openFile: undefined, attachments: undefined },
 );
 
-/** text → segments, recomputed only when the text changes; the template
- *  renders this sequence 1:1. A quote link never legitimately reaches the
- *  message surface (the submit rewrite folds it into a `> ` block first), so
- *  one that slips through (hand-typed) degrades to its plain quoted text —
- *  the composer-private scheme never renders. */
-const segments = computed(() =>
-  splitInlineSegments(props.text).map((segment) =>
-    segment.type === 'quote' ? { type: 'text' as const, value: segment.attrs.text } : segment,
-  ),
+/** text → render blocks, recomputed only when the text changes; the template
+ *  renders this sequence 1:1. Quote handling: the wire-level `> ` blockquote
+ *  (every quote pill's submit form) is segmented by splitQuoteBlocks into a
+ *  chip whose data-quote-text carries the full quote — the mentionTooltip
+ *  singleton's hover bubble needs no wiring. A quote LINK never legitimately
+ *  reaches the message surface (the rewrite folds it into the block first),
+ *  so one that slips through inline (hand-typed) degrades to its plain quoted
+ *  text — the composer-private scheme never renders. */
+type RenderSegment = Exclude<InlineSegment, { type: 'quote' }>;
+type RenderBlock =
+  | Extract<ComposerTextBlock, { type: 'quote' | 'sep' }>
+  | { type: 'inline'; text: string; segments: RenderSegment[] };
+
+const blocks = computed<RenderBlock[]>(() =>
+  splitQuoteBlocks(props.text).map((block) => {
+    if (block.type !== 'inline') return block;
+    return {
+      type: 'inline' as const,
+      text: block.text,
+      segments: splitInlineSegments(block.text).map((segment) =>
+        segment.type === 'quote' ? { type: 'text' as const, value: segment.attrs.text } : segment,
+      ),
+    };
+  }),
 );
 
 /** Tab semantics for actionable pills in message context. Folder pills stay
@@ -144,9 +164,12 @@ function mentionPillsToLinks(fragment: DocumentFragment): void {
  *  identity — before pills existed the bubble rendered the raw wire text
  *  and copied verbatim. Pills carry their FULL attrs in data attributes,
  *  so a cloned pill becomes its exact serialized form again: mentions
- *  serialize to their link, attachment pills degrade to the bare name
- *  (the composer-private attId link never travels as plaintext). When the
- *  selection covers attachment pills, a custom clipboard flavor ALSO
+ *  serialize to their link, quote chips to their canonical `> ` blockquote
+ *  lines (the label is a 24-grapheme excerpt — the data attribute's full
+ *  text is the only faithful source), attachment pills degrade to the
+ *  bare name (the composer-private attId link never travels as
+ *  plaintext). When the selection covers attachment pills, a custom
+ *  clipboard flavor ALSO
  *  carries the selection as a real composer slice plus entries that
  *  inherit the fileId from the message's `attachments` prop (deduped on
  *  `blob:<fileId>`), so a paste back into the composer restores LIVE
@@ -155,16 +178,52 @@ function mentionPillsToLinks(fragment: DocumentFragment): void {
  *  fileId-bearing payload. Only selections fully inside
  *  this component are intercepted; a selection reaching outside keeps
  *  the browser default. */
+/** The pill a range boundary sits inside, if any (a boundary inside a pill
+ *  label would otherwise clone only the partial label — see onCopy). */
+function pillAncestorOf(node: Node): Element | null {
+  const el = node instanceof Element ? node : node.parentElement;
+  return el?.closest('.quote-pill, .mention-pill, .attachment-pill') ?? null;
+}
+
 function onCopy(event: ClipboardEvent): void {
   const selection = window.getSelection();
   const root = event.currentTarget as HTMLElement | null;
   if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !root) return;
-  const range = selection.getRangeAt(0);
-  if (!root.contains(range.commonAncestorContainer)) return;
+  const liveRange = selection.getRangeAt(0);
+  if (!root.contains(liveRange.commonAncestorContainer)) return;
+  // A drag that starts or ends INSIDE a pill's label clones only the partial
+  // label text (the selection sync paints the WHOLE pill as selected, so the
+  // copy must match the paint) — expand the boundaries onto the pill on a
+  // CLONED range (the live selection is never moved). Zero-width guard: a
+  // boundary exactly at the label's START (end side) or END (start side)
+  // means the pill contributes no characters at all, so that side keeps its
+  // place instead of swallowing an unselected pill.
+  const range = liveRange.cloneRange();
+  const pillContentAt = (pill: Element, side: 'start' | 'end'): string => {
+    const probe = liveRange.cloneRange();
+    probe.selectNodeContents(pill);
+    if (side === 'start') probe.setStart(liveRange.startContainer, liveRange.startOffset);
+    else probe.setEnd(liveRange.endContainer, liveRange.endOffset);
+    return probe.toString();
+  };
+  const startPill = pillAncestorOf(range.startContainer);
+  if (startPill !== null && pillContentAt(startPill, 'start') !== '') range.setStartBefore(startPill);
+  const endPill = pillAncestorOf(range.endContainer);
+  if (endPill !== null && pillContentAt(endPill, 'end') !== '') range.setEndAfter(endPill);
   const fragment = range.cloneContents();
   for (const pill of fragment.querySelectorAll('.attachment-pill')) {
     const attrs = readAttachmentAttrs(pill);
     pill.replaceWith(document.createTextNode(attrs?.name ?? pill.textContent ?? ''));
+  }
+  for (const pill of fragment.querySelectorAll('.quote-pill')) {
+    const text = pill.getAttribute('data-quote-text') ?? pill.textContent ?? '';
+    const comment = pill.getAttribute('data-quote-comment');
+    const sep = pill.getAttribute('data-quote-comment-sep') ?? '\n\n';
+    const source = pill.getAttribute('data-quote-source');
+    // A paired chip restores [from: source + \n] quote + separator + comment
+    // — the exact wire (the header is single-line encoded, same as emission).
+    const header = source !== null && source.length > 0 ? `from: ${encodeQuoteSourceHeader(source)}\n` : '';
+    pill.replaceWith(document.createTextNode(header + buildQuoteWireLines(text) + (comment !== null && comment.length > 0 ? sep + comment : '')));
   }
   mentionPillsToLinks(fragment);
   event.clipboardData?.setData('text/plain', fragment.textContent ?? '');
@@ -180,7 +239,25 @@ function onCopy(event: ClipboardEvent): void {
     if (!flavorAtts.some((seen) => seen.attId === attrs.attId)) flavorAtts.push(attrs);
     pill.replaceWith(document.createTextNode(serializeAttachment(attrs)));
   }
-  if (flavorAtts.length > 0) {
+  // Quote chips ride the flavor as their self-contained link form — a paste
+  // back into the composer revives the live quote pill (no registry needed).
+  // Their presence ALSO opens the flavor on its own: a quote-only copy would
+  // otherwise write no MIME at all, and the paste would come back as plain
+  // text instead of the atom.
+  let hasQuotePill = false;
+  for (const pill of flavorFragment.querySelectorAll('.quote-pill')) {
+    hasQuotePill = true;
+    pill.replaceWith(
+      document.createTextNode(
+        serializeQuote({
+          text: pill.getAttribute('data-quote-text') ?? pill.textContent ?? '',
+          comment: pill.getAttribute('data-quote-comment') ?? '',
+          source: pill.getAttribute('data-quote-source') ?? '',
+        }),
+      ),
+    );
+  }
+  if (flavorAtts.length > 0 || hasQuotePill) {
     mentionPillsToLinks(flavorFragment);
     // Re-mint the attIds before building the flavor: a bubble's ids are
     // message-scoped (submit-time 1..N indexes), so two bubbles can carry the
@@ -214,7 +291,21 @@ function onCopy(event: ClipboardEvent): void {
 <template>
   <!-- The inline wrapper is layout-neutral (the content is one inline
        flow); it exists to carry the copy interceptor. -->
-  <span class="composer-text" @copy="onCopy"><template v-for="(segment, index) in segments" :key="index"><span
+  <span class="composer-text" @copy="onCopy"><template v-for="(block, index) in blocks" :key="index"><span
+    v-if="block.type === 'quote'"
+    class="quote-pill"
+    :tabindex="interactive ? 0 : undefined"
+    :data-quote-text="block.text"
+    :data-quote-comment="block.comment || undefined"
+    :data-quote-comment-sep="block.commentSep"
+    :data-quote-source="block.source || undefined"
+    :aria-label="block.comment ? `${block.text}\n${block.comment}` : block.text"
+  ><span class="quote-pill-icon" aria-hidden="true" v-html="quoteIconSvg()" /><span class="quote-pill-name">{{ quotePillLabel(block.text) }}</span><template
+      v-if="block.comment"
+    ><span class="quote-pill-divider" aria-hidden="true" /><span class="quote-pill-comment">{{ quotePillLabel(block.comment) }}</span></template></span><template
+    v-else-if="block.type === 'sep'">{{ block.text }}</template><template
+    v-else
+  ><template v-for="(segment, si) in block.segments" :key="si"><span
     v-if="segment.type === 'mention'"
     :class="`mention-pill mention-${segment.attrs.kind}`"
     :data-mention-kind="segment.attrs.kind"
@@ -231,5 +322,5 @@ function onCopy(event: ClipboardEvent): void {
     :data-attachment-kind="segment.attrs.kind"
     :data-attachment-name="segment.attrs.name"
     v-bind="attachmentPillAttrs(segment.attrs)"
-  ><span class="attachment-pill-icon" aria-hidden="true" v-html="attachmentIconSvg()" /><span class="attachment-pill-name">{{ truncateMentionName(segment.attrs.name) }}</span></span><template v-else>{{ segment.value }}</template></template></span>
+  ><span class="attachment-pill-icon" aria-hidden="true" v-html="attachmentIconSvg()" /><span class="attachment-pill-name">{{ truncateMentionName(segment.attrs.name) }}</span></span><template v-else>{{ segment.value }}</template></template></template></template></span>
 </template>

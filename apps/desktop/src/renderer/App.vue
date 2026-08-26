@@ -40,8 +40,8 @@ import { ModelDisplayKey, ResolveSwarmMembersKey, SubagentEffortKey } from '@moo
 import { ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog, useSelectionQuoteBubble } from '@moonshot-ai/app-client/composables';
-import { runComposerMenuEdit, startMentionTooltip, type AttachmentEntry } from '@moonshot-ai/app-composer';
-import { buildQuoteBlock, sweepPendingQuotes, FILE_PREVIEW_QUOTE_CONTAINER, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
+import { encodeQuoteSourceHeader, runComposerMenuEdit, startMentionTooltip, type AttachmentEntry } from '@moonshot-ai/app-composer';
+import { buildQuoteBlock, sweepPendingQuotes, captureQuoteSource, FILE_PREVIEW_QUOTE_CONTAINER, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { ColorScheme, FontScale, PromptAttachment } from '@moonshot-ai/app-client/client';
 import type { OpenMediaRequest, ToolMedia, TurnAttachment } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
@@ -1364,18 +1364,18 @@ async function handleInterrupt(): Promise<void> {
 // watcher source includes the active session, so a switch sweeps that
 // session's queue IMMEDIATELY (an A→B→A round trip with the composer hidden
 // throughout never resurrects A's stash).
-const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; sessionId: string | undefined }>>([]);
+const pendingQuoteInserts = ref<Array<{ quote: string; comment?: string; source?: string; sessionId: string | undefined }>>([]);
 watch(
   () => [client.activeSessionId.value, conversationPaneRef.value?.hasInsertableComposer() ?? false] as const,
   ([sid, ready]) => {
     if (pendingQuoteInserts.value.length === 0) return;
     pendingQuoteInserts.value = sweepPendingQuotes(pendingQuoteInserts.value, sid, (item) =>
-      ready ? conversationPaneRef.value?.insertComposerQuote(item.quote, item.comment) === true : false,
+      ready ? conversationPaneRef.value?.insertComposerQuote(item.quote, item.comment, item.source) === true : false,
     );
   },
 );
 
-function handleQuoteAction(payload: SelectionActionPayload): void {
+function handleQuoteAction(payload: SelectionActionPayload, quoteSource?: string): void {
   if (payload.action === 'sidechat') {
     // Plan B (用户拍板): the quote lands in the side chat's DRAFT — nothing is
     // sent. Open without a prompt (an empty session is still created on the
@@ -1391,8 +1391,12 @@ function handleQuoteAction(payload: SelectionActionPayload): void {
     // still never dies — it becomes the session's pending side-chat draft,
     // adopted by the next SideChatPanel mount.
     const sideChatFocus = armSideChatFocus();
+    // A FILE-PREVIEW quote's provenance rides as the header line of its block
+    // (chat-message quotes carry none — the conversation is their source),
+    // single-line encoded so the header never splits on a newline in the path.
+    const quoteBlock = quoteSource !== undefined && quoteSource.length > 0 ? `from: ${encodeQuoteSourceHeader(quoteSource)}\n${buildQuoteBlock(payload.quote)}` : buildQuoteBlock(payload.quote);
     const stashPendingDraft = (sessionId: string | null): void => {
-      if (sessionId) client.setSideChatPendingDraft(sessionId, buildQuoteBlock(payload.quote));
+      if (sessionId) client.setSideChatPendingDraft(sessionId, quoteBlock);
     };
     void runSessionCreatingAction(async () => {
       try {
@@ -1438,7 +1442,7 @@ function handleQuoteAction(payload: SelectionActionPayload): void {
           client.notify({ severity: 'warning', title: t('selection.sideChatOpenFailed') });
           return createdId;
         }
-        panel.insertDraft(buildQuoteBlock(payload.quote), { focus: false });
+        panel.insertDraft(quoteBlock, { focus: false });
         return createdId;
       } finally {
         sideChatFocus.focusWhenReady();
@@ -1447,13 +1451,13 @@ function handleQuoteAction(payload: SelectionActionPayload): void {
     return;
   }
   const comment = payload.action === 'comment' ? payload.comment : undefined;
-  if (conversationPaneRef.value?.insertComposerQuote(payload.quote, comment) !== true) {
+  if (conversationPaneRef.value?.insertComposerQuote(payload.quote, comment, quoteSource) !== true) {
     // No composer right now (the dock is showing a question/approval card) —
     // queue it (per session, in order) for replay on recovery instead of
     // dropping the quote.
     pendingQuoteInserts.value = [
       ...pendingQuoteInserts.value,
-      { quote: payload.quote, comment, sessionId: client.activeSessionId.value },
+      { quote: payload.quote, comment, source: quoteSource, sessionId: client.activeSessionId.value },
     ];
   }
 }
@@ -1479,8 +1483,13 @@ const {
 } = useSelectionQuoteBubble({
   root: previewPanelEl,
   containerSelector: FILE_PREVIEW_QUOTE_CONTAINER,
-  onAction: (payload) => {
-    handleQuoteAction(payload);
+  // Provenance probe: the served preview path (workspace-relative in
+  // workspace, absolute for genuinely-external files) plus the selection's
+  // line range when the view carries a data-line grid (code / json / csv /
+  // text); markdown previews degrade to the bare path.
+  captureSource: (sel) => captureQuoteSource(sel, previewFile.value?.path ?? ''),
+  onAction: (payload, source) => {
+    handleQuoteAction(payload, source);
     if (isMobile.value && payload.action !== 'sidechat') closeFilePreview();
   },
 });

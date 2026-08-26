@@ -24,7 +24,7 @@ import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf } from '@moonshot-ai/app-core/lib';
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
-import { canUndoSkillActivation, skillActivationEditText, type AttachmentEntry } from '@moonshot-ai/app-composer';
+import { canUndoSkillActivation, reviveQuoteBlockLinks, skillActivationEditText, type AttachmentEntry } from '@moonshot-ai/app-composer';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
 import { ModelDisplayKey, PinScrollKey, ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { track } from '../../lib/track';
@@ -333,13 +333,15 @@ function loadComposerForEdit(
 }
 
 /** Insert a quote pill into whichever composer is currently mounted (selection
-    quote actions — 划词); the 评论 flow's comment rides after the pill.
-    Returns false when no composer can receive it (e.g. the dock is showing a
-    pending question/approval), same contract as loadComposerForEdit. */
-function insertComposerQuote(quote: string, comment?: string): boolean {
+    quote actions — 划词); the 评论 flow's comment rides in the pill's attrs,
+    and a FILE-PREVIEW quote's provenance rides as `source` (the wire block's
+    header line). Returns false when no composer can receive it (e.g. the dock
+    is showing a pending question/approval), same contract as
+    loadComposerForEdit. */
+function insertComposerQuote(quote: string, comment?: string, source?: string): boolean {
   const composer = dockedComposerRef.value ?? emptyComposerRef.value;
   if (!composer?.insertQuote) return false;
-  const ok = composer.insertQuote(quote, comment);
+  const ok = composer.insertQuote(quote, comment, source);
   return ok !== false;
 }
 
@@ -758,8 +760,9 @@ const chatLayoutStyle = computed(() => ({
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
-  /** Insert a quote pill at the document end (selection quote actions). */
-  insertQuote?: (quote: string, comment?: string) => boolean | void;
+  /** Insert a quote pill at the document end (selection quote actions); a
+   *  FILE-PREVIEW quote's provenance rides as `source`. */
+  insertQuote?: (quote: string, comment?: string, source?: string) => boolean | void;
   /** Whether the (docked) composer is actually mounted — the dock's nested
    *  Composer unmounts while a question/approval card shows. */
   hasInsertableComposer?: () => boolean;
@@ -1653,7 +1656,11 @@ function handleEditMessage(payload: {
   following.value = true;
   showPill.value = false;
   userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
-  emit('editMessage', payload);
+  // Every refill entry converges here (hover undo in ChatPane, Esc/auto undo
+  // below, skill replays): the wire text's quote blocks come back as
+  // self-contained pill links, so the composer revives the quote atoms (with
+  // their bundled comments and provenance) instead of plain `> ` paragraphs.
+  emit('editMessage', { ...payload, text: reviveQuoteBlockLinks(payload.text) });
 }
 
 // A queued message was clicked for editing: load its text (and any attachments)

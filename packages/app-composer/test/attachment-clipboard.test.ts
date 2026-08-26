@@ -163,9 +163,10 @@ describe('buildComposerClipboardCopy — the copy handler’s DOM-free products'
     );
     const copy = buildComposerClipboardCopy(selected.selection.content(), byAttId())!;
     expect(copy).not.toBeNull();
-    // text/plain keeps the FULL quote text (the quote branch of
-    // serializeClipboardSlice degrades to it — no scheme leaks).
-    expect(copy.plain).toBe('看 多行\n引用 吧');
+    // text/plain degrades the quote to its canonical `> ` blockquote lines
+    // (the quote branch of serializeClipboardSlice — block-bounded inside the
+    // paragraph, no scheme leaks).
+    expect(copy.plain).toBe('看\n\n> 多行\n> 引用\n\n吧');
     // Quotes are self-contained: the flavor carries NO registry entries.
     const parsed = parseComposerClipboardPayload(copy.flavor)!;
     expect(parsed).not.toBeNull();
@@ -592,6 +593,20 @@ describe('buildMessageCopyFlavor — sent-message copy button', () => {
 
   it('returns undefined when the text has no attachment links', () => {
     expect(buildMessageCopyFlavor('plain text [m.ts](src/m.ts)', turnAttachments)).toBeUndefined();
+  });
+
+  it('a quote-only message still earns the flavor — quote blocks revive as quote NODES in the slice', () => {
+    // No attachment links at all: the quote block alone opens the flavor, and
+    // the slice carries the quote atom (reviveQuoteBlockLinks) — a paste
+    // restores the chip instead of plain blockquote paragraphs.
+    const flavor = buildMessageCopyFlavor('from: src/a.ts:L1\n> 代码\n\n看这段', undefined);
+    expect(flavor).toBeDefined();
+    const parsed = parseComposerClipboardPayload(flavor!)!;
+    expect(parsed.attachments).toEqual([]);
+    const sliceJson = JSON.stringify(parsed.slice);
+    expect(sliceJson).toContain('"type":"quote"');
+    expect(sliceJson).toContain('看这段');
+    expect(sliceJson).toContain('src/a.ts:L1');
   });
 
   it('marks the entry interrupted when the index has no attachment (foreign text)', () => {

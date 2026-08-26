@@ -13,6 +13,7 @@ import {
   quotePillLabel,
   serializeQuote,
   textToDoc,
+  type QuoteAttrs,
 } from '../src/composerTextDoc';
 
 const link = (text: string): string => serializeQuote({ text });
@@ -34,6 +35,21 @@ describe('quote link — serialize/parse round-trip', () => {
       expect(matches[0]!.start).toBe(0);
       expect(matches[0]!.end).toBe(link(text).length);
     }
+  });
+
+  it('round-trips the bundled comment and provenance (parameter pairs)', () => {
+    const withComment: QuoteAttrs = { text: '引用?带问号', comment: '评论?也带问号' };
+    expect(parseQuoteLinks(serializeQuote(withComment))[0]!.attrs).toEqual(withComment);
+    const withSource: QuoteAttrs = { text: 'const x = 1;', source: 'src/a.ts:L42-L58' };
+    expect(parseQuoteLinks(serializeQuote(withSource))[0]!.attrs).toEqual(withSource);
+    const both: QuoteAttrs = { text: '引用', source: 'docs/指南.md', comment: '看这段' };
+    expect(parseQuoteLinks(serializeQuote(both))[0]!.attrs).toEqual(both);
+    // A bare link never grows parameters on re-serialize.
+    expect(serializeQuote({ text: '引用' })).not.toContain('?comment=');
+    expect(serializeQuote({ text: '引用' })).not.toContain('?source=');
+    // The text's own metacharacters can never fake a parameter boundary.
+    const tricky = parseQuoteLinks(serializeQuote({ text: 'a?comment=b', comment: 'c' }));
+    expect(tricky[0]!.attrs).toEqual({ text: 'a?comment=b', comment: 'c' });
   });
 
   it('rejects an empty tail and the other link families', () => {
@@ -136,10 +152,16 @@ describe('buildQuoteInsertion', () => {
     }
   });
 
-  it('rides the 评论 comment after the pill in the same paragraph, one undoable step', () => {
+  it('bundles the 评论 comment INTO the pill (its attrs), one undoable step', () => {
     const s = state('');
     const doc = s.apply(buildQuoteInsertion(s, { text: '引用' }, '评论')).doc;
-    expect(docToText(doc)).toBe(`${link('引用')} 评论`);
+    expect(docToText(doc)).toBe(`${serializeQuote({ text: '引用', comment: '评论' })} `);
+    let quoteAttrs: QuoteAttrs | null = null;
+    doc.descendants((node) => {
+      if (node.type.name === 'quote') quoteAttrs = node.attrs as QuoteAttrs;
+      return true;
+    });
+    expect(quoteAttrs).toEqual({ text: '引用', comment: '评论', source: '' });
   });
 
   it('accumulates: a second pill lands after a blank-line separation', () => {

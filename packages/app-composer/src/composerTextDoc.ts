@@ -304,6 +304,14 @@ export const QUOTE_LINK_BASE = 'kimi-code-composer://quote/';
 export interface QuoteAttrs {
   /** The full quoted text (may span lines — newlines encode as %0A). */
   text: string;
+  /** The 评论 flow's one-liner, when present — bundled INTO the pill (the
+   *  two-segment atom: quote excerpt | comment excerpt) instead of riding
+   *  after it as editable text. Optional: plain add-to-chat pills carry none. */
+  comment?: string;
+  /** Provenance for a FILE-PREVIEW quote — `path` or `path:L42` /
+   *  `path:L42-L58` (markdown previews carry no line info). Emitted as the
+   *  header line of the quote's wire block; chat-message quotes carry none. */
+  source?: string;
 }
 
 function encodeQuoteText(text: string): string {
@@ -344,9 +352,196 @@ export function quotePillLabel(text: string): string {
 
 /** A quote node → its plain-text (Markdown link) form: the label is the
  *  truncated excerpt (escaped like any link label), the destination the
- *  marker plus the encoded full text. */
+ *  marker plus the encoded full text — and, when the pill bundles a comment,
+ *  a `?comment=` parameter with the encoded comment (the '?'/'=' of the
+ *  separator are literal ONLY there: the text's own are percent-encoded, so
+ *  the first `?comment=` is unambiguous). */
+/** A quote node → its plain-text (Markdown link) form: the label is the
+ *  truncated excerpt (escaped like any link label), the destination the
+ *  marker plus the encoded full text — plus independent `?source=` /
+ *  `?comment=` parameters when the pill carries them (each parameter's '?'
+ *  is literal ONLY at its own marker: the text's own are percent-encoded, so
+ *  the markers are unambiguous). */
 export function serializeQuote(attrs: QuoteAttrs): string {
-  return `[${escapeLinkText(quotePillLabel(attrs.text))}](${QUOTE_LINK_BASE}${encodeQuoteText(attrs.text)})`;
+  const source = attrs.source !== undefined && attrs.source.length > 0 ? `?source=${encodeQuoteText(attrs.source)}` : '';
+  const comment = attrs.comment !== undefined && attrs.comment.length > 0 ? `?comment=${encodeQuoteText(attrs.comment)}` : '';
+  return `[${escapeLinkText(quotePillLabel(attrs.text))}](${QUOTE_LINK_BASE}${encodeQuoteText(attrs.text)}${source}${comment})`;
+}
+
+/** The inverse of serializeQuote's destination: text first, then each
+ *  `?source=` / `?comment=` parameter decoded in place (either order). */
+export function decodeQuoteAttrs(encoded: string): QuoteAttrs {
+  const sourceAt = encoded.indexOf('?source=');
+  const commentAt = encoded.indexOf('?comment=');
+  const firstParam = [sourceAt, commentAt].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
+  const attrs: QuoteAttrs = { text: decodeQuoteText(firstParam === -1 ? encoded : encoded.slice(0, firstParam)) };
+  if (sourceAt >= 0) {
+    const end = commentAt > sourceAt ? commentAt : encoded.length;
+    attrs.source = decodeQuoteText(encoded.slice(sourceAt + '?source='.length, end));
+  }
+  if (commentAt >= 0) {
+    const end = sourceAt > commentAt ? sourceAt : encoded.length;
+    attrs.comment = decodeQuoteText(encoded.slice(commentAt + '?comment='.length, end));
+  }
+  return attrs;
+}
+
+// --- Message-side quote blocks ------------------------------------------------
+// The submit rewrite (app-client's rewriteQuoteLinks) folds every quote pill
+// into the canonical blockquote wire form — a run of `> `-prefixed lines with
+// a blank line on each side. ComposerText renders a user message by SPLITTING
+// its wire text on blank-line runs: a chunk made ENTIRELY of blockquote lines
+// becomes a quote chip (the same pill the composer shows, with the full text
+// on data-quote-text for the mentionTooltip singleton), everything else keeps
+// the plain inline pipeline. A quote block PAIRS with the inline chunk that
+// follows it (sep + inline): that chunk is the quote's comment — the chip
+// renders it as its second segment, matching the composer's bundled pill
+// (quote | comment) one for one. The segmentation is byte-reversible: a
+// paired chip → buildQuoteLines + the absorbed separator + the comment,
+// everything else → its raw text, so a full-message copy round-trips the
+// wire text exactly.
+
+/** One block of a user message's wire text. */
+export type ComposerTextBlock =
+  | /** A maximal blank-line-bounded run of canonical blockquote lines — text
+     *  is the quote CONTENT (prefixes stripped, lines re-joined). A leading
+     *  `from: <source>` header line (single \n — a FILE-PREVIEW quote's
+     *  provenance) rides as `source`. When an inline chunk follows (sep +
+     *  inline), it rides as `comment` (the chip's second segment, like the
+     *  composer's bundled pill) and `commentSep` keeps the absorbed separator
+     *  verbatim for the copy round-trip. */
+    { type: 'quote'; text: string; source?: string; comment?: string; commentSep?: string }
+  | /** Anything else — may contain single newlines (never a blank-line run). */
+    { type: 'inline'; text: string }
+  | /** The blank-line run BETWEEN chunks — rendered verbatim (pre-wrap), so
+     *  the message keeps its exact line structure. */
+    { type: 'sep'; text: string };
+
+const QUOTE_LINE = /^> (.*)$/;
+const QUOTE_EMPTY_LINE = /^>$/;
+
+/** The `from: ` provenance header must stay ONE line: newlines (legal POSIX
+ *  filename characters) percent-encode — `%` first so the layer round-trips
+ *  (the file-link codec already allows CR/LF in names). Non-ASCII stays
+ *  literal. Emitted by the submit rewrite and the side-chat insert. */
+export function encodeQuoteSourceHeader(source: string): string {
+  return source.replaceAll('%', '%25').replaceAll('\n', '%0A').replaceAll('\r', '%0D');
+}
+
+/** The inverse of encodeQuoteSourceHeader (strict reverse order). */
+export function decodeQuoteSourceHeader(encoded: string): string {
+  return encoded.replaceAll('%0A', '\n').replaceAll('%0D', '\r').replaceAll('%25', '%');
+}
+
+/** A quote block's provenance header (a FILE-PREVIEW quote's source, one
+ *  line immediately above its `> ` lines — single \n, no blank line). */
+const QUOTE_SOURCE_LINE = /^from: (.+)$/;
+
+/** The quote content when EVERY line of the chunk is a canonical blockquote
+ *  line (`> text` or a bare `>` — the only forms buildQuoteLines emits), else
+ *  null. A leading `from: …` header is split off as the block's `source`
+ *  (single \n — it shares the chunk with the quote lines; the header's
+ *  encoding is peeled back off). Conservative on purpose: a chunk mixing
+ *  quote and plain lines (only possible hand-typed — the rewrite always
+ *  leaves a blank line after a quote) stays plain text rather than
+ *  half-chipping. */
+function quoteBlockContent(chunk: string): { text: string; source?: string } | null {
+  let body = chunk;
+  let source: string | undefined;
+  const firstBreak = chunk.indexOf('\n');
+  const sourceMatch = QUOTE_SOURCE_LINE.exec(firstBreak === -1 ? chunk : chunk.slice(0, firstBreak));
+  if (sourceMatch !== null) {
+    source = decodeQuoteSourceHeader(sourceMatch[1]!);
+    body = firstBreak === -1 ? '' : chunk.slice(firstBreak + 1);
+  }
+  const contents: string[] = [];
+  for (const line of body.split('\n')) {
+    const match = QUOTE_LINE.exec(line);
+    if (match !== null) {
+      contents.push(match[1] ?? '');
+      continue;
+    }
+    if (QUOTE_EMPTY_LINE.test(line)) {
+      contents.push('');
+      continue;
+    }
+    return null;
+  }
+  return { text: contents.join('\n'), ...(source !== undefined ? { source } : {}) };
+}
+
+/** Split a user message's wire text into renderable blocks. Blank-line runs
+ *  (2+ newlines) are the only chunk boundaries; each non-separator chunk is a
+ *  quote block when entirely canonical blockquote lines, else inline text.
+ *  Pairing pass: a quote block followed by sep + inline absorbs them as its
+ *  comment (the bundled chip, composer-consistent) — the separator is kept
+ *  verbatim on the block so the copy path restores it exactly. The absorbed
+ *  chunk must be PLAIN text: a chunk carrying mention/attachment/quote links
+ *  stays its own inline block (it renders the full pill segments, never a
+ *  flattened comment string). */
+export function splitQuoteBlocks(text: string): ComposerTextBlock[] {
+  const raw: ComposerTextBlock[] = [];
+  for (const part of text.split(/(\n{2,})/)) {
+    if (part === '') continue;
+    if (/^\n{2,}$/.test(part)) {
+      raw.push({ type: 'sep', text: part });
+      continue;
+    }
+    const quote = quoteBlockContent(part);
+    raw.push(quote === null ? { type: 'inline', text: part } : { type: 'quote', text: quote.text, ...(quote.source !== undefined ? { source: quote.source } : {}) });
+  }
+  const blocks: ComposerTextBlock[] = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const block = raw[i]!;
+    if (
+      block.type === 'quote' &&
+      raw[i + 1]?.type === 'sep' &&
+      raw[i + 2]?.type === 'inline' &&
+      isPlainCommentChunk((raw[i + 2] as { type: 'inline'; text: string }).text)
+    ) {
+      const sep = (raw[i + 1] as { type: 'sep'; text: string }).text;
+      const comment = (raw[i + 2] as { type: 'inline'; text: string }).text;
+      blocks.push({ ...block, comment, commentSep: sep });
+      i += 2;
+      continue;
+    }
+    blocks.push(block);
+  }
+  return blocks;
+}
+
+/** A comment candidate is plain text only — no link of any family hides in
+ *  it (a link would otherwise be swallowed into the chip's flat comment
+ *  string, losing its pill/attachment rendering). */
+function isPlainCommentChunk(chunk: string): boolean {
+  return parseMentionLinks(chunk).length === 0 && parseAttachmentLinks(chunk).length === 0 && parseQuoteLinks(chunk).length === 0;
+}
+
+/** Quote content → the canonical blockquote wire lines (the inverse of a
+ *  quote block's chip: the copy path re-serializes it). */
+export function buildQuoteWireLines(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+}
+
+/** Wire text → its PILL-LINK form: every canonical quote block becomes its
+ *  self-contained pill link (serializeQuote, source header and bundled
+ *  comment back into the attrs), so textToDoc revives the quote atom
+ *  instead of leaving plain `> ` paragraphs. The inverse of the submit
+ *  rewrite for the paste/refill paths (the clipboard flavor's slice);
+ *  everything else passes through byte-identical. */
+export function reviveQuoteBlockLinks(text: string): string {
+  return splitQuoteBlocks(text)
+    .map((block) => {
+      if (block.type !== 'quote') return block.text;
+      const attrs: QuoteAttrs = { text: block.text };
+      if (block.source !== undefined) attrs.source = block.source;
+      if (block.comment !== undefined) attrs.comment = block.comment;
+      return serializeQuote(attrs);
+    })
+    .join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -425,21 +620,26 @@ export const composerSchema = new Schema({
       selectable: true,
       attrs: {
         text: {},
+        // PM attributes without defaults are required at create time — an
+        // absent comment/source normalizes to '', which every consumer treats
+        // as absent (serialize/render/rewrite all gate on length > 0).
+        comment: { default: '' },
+        source: { default: '' },
       },
       // Same leafText contract as the mention/attachment: textBetween
       // consults it, so docToText and the clipboard serializer emit the link
       // form.
       leafText: (node: PMNode) => serializeQuote(node.attrs as QuoteAttrs),
       // Rendered by a NodeView (icon + label); this toDOM only feeds PM's
-      // clipboard HTML serializer and DOM fallbacks — the data attribute
-      // carries the full quote for the tooltip.
+      // clipboard HTML serializer and DOM fallbacks — the data attributes
+      // carry the full quote, the bundled comment and the source for the
+      // tooltip.
       toDOM: (node: PMNode) => {
         const attrs = node.attrs as QuoteAttrs;
-        return [
-          'span',
-          { class: 'quote-pill', 'data-quote-text': attrs.text },
-          quotePillLabel(attrs.text),
-        ];
+        const dataAttrs: Record<string, string> = { class: 'quote-pill', 'data-quote-text': attrs.text };
+        if (typeof attrs.comment === 'string' && attrs.comment.length > 0) dataAttrs['data-quote-comment'] = attrs.comment;
+        if (typeof attrs.source === 'string' && attrs.source.length > 0) dataAttrs['data-quote-source'] = attrs.source;
+        return ['span', dataAttrs, quotePillLabel(attrs.text)];
       },
     },
   },
@@ -531,13 +731,13 @@ export function quoteNode(attrs: QuoteAttrs): PMNode {
  *  byte-identical to it). A Shift+Enter tail already IS that separator — a
  *  trailing run of empty paragraphs is collapsed to one and reused, never
  *  stacked upon ('hello\n' would otherwise append as 'hello\n\n\n<quote>',
- *  each tail newline sending that much blank wire text). A trailing space
- *  follows the pill (same caret-home contract as buildMentionInsertion); the
- *  comment rides after that space in the same paragraph. The caret lands at
- *  the very end. */
+ *  each tail newline sending that much blank wire text). The comment rides
+ *  INSIDE the pill (its attrs) — bundled with the quote as one atom, not
+ *  appended as editable text. A trailing space follows the pill (same
+ *  caret-home contract as buildMentionInsertion). The caret lands at the
+ *  very end. */
 export function buildQuoteInsertion(state: EditorState, attrs: QuoteAttrs, comment?: string): Transaction {
-  const inline: PMNode[] = [quoteNode(attrs), composerSchema.text(' ')];
-  if (comment !== undefined && comment.length > 0) inline.push(composerSchema.text(comment));
+  const inline: PMNode[] = [quoteNode(comment !== undefined && comment.length > 0 ? { ...attrs, comment } : attrs), composerSchema.text(' ')];
   const last = state.doc.lastChild;
   if (docToText(state.doc).length === 0 && state.doc.childCount === 1 && last && last.content.size === 0) {
     // Empty draft: fill the single placeholder paragraph instead of leaving a
@@ -803,7 +1003,7 @@ function classifyLinkCandidate(candidate: LinkCandidate): InlineLinkMatch | null
       type: 'quote',
       start,
       end,
-      attrs: { text: decodeQuoteText(rawDest.slice(QUOTE_LINK_BASE.length)) },
+      attrs: decodeQuoteAttrs(rawDest.slice(QUOTE_LINK_BASE.length)),
       rawDest,
     };
   }
@@ -858,7 +1058,7 @@ function scanEscapedQuoteLinks(text: string): InlineLinkMatch[] {
       type: 'quote',
       start: m.index - 1, // Consume the ONE escaping backslash.
       end: m.index + m[0].length,
-      attrs: { text: decodeQuoteText(rawDest.slice(QUOTE_LINK_BASE.length)) },
+      attrs: decodeQuoteAttrs(rawDest.slice(QUOTE_LINK_BASE.length)),
       rawDest,
     });
   }
@@ -1117,6 +1317,16 @@ export function parseClipboardText(text: string, opts?: { reviveMentions?: boole
   return Slice.maxOpen(textToDoc(text.replace(/\r\n?/g, '\n'), opts).content);
 }
 
+/** A quote atom's degrade for text/plain: its canonical `> ` blockquote
+ *  lines with the bundled comment after a blank line and the provenance
+ *  header when present (comment and source both ride the pill's attrs —
+ *  degrading to the bare quote text would silently drop them). */
+function quoteWireText(attrs: QuoteAttrs): string {
+  const header = typeof attrs.source === 'string' && attrs.source.length > 0 ? `from: ${encodeQuoteSourceHeader(attrs.source)}\n` : '';
+  const comment = typeof attrs.comment === 'string' && attrs.comment.length > 0 ? `\n\n${attrs.comment}` : '';
+  return `${header}${buildQuoteWireLines(attrs.text)}${comment}`;
+}
+
 /** clipboardTextSerializer for the composer: paragraphs are lines, so join
  *  with SINGLE newlines — PM's default textBetween separator is "\n\n", which
  *  would double every line break on copy. Mentions serialize via leafText.
@@ -1125,7 +1335,8 @@ export function parseClipboardText(text: string, opts?: { reviveMentions?: boole
  *  as '', so its form is emitted directly. Paragraphs are walked per child
  *  for the same reason: text goes verbatim, a mention keeps its link form,
  *  an attachment degrades to its bare name (the folder name carries its
- *  trailing '/'), and a quote degrades to its plain quoted text — NEVER the
+ *  trailing '/'), and a quote degrades to its canonical `> ` blockquote lines
+ *  with the bundled comment after a blank line (quoteWireText — NEVER the
  *  leafText link form, which would leak the composer-private schemes into
  *  plaintext (the custom clipboard flavor carries the structured form for
  *  attachments, see attachmentRegistry.ts). leafText itself is untouched:
@@ -1135,7 +1346,7 @@ export function serializeClipboardSlice(slice: Slice): string {
     if (node.isText) return node.text ?? '';
     if (node.type === composerSchema.nodes.mention) return serializeMention(node.attrs as MentionAttrs);
     if (node.type === composerSchema.nodes.attachment) return (node.attrs as AttachmentAttrs).name;
-    if (node.type === composerSchema.nodes.quote) return (node.attrs as QuoteAttrs).text;
+    if (node.type === composerSchema.nodes.quote) return quoteWireText(node.attrs as QuoteAttrs);
     return node.textBetween(0, node.content.size, '');
   };
   const lines: string[] = [];
@@ -1144,8 +1355,27 @@ export function serializeClipboardSlice(slice: Slice): string {
       lines.push(serializeInline(node));
     } else {
       let line = '';
+      // A quote pill merged INTO a paragraph gets block-level blank lines
+      // around its degrade (same boundary contract as the submit rewrite) —
+      // but only where selected text actually neighbors it: a pill at the
+      // paragraph's start or end pads nothing, so the copy never invents
+      // blank lines the user didn't have. ONE leading space of the following
+      // text is eaten (the pill's caret separator).
+      let pendingBreak = false;
       node.forEach((child) => {
-        line += serializeInline(child);
+        if (child.type === composerSchema.nodes.quote) {
+          const degrade = quoteWireText(child.attrs as QuoteAttrs);
+          line = line.length > 0 ? `${line.replace(/ +$/, '')}\n\n${degrade}` : degrade;
+          pendingBreak = true;
+          return;
+        }
+        let text = serializeInline(child);
+        if (pendingBreak) {
+          text = text.replace(/^ /, '');
+          line += '\n\n';
+          pendingBreak = false;
+        }
+        line += text;
       });
       lines.push(line);
     }

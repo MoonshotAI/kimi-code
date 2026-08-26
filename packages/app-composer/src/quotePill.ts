@@ -26,9 +26,10 @@ export function buildQuotePill(attrs: QuoteAttrs): HTMLElement {
   const pill = document.createElement('span');
   pill.className = 'quote-pill';
   pill.dataset.quoteText = attrs.text;
+  if (attrs.source !== undefined && attrs.source.length > 0) pill.dataset.quoteSource = attrs.source;
   // The full quote is the keyboard/screen-reader reachable layer — the
   // visible label is truncated, the hover tooltip is mouse-only.
-  pill.setAttribute('aria-label', attrs.text);
+  pill.setAttribute('aria-label', attrs.comment !== undefined && attrs.comment.length > 0 ? `${attrs.text}\n${attrs.comment}` : attrs.text);
   const icon = document.createElement('span');
   icon.className = 'quote-pill-icon';
   icon.setAttribute('aria-hidden', 'true');
@@ -37,5 +38,18 @@ export function buildQuotePill(attrs: QuoteAttrs): HTMLElement {
   label.className = 'quote-pill-name';
   label.textContent = quotePillLabel(attrs.text);
   pill.append(icon, label);
+  // The bundled comment (评论 flow): a hairline divider and the comment
+  // excerpt as the pill's second segment — quote and comment read as ONE
+  // annotation, never as pill plus loose text.
+  if (attrs.comment !== undefined && attrs.comment.length > 0) {
+    pill.dataset.quoteComment = attrs.comment;
+    const divider = document.createElement('span');
+    divider.className = 'quote-pill-divider';
+    divider.setAttribute('aria-hidden', 'true');
+    const comment = document.createElement('span');
+    comment.className = 'quote-pill-comment';
+    comment.textContent = quotePillLabel(attrs.comment);
+    pill.append(divider, comment);
+  }
   return pill;
 }

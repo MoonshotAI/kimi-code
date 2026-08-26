@@ -306,8 +306,10 @@ export function buildAttachmentTooltip(info: AttachmentTooltipInfo, opts: { copy
 
 /** Quote pill tooltip body: the same flex row as the file mention path
  *  tooltip, led by the chat-quote glyph — the full quoted text (whitespace
- *  preserved, scroll-capped) and a copy button that copies it. */
-export function buildQuoteTooltip(text: string, opts: { copyLabel?: string } = {}): HTMLElement {
+ *  preserved, scroll-capped) and a copy button that copies it. A bundled
+ *  comment rides as a hairline-separated muted second row (the anno-tip
+ *  comment recipe). */
+export function buildQuoteTooltip(text: string, opts: { source?: string; comment?: string; copyLabel?: string } = {}): HTMLElement {
   const el = document.createElement('div');
   el.className = 'mention-tip-path';
   const icon = document.createElement('span');
@@ -315,10 +317,25 @@ export function buildQuoteTooltip(text: string, opts: { copyLabel?: string } = {
   icon.setAttribute('aria-hidden', 'true');
   icon.innerHTML = quoteIconSvg();
   el.append(icon);
+  const body = document.createElement('div');
+  body.className = 'mention-tip-quote';
+  if (opts.source !== undefined && opts.source.trim().length > 0) {
+    const source = document.createElement('div');
+    source.className = 'mention-tip-quote-source';
+    source.textContent = opts.source;
+    body.append(source);
+  }
   const quoteText = document.createElement('div');
   quoteText.className = 'mention-tip-quote-text';
   quoteText.textContent = text;
-  el.append(quoteText);
+  body.append(quoteText);
+  if (opts.comment !== undefined && opts.comment.trim().length > 0) {
+    const comment = document.createElement('div');
+    comment.className = 'mention-tip-quote-comment';
+    comment.textContent = opts.comment;
+    body.append(comment);
+  }
+  el.append(body);
   el.append(buildCopyButton(text, opts.copyLabel));
   return el;
 }
@@ -522,8 +539,10 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
 
   function contentFor(pill: HTMLElement): HTMLElement {
     if (pill.classList.contains('quote-pill')) {
-      // Self-contained: the full quote rides in the pill's data attribute.
-      return buildQuoteTooltip(pill.dataset.quoteText ?? '', { copyLabel: host.copyQuoteLabel?.() });
+      // Self-contained: the full quote (and the bundled comment / preview
+      // source, when the pill carries them) rides in the pill's data
+      // attributes.
+      return buildQuoteTooltip(pill.dataset.quoteText ?? '', { source: pill.dataset.quoteSource, comment: pill.dataset.quoteComment, copyLabel: host.copyQuoteLabel?.() });
     }
     if (pill.classList.contains('attachment-pill')) {
       const att = pillAttachment(pill);

@@ -168,6 +168,14 @@ const sourceText = computed<string>(() => {
   return contentKind.value === 'json' ? prettyJson.value : decodedContent.value;
 });
 
+/** The JSON body shows FORMATTED display lines (not source-file lines) only
+ *  when the pretty-printer actually rewrote the content — an unparseable
+ *  (mid-edit) JSON falls back to the raw text, whose grid IS the source
+ *  numbering, so the quote provenance keeps its real line range. */
+const jsonReformatted = computed<boolean>(
+  () => contentKind.value === 'json' && prettyJson.value !== decodedContent.value,
+);
+
 // Real 1-based line numbers for the code body's gutter (search and the line
 // jump target reference the same numbering).
 const lineNumberList = computed<number[]>(() => lines.value.map((_, i) => i + 1));
@@ -483,8 +491,16 @@ function truncatePath(path: string, maxLen = 55): string {
         </IconButton>
       </PanelHeader>
 
-      <!-- Body: Markdown -->
-      <div v-if="contentKind === 'markdown'" class="fp-body" :class="{ 'fp-markdown': markdownMode === 'preview' }">
+      <!-- Body: Markdown (PREVIEW mode renders HTML whose fenced code blocks
+           carry their own block-relative data-line rows — not source-file
+           lines: the quote provenance marker keeps them out of
+           captureQuoteSource; source mode shows the real line grid) -->
+      <div
+        v-if="contentKind === 'markdown'"
+        class="fp-body"
+        :class="{ 'fp-markdown': markdownMode === 'preview' }"
+        :data-quote-display-lines="markdownMode === 'preview' || undefined"
+      >
         <!-- Keyed by the file path: a switch to a DIFFERENT file with
              identical content leaves :text unchanged, and without the remount
              the decoration pass would keep mention paths resolved against the
@@ -501,8 +517,10 @@ function truncatePath(path: string, maxLen = 55): string {
         </div>
       </div>
 
-      <!-- Body: JSON -->
-      <div v-else-if="contentKind === 'json'" class="fp-body fp-code">
+      <!-- Body: JSON (pretty-printed: only an ACTUALLY reformatted document
+           has FORMATTED display lines instead of source-file lines — the
+           quote provenance marker tracks jsonReformatted) -->
+      <div v-else-if="contentKind === 'json'" class="fp-body fp-code" :data-quote-display-lines="jsonReformatted || undefined">
         <HighlightedCode :code="lines" :path="highlightPath" :line-numbers="lineNumberList" :framed="false" :line-class="lineClass" />
       </div>
 

@@ -593,6 +593,14 @@ html[data-color-scheme="dark"] {
   --p-hairline: 0.5px;
   /* -- current-match outline ring width (design-system §03 find bar) --------- */
   --p-findring-w: 2px;
+  /* -- pill excerpt segments' shared inline cap (mention/attachment/quote
+     name + the quote pill's comment segment) — CJK/full-width labels would
+     otherwise outgrow a narrow bubble. */
+  --p-pill-excerpt-max: 24em;
+  /* -- mentionTooltip scroll caps (line units, so the cap tracks the font) --
+     the quote tooltip's full text and the bundled comment's second block. */
+  --p-tip-quote-lines: 8lh;
+  --p-tip-comment-lines: 4lh;
 
   /* -- scroll-linked seam height (sidebar lists, approval card scrollers) ----
      The soft top-edge shadow that fades in once a scroller moves — one
@@ -999,7 +1007,7 @@ a.mention-folder {
 .mention-pill-name,
 .attachment-pill-name,
 .quote-pill-name {
-  max-width: 24em;
+  max-width: var(--p-pill-excerpt-max);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1065,6 +1073,23 @@ a.mention-folder {
 /* Selection paint always wins over the accent ground, hover included. */
 .quote-pill.pill-in-selection,
 .quote-pill.pill-in-selection:hover { background: var(--p-selection); }
+/* The bundled comment segment (评论 flow): a hairline divider in the ground's
+   border color and a muted regular-weight excerpt — quote and comment read
+   as ONE annotation inside the same fill, never as pill plus loose text. */
+.quote-pill-divider {
+  width: var(--p-hairline);
+  align-self: stretch;
+  margin-block: calc(var(--space-05) / 2);
+  background: var(--color-accent-bd);
+}
+.quote-pill-comment {
+  max-width: var(--p-pill-excerpt-max);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
 
 /* ---------------------------------------------------------------------------
    Attachment pill — the attachment content type's variant of the pill
@@ -1096,6 +1121,13 @@ a.mention-folder {
   border-radius: var(--radius-sm);
   background: var(--color-text);
   color: var(--color-bg);
+  /* Ink levels ON THE INVERTED SKIN (currentColor = --color-bg here): the
+     quote tooltip's hairline divider, its muted comment block, and the
+     fainter provenance header — one semantic home so a theme tune reaches
+     every quote row at once. */
+  --p-tip-line: color-mix(in srgb, currentColor 18%, transparent);
+  --p-tip-ink: color-mix(in srgb, currentColor 80%, transparent);
+  --p-tip-ink-weak: color-mix(in srgb, currentColor 55%, transparent);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   /* Mirror the .text-ui-c1 utility's integer-px line height (token, never a
@@ -1194,11 +1226,39 @@ a.mention-folder {
 }
 /* Quote tooltip: the full quoted text, whitespace preserved, capped with
    scroll beyond a few lines (a quote can be a whole answer). */
+/* Quote tooltip: the full quoted text, whitespace preserved, capped with
+   scroll beyond a few lines (a quote can be a whole answer). */
+.mention-tip-quote {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .mention-tip-quote-text {
   min-width: 0;
-  max-height: 8lh;
+  max-height: var(--p-tip-quote-lines);
   overflow-y: auto;
   white-space: pre-wrap;
+}
+/* The bundled comment's row in the quote tooltip: a hairline-separated muted
+   second block under the quote. */
+.mention-tip-quote-comment {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: var(--p-hairline) solid var(--p-tip-line);
+  color: var(--p-tip-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: var(--p-tip-comment-lines);
+  overflow-y: auto;
+}
+/* The preview quote's provenance row in the quote tooltip: the file path
+   (and line range) as a faint single-line header above the quote. */
+.mention-tip-quote-source {
+  color: var(--p-tip-ink-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: var(--space-05);
 }
 /* The attachment tooltip's error line (a failed/interrupted upload): danger
    lifted toward the bubble's own ink so it reads on the inverted skin. */

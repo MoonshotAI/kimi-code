@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { serializeQuote } from '@moonshot-ai/app-composer';
-import { buildQuoteBlock, buildQuoteLines, buildQuotePrompt, clampOverlayAxis, joinDraftSegments, nextMenuIndex, partitionPendingQuotes, rewriteQuoteLinks, selectionOwnedByRoot, selectionQuoteAnchor, sharedQuoteContainer, sweepPendingQuotes } from '../src/lib/quoteSelection';
+import { buildQuoteBlock, buildQuoteLines, buildQuotePrompt, captureQuoteSource, clampOverlayAxis, joinDraftSegments, nextMenuIndex, partitionPendingQuotes, rewriteQuoteLinks, selectionOwnedByRoot, selectionQuoteAnchor, sharedQuoteContainer, sweepPendingQuotes } from '../src/lib/quoteSelection';
 
 describe('quoteSelection', () => {
   it('prefixes every line of a multi-line quote with `> `', () => {
@@ -79,6 +79,32 @@ describe('rewriteQuoteLinks — mid-line pill (edited into text)', () => {
 
   it('mid-line between two pills breaks only where needed', () => {
     expect(rewriteQuoteLinks(`${link('q1')}\n\n前文${link('q2')}`)).toBe('> q1\n\n\n\n前文\n> q2\n\n');
+  });
+});
+
+describe('rewriteQuoteLinks — bundled comment (attr-carried)', () => {
+  const bundled = (text: string, comment: string): string => serializeQuote({ text, comment });
+
+  it('a comment-bearing pill folds to the same wire as the text-era flow', () => {
+    expect(rewriteQuoteLinks(`${bundled('引用', '评论')} `).trim()).toBe(textEra(buildQuotePrompt('引用', '评论')));
+    expect(rewriteQuoteLinks(`${bundled('引用', '评论')} `).trim()).toBe('> 引用\n\n评论');
+  });
+
+  it('typed text after the pill lands right after the attr comment (insertion space eaten)', () => {
+    expect(rewriteQuoteLinks(`${bundled('引用', '评论')} 追加`).trim()).toBe('> 引用\n\n评论追加');
+  });
+
+  it('the bundled comment survives an existing draft join and a mid-line edit', () => {
+    expect(rewriteQuoteLinks(`hello\n\n${bundled('引用', '评论')} `).trim()).toBe('hello\n\n> 引用\n\n评论');
+    expect(rewriteQuoteLinks(`前文${bundled('引用', '评论')}`).trim()).toBe('前文\n> 引用\n\n评论');
+  });
+
+  it('a preview quote’s provenance leads its block as a `from: …` header line', () => {
+    const sourced = (text: string, source: string): string => serializeQuote({ text, source });
+    expect(rewriteQuoteLinks(`${sourced('代码', 'src/a.ts:L42-L58')} `).trim()).toBe('from: src/a.ts:L42-L58\n> 代码');
+    expect(rewriteQuoteLinks(`${serializeQuote({ text: '代码', source: 'docs/x.md', comment: '看这段' })} `).trim()).toBe(
+      'from: docs/x.md\n> 代码\n\n看这段',
+    );
   });
 });
 
@@ -447,5 +473,172 @@ describe('joinDraftSegments (draft + insertion newline normalization)', () => {
     expect(joinDraftSegments('> q1\n\n', '> q2\n\n')).toBe('> q1\n\n> q2\n\n');
     expect(joinDraftSegments('已有\n\n\n', '\n\n插入')).toBe('已有\n\n插入');
     expect(joinDraftSegments('> q1\n\n> q2\n\n', '> q3\n\n')).toBe('> q1\n\n> q2\n\n> q3\n\n');
+  });
+});
+
+describe('captureQuoteSource (preview provenance)', () => {
+  class FakeElement {}
+  const row = (line: number) => Object.assign(new FakeElement(), {
+    getAttribute: () => String(line),
+    closest: () => null, // never inside a data-quote-display-lines view
+    previousSibling: { id: `prev-of-${line}` }, // a row always has preceding rows
+    parentNode: null,
+  });
+  const elInRow = (line: number | null) =>
+    Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' && line !== null ? row(line) : null),
+    }) as unknown as Element;
+  function fakeSel(start: unknown, end: unknown, collapsed = false, endOffset?: number, startOffset?: number): Selection {
+    const range = { startContainer: start, endContainer: end, endOffset, startOffset };
+    return { isCollapsed: collapsed, rangeCount: 1, getRangeAt: () => range } as unknown as Selection;
+  }
+
+  let savedElement: unknown;
+  beforeEach(() => {
+    savedElement = (globalThis as { Element?: unknown }).Element;
+    (globalThis as { Element?: unknown }).Element = FakeElement;
+  });
+  afterEach(() => {
+    (globalThis as { Element?: unknown }).Element = savedElement;
+  });
+
+  it('both ends on data-line rows give the line range (document order normalized)', () => {
+    expect(captureQuoteSource(fakeSel(elInRow(42), elInRow(58)), 'src/a.ts')).toBe('src/a.ts:L42-L58');
+    expect(captureQuoteSource(fakeSel(elInRow(58), elInRow(42)), 'src/a.ts')).toBe('src/a.ts:L42-L58');
+  });
+
+  it('a single row gives a single line', () => {
+    expect(captureQuoteSource(fakeSel(elInRow(42), elInRow(42)), 'src/a.ts')).toBe('src/a.ts:L42');
+  });
+
+  it('no line grid (markdown preview) degrades to the bare path', () => {
+    expect(captureQuoteSource(fakeSel(elInRow(null), elInRow(null)), 'docs/x.md')).toBe('docs/x.md');
+    expect(captureQuoteSource(fakeSel(elInRow(42), elInRow(null)), 'src/a.ts')).toBe('src/a.ts');
+  });
+
+  it('a selection ending exactly at the next row’s START excludes that row', () => {
+    // Full-line drag (or Shift+Down) stopping at row 43's offset 0: row 43
+    // contributes no content — every ancestor step has no previous sibling.
+    const endRow = row(43);
+    (endRow as { previousSibling: unknown }).previousSibling = null;
+    const endAtStart = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? endRow : null),
+      previousSibling: null,
+      parentNode: endRow,
+    });
+    expect(captureQuoteSource(fakeSel(elInRow(42), endAtStart, false, 0), 'src/a.ts')).toBe('src/a.ts:L42');
+    // Control: an offset-0 end with preceding content in the row still counts it.
+    const endMid = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? endRow : null),
+      previousSibling: { id: 'span-before' },
+      parentNode: endRow,
+    });
+    expect(captureQuoteSource(fakeSel(elInRow(42), endMid, false, 0), 'src/a.ts')).toBe('src/a.ts:L42-L43');
+    // The production row always carries a user-select:none GUTTER before the
+    // content (HighlightedCode's .hl-gutter / the CSV view's <th>) — it is
+    // decoration, not selected content, so an end right after it still
+    // excludes the row.
+    const gutter = Object.assign(new FakeElement(), {
+      classList: { contains: (c: string) => c === 'hl-gutter' },
+      tagName: 'SPAN',
+      previousSibling: null,
+    });
+    const endAfterGutter = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? endRow : null),
+      previousSibling: gutter,
+      parentNode: endRow,
+    });
+    expect(captureQuoteSource(fakeSel(elInRow(42), endAfterGutter, false, 0), 'src/a.ts')).toBe('src/a.ts:L42');
+    // Same for the CSV view's <th> row-header cell.
+    const th = Object.assign(new FakeElement(), {
+      classList: { contains: () => false },
+      tagName: 'TH',
+      previousSibling: null,
+    });
+    const endAfterTh = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? endRow : null),
+      previousSibling: th,
+      parentNode: endRow,
+    });
+    expect(captureQuoteSource(fakeSel(elInRow(42), endAfterTh, false, 0), 'data.csv')).toBe('data.csv:L42');
+    // Control: a non-zero end offset at the row start still counts it.
+    expect(captureQuoteSource(fakeSel(elInRow(42), endAtStart, false, 3), 'src/a.ts')).toBe('src/a.ts:L42-L43');
+  });
+
+  it('a selection starting exactly at the previous row’s END excludes that row', () => {
+    // Shift+Down from a line end: the stripped excerpt starts on the NEXT
+    // row, so the start row (content fully behind the start point) moves out.
+    const startRow = row(42);
+    (startRow as { previousSibling: unknown }).previousSibling = null;
+    const startAtEnd = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? startRow : null),
+      childNodes: [],
+      nextSibling: null,
+      parentNode: startRow,
+    });
+    expect(captureQuoteSource(fakeSel(startAtEnd, elInRow(43), false, undefined, 0), 'src/a.ts')).toBe('src/a.ts:L43');
+    // Control: a start point with content still ahead in the row counts it.
+    const startMid = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? startRow : null),
+      childNodes: [{}, {}],
+      nextSibling: null,
+      parentNode: startRow,
+    });
+    expect(captureQuoteSource(fakeSel(startMid, elInRow(43), false, undefined, 1), 'src/a.ts')).toBe('src/a.ts:L42-L43');
+    // Both adjustments compose: start at row 42's end AND end at row 44's start.
+    const endRow44 = row(44);
+    (endRow44 as { previousSibling: unknown }).previousSibling = null;
+    const endAtStart44 = Object.assign(new FakeElement(), {
+      closest: (sel: string) => (sel === '[data-line]' ? endRow44 : null),
+      previousSibling: null,
+      parentNode: endRow44,
+    });
+    expect(captureQuoteSource(fakeSel(startAtEnd, endAtStart44, false, 0, 0), 'src/a.ts')).toBe('src/a.ts:L43');
+  });
+
+  it('a formatted-display-lines view (JSON pretty-print) degrades to the bare path', () => {
+    const displayRow = (line: number) =>
+      Object.assign(new FakeElement(), {
+        getAttribute: () => String(line),
+        closest: (sel: string) => (sel === '[data-quote-display-lines]' ? { id: 'json-body' } : null),
+      });
+    const elInDisplayRow = (line: number) =>
+      Object.assign(new FakeElement(), {
+        closest: (sel: string) => (sel === '[data-line]' ? displayRow(line) : null),
+      }) as unknown as Element;
+    expect(captureQuoteSource(fakeSel(elInDisplayRow(3), elInDisplayRow(9)), 'data.json')).toBe('data.json');
+  });
+
+  it('finds the display-lines marker across a shadow boundary (markdown preview code blocks)', () => {
+    class FakeShadowRoot {}
+    const saved = (globalThis as { ShadowRoot?: unknown }).ShadowRoot;
+    (globalThis as { ShadowRoot?: unknown }).ShadowRoot = FakeShadowRoot;
+    try {
+      // The block-relative data-line row lives in the code block's shadow
+      // tree; the preview body's marker is on the LIGHT host above it.
+      const host = Object.assign(new FakeElement(), {
+        closest: (sel: string) => (sel === '[data-quote-display-lines]' ? { id: 'fp-body' } : null),
+      });
+      const shadow = new FakeShadowRoot() as unknown as ShadowRoot;
+      (shadow as { host?: Element }).host = host;
+      const rowInShadow = Object.assign(new FakeElement(), {
+        getAttribute: () => '2',
+        closest: () => null,
+        getRootNode: () => shadow,
+      });
+      const elInShadowRow = Object.assign(new FakeElement(), {
+        closest: (sel: string) => (sel === '[data-line]' ? rowInShadow : null),
+        getRootNode: () => shadow,
+      }) as unknown as Element;
+      expect(captureQuoteSource(fakeSel(elInShadowRow, elInShadowRow), 'README.md')).toBe('README.md');
+    } finally {
+      (globalThis as { ShadowRoot?: unknown }).ShadowRoot = saved;
+    }
+  });
+
+  it('empty path / collapsed / null selection yield undefined', () => {
+    expect(captureQuoteSource(fakeSel(elInRow(42), elInRow(58)), '')).toBeUndefined();
+    expect(captureQuoteSource(fakeSel(elInRow(42), elInRow(58), true), 'src/a.ts')).toBeUndefined();
+    expect(captureQuoteSource(null, 'src/a.ts')).toBeUndefined();
   });
 });

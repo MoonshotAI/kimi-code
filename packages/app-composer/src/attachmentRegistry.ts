@@ -21,8 +21,10 @@ import { Fragment, Slice, type Node as PMNode } from 'prosemirror-model';
 import {
   composerSchema,
   parseAttachmentLinks,
+  reviveQuoteBlockLinks,
   serializeAttachment,
   serializeClipboardSlice,
+  splitQuoteBlocks,
   textToDoc,
   type AttachmentAttrs,
   type AttachmentKind,
@@ -683,18 +685,23 @@ export function messageCopyEntryFor<T extends { kind: string; fileId?: string; s
  *  becomes the flavor slice verbatim — pasting revives the pills — and each
  *  entry inherits the fileId/size from the message's file attachments
  *  (attachmentTargetFor maps the index back), keyed blob:<fileId> so a
- *  composer paste dedups by file and needs no re-upload. Returns undefined
- *  when the text has no attachment links — the caller then writes plain
- *  text only. The text/plain half is NOT produced here: it's
- *  stripAttachmentLinks(text) (bare names — the composer-private link never
- *  travels as plaintext). */
+ *  composer paste dedups by file and needs no re-upload. A quote-only
+ *  message still earns the flavor (its quote blocks revive as pill links on
+ *  paste), so the gate is attachment links OR quote blocks; without either
+ *  the caller writes plain text only. The text/plain half is NOT produced
+ *  here: it's stripAttachmentLinks(text) (bare names — the composer-private
+ *  link never travels as plaintext). */
 export function buildMessageCopyFlavor<T extends { kind: string; fileId?: string; size?: number; mediaType?: string }>(
   text: string,
   attachments: readonly T[] | undefined,
 ): string | undefined {
   const links = parseAttachmentLinks(text);
-  if (links.length === 0) return undefined;
-  const doc = textToDoc(text, { reviveMentions: true });
+  const hasQuoteBlocks = splitQuoteBlocks(text).some((block) => block.type === 'quote');
+  if (links.length === 0 && !hasQuoteBlocks) return undefined;
+  // Quote blocks ride the slice as their self-contained pill links (the
+  // inverse of the submit rewrite) — a paste revives quote atoms instead of
+  // plain blockquote paragraphs.
+  const doc = textToDoc(reviveQuoteBlockLinks(text), { reviveMentions: true });
   const entries: AttachmentEntry[] = links.map((link) =>
     messageCopyEntryFor(link.attrs, attachmentTargetFor(link.attrs.attId, attachments)),
   );
