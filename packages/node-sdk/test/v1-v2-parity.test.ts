@@ -309,9 +309,12 @@ const KNOWN_DIFFS = {
   // diverges after a detach by design (v1 keeps the foreground deadline in
   // the reported info; v2 rewrites it to the detach deadline — pinned in the
   // migration tracker), so it is deleted too; the pre-detach equality is
-  // asserted explicitly at the call site. Everything else (kind, command,
-  // description, status, detached, exitCode, stopReason, flags) compares in
-  // full.
+  // asserted explicitly at the call site. `parentToolCallId` is v2-only: v2
+  // process tasks record the tool call that spawned them (real tool calls
+  // carry their id; the shell-command bridge stamps the constant
+  // 'shell-command'), while the v1 wire has no such field — deleted.
+  // Everything else (kind, command, description, status, detached, exitCode,
+  // stopReason, flags) compares in full.
   listBackgroundTasks: (tasks: readonly BackgroundTaskInfo[]): unknown =>
     tasks.map((task) => projectBackgroundTask(task)),
   detachBackgroundTask: (info: BackgroundTaskInfo | undefined): unknown =>
@@ -374,6 +377,7 @@ function projectBackgroundTask(info: BackgroundTaskInfo): unknown {
   delete projected['endedAt'];
   delete projected['timeoutMs'];
   delete projected['terminalNotificationSuppressed'];
+  delete projected['parentToolCallId'];
   return projected;
 }
 
