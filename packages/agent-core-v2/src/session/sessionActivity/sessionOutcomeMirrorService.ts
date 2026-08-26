@@ -4,8 +4,10 @@ import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
 import { ContextUndone } from '#/agent/undo/undoService';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -22,13 +24,14 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
   private adopted = false;
   private turnStartedHere = false;
   private mainSubscription: DisposableStore | undefined;
+  private readonly metadataReady: Promise<void>;
 
   constructor(
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) {
     super();
-    void this.metadata
+    this.metadataReady = this.metadata
       .read()
       .then((meta) => {
         if (!this.adopted) this.lastPersisted = meta.lastTurnReason;
@@ -53,12 +56,21 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private attachMain(): void {
     if (this.mainSubscription !== undefined) return;
-    const bus = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
-      | IEventBus
-      | undefined;
+    const handle = this.agents.handleOf(MAIN_AGENT_ID);
+    const bus = handle?.accessor.get(IEventBus) as IEventBus | undefined;
     if (bus === undefined) return;
     const subscription = new DisposableStore();
     this.mainSubscription = subscription;
+    const dispatcher = handle?.accessor.get(IEventDispatcher) as IEventDispatcher | undefined;
+    const agentStates = handle?.accessor.get(IAgentStateService) as IAgentStateService | undefined;
+    if (dispatcher !== undefined && agentStates !== undefined) {
+      subscription.add(
+        dispatcher.hooks.onDidRestore.register('session-outcome-mirror', async (_ctx, next) => {
+          await next();
+          await this.reconcileAfterRestore(agentStates);
+        }),
+      );
+    }
     subscription.add(
       bus.subscribe(TurnEnded, (event) => {
         if (event.reason === 'completed') {
@@ -97,6 +109,15 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
         }
       }),
     );
+  }
+
+  private async reconcileAfterRestore(agentStates: IAgentStateService): Promise<void> {
+    await this.metadataReady;
+    if (this.lastPersisted === undefined) return;
+    if (this.turnStartedHere) return;
+    if (!agentStates.has(turnKey)) return;
+    if (agentStates.get(turnKey).lastEnded !== undefined) return;
+    this.write(undefined, { touchUpdatedAt: false });
   }
 
   private write(
