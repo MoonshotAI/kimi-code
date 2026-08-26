@@ -1,12 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
+  class FakeWebContents {
+    handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+    executeJavaScript = vi.fn((_js: string) => Promise.resolve());
+    on(event: string, cb: (...args: unknown[]) => void): void {
+      this.handlers.set(event, [...(this.handlers.get(event) ?? []), cb]);
+    }
+    emit(event: string, ...args: unknown[]): void {
+      for (const cb of this.handlers.get(event) ?? []) cb(...args);
+    }
+  }
   class FakeBrowserWindow {
     static instances: FakeBrowserWindow[] = [];
     options: Record<string, unknown>;
     handlers = new Map<string, ((...args: unknown[]) => void)[]>();
     destroyed = false;
-    webContents = {};
+    webContents = new FakeWebContents();
     loadURL = vi.fn();
     show = vi.fn();
     focus = vi.fn();
@@ -15,9 +25,12 @@ const mocks = vi.hoisted(() => {
       this.options = options;
       FakeBrowserWindow.instances.push(this);
     }
-    once(event: string, cb: (...args: unknown[]) => void): this {
+    on(event: string, cb: (...args: unknown[]) => void): this {
       this.handlers.set(event, [...(this.handlers.get(event) ?? []), cb]);
       return this;
+    }
+    once(event: string, cb: (...args: unknown[]) => void): this {
+      return this.on(event, cb);
     }
     emit(event: string, ...args: unknown[]): void {
       for (const cb of this.handlers.get(event) ?? []) cb(...args);
@@ -163,5 +176,14 @@ describe('preview-window', () => {
     // The next preview opens a fresh window.
     openPreviewWindow(OPTS, setDistRoot);
     expect(mocks.FakeBrowserWindow.instances).toHaveLength(2);
+  });
+
+  it('vetoes page-title-updated so the PR Preview title sticks', () => {
+    openPreviewWindow(OPTS, vi.fn());
+    const win = mocks.FakeBrowserWindow.instances[0]!;
+    const event = { preventDefault: vi.fn() };
+    win.emit('page-title-updated', event, 'Kimi Code');
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(win.setTitle).toHaveBeenCalledWith('PR Preview #362');
   });
 });

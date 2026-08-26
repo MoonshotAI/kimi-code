@@ -57,7 +57,8 @@ GUI 应用看不到 Homebrew 的 PATH 没关系，app 会自动探测 `/opt/home
   commit sha → 在隔离 worktree（`<userData>/pr-previews/`）里构建该代码的
   渲染层，构建完成后自动在**独立预览窗口**打开，主窗口不动。server 仍是
   当前 app 的，预览的只是界面；关掉预览窗口即退出预览（原生 View 菜单
-  也有「退出 PR 预览」+ 快捷键）。
+  也有「退出 PR 预览」+ 快捷键）。预览窗口左上角的 debug pill 会变为
+  黄色并显示当前预览的分支 / PR。
   - 首次预览某个目标需要 `pnpm install` + 构建，几分钟；同一目标再次预览
     会复用缓存，快很多。
   - 预览 worktree 的 git 对象来自 `<userData>/pr-previews/repo-cache.git`

@@ -64,9 +64,25 @@ export function isPreviewWindowOpen(): boolean {
   return previewWindow !== null && !previewWindow.isDestroyed();
 }
 
+// The preview window identifies its target two ways:
+// - inside the page, the sidebar's debug pill shows the preview label
+//   (renderer, DebugMenu.vue — the preview build is the full app);
+// - the native title stays `PR Preview <label>` (page-title-updated is
+//   vetoed, or the app's document.title would replace it after load) so
+//   Mission Control / ⌘` can tell windows apart.
+let titleLabel = '';
+
+function armWindowIdentity(win: BrowserWindow): void {
+  win.on('page-title-updated', (event) => {
+    event.preventDefault();
+    win.setTitle(`PR Preview ${titleLabel}`);
+  });
+}
+
 /** Open (or reuse) the preview window for a freshly built preview. */
 export function openPreviewWindow(opts: OpenPreviewWindowOptions, setDistRoot: SetPreviewDistRoot): void {
   setDistRoot(opts.distRoot);
+  titleLabel = opts.label;
   const url = rendererUrl(opts.origin, opts.token, undefined, true, isVibrancyEnabled());
   if (isPreviewWindowOpen()) {
     const win = previewWindow!;
@@ -96,6 +112,7 @@ export function openPreviewWindow(opts: OpenPreviewWindowOptions, setDistRoot: S
     },
   });
   previewWindow = win;
+  armWindowIdentity(win);
   // Same affordances as the main window: external links open in the system
   // browser, text fields get the native editing context menu.
   installExternalLinkGuard(win.webContents, (target) => shell.openExternal(target));

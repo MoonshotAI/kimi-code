@@ -1,7 +1,7 @@
 // apps/desktop/src/renderer/lib/prPreview.ts
 // Desktop-only PR preview (dev builds / Kimi Code Canary): the main process
 // builds a code-app PR/branch/sha's renderer in an isolated git worktree and
-// swaps this window onto it (main/pr-preview.ts). The preload bridge exposes
+// opens it in a separate preview window (main/pr-preview.ts + preview-window.ts). The preload bridge exposes
 // it as `window.kimiDesktop.prPreview*`; plain web has no bridge and stable
 // packaged builds answer getState with null — both mean "feature unavailable"
 // and the entry point stays hidden (see docs/native-todos.md).
@@ -114,4 +114,18 @@ export function onPrPreviewEvent(cb: (state: PrPreviewState) => void): () => voi
   const b = bridge();
   if (b === undefined) return () => {};
   return b.onPrPreviewEvent(cb);
+}
+
+/** What the debug pill should show for a preview state: the target while a
+ *  preview builds (`label`) and once it serves (`servingLabel`), '' in every
+ *  other phase (idle/error keep the pill on the build branch). Pure — the
+ *  preview window renders the same DebugMenu pill, so this is what identifies
+ *  it (DebugMenu.vue). */
+export function previewPillLabel(state: PrPreviewState | undefined): string {
+  if (state === undefined) return '';
+  if (state.phase === 'active') return state.servingLabel ?? state.label ?? '';
+  if (state.phase === 'fetching' || state.phase === 'installing' || state.phase === 'building') {
+    return state.label ?? '';
+  }
+  return '';
 }

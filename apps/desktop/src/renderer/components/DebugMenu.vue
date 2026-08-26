@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import { Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 import { useCanaryChannel, useUpdateStatus, useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import PrPreviewIndicator from './PrPreviewIndicator.vue';
-import type { PrPreviewState } from '../lib/prPreview';
+import { previewPillLabel, type PrPreviewState } from '../lib/prPreview';
 
 const { t } = useI18n();
 const { confirm } = useConfirmDialog();
@@ -185,9 +185,15 @@ const pillBusy = computed(() => previewBusy.value || checking.value || triggerin
 
 /** Pill label: the branch the bundle was built from (injected at build time;
  *  'main' for canary CI builds, the checkout's branch in dev), 'debug' when
- *  unknown. */
+ *  unknown — unless a preview is building or serving, in which case the
+ *  preview target (`#362` / branch) takes over the pill: the preview window
+ *  renders this same pill, so it identifies itself at a glance. */
 const branchLabel =
   typeof __KIMI_BRANCH__ === 'string' && __KIMI_BRANCH__.trim() !== '' ? __KIMI_BRANCH__.trim() : 'debug';
+
+const previewLabel = computed(() => previewPillLabel(previewRef.value?.state));
+const pillLabel = computed(() => (previewLabel.value !== '' ? previewLabel.value : branchLabel));
+const pillIcon = computed(() => (previewLabel.value !== '' ? 'git-pull-request' : 'flask'));
 </script>
 
 <template>
@@ -196,12 +202,12 @@ const branchLabel =
       class="dbg-pill"
       :class="{ 'is-preview-active': previewActive }"
       type="button"
-      :aria-label="branchLabel"
+      :aria-label="pillLabel"
       @click="toggleMenu"
     >
       <Spinner v-if="pillBusy" size="xs" />
-      <Icon v-else class="dbg-pill-icon" name="flask" size="sm" />
-      <span class="dbg-pill-text">{{ branchLabel }}</span>
+      <Icon v-else class="dbg-pill-icon" :name="pillIcon" size="sm" />
+      <span class="dbg-pill-text">{{ pillLabel }}</span>
     </button>
 
     <Teleport to="body">
