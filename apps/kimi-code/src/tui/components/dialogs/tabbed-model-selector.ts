@@ -15,8 +15,8 @@
  * Each tab owns its own inner ModelSelectorComponent built from the filtered
  * subset of models. ↑/↓/Enter/Esc/←/→ (thinking) and typing (filter) are
  * forwarded to the active inner selector; Tab / Shift-Tab cycle between tabs.
- * Alt+M toggles the favorite state of the highlighted model in every tab and
- * live-refreshes the tab layout via {@link setFavoriteAliases}.
+ * Shift+A adds the highlighted model to Favorites and Shift+R removes it in
+ * every tab, live-refreshing the tab layout via {@link setFavoriteAliases}.
  *
  * The active tab is highlighted with a filled background (matching the
  * AskUserQuestion dialog's tab strip) — see .agents/skills/write-tui/DESIGN.md.
@@ -46,7 +46,7 @@ const ALL_TAB_LABEL = 'All';
 const FAVORITES_TAB_ID = 'favorites';
 const FAVORITES_TAB_LABEL = 'Favorites';
 const FAVORITES_EMPTY_MESSAGE =
-  'No favorites yet — highlight a model and press Alt+M to add it';
+  'No favorites yet — highlight a model and press Shift+A to add it';
 
 export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
@@ -68,12 +68,12 @@ export interface TabbedModelSelectorOptions {
   /** Favorite aliases (add-order). When provided, a Favorites tab is prepended
    * and every list row carries a ★ for favorited models. */
   readonly favoriteAliases?: readonly string[];
-  /** When set, Alt+M toggles the favorite state of the highlighted model
-   * inside any tab; the host persists the change and calls
+  /** When set, Shift+A adds the highlighted model to Favorites and Shift+R
+   * removes it inside any tab; the host persists the change and calls
    * {@link setFavoriteAliases} to refresh the layout live. */
   readonly onToggleFavorite?: (alias: string) => void;
   readonly onSelect: (selection: ModelSelection) => void;
-  /** Forwarded to each inner selector; when set, Alt+S applies the choice to
+  /** Forwarded to each inner selector; when set, Shift+S applies the choice to
    * the current session only without persisting it as the default. */
   readonly onSessionOnlySelect?: (selection: ModelSelection) => void;
   readonly onCancel: () => void;

@@ -172,7 +172,8 @@ describe('TabbedModelSelectorComponent', () => {
 });
 
 describe('TabbedModelSelectorComponent favorites', () => {
-  const ALT_M = `${ESC}m`;
+  const SHIFT_A = 'A';
+  const SHIFT_R = 'R';
   const SHIFT_TAB = `${ESC}[Z`;
 
   function makeFavorites(favoriteAliases?: readonly string[]) {
@@ -238,7 +239,7 @@ describe('TabbedModelSelectorComponent favorites', () => {
     component.handleInput(SHIFT_TAB);
     const favoritesOut = strip(component.render(120).join('\n'));
     expect(favoritesOut).toContain('No favorites yet');
-    expect(favoritesOut).toContain('Alt+M');
+    expect(favoritesOut).toContain('Shift+A');
   });
 
   it('keeps the current-model marker inside the Favorites tab', () => {
@@ -248,18 +249,24 @@ describe('TabbedModelSelectorComponent favorites', () => {
     expect(list.some((l) => l.includes('Kimi K2') && l.includes('← current'))).toBe(true);
   });
 
-  it('Alt+M forwards the highlighted alias and live-updates tabs via setFavoriteAliases', () => {
-    const { component, onToggleFavorite } = makeFavorites(['k2']);
-    component.handleInput(ALT_M);
+  it('Shift+A forwards the highlighted non-favorite and live-updates tabs via setFavoriteAliases', () => {
+    const { component, onToggleFavorite } = makeFavorites([]);
+    component.handleInput(SHIFT_A);
     expect(onToggleFavorite).toHaveBeenCalledWith('k2');
 
-    // The host persists and refreshes: gpt becomes a favorite too, and the
-    // picker (still on the Favorites tab) now lists both.
+    // The host persists and refreshes: both become favorites and are listed.
     component.setFavoriteAliases(['k2', 'gpt']);
     const out = strip(component.render(120).join('\n'));
     const list = activeList(out.split('\n'));
     expect(list.some((l) => l.includes('GPT-5'))).toBe(true);
     expect(list.some((l) => l.includes('Kimi K2'))).toBe(true);
+  });
+
+  it('Shift+R forwards the highlighted favorite and live-updates tabs via setFavoriteAliases', () => {
+    const { component, onToggleFavorite } = makeFavorites(['k2', 'gpt']);
+    // Opens on the Favorites tab with k2 highlighted.
+    component.handleInput(SHIFT_R);
+    expect(onToggleFavorite).toHaveBeenCalledWith('k2');
   });
 
   it('live-removes a unfavorited model from the Favorites tab', () => {

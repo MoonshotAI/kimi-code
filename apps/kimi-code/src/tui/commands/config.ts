@@ -1132,7 +1132,7 @@ export async function rotateToNextFavoriteModel(host: SlashCommandHost): Promise
   if (next === undefined) {
     host.showNotice(
       'No favorite models to rotate to',
-      'Open /model and press Alt+M on a model to add it to Favorites.',
+      'Open /model and press Shift+A on a model to add it to Favorites.',
     );
     return;
   }

@@ -305,7 +305,7 @@ describe('ModelSelectorComponent', () => {
     }
   });
 
-  it('invokes onSessionOnlySelect on Alt+S with the effective thinking state', () => {
+  it('invokes onSessionOnlySelect on Shift+S with the effective thinking state', () => {
     const onSelect = vi.fn();
     const onSessionOnlySelect = vi.fn();
     const picker = new ModelSelectorComponent({
@@ -317,14 +317,14 @@ describe('ModelSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    // Toggle thinking Off, then Alt+S applies the choice to the session only.
+    // Toggle thinking Off, then Shift+S applies the choice to the session only.
     picker.handleInput(RIGHT);
-    picker.handleInput(`${ESC}s`);
+    picker.handleInput('S');
     expect(onSessionOnlySelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: 'off' });
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('ignores Alt+S and hides its hint when onSessionOnlySelect is not provided', () => {
+  it('ignores Shift+S and hides its hint when onSessionOnlySelect is not provided', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
@@ -334,12 +334,12 @@ describe('ModelSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    picker.handleInput(`${ESC}s`);
+    picker.handleInput('S');
     expect(onSelect).not.toHaveBeenCalled();
-    expect(text(picker)).not.toContain('Alt+S session-only');
+    expect(text(picker)).not.toContain('Shift+S session-only');
   });
 
-  it('shows the Alt+S session-only hint when onSessionOnlySelect is provided', () => {
+  it('shows the Shift+S session-only hint when onSessionOnlySelect is provided', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
@@ -348,7 +348,7 @@ describe('ModelSelectorComponent', () => {
       onSessionOnlySelect: vi.fn(),
       onCancel: vi.fn(),
     });
-    expect(text(picker)).toContain('Alt+S session-only');
+    expect(text(picker)).toContain('Shift+S session-only');
   });
 
   it('renders effort segments with the default effort highlighted', () => {
@@ -567,7 +567,8 @@ describe('ModelSelectorComponent overrides', () => {
 });
 
 describe('ModelSelectorComponent favorites', () => {
-  const ALT_M = `${ESC}m`;
+  const SHIFT_A = 'A';
+  const SHIFT_R = 'R';
 
   function makeFavoritesPicker(overrides: {
     favoriteAliases?: ReadonlySet<string>;
@@ -599,31 +600,58 @@ describe('ModelSelectorComponent favorites', () => {
     expect(out).not.toMatch(/GPT-5 ★/);
   });
 
-  it('Alt+M toggles the favorite state of the highlighted model', () => {
+  it('Shift+A adds the highlighted model to Favorites when it is not already a favorite', () => {
     const onToggleFavorite = vi.fn();
     const picker = makeFavoritesPicker({ onToggleFavorite });
 
-    picker.handleInput(ALT_M);
+    picker.handleInput(SHIFT_A);
 
     expect(onToggleFavorite).toHaveBeenCalledWith('kimi');
   });
 
-  it('mentions Alt+M in the hint line only when the toggle is available', () => {
+  it('Shift+A is a no-op when the highlighted model is already a favorite', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ favoriteAliases: new Set(['kimi']), onToggleFavorite });
+
+    picker.handleInput(SHIFT_A);
+
+    expect(onToggleFavorite).not.toHaveBeenCalled();
+  });
+
+  it('Shift+R removes the highlighted model from Favorites', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ favoriteAliases: new Set(['kimi']), onToggleFavorite });
+
+    picker.handleInput(SHIFT_R);
+
+    expect(onToggleFavorite).toHaveBeenCalledWith('kimi');
+  });
+
+  it('Shift+R is a no-op when the highlighted model is not a favorite', () => {
+    const onToggleFavorite = vi.fn();
+    const picker = makeFavoritesPicker({ onToggleFavorite });
+
+    picker.handleInput(SHIFT_R);
+
+    expect(onToggleFavorite).not.toHaveBeenCalled();
+  });
+
+  it('mentions Shift+A favorite and Shift+R unfavorite in the hint line only when the toggle is available', () => {
     const withToggle = makeFavoritesPicker({ onToggleFavorite: vi.fn() });
-    expect(text(withToggle)).toContain('Alt+M favorite');
+    expect(text(withToggle)).toContain('Shift+A favorite · Shift+R unfavorite');
 
     const withoutToggle = makeFavoritesPicker();
-    expect(text(withoutToggle)).not.toContain('Alt+M favorite');
+    expect(text(withoutToggle)).not.toContain('Shift+A favorite');
   });
 
   it('shows the custom empty message instead of "No matches" when the list is empty', () => {
     const picker = makeFavoritesPicker({
       models: {},
-      emptyMessage: 'No favorites yet — press Alt+M',
+      emptyMessage: 'No favorites yet — press Shift+A',
     });
 
     const out = text(picker);
-    expect(out).toContain('No favorites yet — press Alt+M');
+    expect(out).toContain('No favorites yet — press Shift+A');
     expect(out).not.toContain('No matches');
   });
 });

@@ -1,0 +1,1 @@
+Replace Alt+M/Alt+S with Shift+A/R/S in the model chooser
