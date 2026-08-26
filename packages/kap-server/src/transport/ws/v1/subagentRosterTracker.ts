@@ -96,7 +96,6 @@ export class SubagentRosterTracker {
     }
   }
 
-  /** Fresh copies — callers must not mutate the tracked entries. */
   get(sessionId: string): SnapshotSubagent[] {
     const roster = this.bySession.get(sessionId);
     if (!roster) return [];

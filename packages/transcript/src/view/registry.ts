@@ -31,19 +31,16 @@ export class ViewRegistry<C = unknown> {
     this.#fallbackTool = options.fallbackTool;
   }
 
-  /** Key: view hint or tool name (`frame.view ?? frame.name`, lower-cased). */
   registerTool(key: string, renderer: C): this {
     this.#toolRenderers.set(key.toLowerCase(), renderer);
     return this;
   }
 
-  /** Key: origin kind ('user' | 'cron' | 'task' | …). */
   registerInput(originKind: string, renderer: C): this {
     this.#inputRenderers.set(originKind, renderer);
     return this;
   }
 
-  /** Key: marker key ('compaction' | 'goal' | 'notice' | …). */
   registerMarker(marker: string, renderer: C): this {
     this.#markerRenderers.set(marker, renderer);
     return this;

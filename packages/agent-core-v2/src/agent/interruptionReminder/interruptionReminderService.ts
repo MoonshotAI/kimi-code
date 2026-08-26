@@ -5,7 +5,9 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -27,7 +29,8 @@ export class AgentInterruptionReminderService
   constructor(
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
@@ -37,8 +40,7 @@ export class AgentInterruptionReminderService
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
         const origin = lastComparableMessage(this.context.get())?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-        this.reminders.appendSystemReminder(INTERRUPTION_REMINDER, {
-          kind: 'injection',
+        agentLifecycle.resolve(scopeContext.agentContext, AgentReminder).notify(INTERRUPTION_REMINDER, {
           variant: INTERRUPTION_REMINDER_VARIANT,
         });
       }),

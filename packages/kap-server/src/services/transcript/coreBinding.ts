@@ -22,24 +22,11 @@ import {
   type ProjectorInteraction,
 } from './coreEventMap';
 
-/** Minimal warn sink (matches `JournalLogger`). */
 export interface TranscriptBindingLogger {
   warn(obj: unknown, msg: string): void;
 }
 
-/** The live binding plus its deferred seeding hook. */
 export interface TranscriptBinding extends IDisposable {
-  /**
-   * Announce interactions that were already pending at bind time.
-   * Deliberately NOT run during bind: the store (and the projector's tool
-   * map) is empty until the initial history backfill lands, so an early
-   * announce misplaces the frame into a synthetic step and loses the
-   * resolve-time `approvalId` back-link. The service calls it after the
-   * initial backfill for the main agent, and after each agent's on-demand
-   * backfill for that agent's interactions — pass `agentId` to seed only the
-   * pendings routed to that agent (a subagent's pending must not be placed
-   * before its own history is replayed).
-   */
   seedPendingInteractions(agentId?: string): void;
 }
 

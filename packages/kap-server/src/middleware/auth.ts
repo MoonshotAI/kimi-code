@@ -17,11 +17,6 @@ const BEARER_PREFIX = 'Bearer ';
 export interface AuthHookOptions {
   readonly isBypassed?: (req: FastifyRequest) => boolean;
   readonly limiter?: Pick<AuthFailureLimiter, 'recordFailure' | 'isBanned'>;
-  /**
-   * Unified credential validator. Defaults to `authTokenService.isValid`
-   * (persistent token / password). `start.ts` supplies one that also accepts
-   * the optional `rpcToken` so the same credential gates every surface.
-   */
   readonly validateCredential?: CredentialValidator;
 }
 

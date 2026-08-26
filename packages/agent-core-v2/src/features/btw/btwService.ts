@@ -1,4 +1,4 @@
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -22,12 +22,9 @@ export class SessionBtwService implements ISessionBtwService {
     }
     const childContext = await this.agentLifecycle.fork(main.accessor.get(IAgentScopeContext).agentContext);
     const child = this.agentLifecycle.handleOf(childContext.agentId)!;
-    child.accessor
-      .get(IAgentSystemReminderService)
-      ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {
-        kind: 'injection',
-        variant: 'btw',
-      });
+    this.agentLifecycle
+      .resolve(childContext, AgentReminder)
+      .notify(SIDE_QUESTION_SYSTEM_REMINDER, { variant: 'btw' });
     const reason =
       child.accessor.get(IAgentToolApprovalService)?.formatDenyMessage(
         TOOL_CALL_DISABLED_MESSAGE,

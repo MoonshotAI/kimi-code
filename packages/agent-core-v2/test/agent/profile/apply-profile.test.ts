@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -205,17 +205,18 @@ describe('AgentProfileService.applyProfile', () => {
     expect(prompt).toContain('ls:\nextra:');
   });
 
-  it('refreshes the active profile system prompt exactly without resetting active tools', async () => {
+  it('keeps the system prompt frozen until an explicit applyProfile rebuild', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const { profile: svc } = buildContext();
     await svc.applyProfile(exactProfile);
-    svc.update({ activeToolNames: ['Read'] });
+    const before = svc.data().systemPrompt;
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
 
-    await svc.refreshSystemPrompt();
+    expect(svc.data().systemPrompt).toBe(before);
+
+    await svc.applyProfile(exactProfile);
 
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'new instructions'));
-    expect(svc.getActiveToolNames()).toEqual(['Read']);
   });
 
   it('caches an agents-md warning when the content exceeds the 32 KB soft budget', async () => {
@@ -278,7 +279,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
     change.dispose();
@@ -295,7 +296,7 @@ describe('AgentProfileService.applyProfile', () => {
     const before = svc.data().systemPrompt;
 
     sections.value = [];
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
   });
@@ -307,7 +308,7 @@ describe('AgentProfileService.applyProfile', () => {
     const before = svc.data().systemPrompt;
 
     sections.value = [{ pluginId: 'demo', content: 'Always cite sources.' }];
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
   });
@@ -321,7 +322,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     loaded.value = true;
     sections.value = [{ pluginId: 'demo', content: 'V1' }];
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin demo -->');
   });
@@ -342,7 +343,7 @@ describe('AgentProfileService.applyProfile', () => {
     await first.ctx.dispose();
   });
 
-  it('keeps plugin sections frozen while other prompt inputs still refresh', async () => {
+  it('keeps plugin sections frozen across rebuilds while other prompt inputs re-render', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const sections = {
       value: [{ pluginId: 'demo', content: 'cite' }] as readonly EnabledPluginSystemPrompt[],
@@ -354,7 +355,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     sections.value = [];
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(agentsAndPluginsProfile);
 
     expect(svc.data().systemPrompt).toContain('new instructions');
     expect(svc.data().systemPrompt).toContain('cite');
@@ -372,7 +373,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     listing.value = 'after';
     change.fire(BUILTIN_SKILL_SOURCE_ID);
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(skillsProfile);
 
     expect(svc.data().systemPrompt).toBe('skills:before');
     change.dispose();
@@ -397,7 +398,7 @@ describe('AgentProfileService.applyProfile', () => {
     change.dispose();
   });
 
-  it('rebuilds the system prompt when the builtin skill source changes', async () => {
+  it('does not rebuild the system prompt when the builtin skill source changes', async () => {
     let renders = 0;
     const countingProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'counting-profile',
@@ -410,10 +411,9 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe('render:1');
 
     change.fire(BUILTIN_SKILL_SOURCE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    await vi.waitFor(() => {
-      expect(svc.data().systemPrompt).toBe('render:2');
-    });
+    expect(svc.data().systemPrompt).toBe('render:1');
     change.dispose();
   });
 
@@ -437,7 +437,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');

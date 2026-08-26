@@ -233,7 +233,7 @@ function buildHost(key: string): {
     agentsMd: undefined,
     agentsMdWarning: undefined,
     agentsMdPaths: undefined,
-    onDidChange: Event.None as Event<void>,
+    onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
   } satisfies ISessionInstructionsProvider);
   host.stub(IAgentAgentsMdReminderService, {
     _serviceBrand: undefined,

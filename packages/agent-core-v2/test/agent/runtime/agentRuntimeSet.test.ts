@@ -142,6 +142,47 @@ describe('AgentRuntimeSet', () => {
     expect(attach.mock.results[0]!.value.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('materializes an eager non-durable runtime at durable attach while a lazy one stays registered', async () => {
+    let restores = 0;
+    const eager = defineAgentRuntimeContract<unknown>('eager-plain');
+    const eagerProvider = defineAgentRuntimeProvider(eager, {
+      id: 'eager-plain',
+      logic: fromCallback(({ receive }) => {
+        receive((event) => {
+          if ((event as AgentRuntimeRestoreEvent).type === 'runtime.restore') restores += 1;
+        });
+      }),
+      eager: true,
+      createApi: () => ({}),
+    });
+    const lazy = defineAgentRuntimeContract<unknown>('lazy-plain');
+    const lazyProvider = defineAgentRuntimeProvider(lazy, {
+      id: 'lazy-plain',
+      logic: fromCallback(() => {}),
+      createApi: () => ({}),
+    });
+    const set = new AgentRuntimeSet(agent, accessor);
+    set.apply({ definition: eager, provider: eagerProvider, generation: 1, active: true });
+    set.apply({ definition: lazy, provider: lazyProvider, generation: 1, active: true });
+
+    expect(set.inspect()).toEqual([
+      expect.objectContaining({ id: 'eager-plain', status: 'registered' }),
+      expect.objectContaining({ id: 'lazy-plain', status: 'registered' }),
+    ]);
+
+    set.attachDurable(host(vi.fn(() => ({ dispose: vi.fn() }))));
+
+    expect(set.inspect()).toEqual([
+      expect.objectContaining({ id: 'eager-plain', status: 'materialized' }),
+      expect.objectContaining({ id: 'lazy-plain', status: 'registered' }),
+    ]);
+
+    await set.restore();
+
+    expect(restores).toBe(1);
+    await set.close();
+  });
+
   it('sends restore once and waits for actor readiness', async () => {
     let restores = 0;
     let release!: () => void;

@@ -8,7 +8,6 @@ export function truncate(text: string, max = 100): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** Property access shape of a JSON Schema node (avoids index-signature access). */
 export interface JsonSchema {
   readonly $ref?: unknown;
   readonly $defs?: unknown;
@@ -28,7 +27,6 @@ export function asJsonSchema(value: unknown): JsonSchema | undefined {
   return isRecord(value) ? (value as JsonSchema) : undefined;
 }
 
-/** Resolve a `#/$defs/<name>` reference against the root schema. */
 export function resolveRef(schema: unknown, root: JsonSchema): unknown {
   const s = asJsonSchema(schema);
   if (typeof s?.$ref === 'string' && s.$ref.startsWith('#/$defs/')) {
@@ -41,7 +39,6 @@ export function resolveRef(schema: unknown, root: JsonSchema): unknown {
   return schema;
 }
 
-/** One-line type description of a JSON Schema node (`"a" | "b"`, `Foo[]`, …). */
 export function describeType(
   schema: unknown,
   quoteString: (raw: string) => string = (s) => JSON.stringify(s),
@@ -78,7 +75,6 @@ export function describeType(
   return 'any';
 }
 
-/** Project a zod schema to JSON Schema; `undefined` when it uses transforms. */
 export function toJsonSchema(schema: unknown): JsonSchema | undefined {
   try {
     return z.toJSONSchema(schema as never) as JsonSchema;

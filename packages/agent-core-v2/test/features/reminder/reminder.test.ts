@@ -1,39 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
-import {
-  createServices,
-  type TestInstantiationService,
-} from '#/_base/di/test';
-import {
-  IAgentContextInjectorService,
-} from '#/agent/contextInjector/contextInjector';
-import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
+import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
-import { EventBusService } from '#/app/event/eventBusService';
-import { IWireService } from '#/wire/wire';
-import { registerLogServices } from '../../_base/log/stubs';
-import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
+import { IFeatureManager } from '#/app/feature/featureManager';
+import { createTestAgent, type TestAgentContext } from '../../harness';
 import {
   runWillBeginStepHooks,
   type StubLoop,
-  stubLoopWithHooks,
-  stubWire,
-} from '../loop/stubs';
-import { stubAgentContext } from '../agentContext/stubs';
-
-function injector(ix: TestInstantiationService): IAgentContextInjectorService {
-  return ix.get(IAgentContextInjectorService);
-}
+} from '../../agent/loop/stubs';
 
 function userMessage(text: string): ContextMessage {
   return {
@@ -59,31 +39,23 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
   return part?.type === 'text' ? part.text : undefined;
 }
 
-describe('AgentContextInjectorService', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
+describe('ReminderRuntime', () => {
+  let ctx: TestAgentContext;
+  let reminder: ReminderRuntime;
   let context: IAgentContextMemoryService;
   let loop: StubLoop;
 
-  beforeEach(() => {
-    disposables = new DisposableStore();
-    loop = stubLoopWithHooks();
-    ix = createServices(disposables, {
-      base: [registerContextMemoryServices, registerLogServices],
-      strict: true,
-      additionalServices: (reg) => {
-        reg.defineInstance(IAgentLoopService, loop);
-        reg.defineInstance(IWireService, stubWire());
-        reg.defineInstance(IAgentStateService, new AgentStateService());
-        reg.define(IAgentSystemReminderService, AgentSystemReminderService);
-        reg.define(IAgentContextInjectorService, AgentContextInjectorService);
-      },
-    });
-    context = ix.get(IAgentContextMemoryService);
+  beforeEach(async () => {
+    ctx = createTestAgent();
+    context = ctx.get(IAgentContextMemoryService);
+    loop = ctx.get(IAgentLoopService) as StubLoop;
+    await ctx.restorePersisted();
+    await ctx.restoreRuntimes();
+    reminder = ctx.resolve(AgentReminder);
   });
 
-  afterEach(() => {
-    disposables.dispose();
+  afterEach(async () => {
+    await ctx.dispose();
   });
 
   async function runInjectionStep(firstStepOfTurn = false): Promise<void> {
@@ -95,26 +67,24 @@ describe('AgentContextInjectorService', () => {
     deleteCount: number,
     inserted: readonly ContextMessage[],
   ): void {
-    const backing = (context as StubContextMemory).messages as ContextMessage[];
+    const backing = [...ctx.agentState.get(contextMemoryKey)];
     backing.splice(start, deleteCount, ...inserted);
-    const eventBus = ix.get(IEventBus);
-    const agentContext = stubAgentContext('main', 1);
-    (eventBus as EventBusService).activateAgent(agentContext);
-    eventBus.publish(
+    ctx.agentState.set(contextMemoryKey, backing);
+    ctx.get(IEventBus).publish(
       new ContextSpliced({
         agentId: 'main',
         start,
         deleteCount,
         messages: [...inserted],
       }),
-      agentContext,
+      ctx.agentContext,
     );
   }
 
   it('registers providers and appends injection messages with the provider variant', async () => {
     const seen: Array<number | null> = [];
 
-    injector(ix).register('recording_test', ({ lastInjectedAt }) => {
+    reminder.register('recording_test', ({ lastInjectedAt }) => {
       seen.push(lastInjectedAt);
       return 'recorded reminder';
     });
@@ -131,7 +101,7 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('persists provider disclosure metadata on the injected message origin', async () => {
-    injector(ix).register('date_test', () => ({
+    reminder.register('date_test', () => ({
       content: 'date reminder',
       disclosure: {
         kind: 'date',
@@ -156,7 +126,7 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('appends provider content parts verbatim without system-reminder wrapping', async () => {
-    injector(ix).register('media_test', () => [
+    reminder.register('media_test', () => [
       { type: 'text', text: 'caption' },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
     ]);
@@ -172,7 +142,7 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('skips injection when the provider returns an empty content array', async () => {
-    injector(ix).register('empty_test', () => []);
+    reminder.register('empty_test', () => []);
 
     await runInjectionStep();
 
@@ -182,7 +152,7 @@ describe('AgentContextInjectorService', () => {
   it('passes the previous injection index back to the provider', async () => {
     const seen: Array<number | null> = [];
 
-    injector(ix).register('recording_test', ({ lastInjectedAt }) => {
+    reminder.register('recording_test', ({ lastInjectedAt }) => {
       seen.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder' : undefined;
     });
@@ -196,16 +166,16 @@ describe('AgentContextInjectorService', () => {
 
   it('reconciles only providers registered under the requested name while idle', async () => {
     const seen: string[] = [];
-    injector(ix).register('target', () => {
+    reminder.register('target', () => {
       seen.push('target');
       return 'target reminder';
     });
-    injector(ix).register('other', () => {
+    reminder.register('other', () => {
       seen.push('other');
       return 'other reminder';
     });
 
-    await injector(ix).reconcileWhenIdle('target');
+    await reminder.reconcileWhenIdle('target');
 
     expect(seen).toEqual(['target']);
     expect(context.get()).toHaveLength(1);
@@ -214,7 +184,7 @@ describe('AgentContextInjectorService', () => {
 
   it('leaves reconciliation to the next step head when quiescence cannot be acquired', async () => {
     let calls = 0;
-    injector(ix).register('target', () => {
+    reminder.register('target', () => {
       calls++;
       return 'target reminder';
     });
@@ -223,7 +193,7 @@ describe('AgentContextInjectorService', () => {
     };
     loop.tryAcquireQuiescence = () => undefined;
 
-    await injector(ix).reconcileWhenIdle('target');
+    await reminder.reconcileWhenIdle('target');
 
     expect(calls).toBe(0);
     expect(context.get()).toHaveLength(0);
@@ -232,7 +202,7 @@ describe('AgentContextInjectorService', () => {
   it('exposes all live injection positions alongside the newest one', async () => {
     const seen: Array<readonly number[]> = [];
 
-    injector(ix).register('recording_test', ({ injectedPositions, lastInjectedAt }) => {
+    reminder.register('recording_test', ({ injectedPositions, lastInjectedAt }) => {
       seen.push(injectedPositions);
       expect(lastInjectedAt).toBe(injectedPositions.at(-1) ?? null);
       return seen.length <= 2 ? 'recorded reminder' : undefined;
@@ -249,7 +219,7 @@ describe('AgentContextInjectorService', () => {
   it('falls back to the previous surviving copy when the newest injection is deleted', async () => {
     const seen: Array<number | null> = [];
 
-    injector(ix).register('recording_test', ({ lastInjectedAt }) => {
+    reminder.register('recording_test', ({ lastInjectedAt }) => {
       seen.push(lastInjectedAt);
       return seen.length <= 2 ? 'recorded reminder' : undefined;
     });
@@ -271,11 +241,11 @@ describe('AgentContextInjectorService', () => {
     const seenA: Array<number | null> = [];
     const seenB: Array<number | null> = [];
 
-    injector(ix).register('recording_a', ({ lastInjectedAt }) => {
+    reminder.register('recording_a', ({ lastInjectedAt }) => {
       seenA.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder A' : undefined;
     });
-    injector(ix).register('recording_b', ({ lastInjectedAt }) => {
+    reminder.register('recording_b', ({ lastInjectedAt }) => {
       seenB.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder B' : undefined;
     });
@@ -296,7 +266,7 @@ describe('AgentContextInjectorService', () => {
     const seen: Array<number | null> = [];
 
     context.append(userMessage('before reminder'));
-    injector(ix).register('recording_test', ({ lastInjectedAt }) => {
+    reminder.register('recording_test', ({ lastInjectedAt }) => {
       seen.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder' : undefined;
     });
@@ -324,11 +294,11 @@ describe('AgentContextInjectorService', () => {
       userMessage('old request'),
       userMessage('old follow-up'),
     );
-    injector(ix).register('recording_a', ({ lastInjectedAt }) => {
+    reminder.register('recording_a', ({ lastInjectedAt }) => {
       seenA.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder A' : undefined;
     });
-    injector(ix).register('recording_b', ({ lastInjectedAt }) => {
+    reminder.register('recording_b', ({ lastInjectedAt }) => {
       seenB.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder B' : undefined;
     });
@@ -348,7 +318,7 @@ describe('AgentContextInjectorService', () => {
 
   it('re-arms per-turn providers at the first step after a compaction splice', async () => {
     const seen: boolean[] = [];
-    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+    reminder.register('per_turn_test', ({ isNewTurn }) => {
       seen.push(isNewTurn);
       return isNewTurn ? 'per-turn reminder' : undefined;
     });
@@ -367,7 +337,7 @@ describe('AgentContextInjectorService', () => {
 
   it('does not re-arm the new-turn flag for non-compaction splices', async () => {
     const seen: boolean[] = [];
-    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+    reminder.register('per_turn_test', ({ isNewTurn }) => {
       seen.push(isNewTurn);
       return undefined;
     });
@@ -381,7 +351,7 @@ describe('AgentContextInjectorService', () => {
 
   it('re-reconciles within the same step when compaction lands inside the step hook chain', async () => {
     const seen: boolean[] = [];
-    injector(ix).register('per_turn_test', ({ isNewTurn }) => {
+    reminder.register('per_turn_test', ({ isNewTurn }) => {
       seen.push(isNewTurn);
       return isNewTurn ? 'per-turn reminder' : undefined;
     });
@@ -400,7 +370,7 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('appends tagged raw messages verbatim with the injection origin stamped', async () => {
-    injector(ix).register('schema_test', () => ({
+    reminder.register('schema_test', () => ({
       message: {
         role: 'system',
         content: [],
@@ -419,7 +389,7 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('stamps the disclosure on tagged raw messages returned through the result wrapper', async () => {
-    injector(ix).register('schema_test', () => ({
+    reminder.register('schema_test', () => ({
       content: { message: { role: 'user', content: [{ type: 'text', text: 'raw' }] } },
       disclosure: { kind: 'test_receipt', id: 'r1' },
     }));
@@ -434,7 +404,7 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('skips tagged raw messages with neither content nor tools', async () => {
-    injector(ix).register('empty_raw_test', () => ({ message: { role: 'system', content: [] } }));
+    reminder.register('empty_raw_test', () => ({ message: { role: 'system', content: [] } }));
 
     await runInjectionStep();
 
@@ -442,10 +412,10 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('skips a throwing step provider and still runs the rest', async () => {
-    injector(ix).register('step_throwing', () => {
+    reminder.register('step_throwing', () => {
       throw new Error('boom');
     });
-    injector(ix).register('step_surviving', () => 'surviving reminder');
+    reminder.register('step_surviving', () => 'surviving reminder');
 
     await runInjectionStep();
 
@@ -454,12 +424,59 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('skips a rejecting step provider and still runs the rest', async () => {
-    injector(ix).register('step_rejecting', () => Promise.reject(new Error('boom')));
-    injector(ix).register('step_surviving', () => 'surviving reminder');
+    reminder.register('step_rejecting', () => Promise.reject(new Error('boom')));
+    reminder.register('step_surviving', () => 'surviving reminder');
 
     await runInjectionStep();
 
     expect(context.get()).toHaveLength(1);
     expect(lastText(context)).toContain('surviving reminder');
+  });
+
+  it('exposes an opaque frozen contract token', () => {
+    expect(Object.isFrozen(AgentReminder)).toBe(true);
+    expect(Object.keys(AgentReminder)).toEqual([]);
+    const forged = Object.freeze({}) as AgentRuntimeDefinition<ReminderRuntime>;
+    expect(() => ctx.resolve(forged)).toThrow('Unknown agent runtime definition');
+  });
+
+  it('installs effects only after restore and only once', async () => {
+    const local = createTestAgent();
+    const localLoop = local.get(IAgentLoopService) as StubLoop;
+    const localReminder = local.resolve(AgentReminder);
+    let calls = 0;
+    localReminder.register('restore_test', () => {
+      calls += 1;
+      return undefined;
+    });
+
+    await runWillBeginStepHooks(localLoop, false);
+    expect(calls).toBe(0);
+
+    await local.restorePersisted();
+    await local.restoreRuntimes();
+    await local.restoreRuntimes();
+    await runWillBeginStepHooks(localLoop, false);
+    expect(calls).toBe(1);
+
+    await local.dispose();
+    await runWillBeginStepHooks(localLoop, false);
+    expect(calls).toBe(1);
+  });
+
+  it('cleans the registry and hook when the feature is withdrawn', async () => {
+    let calls = 0;
+    reminder.register('withdraw_test', () => {
+      calls += 1;
+      return undefined;
+    });
+    await runInjectionStep();
+    expect(calls).toBe(1);
+
+    await ctx.get(IFeatureManager).unprovideUnit('reminder');
+    await runInjectionStep();
+
+    expect(calls).toBe(1);
+    expect(() => ctx.resolve(AgentReminder)).toThrow('unavailable');
   });
 });

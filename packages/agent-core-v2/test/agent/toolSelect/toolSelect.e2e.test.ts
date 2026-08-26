@@ -97,6 +97,8 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.get(IAgentToolSelectSchemasService);
     ctx.get(IAgentToolExecutorService);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+    await ctx.restorePersisted();
+    await ctx.restoreRuntimes();
     await ctx.rpc.setPermission({ mode: 'yolo' });
     alpha = new StubMcpTool(MCP_ALPHA);
     registration = ctx.get(IAgentToolRegistryService).register(alpha, { source: 'mcp' });

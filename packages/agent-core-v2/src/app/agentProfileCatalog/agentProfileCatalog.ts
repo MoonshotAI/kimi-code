@@ -59,20 +59,6 @@ export interface AgentProfile {
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
 }
 
-/**
- * The profile shape accepted at registration ({@link registerAgentProfile},
- * file-based profile factories): authors provide at least one render entry —
- * the structured `renderSystemPrompt`, the legacy text-only `systemPrompt`,
- * or both (the structured renderer is then authoritative). The union
- * statically requires at least one entry; {@link normalizeAgentProfile} still
- * throws on inputs that escaped the type check (plain JS, casts).
- * {@link normalizeAgentProfile} derives the other method, so a registered
- * {@link AgentProfile} always carries both and its `systemPrompt` text always
- * comes from the same render as its disclosure metadata. A text-only input
- * renders with no disclosed environment facts. Callbacks are bound to the
- * input object at runtime, so method-style definitions relying on `this`
- * keep working.
- */
 export type AgentProfileInput = Omit<AgentProfile, 'systemPrompt' | 'renderSystemPrompt'> &
   (
     | {

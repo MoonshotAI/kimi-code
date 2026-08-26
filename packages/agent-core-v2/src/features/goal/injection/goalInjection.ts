@@ -1,7 +1,7 @@
 import type { GoalSnapshot } from '#/features/goal/types';
 import { Service } from "#/_base/di/service";
 import { renderPrompt } from "#/_base/utils/render-prompt";
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import GOAL_ACTIVE_REMINDER from './goal-active-reminder.md?raw';
 import GOAL_BLOCKED_REMINDER from './goal-blocked-reminder.md?raw';
 import GOAL_PAUSED_REMINDER from './goal-paused-reminder.md?raw';
@@ -17,7 +17,7 @@ export const GOAL_WAIT_FOR_GUIDANCE =
 export class GoalInjection extends Service {
   constructor(
     private readonly options: GoalInjectionOptions,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    injector: ReminderRuntime,
   ) {
     super();
     this._register(

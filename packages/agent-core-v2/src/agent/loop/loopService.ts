@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 import { createControlledPromise } from '@antfu/utils';
 
@@ -81,6 +82,8 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
   () => undefined as string | undefined,
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
+
+const MAX_STEP_SIGNAL_LISTENERS = 64;
 
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
@@ -702,6 +705,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ? runtime.turnSignal
         : AbortSignal.any([runtime.turnSignal, mutableStep.controller.signal]),
     };
+    EventEmitter.setMaxListeners(MAX_STEP_SIGNAL_LISTENERS, step.signal);
     this.materializeBatch(batch);
     return { step };
   }

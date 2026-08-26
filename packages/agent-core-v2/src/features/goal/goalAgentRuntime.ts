@@ -5,7 +5,7 @@ import { assign, fromCallback, sendTo, setup, type Snapshot } from 'xstate';
 import { MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
@@ -28,7 +28,6 @@ import {
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
@@ -47,7 +46,7 @@ import {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
@@ -236,6 +235,10 @@ interface GoalOperationContext {
 
 function goalOperationContext(runtime: AgentRuntimeContext<GoalRuntimeState>): GoalOperationContext {
   return { runtime, effects: runtime.getLogicState<GoalActorContext>().effects };
+}
+
+function reminderOf(runtime: AgentRuntimeContext<GoalRuntimeState>) {
+  return runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentReminder);
 }
 
 export class GoalRuntime {
@@ -451,8 +454,7 @@ async function cancelGoal(context: GoalOperationContext, _input: GoalReasonInput
   }
   clearInternal(context, actor);
   if (actor === 'user') {
-    context.runtime.get(IAgentSystemReminderService).appendSystemReminder(GOAL_CANCELLED_REMINDER, {
-      kind: 'injection',
+    reminderOf(context.runtime).notify(GOAL_CANCELLED_REMINDER, {
       variant: 'goal_cancelled',
     });
   }
@@ -631,8 +633,7 @@ function stopAfterBudgetReached(context: GoalOperationContext, ctx: AfterStepCon
     hasStepBudgetRemaining(maxSteps, ctx.step)
   ) {
     context.effects.budgetGraceTurns.add(ctx.turnId);
-    context.runtime.get(IAgentSystemReminderService).appendSystemReminder(GOAL_BUDGET_STOP_REMINDER, {
-      kind: 'injection',
+    reminderOf(context.runtime).notify(GOAL_BUDGET_STOP_REMINDER, {
       variant: GOAL_BUDGET_STOP_REMINDER_NAME,
     });
     return true;
@@ -860,8 +861,7 @@ function normalizeAfterReplay(context: GoalOperationContext): void {
 
 function appendForkClearedReminder(context: GoalOperationContext): void {
   if (!context.runtime.getState().forkNotice.reminderPending) return;
-  context.runtime.get(IAgentSystemReminderService).appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
-    kind: 'injection',
+  reminderOf(context.runtime).notify(GOAL_FORK_CLEARED_REMINDER, {
     variant: GOAL_FORK_CLEARED_REMINDER_NAME,
   });
 }
@@ -1247,7 +1247,7 @@ const goalEffects = fromCallback(({
   });
   const disposables: IDisposable[] = [deadline];
   if (input.runtime.agent.agentId === MAIN_AGENT_ID) {
-    disposables.push(new GoalInjection(handlers.injection, input.runtime.get(IAgentContextInjectorService)));
+    disposables.push(new GoalInjection(handlers.injection, reminderOf(input.runtime)));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnStarted, handlers.turnStarted));
     disposables.push(input.runtime.get(ISessionUsageService).onDidRecord(handlers.usageRecorded));
     const loop = input.runtime.get(IAgentLoopService);
