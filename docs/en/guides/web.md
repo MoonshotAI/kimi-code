@@ -39,18 +39,13 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 | Option | Description |
 | --- | --- |
 | `--port <port>` | Bind port; defaults to `58627`, auto-increments when taken |
-| `--host [host]` | IP address to listen on. Without it, only this machine (`127.0.0.1`) can connect; bare `--host` binds `0.0.0.0`, so phones, tablets, or other computers on the same LAN (same Wi-Fi/router) can use it — just open the Network URL from the banner; or pick a specific IP, e.g. `--host 192.168.1.10` |
+| `--host [host]` | Let phones, tablets, or other computers on the same LAN access the web address; you can also specify an IP, e.g. `--host 192.168.1.10` |
 | `--no-open` | Don't open the browser when ready |
 | `--log-level <level>` | Enable server logs at the given level; off by default |
 
-## Security notes
-
-- **Set a parallel credential**: when binding a LAN address, also set the `KIMI_CODE_PASSWORD` environment variable; the server then rate-limits authentication failures automatically.
-- **Don't disable authentication entirely**: `--dangerous-bypass-auth` turns off all authentication — anyone who can reach the port can control your sessions, file system, and shell. Only use it on trusted networks or behind your own authenticating proxy. See the [kimi command reference](../reference/kimi-command.md#kimi-web).
-
 ## Relationship with the CLI
 
-The web UI and the CLI share the same login state, configuration (`config.toml`), and session data — a session started in the CLI shows up in the web UI after a refresh, and you can use both at the same time.
+The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.
 
 Note that the web UI supports only a subset of the CLI's slash commands — common ones like `/new`, `/goal`, and `/compact` all work. Everything else usually has a point-and-click equivalent in the UI (the settings page, the model picker, the account menu, the task panel).
 
@@ -60,8 +55,8 @@ How the two sides compare:
 
 | Feature | CLI | Web | Notes |
 | --- | --- | --- | --- |
-| Streaming chat | ✓ | ✓ | Web renders rich format incrementally (tables, code highlighting, diffs, tool cards) |
-| Session management | ✓ | ✓ | Web lets you archive sessions away and restore them anytime from the archive page, sorted by time; the Open / Done / Workspaces tabs are a Lab experiment (off by default) — enable them on the settings Lab page |
+| Streaming chat | ✓ | ✓ | Web renders rich formats incrementally (tables, code highlighting, diffs, tool cards) |
+| Session management | ✓ | ✓ | Web lets you archive less-used sessions away; the archive page sorts them by time and you can restore them anytime; the Open / Done / Workspaces tabs are a Lab experiment (off by default) — enable them on the settings Lab page |
 | Approvals | ✓ | ✓ | Web handles them with clicks in the UI — no commands needed |
 | Background tasks | ✓ | ✓ | Web shows live progress in the task panel |
 | Files and changes | ✓ | ✓ | Web has a changed-files summary card and per-file diffs |
@@ -70,6 +65,11 @@ How the two sides compare:
 | Mobile layout | — | ✓ | With LAN sharing on (`--host`), it works in phone browsers on the same network |
 
 </div>
+
+## Security notes
+
+- **Set a parallel credential**: when binding a LAN address, also set the `KIMI_CODE_PASSWORD` environment variable; the server then rate-limits authentication failures automatically.
+- **Don't disable authentication entirely**: `--dangerous-bypass-auth` turns off all authentication — anyone who can reach the port can control your sessions, file system, and shell. Only use it on trusted networks or behind your own authenticating proxy. See the [kimi command reference](../reference/kimi-command.md#kimi-web).
 
 ## FAQ
 
