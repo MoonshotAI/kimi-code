@@ -70,6 +70,33 @@ describe('turnKey lastEnded', () => {
   it('starts without a stored outcome', () => {
     expect(turnKey.initial().lastEnded).toBeUndefined();
   });
+
+  it('clears the stored outcome when the undone range covers its turn', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled' }));
+    s = fold(s, new ContextUndo({ agentId: 'main', count: 1 }));
+    expect(s.lastEnded).toBeUndefined();
+    expect(s.anchorTurnIds).toEqual([0]);
+  });
+
+  it('keeps the stored outcome when the undone range starts after its turn', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'failed' }));
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new ContextUndo({ agentId: 'main', count: 1 }));
+    expect(s.lastEnded).toMatchObject({ turnId: 0, reason: 'failed' });
+  });
+
+  it('clears the stored outcome when every anchor turn is undone', () => {
+    let s = turnKey.initial();
+    s = fold(s, new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' } }));
+    s = fold(s, new TurnEnded({ agentId: 'main', turnId: 0, reason: 'cancelled' }));
+    s = fold(s, new ContextUndo({ agentId: 'main', count: 1 }));
+    expect(s.lastEnded).toBeUndefined();
+  });
 });
 
 describe('turnKey anchorTurnIds', () => {

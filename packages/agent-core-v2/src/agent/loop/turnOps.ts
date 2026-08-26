@@ -139,10 +139,21 @@ export const turnKey = defineState(
     return { ...next, anchorTurnIds: [...s.anchorTurnIds, s.nextTurnId] };
   })
   .on(TurnSteer, () => {})
-  .on(ContextUndo, (s, e) => ({
-    ...s,
-    anchorTurnIds: s.anchorTurnIds.slice(0, Math.max(0, s.anchorTurnIds.length - e.count)),
-  }))
+  .on(ContextUndo, (s, e) => {
+    const anchorTurnIds = s.anchorTurnIds.slice(0, Math.max(0, s.anchorTurnIds.length - e.count));
+    const removedFrom =
+      anchorTurnIds.length < s.anchorTurnIds.length
+        ? s.anchorTurnIds[anchorTurnIds.length]
+        : undefined;
+    let next: TurnModelState = { ...s, anchorTurnIds };
+    if (
+      next.lastEnded !== undefined &&
+      (removedFrom === undefined || next.lastEnded.turnId >= removedFrom)
+    ) {
+      next = { ...next, lastEnded: undefined };
+    }
+    return next;
+  })
   .on(ContextApplyCompaction, (s) => ({ ...s, anchorTurnIds: [] }))
   .on(ContextClear, (s) => ({ ...s, anchorTurnIds: [] }))
   .on(TurnCancel, (s, e) => {

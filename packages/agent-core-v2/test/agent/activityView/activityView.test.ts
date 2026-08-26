@@ -20,6 +20,7 @@ import {
 } from '#/agent/fullCompaction/compactionOps';
 import { AgentActivityView } from '#/agent/activityView/activityViewService';
 import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
+import { ContextUndone } from '#/agent/undo/undoService';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -232,6 +233,37 @@ describe('AgentActivityView', () => {
 
     bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'completed' }));
     expect(view.state().lastTurn).toMatchObject({ turnId: 2, reason: 'completed' });
+  });
+
+  it('clears the last-turn outcome when its turn is undone', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled' }));
+    expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'cancelled' });
+
+    bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 1 }));
+    expect(view.state().lastTurn).toBeUndefined();
+  });
+
+  it('keeps the last-turn outcome when the undone range starts after its turn', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled' }));
+
+    bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 5 }));
+    expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'cancelled' });
+  });
+
+  it('clears the last-turn outcome when the undone range is unknown', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled' }));
+
+    bus.publish(new ContextUndone({ agentId: 'main', turns: 1 }));
+    expect(view.state().lastTurn).toBeUndefined();
   });
 
   it('exposes the engine-minted interaction id as the approval id', () => {

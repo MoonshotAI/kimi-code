@@ -17,6 +17,7 @@ import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { ContextUndone } from '#/agent/undo/undoService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -193,6 +194,31 @@ describe('SessionOutcomeMirror (Session scope)', () => {
     started();
     expect(writes).toEqual(['failed', undefined]);
     started();
+    expect(writes).toEqual(['failed', undefined]);
+  });
+
+  it('clears the persisted outcome when its turn is undone', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('cancelled', 'user_cancelled', 3);
+    expect(writes).toEqual(['cancelled']);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 3 }));
+    expect(writes).toEqual(['cancelled', undefined]);
+  });
+
+  it('keeps the persisted outcome when the undone range starts after its turn', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('cancelled', 'user_cancelled', 2);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 5 }));
+    expect(writes).toEqual(['cancelled']);
+  });
+
+  it('clears the persisted outcome when the undone range is unknown', async () => {
+    lifecycle.addMain();
+    await tick();
+    ended('failed', undefined, 4);
+    lifecycle.bus.publish(new ContextUndone({ agentId: 'main', turns: 1 }));
     expect(writes).toEqual(['failed', undefined]);
   });
 

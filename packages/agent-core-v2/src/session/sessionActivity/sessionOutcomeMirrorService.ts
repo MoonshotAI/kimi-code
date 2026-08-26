@@ -5,6 +5,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { ContextUndone } from '#/agent/undo/undoService';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -18,6 +19,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
   declare readonly _serviceBrand: undefined;
 
   private lastPersisted: SessionTurnOutcome | undefined;
+  private outcomeTurnId: number | undefined;
   private adopted = false;
   private turnStartedHere = false;
   private mainSubscription: DisposableStore | undefined;
@@ -61,14 +63,17 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     subscription.add(
       bus.subscribe(TurnEnded, (event) => {
         if (event.reason === 'completed') {
+          this.outcomeTurnId = event.turnId;
           this.write('completed');
           return;
         }
         if (event.reason === 'failed' || event.reason === 'blocked') {
+          this.outcomeTurnId = event.turnId;
           this.write('failed');
           return;
         }
         if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
+          this.outcomeTurnId = event.turnId;
           this.write('cancelled');
         }
       }),
@@ -76,6 +81,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
     subscription.add(
       bus.subscribe(TurnStarted, () => {
         this.turnStartedHere = true;
+        this.outcomeTurnId = undefined;
         this.write(undefined);
       }),
     );
@@ -85,10 +91,26 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
         if (this.lastPersisted !== undefined) return;
         const reason = event.lastTurn?.reason;
         if (reason === 'completed' || reason === 'cancelled') {
+          this.outcomeTurnId = event.lastTurn?.turnId;
           this.write(reason, { touchUpdatedAt: false });
         } else if (reason === 'failed' || reason === 'blocked') {
+          this.outcomeTurnId = event.lastTurn?.turnId;
           this.write('failed', { touchUpdatedAt: false });
         }
+      }),
+    );
+    subscription.add(
+      bus.subscribe(ContextUndone, (event) => {
+        if (this.lastPersisted === undefined) return;
+        if (
+          event.fromTurnId !== undefined &&
+          this.outcomeTurnId !== undefined &&
+          this.outcomeTurnId < event.fromTurnId
+        ) {
+          return;
+        }
+        this.outcomeTurnId = undefined;
+        this.write(undefined);
       }),
     );
   }
