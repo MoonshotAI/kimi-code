@@ -17,6 +17,7 @@ interface GetProjectFilesParams {
 }
 interface PickMediaParams { maxCount?: number; includeVideo?: boolean }
 interface FilePathParams { filePath: string }
+interface PlanReferenceParams { reference: string }
 interface OptionalFilePathParams { filePath?: string }
 interface PathsParams { paths: string[] }
 interface CheckFilesExistParams { paths: string[] }
@@ -72,6 +73,20 @@ const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, 
   const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), filePath);
   if (resolved === undefined) return { ok: false };
   await vscode.commands.executeCommand("vscode.open", resolved.uri);
+  return { ok: true };
+};
+
+const openPlanFile: Handler<PlanReferenceParams, { ok: boolean }> = async ({ reference }, ctx) => {
+  const planPath = ctx.runtime.resolvePlanFile(reference);
+  if (planPath === undefined) return { ok: false };
+
+  const uri = vscode.Uri.file(planPath);
+  try {
+    await vscode.workspace.fs.stat(uri);
+  } catch {
+    return { ok: false };
+  }
+  await vscode.commands.executeCommand("vscode.open", uri);
   return { ok: true };
 };
 
@@ -180,6 +195,7 @@ export const fileHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetProjectFiles]: getProjectFiles,
   [Methods.PickMedia]: pickMedia,
   [Methods.OpenFile]: openFile,
+  [Methods.OpenPlanFile]: openPlanFile,
   [Methods.OpenFileDiff]: openFileDiff,
   [Methods.TrackFiles]: trackFiles,
   [Methods.ClearTrackedFiles]: clearTrackedFiles,

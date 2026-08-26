@@ -37,13 +37,26 @@ export interface ShellBlock {
   command: string;
 }
 
+export interface PlanBlock {
+  type: 'plan';
+  plan: string;
+  path?: string;
+  reference?: string;
+}
+
 export interface UnknownBlock {
   type: string;
   data?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
-export type DisplayBlock = BriefBlock | DiffBlock | TodoBlock | ShellBlock | UnknownBlock;
+export type DisplayBlock =
+  | BriefBlock
+  | DiffBlock
+  | TodoBlock
+  | ShellBlock
+  | PlanBlock
+  | UnknownBlock;
 
 export interface ToolCall {
   type: 'function';
