@@ -134,11 +134,17 @@ describe('SessionMediaStoreService', () => {
     await store.materialize(input());
     await expect(store.read('f_1')).resolves.toEqual({
       data: BYTES,
-      name: 'clip.mp4',
+      name: 'f_1.mp4',
     });
   });
 
-  it('falls back to the storage key as the name when no metadata was persisted', async () => {
+  it('reads an extensionless canonical under its MIME-derived storage key', async () => {
+    await store.materialize(input({ name: 'noext', mimeType: 'video/mpeg' }));
+
+    await expect(store.read('f_1')).resolves.toEqual({ data: BYTES, name: 'f_1.mpg' });
+  });
+
+  it('reads canonical bytes that predate persisted metadata', async () => {
     await mkdir(join(sessionDir, 'media'), { recursive: true });
     await writeFile(join(sessionDir, 'media', 'f_1.mp4'), BYTES);
 
@@ -195,7 +201,7 @@ describe('SessionMediaStoreService', () => {
 
     const target = await store.materialize(input());
     await expect(store.resolveDisplayPath('f_1')).resolves.toBe(target);
-    await expect(store.read('f_1')).resolves.toEqual({ data: BYTES, name: 'clip.mp4' });
+    await expect(store.read('f_1')).resolves.toEqual({ data: BYTES, name: 'f_1.mp4' });
   });
 
   it('never turns a non-upload id into a storage key (path traversal guard)', async () => {
@@ -235,7 +241,7 @@ it('retains canonical bytes without inventing a path for a non-filesystem backen
     stream: streamOf(BYTES),
   })).resolves.toBeUndefined();
   const canonical = await store.read('f_1');
-  expect(canonical?.name).toBe('clip.mp4');
+  expect(canonical?.name).toBe('f_1.mp4');
   expect(canonical === undefined ? undefined : Buffer.from(canonical.data)).toEqual(BYTES);
   expect((await store.open('f_1'))?.path).toBeUndefined();
   disposables.dispose();

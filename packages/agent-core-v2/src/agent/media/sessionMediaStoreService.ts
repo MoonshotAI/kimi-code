@@ -57,7 +57,7 @@ export class SessionMediaStoreService implements ISessionMediaStore {
     const stored = await this.resolveStored(fileId);
     if (stored === undefined) return undefined;
     const data = await this.storage.read(this.scope, stored.key);
-    return data === undefined ? undefined : { data, name: stored.metadata?.name ?? stored.key };
+    return data === undefined ? undefined : { data, name: stored.key };
   }
 
   async open(fileId: string): Promise<SessionMediaFile | undefined> {
