@@ -5,6 +5,7 @@ import { Badge, Icon, IconButton, Menu, MenuItem, PanelHeader, openDialogCount }
 
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useFollowScroll } from '@moonshot-ai/app-client/composables';
+import { ModelDisplayKey, PinScrollKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import type { AgentMember, ChatTurn, FilePreviewRequest, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
 import ChatPane from './ChatPane.vue';
 import OutputPanel from './tool-calls/OutputPanel.vue';
@@ -289,7 +290,7 @@ const fallbackOutput = computed(() => {
 // REST/event rows that never reported a profile.
 const fallbackProse = computed(() => props.member.kind === 'subagent');
 
-provide('pinScroll', () => {
+provide(PinScrollKey, () => {
   if (scroller.value) pinScroll();
 });
 
@@ -305,8 +306,8 @@ function phaseLabel(phase: AgentMember['phase']): string {
 }
 
 // Subtitle: agent type · bound model (friendly name) · effort (concrete levels only).
-const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
-const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const modelDisplay = inject(ModelDisplayKey);
+const subagentEffort = inject(SubagentEffortKey);
 const subtitle = computed(() => {
   const parts = [
     props.member.subagentType,

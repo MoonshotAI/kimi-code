@@ -25,6 +25,7 @@ import { closestRegion, isEditableTarget, isSelectAllKeyEvent, selectContentsOf 
 import { isFindKeyEvent } from '@moonshot-ai/app-core/lib';
 import { canUndoSkillActivation, skillActivationEditText, type AttachmentEntry } from '@moonshot-ai/app-composer';
 import { editRefillAttachments } from '@moonshot-ai/app-client/lib';
+import { ModelDisplayKey, PinScrollKey, ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { useComposerAutoFocus } from '@moonshot-ai/app-client/composables';
 import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import { turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
@@ -410,13 +411,13 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
   if (unmapped.length === 1) return unmapped[0]!.agentId;
   return undefined;
 }
-provide('resolveAgentTaskId', resolveAgentTaskId);
+provide(ResolveAgentTaskIdKey, resolveAgentTaskId);
 // The Agent tool card's model meta: same task resolution as above, then the
 // alias is mapped to a friendly display name through the shared App-level
 // mapper, with the effort riding along whenever a concrete level exists.
 // Undefined for history rows whose lifecycle events predate the session load.
-const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
-const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const modelDisplay = inject(ModelDisplayKey);
+const subagentEffort = inject(SubagentEffortKey);
 function resolveAgentModel(
   toolCallId: string,
   agentId?: string,
@@ -434,7 +435,7 @@ function resolveAgentModel(
   if (display === undefined && effort === undefined) return undefined;
   return { display, effort };
 }
-provide('resolveAgentModel', resolveAgentModel);
+provide(ResolveAgentModelKey, resolveAgentModel);
 // A BACKGROUND Agent call returns at spawn: its own status would show a
 // premature ✓ while the task still runs, so the card binds its status icon to
 // the task's live state via this resolver. Undefined when the task row is
@@ -456,13 +457,13 @@ function resolveAgentTaskState(
     (tk) => (tk.agentId === agentId || tk.id === agentId) && tk.parentToolCallId === undefined,
   )?.state;
 }
-provide('resolveAgentTaskState', resolveAgentTaskState);
+provide(ResolveAgentTaskStateKey, resolveAgentTaskState);
 // Only manual toggles on SETTLED rows call this: the row is pinned while its
 // body transition runs, breaking the bottom follow on purpose; the follow
 // state is re-decided from real geometry once the pin settles (see
 // settleAfterPin). Live (streaming/running) rows skip the pin — the follow
 // absorbs their growth as read-along.
-provide('pinScroll', pinScrollFor);
+provide(PinScrollKey, pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 // The goal rides the dock as one more work pill, so it keeps the workbar (and
 // the panel) alive even without task/todo items. Queued prompts don't count —

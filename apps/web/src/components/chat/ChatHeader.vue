@@ -8,6 +8,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { Button, Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
+import { track } from '@moonshot-ai/app-client/contracts';
 
 const { t } = useI18n();
 
@@ -152,11 +153,13 @@ onUnmounted(() => {
 });
 
 function onCopyAll(): void {
+  track('session_menu_action', { action: 'copyAll' });
   emit('copyAll');
   closeMenu();
 }
 
 function onCopyFinalSummary(): void {
+  track('session_menu_action', { action: 'copyFinalSummary' });
   emit('copyFinalSummary');
   closeMenu();
 }
@@ -167,6 +170,7 @@ function onCopyFinalSummary(): void {
 const copiedId = ref(false);
 function copySessionId(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'copySessionId' });
   void copyTextToClipboard(props.sessionId).then((ok) => {
     if (!ok) return;
     copiedId.value = true;
@@ -188,6 +192,7 @@ const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = us
 async function startRename(): Promise<void> {
   closeMenu();
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'rename' });
   renaming.value = true;
   renameValue.value = props.sessionTitle ?? '';
   await nextTick();
@@ -222,6 +227,7 @@ function cancelRename(): void {
 // ---------------------------------------------------------------------------
 function togglePin(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: props.pinned ? 'unpin' : 'pin' });
   closeMenu();
   emit('togglePin', props.sessionId);
 }
@@ -231,6 +237,7 @@ function togglePin(): void {
 // ---------------------------------------------------------------------------
 function forkSession(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'fork' });
   closeMenu();
   emit('forkSession', props.sessionId);
 }
@@ -240,6 +247,7 @@ function forkSession(): void {
 // ---------------------------------------------------------------------------
 function exportSession(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'export' });
   closeMenu();
   emit('exportSession', props.sessionId);
 }
@@ -250,6 +258,7 @@ function exportSession(): void {
 // ---------------------------------------------------------------------------
 function startArchive(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'archive' });
   closeMenu();
   emit('archiveSession', props.sessionId);
 }
@@ -257,6 +266,7 @@ function startArchive(): void {
 // Reopen a done session (the header's Done-state button).
 function startRestore(): void {
   if (!props.sessionId) return;
+  track('session_menu_action', { action: 'restore' });
   closeMenu();
   emit('restoreSession', props.sessionId);
 }

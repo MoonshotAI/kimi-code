@@ -6,6 +6,7 @@ import { computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
+import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { formatDuration } from '@moonshot-ai/app-components';
 
 const props = defineProps<{ tasks: TaskItem[]; filter?: 'active' | 'running' | 'done' | 'all' }>();
@@ -29,8 +30,8 @@ const { t } = useI18n();
 
 // The bound model + thinking effort, shared by every subagent surface (the
 // Agent tool card, swarm rows, the detail panel) — the card carries it too.
-const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
-const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const modelDisplay = inject(ModelDisplayKey);
+const subagentEffort = inject(SubagentEffortKey);
 function modelEffortLabel(task: TaskItem): string | undefined {
   const parts = [modelDisplay?.(task.model), subagentEffort?.(task.thinkingEffort)].filter(
     (part): part is string => part !== undefined,

@@ -6,6 +6,7 @@ import { computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '@moonshot-ai/app-core/client/types';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
+import { ModelDisplayKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { formatDuration } from '@moonshot-ai/app-components';
 
 const props = defineProps<{ tasks: TaskItem[]; filter?: 'active' | 'running' | 'done' | 'all' }>();
@@ -66,8 +67,8 @@ function stateLabel(task: TaskItem): string {
 // Subagent rows show the bound model (friendly name) after the name; absent
 // for rows restored without lifecycle metadata. The effort appears whenever a
 // concrete level exists.
-const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
-const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const modelDisplay = inject(ModelDisplayKey);
+const subagentEffort = inject(SubagentEffortKey);
 function taskModel(task: TaskItem): string | undefined {
   if (task.kind !== 'subagent') return undefined;
   return modelDisplay?.(task.model);

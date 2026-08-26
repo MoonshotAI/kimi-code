@@ -12,7 +12,7 @@ import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import { formatDuration } from '@moonshot-ai/app-components';
-import { track } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey, track } from '@moonshot-ai/app-client/contracts';
 
 const props = withDefaults(
   defineProps<{
@@ -78,7 +78,7 @@ const elapsedLabel = computed(() => {
 // streaming) skips the pin instead: it keeps growing on its own, and the
 // follow — or native anchoring off-follow — absorbs the toggle, so expanding
 // mid-stream becomes read-along rather than breaking the follow.
-const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const pinScroll = inject(PinScrollKey, () => {});
 const headEl = ref<HTMLElement | null>(null);
 const bodyInnerEl = ref<HTMLElement | null>(null);
 

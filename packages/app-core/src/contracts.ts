@@ -6,6 +6,7 @@
 // constructor. The shapes below mirror the consumer's trace + credential
 // surfaces so a thin, allocation-free wrapper can bridge them through.
 
+import type { InjectionKey } from 'vue';
 export interface ClientIdentity {
   readonly clientId: string;
   readonly clientName: string;
@@ -74,3 +75,8 @@ export interface CredentialStore {
 export interface ResolveImage {
   (src: string): Promise<string>;
 }
+
+/** Provide/inject key for the app-level markdown image resolver (auth-bearing
+    blob fetch). Lives here — next to the ResolveImage contract — so
+    app-markdown can inject without depending on a higher-layer package. */
+export const ResolveImageKey: InjectionKey<ResolveImage> = Symbol('resolveImage');

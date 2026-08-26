@@ -21,6 +21,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { Button, Icon, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
+import { track } from '@moonshot-ai/app-client/contracts';
 
 const emit = defineEmits<{
   login: [];
@@ -65,6 +66,7 @@ const themeOptions: readonly { value: ColorScheme; labelKey: string; icon: strin
 
 function chooseColorScheme(scheme: ColorScheme): void {
   client.setColorScheme(scheme);
+  track('settings_changed', { key: 'theme', value: scheme, source_panel: 'user_menu' });
 }
 
 // Locale names stay in their own language.
@@ -75,6 +77,7 @@ const currentLanguageLabel = computed(
 function chooseLanguage(code: LocaleCode): void {
   if (locale.value !== code) {
     setLocale(code);
+    track('settings_changed', { key: 'language', value: code, source_panel: 'user_menu' });
   }
 }
 
@@ -298,6 +301,7 @@ function resetHint(row: UsageRow): string {
 function onUpgrade(): void {
   closeMenu();
   openUpgrade();
+  track('upgrade_clicked', {});
 }
 
 function onLogin(): void {

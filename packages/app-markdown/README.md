@@ -31,9 +31,11 @@ The host app must:
 
 3. **Provide an image resolver.** Local image `src`s (attachments / chat images) are rewritten before markstream sees them:
    ```ts
-   app.provide('resolveImage', (src: string) => Promise<string>);
+   import { ResolveImageKey } from '@moonshot-ai/app-core/contracts';
+
+   app.provide(ResolveImageKey, (src: string) => Promise<string>);
    ```
-   Return a loadable URL (e.g. a data URL) for a local path, or the original `src` to leave it untouched. The component injects `'resolveImage'`; if absent, local images are left as-is.
+   Return a loadable URL (e.g. a data URL) for a local path, or the original `src` to leave it untouched. The component injects `ResolveImageKey` (from `@moonshot-ai/app-core/contracts`, alongside the `ResolveImage` interface); if absent, local images are left as-is.
 
 4. **Colour scheme.** The renderer reads the host's dark mode directly from `@moonshot-ai/app-core`'s `useIsDark()` singleton (resolved against `<html data-color-scheme>`), so no `provide` bridge is required. It falls back to light when the document carries no scheme.
 

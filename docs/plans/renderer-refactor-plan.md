@@ -174,8 +174,8 @@
 
 ### P18 — 组件 telemetry 走 ProductTracker + provide 纪律
 
-- 组件内 `import { track }` 全部改走 `contracts.track`（P6 registry 已就绪，web no-op 即现状）：ChatHeader / ApprovalCard / SessionRow / UserMenu / Sidebar 的 diff 因此归零，随改随下沉 P17 未收的这批文件。
-- 5 个裸字符串 provide key 全部 `InjectionKey<T>` 化（`app-client/contracts` 或新建 `injectionKeys.ts`）；`KimiWebClientFacadeKey` 二选一：P24 组件改 inject 则保留，否则删除死 provide（**推荐删除**——P24 直接让组件消费 store/facade，注入键不再必要）。
+- 组件内 `import { track }` 全部改走 `contracts.track`（P6 registry 已就绪，web no-op 即现状）：~~ChatHeader / ApprovalCard / SessionRow / UserMenu / Sidebar 的 diff 因此归零，随改随下沉~~（**2026-08-25 执行修正**：SessionRow 已随 P17 做掉；剩余 4 文件的分叉主体是 OpenIn/终端/keymap/statusTab 等已登记真实分叉，track 只占小头——本阶段只做缝收口，**4 文件均不下沉**，由 P19–P21 结构性统一承接；web 镜像仅限共享代码路径的调用：ChatHeader 9 + UserMenu 3，ApprovalCard/Sidebar 的 desktop 专属路径调用不移植）。实施文档：`docs/plans/2026-08-25-p18-track-seam-and-injection-keys.md`。
+- 5 个裸字符串 provide key 全部 `InjectionKey<T>` 化（进 `app-client/contracts`）；`KimiWebClientFacadeKey` 删除死 provide（零 inject 实证，类型本身也零引用，整文件删除）。
 
 验收：五件套 + desktop 埋点冒烟（P6 同款清单）。
 

@@ -36,6 +36,8 @@ import { GlobalLoading } from '@moonshot-ai/app-components';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient, promptAttachmentToTurnAttachment } from '@moonshot-ai/app-client/client';
+import { ModelDisplayKey, ResolveSwarmMembersKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
+import { ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { getKimiWebApi } from './api';
 import { useConfirmDialog, useSelectionQuoteBubble } from '@moonshot-ai/app-client/composables';
 import { buildQuoteBlock, sweepPendingQuotes, FILE_PREVIEW_QUOTE_CONTAINER, type SelectionActionPayload } from '@moonshot-ai/app-client/lib';
@@ -78,25 +80,25 @@ const client = useKimiWebClient();
 const showServerAuth = computed(
   () => !client.dangerousBypassAuth.value && authRequired.value,
 );
-provide('resolveImage', client.resolveImageUrl);
+provide(ResolveImageKey, client.resolveImageUrl);
 // Live swarm member roster for the inline AgentSwarm tool card. Sourced from the
 // AppTask store so the card shows each subagent's live phase; on refresh the
 // tasks are gone and the card falls back to the parsed tool result. Includes
 // single-member "swarms" (e.g. AgentSwarm with one resume_agent_ids entry),
 // which buildSwarmGroups filters out for the badge counter.
 provide(
-  'resolveSwarmMembers',
+  ResolveSwarmMembersKey,
   (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
 );
 // Alias → friendly model name, shared by every subagent surface (Agent tool
 // card meta, dock task rows, detail panel subtitle, swarm overview).
-provide('modelDisplay', (alias: string | undefined): string | undefined =>
+provide(ModelDisplayKey, (alias: string | undefined): string | undefined =>
   modelDisplayName(alias, client.models.value),
 );
 const { t } = useI18n();
 // A subagent's thinking effort segment: concrete levels are always shown;
 // the boolean states ('on'/'off') carry no level and stay hidden.
-provide('subagentEffort', (effort: string | undefined): string | undefined =>
+provide(SubagentEffortKey, (effort: string | undefined): string | undefined =>
   subagentEffortSuffix(effort),
 );
 const { confirm } = useConfirmDialog();

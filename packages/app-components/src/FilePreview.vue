@@ -6,6 +6,7 @@ import { Markdown } from '@moonshot-ai/app-markdown';
 import type { FileData, FilePreviewRequest } from '@moonshot-ai/app-core/client/types';
 import { copyTextToClipboard, pathDirname, resolveRelativePath } from '@moonshot-ai/app-core/lib';
 import { MAX_HIGHLIGHT_CHARS } from '@moonshot-ai/app-core/client';
+import { ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/app-ui';
 import HighlightedCode from './HighlightedCode.vue';
 
@@ -13,7 +14,7 @@ const { t } = useI18n();
 
 // Wrap the app-level image resolver so that relative image paths inside a
 // Markdown file are resolved against that file's directory.
-const parentResolveImage = inject<(src: string) => Promise<string>>('resolveImage', async (src: string) => src);
+const parentResolveImage = inject(ResolveImageKey, async (src: string) => src);
 const markdownBaseDir = computed(() => pathDirname(props.file?.path ?? ''));
 function resolveImageSrc(src: string): string {
   if (/^(https?:|data:|blob:)/i.test(src)) return src;
@@ -28,7 +29,7 @@ async function resolveMarkdownImage(src: string): Promise<string> {
   if (parentResolveImage) return parentResolveImage(resolved);
   return resolved;
 }
-provide('resolveImage', resolveMarkdownImage);
+provide(ResolveImageKey, resolveMarkdownImage);
 
 // Resolve a Markdown `[link](./foo.md)` path against the current file's
 // directory. Two consumers, ONE resolution — the display form (Markdown's

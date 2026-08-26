@@ -23,6 +23,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon } from '@moonshot-ai/app-ui';
+import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
 import { formatDuration, toolStackKey } from '@moonshot-ai/app-components';
@@ -83,7 +84,7 @@ const open = ref(runStatus.value === 'running');
 // Inspector mode pins the body open no matter what the fold state says.
 const effectiveOpen = computed(() => props.forceOpen || open.value);
 
-const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const pinScroll = inject(PinScrollKey, () => {});
 const headEl = ref<HTMLElement | null>(null);
 
 // Renderer-measured run span (live sessions only): the clock opens when the

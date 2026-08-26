@@ -9,6 +9,7 @@ import ChatPane from './ChatPane.vue';
 import WorkingIndicator from './WorkingIndicator.vue';
 import { Icon, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 import { joinDraftSegments } from '@moonshot-ai/app-client/lib';
+import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import type { ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
 
 const props = defineProps<{
@@ -104,7 +105,7 @@ function scrollToBottom(): void {
 // ChatPane anchors the toggle when collapsing an overlong user message. The
 // ConversationPane pin machinery (follow state, transition chasing) doesn't
 // exist here; the collapse is instant, so a one-shot correction suffices.
-provide('pinScroll', (el: HTMLElement) => {
+provide(PinScrollKey, (el: HTMLElement) => {
   const scroller = bodyRef.value;
   if (!scroller) return;
   const top = el.getBoundingClientRect().top;

@@ -8,6 +8,7 @@ import TurnFold from './TurnFold.vue';
 import TurnFilesSummary from './TurnFilesSummary.vue';
 import NotificationCard from './NotificationCard.vue';
 import { Markdown } from '@moonshot-ai/app-markdown';
+import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
@@ -825,7 +826,7 @@ const expandedUserTurns = reactive(new Set<string>());
 
 const userTextEls = new Map<string, HTMLElement>();
 const userTextTurnIds = new WeakMap<HTMLElement, string>();
-const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const pinScroll = inject(PinScrollKey, () => {});
 
 const userTextObserver = new ResizeObserver((entries) => {
   for (const entry of entries) {

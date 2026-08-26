@@ -20,6 +20,7 @@ import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, StatusDot } from '@moonshot-ai/app-ui';
 import type { ToolCall } from '@moonshot-ai/app-core/client/types';
+import { ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey } from '@moonshot-ai/app-client/contracts';
 import { toolLabel } from '@moonshot-ai/app-components';
 import OutputPanel from './OutputPanel.vue';
 
@@ -60,20 +61,13 @@ const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as '
 const task = computed(() => input.value.description || input.value.subagentType || toolLabel(props.tool.name));
 const agentType = computed(() => (input.value.description ? input.value.subagentType : ''));
 
-const resolveAgentTaskId = inject<(toolCallId: string) => string | undefined>('resolveAgentTaskId');
-const resolveAgentModel = inject<
-  (toolCallId: string, agentId?: string) => { display?: string; effort?: string } | undefined
->('resolveAgentModel');
+const resolveAgentTaskId = inject(ResolveAgentTaskIdKey);
+const resolveAgentModel = inject(ResolveAgentModelKey);
 const agentTarget = computed(
   () => props.tool.agentId ?? resolveAgentTaskId?.(props.tool.id),
 );
 const canOpenAgent = computed(() => agentTarget.value !== undefined);
-const resolveAgentTaskState = inject<
-  (
-    toolCallId: string,
-    agentId: string | undefined,
-  ) => 'run' | 'done' | 'fail' | 'cancelled' | undefined
->('resolveAgentTaskState');
+const resolveAgentTaskState = inject(ResolveAgentTaskStateKey);
 // Background only: the icon tells the TASK's truth, not the spawn call's.
 const taskState = computed(() =>
   input.value.runInBackground

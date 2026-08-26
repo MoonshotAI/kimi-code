@@ -21,7 +21,7 @@ import {
   usageSeverity,
 } from '@moonshot-ai/app-core/lib';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
-import { track } from '../lib/track';
+import { track } from '@moonshot-ai/app-client/contracts';
 import { openUpgrade } from '@moonshot-ai/app-core/lib';
 import { Badge, Button, Icon, Kbd, Menu, MenuItem, Spinner } from '@moonshot-ai/app-ui';
 

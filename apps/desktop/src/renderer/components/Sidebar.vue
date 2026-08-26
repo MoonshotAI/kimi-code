@@ -49,7 +49,7 @@ import { useSidebarTabs, useAppearance } from '@moonshot-ai/app-core';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { SESSIONS_EXPAND_BATCH } from '@moonshot-ai/app-client/client';
 import { useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
-import { track } from '../lib/track';
+import { track } from '@moonshot-ai/app-client/contracts';
 import type { SessionCreatedSource } from '../../shared/track-events';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill, SegmentedControl, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
 

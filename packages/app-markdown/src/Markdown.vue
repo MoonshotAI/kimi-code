@@ -5,7 +5,7 @@ import { useKimiI18n } from '@moonshot-ai/app-i18n';
 import { MarkdownRender, enableKatex, enableMermaid } from 'markstream-vue';
 import { ensureMarkdownWorkers } from './lib/markdownWorkers';
 import { useIsDark } from '@moonshot-ai/app-core';
-import type { ResolveImage } from '@moonshot-ai/app-core/contracts';
+import { ResolveImageKey } from '@moonshot-ai/app-core/contracts';
 import { classifyMentionHref, decodeSkillName, fileMentionIconSvg, mentionActionPath, mentionHrefToPath, mentionIconSvg, truncateMentionName, unescapeRenderedLinkText } from '@moonshot-ai/app-composer';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { splitFrontmatter } from './lib/frontmatter';
@@ -60,7 +60,7 @@ ensureMarkdownWorkers();
 
 const { t } = useKimiI18n();
 
-const resolveImage = inject<ResolveImage>('resolveImage');
+const resolveImage = inject(ResolveImageKey);
 const mdRef = ref<HTMLElement | null>(null);
 const props = withDefaults(
   defineProps<{

@@ -8,7 +8,7 @@ import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
 import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
-import { track } from '../../lib/track';
+import { track } from '@moonshot-ai/app-client/contracts';
 import OpenInMenu from './OpenInMenu.vue';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 import { Button, Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';

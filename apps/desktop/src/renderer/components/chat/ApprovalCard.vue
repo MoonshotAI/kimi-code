@@ -12,7 +12,7 @@ import {
   type ApprovalTelemetryAction,
   type ApprovalVia,
 } from '../../lib/approvalTelemetry';
-import { track } from '../../lib/track';
+import { track } from '@moonshot-ai/app-client/contracts';
 
 const props = defineProps<{
   block: ApprovalBlock;

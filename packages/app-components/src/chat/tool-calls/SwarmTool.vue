@@ -12,7 +12,7 @@ import { computed, inject, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, OpenMediaRequest, ToolCall } from '@moonshot-ai/app-core/client/types';
 import type { AppSubagentPhase } from '@moonshot-ai/app-core/api';
-import type { SwarmMember } from '@moonshot-ai/app-core/client';
+import { ModelDisplayKey, ResolveSwarmMembersKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { toolLabel } from '@moonshot-ai/app-components';
 import { parseSwarmResult } from '@moonshot-ai/app-core/lib';
 import { buildSwarmCardRows, type SwarmCardRow } from '@moonshot-ai/app-core/client';
@@ -48,7 +48,7 @@ function parseInput(arg: string): SwarmInput {
 }
 
 const resolveSwarmMembers =
-  inject<(toolCallId: string) => SwarmMember[] | undefined>('resolveSwarmMembers');
+  inject(ResolveSwarmMembersKey);
 
 const input = computed(() => parseInput(props.tool.arg));
 const label = computed(() => toolLabel(props.tool.name));
@@ -63,8 +63,8 @@ const result = computed(() => parseSwarmResult(props.tool.output));
 // the first member's. A member reports with whichever of model/effort it has
 // (an effort-only member still counts). Result-only rows after a refresh
 // carry neither and simply hide it.
-const modelDisplay = inject<(alias: string | undefined) => string | undefined>('modelDisplay');
-const subagentEffort = inject<(effort: string | undefined) => string | undefined>('subagentEffort');
+const modelDisplay = inject(ModelDisplayKey);
+const subagentEffort = inject(SubagentEffortKey);
 const swarmModelLabel = computed(() => {
   let label: string | undefined;
   for (const member of members.value) {

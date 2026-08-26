@@ -42,7 +42,7 @@
 import { computed, inject, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, StatusDot, Tooltip } from '@moonshot-ai/app-ui';
-import { track } from '@moonshot-ai/app-client/contracts';
+import { PinScrollKey, track } from '@moonshot-ai/app-client/contracts';
 
 const props = withDefaults(
   defineProps<{
@@ -57,7 +57,7 @@ const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();
 
-const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const pinScroll = inject(PinScrollKey, () => {});
 const headEl = ref<HTMLElement | null>(null);
 
 function toggle(): void {

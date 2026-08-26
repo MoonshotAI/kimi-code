@@ -30,6 +30,7 @@
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
+import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityRun from './ActivityRun.vue';
@@ -141,7 +142,7 @@ watch(effectiveOpen, (now) => {
   }, 200);
 });
 
-const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const pinScroll = inject(PinScrollKey, () => {});
 const headEl = ref<HTMLElement | null>(null);
 
 // The span is the turn's ELAPSED time (turnWorkMs): a live tick while the
