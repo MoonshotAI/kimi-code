@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/kimi-code": patch
 ---
 
-Oversized tool outputs, dropped MCP content blocks, and interrupted assistant output are no longer silently lost.
+Save oversized tool output within safety limits for later inspection, report omitted MCP content, and retain partial assistant responses when streams fail.
