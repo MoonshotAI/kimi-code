@@ -22,7 +22,7 @@
 - `GET /api/v1/healthz`（探活）
 - 静态 web 资源（非 `/api/` 路径）
 
-携带方式：REST 用 `Authorization: Bearer <token>` 请求头；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。token 的生成与轮换见 [在网页中使用：开始使用](../guides/server.md#开始使用)。
+携带方式：REST 用 `Authorization: Bearer <token>` 请求头；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。token 的生成与轮换见 [在网页中使用：开始使用](../guides/web.md#开始使用)。
 
 鉴权失败返回 HTTP 401，信封 `code` 为 `40101`。在非 loopback 绑定上，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，期间每个请求都返回 HTTP 429（`code` 为 `42901`）。
 
@@ -2377,5 +2377,5 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ## 下一步
 
-- [在网页中使用](../guides/server.md) — 启动服务并在浏览器中使用 Kimi Code
+- [在网页中使用](../guides/web.md) — 启动服务并在浏览器中使用 Kimi Code
 - [kimi 命令](./kimi-command.md#kimi-web) — `kimi web` 的全部命令行选项

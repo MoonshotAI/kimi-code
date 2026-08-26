@@ -230,7 +230,7 @@ body {
   background: transparent;
 }
 
-/* --- Step rail (numbered steps on guides/server) --- */
+/* --- Step rail (numbered steps on guides/web) --- */
 .vp-doc .step-num {
   display: inline-flex;
   align-items: center;
@@ -263,7 +263,7 @@ body {
   margin-right: 0;
 }
 
-/* --- Feature compare table (fixed-width ✓ columns on guides/server) --- */
+/* --- Feature compare table (fixed-width ✓ columns on guides/web) --- */
 .feature-compare-table table {
   table-layout: fixed;
   width: 100%;
