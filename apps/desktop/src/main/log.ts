@@ -156,6 +156,11 @@ function surfaceUncaught(error: unknown): void {
 export function installCrashGuards(): void {
   if (guardsInstalled) return;
   guardsInstalled = true;
+  for (const stdio of [process.stdout, process.stderr]) {
+    stdio.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') throw error;
+    });
+  }
   process.on('uncaughtException', (error) => {
     if (isUndiciStreamCloseRace(error)) {
       log.warn('ignored benign undici stream-close race (aborted fetch body)');

@@ -150,6 +150,35 @@ describe('isUndiciStreamCloseRace', () => {
 });
 
 describe('installCrashGuards', () => {
+  it('swallows stdio EPIPE so a closed dev pipe cannot cascade into the crash dialog', async () => {
+    vi.resetModules();
+    const stdioHandlers = new Map<string, (error: unknown) => void>();
+    const stdoutOnSpy = vi.spyOn(process.stdout, 'on').mockImplementation(((event: string, cb: (error: unknown) => void) => {
+      stdioHandlers.set(`stdout:${event}`, cb);
+      return process.stdout;
+    }) as unknown as typeof process.stdout.on);
+    const stderrOnSpy = vi.spyOn(process.stderr, 'on').mockImplementation(((event: string, cb: (error: unknown) => void) => {
+      stdioHandlers.set(`stderr:${event}`, cb);
+      return process.stderr;
+    }) as unknown as typeof process.stderr.on);
+    // Keep the real process-level handlers off the vitest process.
+    const processOnSpy = vi
+      .spyOn(process, 'on')
+      .mockImplementation((() => process) as unknown as typeof process.on);
+    try {
+      const { installCrashGuards } = await import('../../src/main/log');
+      installCrashGuards();
+      const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+      expect(() => stdioHandlers.get('stdout:error')?.(epipe)).not.toThrow();
+      expect(() => stdioHandlers.get('stderr:error')?.(epipe)).not.toThrow();
+      expect(() => stdioHandlers.get('stdout:error')?.(new Error('write EIO'))).toThrow('write EIO');
+    } finally {
+      stdoutOnSpy.mockRestore();
+      stderrOnSpy.mockRestore();
+      processOnSpy.mockRestore();
+    }
+  });
+
   it('tracks app_crashed for uncaught errors and skips the benign undici race', async () => {
     // Fresh module instances: every initMainLogging() above already tripped
     // the once-only guard installation on the shared instance.
