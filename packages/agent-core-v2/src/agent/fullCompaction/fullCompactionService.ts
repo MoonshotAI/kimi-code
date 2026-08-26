@@ -13,10 +13,12 @@ import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/l
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
+import { ILogService } from '#/_base/log/log';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import { WarningIssued } from '#/agent/profile/profileOps';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import {
@@ -162,6 +164,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentStateService private readonly states: IAgentStateService,
     @IConfigService private readonly configService: IConfigService,
     @IFlagService private readonly flags: IFlagService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.todo = manager.resolve(agent.agentContext, AgentTodo);
@@ -894,6 +897,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
                 `compaction model "${dedicatedModelAlias}" failed; trying secondary compaction model "${secondaryAlias}"`,
                 { cause: wrapCompactionModelError(error, dedicatedModelAlias) },
               );
+              void this.dispatcher.dispatch(
+                new WarningIssued({
+                  agentId: this.agent.agentId,
+                  code: 'compaction-model-fallback',
+                  message: `Compaction failed with ${compactionDisplayModel(this.configService, dedicatedModelAlias)}, retrying with ${compactionDisplayModel(this.configService, secondaryAlias)}`,
+                }),
+              );
               retryCount = 0;
               continue;
             }
@@ -903,6 +913,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             this.log.warn(
               `compaction model "${activeSqueezeAlias}" failed; falling back to current model "${currentModelAlias}"`,
               { cause: wrapCompactionModelError(error, activeSqueezeAlias) },
+            );
+            void this.dispatcher.dispatch(
+              new WarningIssued({
+                agentId: this.agent.agentId,
+                code: 'compaction-model-fallback',
+                message: `Compaction failed with ${compactionDisplayModel(this.configService, activeSqueezeAlias)}, retrying with the current model ${compactionDisplayModel(this.configService, currentModelAlias)}`,
+              }),
             );
             retryCount = 0;
             continue;

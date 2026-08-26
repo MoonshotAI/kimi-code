@@ -173,6 +173,15 @@ describe('FullCompaction — dedicated compaction model', () => {
     const finished = compactionFinished(records);
     expect(finished).toBeDefined();
     expect(finished?.properties?.['model']).toBe('kimi-code');
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        event: 'warning',
+        args: expect.objectContaining({
+          code: 'compaction-model-fallback',
+          message: expect.stringContaining('retrying with the current model'),
+        }),
+      }),
+    );
   });
 
   it('uses the current model when the flag is off (no behavior change)', async () => {
