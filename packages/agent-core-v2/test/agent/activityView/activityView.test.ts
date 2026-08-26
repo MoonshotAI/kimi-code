@@ -96,7 +96,7 @@ function harness(
     },
   } as unknown as IEventDispatcher;
   const restore = async (ended: TurnModelState['lastEnded']): Promise<void> => {
-    agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], lastEnded: ended });
+    agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], anchorTurnIds: [], lastEnded: ended });
     for (const hook of restoreHooks) await hook();
   };
   const ix = disposables.add(new TestInstantiationService());
@@ -106,7 +106,7 @@ function harness(
   ix.stub(IEventDispatcher, dispatcher);
   const agentState = new AgentStateService();
   agentState.contributeState(turnKey);
-  agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], lastEnded });
+  agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], anchorTurnIds: [], lastEnded });
   ix.set(IAgentStateService, agentState);
   ix.stub(IAgentScopeContext, {
     _serviceBrand: undefined,

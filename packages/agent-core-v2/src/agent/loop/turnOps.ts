@@ -2,7 +2,13 @@
 import { z } from 'zod';
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
-import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
+import {
+  ContextAppendLoopEvent,
+  ContextApplyCompaction,
+  ContextClear,
+  ContextUndo,
+} from '#/agent/contextMemory/contextEvents';
+import { isUndoAnchorOrigin } from '#/agent/contextMemory/conversationTime';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -13,6 +19,7 @@ import type { TurnInterruptReason } from './turnEvents';
 export interface TurnModelState {
   readonly nextTurnId: number;
   readonly cancelledTurnIds: readonly number[];
+  readonly anchorTurnIds: readonly number[];
   readonly lastEnded?: {
     readonly turnId: number;
     readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
@@ -111,7 +118,7 @@ export interface TurnEnded extends TurnEndedPayload {}
 
 export const turnKey = defineState(
   'turn',
-  (): TurnModelState => ({ nextTurnId: 0, cancelledTurnIds: [] }),
+  (): TurnModelState => ({ nextTurnId: 0, cancelledTurnIds: [], anchorTurnIds: [] }),
 ).replayable({ schema: z.custom<TurnModelState>() })
   .on(ContextAppendLoopEvent, (s, e) => {
     const { event } = e;
@@ -125,8 +132,18 @@ export const turnKey = defineState(
     }
     if (next !== s) return next;
   })
-  .on(TurnPrompt, (s) => advanceTurnClock(s, s.nextTurnId + 1))
+  .on(TurnPrompt, (s, e) => {
+    const next = advanceTurnClock(s, s.nextTurnId + 1);
+    if (!isUndoAnchorOrigin(e.origin)) return next;
+    return { ...next, anchorTurnIds: [...s.anchorTurnIds, s.nextTurnId] };
+  })
   .on(TurnSteer, () => {})
+  .on(ContextUndo, (s, e) => ({
+    ...s,
+    anchorTurnIds: s.anchorTurnIds.slice(0, Math.max(0, s.anchorTurnIds.length - e.count)),
+  }))
+  .on(ContextApplyCompaction, (s) => ({ ...s, anchorTurnIds: [] }))
+  .on(ContextClear, (s) => ({ ...s, anchorTurnIds: [] }))
   .on(TurnCancel, (s, e) => {
     if (e.target === undefined || e.turnId === undefined) return;
     if (e.turnId < s.nextTurnId) return;

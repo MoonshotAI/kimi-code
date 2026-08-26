@@ -1194,18 +1194,29 @@ export class AgentTranscriptProjector {
     return ops;
   }
 
-  private onContextUndone(event: { turns: number }): TranscriptOperation[] {
+  private onContextUndone(event: { turns: number; fromTurnId?: number }): TranscriptOperation[] {
     const items = this.lookups?.items?.();
     if (items === undefined) return [];
     const ids: string[] = [];
     let cutIndex = items.length;
-    let remaining = event.turns;
-    for (let i = items.length - 1; i >= 0 && remaining > 0; i--) {
-      const item = items[i];
-      if (item === undefined || item.kind !== 'turn') continue;
-      ids.push(item.turnId);
-      cutIndex = i;
-      remaining -= 1;
+    if (event.fromTurnId !== undefined) {
+      const fromTurnId = event.fromTurnId;
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item === undefined || item.kind !== 'turn') continue;
+        if (item.ordinal < fromTurnId) break;
+        ids.push(item.turnId);
+        cutIndex = i;
+      }
+    } else {
+      let remaining = event.turns;
+      for (let i = items.length - 1; i >= 0 && remaining > 0; i--) {
+        const item = items[i];
+        if (item === undefined || item.kind !== 'turn') continue;
+        ids.push(item.turnId);
+        cutIndex = i;
+        remaining -= 1;
+      }
     }
     if (ids.length === 0) return [];
     for (let i = cutIndex + 1; i < items.length; i++) {

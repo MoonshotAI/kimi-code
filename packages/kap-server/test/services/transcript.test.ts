@@ -1470,6 +1470,33 @@ describe('AgentTranscriptProjector', () => {
     expect(projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
   });
 
+  it('removes every turn from fromTurnId onward, including trailing non-anchor turns', () => {
+    const tx = new AgentTranscript('main');
+    const projector = new AgentTranscriptProjector('main', {
+      items: () => tx.getItems(),
+    });
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'kept' }));
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'undone' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'cron', taskId: 'j1' } }));
+    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    feed(ev({ type: 'context.spliced', start: 1, deleteCount: 3, messages: [] }));
+
+    const removeOps = projector.map(
+      ev({ type: 'context.undone', agentId: 'main', turns: 1, fromTurnId: 1 }),
+    );
+    expect(removeOps).toEqual([{ op: 'items.remove', ids: ['t2', 't1', 'live-m1'] }]);
+    tx.apply(removeOps);
+
+    expect(tx.getItems().map((item) => item.kind)).toEqual(['turn']);
+    expect(turnOps('t0', tx.getItems()).prompt).toBe('kept');
+  });
+
   it('projects error / warning events as notice markers outside any step', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
