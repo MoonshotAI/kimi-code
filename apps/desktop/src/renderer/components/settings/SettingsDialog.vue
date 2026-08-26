@@ -15,7 +15,17 @@ import { usePlugins } from '../../composables/usePlugins';
 import { ProvidersPanel } from '@moonshot-ai/app-components';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { canSetDockIconChoice, useDockIconChoice, type DockIconChoice } from '../../lib/dockIconChoice';
-import { copyTextToClipboard, logWarn } from '@moonshot-ai/app-core/lib';
+import {
+  commitLevel,
+  copyTextToClipboard,
+  defaultThinkingLevelFor,
+  effortLabel,
+  logWarn,
+  modelThinkingAvailability,
+  segmentsFor,
+  thinkingLevelFromConfig,
+  thinkingLevelToConfig,
+} from '@moonshot-ai/app-core/lib';
 import { track } from '../../lib/track';
 import DockIconPicker from './DockIconPicker.vue';
 import { isMacosDesktop } from '@moonshot-ai/app-core/lib';
@@ -25,7 +35,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '@moonshot-ai/app-client/composables';
 import type { ColorScheme, FontScale } from '@moonshot-ai/app-client/client';
-import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult } from '../../api/types';
+import type { AppConfig, AppModel, ManagedUserInfo, ManagedUsageResult, ThinkingLevel } from '../../api/types';
 import PlanUsageCard from './PlanUsageCard.vue';
 import { SecondaryModelPicker } from '@moonshot-ai/app-components';
 import { PlanUpgradeCard } from '@moonshot-ai/app-components';
@@ -484,22 +494,42 @@ function toggleConfigBoolean(key: 'defaultPlanMode'): void {
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
 
-// "Default thinking" lives at config.thinking.enabled on the daemon — the legacy
-// top-level defaultThinking field was removed. Read/write it there so the toggle
-// actually persists (the old field was silently stripped by the server).
-//
-// Mirror the core resolver: thinking is on unless explicitly disabled
-// (enabled === false). An absent thinking section — or one with an effort but no
-// enabled field — falls through to the model/default effort (on for
-// thinking-capable models), so the toggle reflects that as on.
-function thinkingEnabled(): boolean {
-  const thinking = props.config?.thinking;
-  if (!thinking || typeof thinking !== 'object') return true;
-  return (thinking as { enabled?: boolean }).enabled !== false;
+// config.thinking replaces the legacy top-level defaultThinking field, which
+// the server silently stripped.
+const defaultModelInfo = computed(() =>
+  props.config?.defaultModel ? modelInfoById.value[props.config.defaultModel] : undefined,
+);
+const defaultThinkingAvailability = computed(() => modelThinkingAvailability(defaultModelInfo.value));
+const defaultThinkingSegments = computed(() => segmentsFor(defaultModelInfo.value));
+
+// Mirrors thinkingLevelForSession's resolution so this preview matches what a
+// new session actually runs with.
+function defaultThinkingLevel(): ThinkingLevel {
+  return (
+    thinkingLevelFromConfig(props.config?.thinking, defaultModelInfo.value) ??
+    defaultThinkingLevelFor(defaultModelInfo.value)
+  );
 }
 
-function toggleDefaultThinking(): void {
-  emit('updateConfig', { thinking: { enabled: !thinkingEnabled() } } as Partial<AppConfig>);
+const activeDefaultThinkingSegment = computed(() => {
+  const segs = defaultThinkingSegments.value;
+  const level = defaultThinkingLevel();
+  return segs.includes(level) ? level : '';
+});
+
+const defaultThinkingOptions = computed(() =>
+  defaultThinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
+);
+
+// Mirrors the TUI's thinkingEffortToConfig: a model's highest tier persists
+// only `enabled`, never `effort`, so it can't leak in as the global default
+// for every other model. Picking it shows selected now but falls back to the
+// model default after a reload — deliberate, not a bug.
+function setDefaultThinkingSegment(draft: string): void {
+  const level = commitLevel(defaultModelInfo.value, draft);
+  emit('updateConfig', {
+    thinking: thinkingLevelToConfig(level, defaultModelInfo.value?.supportEfforts),
+  } as Partial<AppConfig>);
 }
 
 // Telemetry is opt-out: undefined and `true` both mean enabled, only explicit
@@ -860,11 +890,22 @@ function archiveTime(iso: string): string {
                   {{ t('settings.defaultThinking') }}
                   <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
                 </span>
-                <Switch
-                  :model-value="thinkingEnabled()"
-                  :label="t('settings.defaultThinking')"
-                  @update:model-value="toggleDefaultThinking()"
+                <span
+                  v-if="!config.defaultModel"
+                  class="rvalue mono"
+                >{{ t('settings.noDefaultModel') }}</span>
+                <span
+                  v-else-if="defaultThinkingAvailability === 'unsupported'"
+                  class="rvalue mono"
+                >{{ t('status.modeNotSupported') }}</span>
+                <SegmentedControl
+                  v-else-if="defaultThinkingSegments.length > 1"
+                  :model-value="activeDefaultThinkingSegment"
+                  :options="defaultThinkingOptions"
+                  :aria-label="t('settings.defaultThinking')"
+                  @update:model-value="setDefaultThinkingSegment"
                 />
+                <span v-else class="rvalue mono">{{ effortLabel(defaultThinkingSegments[0] ?? 'on') }}</span>
               </div>
 
               <div class="row">

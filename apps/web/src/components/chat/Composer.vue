@@ -2072,14 +2072,9 @@ function setThinkingSegment(draft: string): void {
   if (thinkingReadonly.value) return;
   emit('setThinking', commitLevel(currentModel.value, draft));
 }
-function thinkingSegmentLabel(segment: string): string {
-  if (segment === 'on') return t('status.thinkingOn');
-  if (segment === 'off') return t('status.thinkingOff');
-  return effortLabel(segment);
-}
-// Options for the shared SegmentedControl (same control as settings/mobile).
+// Labels stay untranslated (effortLabel), matching the settings/mobile-sheet pickers.
 const thinkingOptions = computed(() =>
-  thinkingSegments.value.map((seg) => ({ value: seg, label: thinkingSegmentLabel(seg) })),
+  thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
 );
 
 // Plan toggle — lit for the intent (armed) and the daemon fact alike.
@@ -2975,7 +2970,7 @@ function selectModel(modelId: string): void {
               size="xs"
               @update:model-value="setThinkingSegment"
             />
-            <span v-else class="md-note">{{ thinkingSegmentLabel(thinkingSegments[0] ?? thinkingLevel) }}</span>
+            <span v-else class="md-note">{{ effortLabel(thinkingSegments[0] ?? thinkingLevel) }}</span>
           </div>
 
           <div class="md-divider" />

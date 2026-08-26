@@ -43,8 +43,6 @@ export default {
   // Thinking selector
   thinkingLabel: 'Thinking',
   thinkingTooltip: 'Toggle thinking mode',
-  thinkingOn: 'On',
-  thinkingOff: 'Off',
   cacheNote:
     'Note: Switching models or thinking effort invalidates the existing prompt cache. Start a new chat to avoid extra token costs.',
   starredModels: 'Starred',

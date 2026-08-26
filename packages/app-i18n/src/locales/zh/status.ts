@@ -43,8 +43,6 @@ export default {
   // 思考强度选择
   thinkingLabel: '思考',
   thinkingTooltip: '切换思考模式',
-  thinkingOn: '开',
-  thinkingOff: '关',
   cacheNote: '提示：切换模型或思考程度会使已有的提示词缓存失效。建议新建会话，避免额外的 token 消耗。',
   starredModels: '收藏',
   moreModels: '更多模型…',

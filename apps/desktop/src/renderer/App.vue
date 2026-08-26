@@ -300,13 +300,14 @@ const activeDisplayStatus = computed<SessionDisplayStatus>(() => {
 // spinner while the agent is running so activity is visible at a glance.
 usePageTitle({ running });
 
-// Status panel (/status) renders current client state only — show the
-// effective thinking level so "no preference" reads as the model default that
-// will actually run, not a blank.
-const statusPanelThinking = computed<ThinkingLevel>(() => {
-  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
-  return effectiveThinkingLevel(model, client.thinking.value);
-});
+// Show the effective level so "no preference" reads as the model default
+// that will actually run, not a blank.
+const statusPanelModel = computed(() =>
+  client.models.value.find((m) => m.id === client.status.value.modelId),
+);
+const statusPanelThinking = computed<ThinkingLevel>(() =>
+  effectiveThinkingLevel(statusPanelModel.value, client.thinking.value),
+);
 
 // First-run onboarding wizard (language → appearance → notifications → Kimi
 // login). Shown until the user finishes it once — completing OR skipping the
@@ -2446,15 +2447,17 @@ function openPr(url: string): void {
     />
     </ErrorBoundary>
 
-    <!-- Status panel overlay (/status) — renders current client state, no daemon call -->
+    <!-- Status panel overlay (/status) — renders current client state -->
     <StatusPanel
       v-if="showStatusPanel"
       :status="client.status.value"
       :thinking="statusPanelThinking"
+      :model="statusPanelModel"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"
       @close="showStatusPanel = false"
+      @set-thinking="client.setThinking($event)"
     />
 
     <!-- Add Workspace overlay (daemon folder browser + paste-path fallback) -->

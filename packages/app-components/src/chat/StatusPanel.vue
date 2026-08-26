@@ -5,14 +5,23 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '@moonshot-ai/app-core/client/types';
 import type { ThinkingLevel } from '@moonshot-ai/app-core/api';
-import { formatTokens } from '@moonshot-ai/app-core/lib';
-import { Dialog } from '@moonshot-ai/app-ui';
+import {
+  commitLevel,
+  effortLabel,
+  formatTokens,
+  modelThinkingAvailability,
+  segmentsFor,
+  type ModelThinkingInfo,
+} from '@moonshot-ai/app-core/lib';
+import { Dialog, SegmentedControl } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   status: ConversationStatus;
   thinking: ThinkingLevel;
+  /** Catalog info for the active model — drives the thinking row's segments. */
+  model?: ModelThinkingInfo;
   planMode: boolean;
   swarmMode?: boolean;
   /** Cumulative session cost in USD, when known (>= 0). */
@@ -21,7 +30,20 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
+  setThinking: [level: ThinkingLevel];
 }>();
+
+const thinkingAvailability = computed(() => modelThinkingAvailability(props.model));
+const thinkingSegments = computed(() => segmentsFor(props.model));
+const activeThinkingSegment = computed(() =>
+  thinkingSegments.value.includes(props.thinking) ? props.thinking : '',
+);
+const thinkingOptions = computed(() =>
+  thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
+);
+function setThinkingSegment(draft: string): void {
+  emit('setThinking', commitLevel(props.model, draft));
+}
 
 // The parent controls visibility with `v-if`, so the dialog is open whenever
 // this component is mounted. Dialog emits `close` on Esc / overlay / close
@@ -78,7 +100,18 @@ const costText = computed(() =>
       </div>
       <div class="row">
         <dt>{{ t('status.statusThinking') }}</dt>
-        <dd>{{ thinking }}</dd>
+        <dd v-if="thinkingAvailability === 'unsupported'">{{ t('status.modeNotSupported') }}</dd>
+        <dd v-else-if="thinkingSegments.length > 1" class="thinking-value">
+          <SegmentedControl
+            :model-value="activeThinkingSegment"
+            :options="thinkingOptions"
+            size="xs"
+            :aria-label="t('status.statusThinking')"
+            @update:model-value="setThinkingSegment"
+          />
+          <span class="cache-note">{{ t('status.cacheNote') }}</span>
+        </dd>
+        <dd v-else>{{ effortLabel(thinkingSegments[0] ?? 'on') }}</dd>
       </div>
       <div class="row">
         <dt>{{ t('status.statusPermission') }}</dt>
@@ -138,6 +171,18 @@ const costText = computed(() =>
 }
 .row dd.plan-on { color: var(--color-accent); }
 .row dd.swarm-on { color: var(--color-accent); }
+/* Overrides .row dd's horizontal flex: the cache note reads as a caption
+   beneath the control, not squeezed beside it in the label column's width. */
+.row dd.thinking-value {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+.cache-note {
+  color: var(--color-text-faint);
+  font-weight: var(--weight-regular);
+  font-size: var(--text-xs);
+}
 
 .ctx-text { flex: none; }
 .bar {
