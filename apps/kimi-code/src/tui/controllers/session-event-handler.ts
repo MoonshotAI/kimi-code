@@ -712,9 +712,20 @@ export class SessionEventHandler {
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
     const patch: Partial<AppState> = {};
-    if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
+    if (event.contextUsage !== undefined) {
+      patch.contextUsage = event.contextUsage;
+    } else if (event.contextTokens !== undefined || event.maxContextTokens !== undefined) {
+      // v2 status events carry contextTokens/maxContextTokens but never
+      // contextUsage. Recompute the ratio from the post-patch token counts so
+      // it cannot go stale and drift from them — the footer and the /usage
+      // panel bar render this ratio while their texts recompute from the
+      // counts, so a stale ratio shows as a bar/percentage mismatch.
+      const tokens = patch.contextTokens ?? this.host.state.appState.contextTokens;
+      const max = patch.maxContextTokens ?? this.host.state.appState.maxContextTokens;
+      patch.contextUsage = max > 0 ? tokens / max : 0;
+    }
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
     if (event.towerMode !== undefined) patch.towerMode = event.towerMode;

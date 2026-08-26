@@ -501,6 +501,38 @@ describe('AgentToolDedupeService', () => {
       expect(final!.result.isError).toBe(true);
       expect(final!.result.output as string).toContain('<system-reminder>');
     });
+
+    it('mirrors the reminder into spill.suffix for results carrying a spill', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        spill: { outputPath: '/tmp/log' },
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.spill?.suffix).toBe(REMINDER_TEXT_1);
+    });
+
+    it('appends the reminder after an existing spill suffix', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        spill: { outputPath: '/tmp/log', suffix: 'Command failed with exit code: 1.' },
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.spill?.suffix).toBe(
+        'Command failed with exit code: 1.' + REMINDER_TEXT_1,
+      );
+    });
   });
 
   describe('key canonicalization', () => {

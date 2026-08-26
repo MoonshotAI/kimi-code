@@ -850,7 +850,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       try {
         response = await request.result;
       } catch (error) {
-        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts, turnSignal);
+        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts);
         throw error;
       }
       this.lastRequestTraceId = request.trace.traceId;
@@ -942,9 +942,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     currentStep: number,
     stepUuid: string,
     streamParts: StreamPartCollector,
-    turnSignal: AbortSignal,
   ): void {
-    if (!turnSignal.aborted) return;
     for (const part of streamParts.drainInterruptedContent()) {
       this.context.appendLoopEvent({
         type: 'content.part',
