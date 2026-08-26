@@ -267,8 +267,8 @@ export class BashTool implements IBashTool {
                 brief: `Backgrounded ${taskId} after timeout`,
               }
             : {
-                title: 'Task moved to background',
-                brief: `Backgrounded ${taskId}`,
+                title: 'Task moved to background by the user',
+                brief: `Backgrounded ${taskId} by the user`,
               };
         return this.backgroundStartedResult(
           taskId,
@@ -276,7 +276,7 @@ export class BashTool implements IBashTool {
           description,
           labels,
           builder,
-          'foreground_detached',
+          release === 'timeout_detached' ? 'foreground_detached' : 'foreground_detached_by_user',
         );
       }
 
@@ -376,7 +376,7 @@ export class BashTool implements IBashTool {
     description: string,
     labels: { title: string; brief: string },
     builder = new ToolOutputAccumulator(),
-    scenario: 'background_started' | 'foreground_detached' = 'background_started',
+    scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
     const metadata =
@@ -404,14 +404,18 @@ export class BashTool implements IBashTool {
   }
 
   private nextStepLines(
-    scenario: 'background_started' | 'foreground_detached',
+    scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user',
   ): string {
-    if (scenario === 'foreground_detached') {
+    if (scenario === 'foreground_detached' || scenario === 'foreground_detached_by_user') {
       const avoid = this.allowBackground()
         ? 'do NOT wait, poll, or call TaskOutput on it'
         : 'do NOT wait or poll';
+      const moved =
+        scenario === 'foreground_detached_by_user'
+          ? 'The user moved this task to the background.'
+          : 'The task now runs in the background.';
       return (
-        'next_step: The task now runs in the background. You will be automatically notified ' +
+        `next_step: ${moved} You will be automatically notified ` +
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }

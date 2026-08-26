@@ -1395,8 +1395,9 @@ describe('BashTool background mode', () => {
     expect(result.output).not.toContain('after detach\n');
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('automatic_notification: true');
+    expect(result.output).toContain('The user moved this task to the background.');
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
-    expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId}`);
+    expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId} by the user`);
     expect(service.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
       await expect(service.readOutput(task.taskId)).resolves.toContain('after detach\n');
@@ -1493,6 +1494,8 @@ describe('BashTool background mode', () => {
         isError: false,
         brief: expect.stringContaining('after timeout'),
       });
+      expect(result.output).toContain('The task now runs in the background.');
+      expect(result.output).not.toContain('The user moved this task');
       const taskId = /^task_id: (\S+)/m.exec(result.output as string)?.[1];
       expect(taskId).toBeDefined();
       expect(service.getTask(taskId!)).toMatchObject({ status: 'running', detached: true });

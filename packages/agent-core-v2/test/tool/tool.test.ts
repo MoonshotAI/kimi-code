@@ -2573,6 +2573,7 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('agent_id: agent-child');
     expect(result.output).toContain('automatic_notification: true');
+    expect(result.output).toContain('note: The user moved this subagent to the background.');
 
     completion.resolve({ summary: 'finished later' });
     await expect(tasks.wait(task.taskId)).resolves.toMatchObject({
