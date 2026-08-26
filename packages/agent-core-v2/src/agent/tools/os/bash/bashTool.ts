@@ -11,7 +11,6 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
-  DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
   type ExecutableToolResult,
   type ToolExecution,
   type ToolUpdate,
@@ -351,11 +350,7 @@ export class BashTool implements IBashTool {
   ): Promise<ExecutableToolResult> {
     if (totalChars <= DEFAULT_TOOL_RESULT_MAX_CHARS) return result;
     const output = await this.tasks.getOutputSnapshot(taskId, 0);
-    if (
-      !output.fullOutputAvailable ||
-      output.outputPath === undefined ||
-      output.outputSizeBytes > DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS
-    ) {
+    if (!output.fullOutputAvailable || output.outputPath === undefined) {
       return result;
     }
 

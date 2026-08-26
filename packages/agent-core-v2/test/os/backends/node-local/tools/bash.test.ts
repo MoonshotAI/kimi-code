@@ -1139,7 +1139,8 @@ describe('BashTool', () => {
   it('does not shape output inline at the tool layer', async () => {
     const huge = Buffer.alloc(10 * 1024 * 1024 + 1, 'x');
     const { runner } = createTestRunner(processWithOutput({ stdout: huge }));
-    const tool = bashTool(runner);
+    const { service } = createFakeTaskService({ outputPersistenceAvailable: false });
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const result = await executeTool(tool, context({ command: 'yes', timeout: 60 }));
 
@@ -1213,7 +1214,7 @@ describe('BashTool', () => {
     expect(persisted.size).toBe(0);
   });
 
-  it('skips task-log reuse when the persisted log exceeds the retention budget', async () => {
+  it('reuses the persisted task log even when output exceeds the retention budget', async () => {
     const huge = Buffer.alloc(10 * 1024 * 1024 + 1, 'x');
     const { runner } = createTestRunner(processWithOutput({ stdout: huge }));
     const { service, persisted } = createFakeTaskService();
@@ -1222,7 +1223,11 @@ describe('BashTool', () => {
     const result = await executeTool(tool, context({ command: 'yes', timeout: 60 }));
 
     expect(persisted.size).toBe(1);
-    expect(result.spill?.outputPath).toBeUndefined();
+    const taskId = /^\/fake\/tasks\/(bash-[0-9a-z]{8})\/output\.log$/.exec(
+      result.spill!.outputPath!,
+    )?.[1];
+    expect(taskId).toBeTruthy();
+    expect(persisted.has(taskId!)).toBe(true);
     expect(result.spill?.totalChars).toBe(10 * 1024 * 1024 + 1);
   });
 
