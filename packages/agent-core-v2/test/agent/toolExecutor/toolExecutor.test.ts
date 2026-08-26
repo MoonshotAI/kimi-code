@@ -1111,6 +1111,27 @@ describe('truncation pipeline', () => {
     );
   });
 
+  it('keeps the builder completion message after spilling a successful result', async () => {
+    const fullOutput = 'x'.repeat(50_001);
+    const tool = new TestTool('successful-noisy', {
+      execute: async () => {
+        const builder = new ToolOutputAccumulator();
+        builder.write(fullOutput);
+        return builder.ok('Command executed successfully.');
+      },
+    });
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_successful_noisy', 'successful-noisy', {})]);
+
+    expect(result?.isError).not.toBe(true);
+    const rendered = result?.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Command executed successfully.');
+    expect(readFileSync(renderedOutputPath(rendered), 'utf8')).toBe(fullOutput);
+  });
+
   it('appends a spill pointer for per-line truncation without replacing the output', async () => {
     const longLine = 'x'.repeat(60_000);
     const fullOutput = `short line\n${longLine}\n`;

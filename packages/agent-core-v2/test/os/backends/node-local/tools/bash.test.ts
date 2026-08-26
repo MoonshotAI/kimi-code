@@ -1147,6 +1147,7 @@ describe('BashTool', () => {
     const output = result.output as string;
     expect(output).not.toContain('[...truncated]');
     expect(output).not.toContain('Output is truncated');
+    expect(result.spill?.suffix).toBe('Command executed successfully.');
   });
 
   it('appends the failure message after retained output when the command fails', async () => {
@@ -1195,7 +1196,7 @@ describe('BashTool', () => {
     const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
 
     expect(result.output).toBe(fullOutput);
-    expect(result.spill).toBeUndefined();
+    expect(result.spill).toEqual({ suffix: 'Command executed successfully.' });
     expect(persisted.size).toBe(0);
   });
 

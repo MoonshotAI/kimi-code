@@ -41,6 +41,16 @@ describe('ToolOutputAccumulator', () => {
     expect(result.output).toBe('ok\n');
   });
 
+  it('carries the completion message in spill metadata for oversized output', () => {
+    const builder = new ToolOutputAccumulator();
+
+    builder.write('x'.repeat(50_001));
+    const result = builder.ok('Command executed successfully.');
+
+    expect(result.output).toBe('x'.repeat(50_001));
+    expect(result.spill).toEqual({ suffix: 'Command executed successfully.' });
+  });
+
   it('appends the error message after accumulated output', () => {
     const builder = new ToolOutputAccumulator();
 

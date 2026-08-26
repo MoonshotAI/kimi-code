@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
   type ExecutableToolErrorResult,
   type ExecutableToolSuccessResult,
@@ -45,7 +46,7 @@ export class ToolOutputAccumulator {
       isError: false,
       output: output.length === 0 ? finalMessage : output,
       brief: options.brief,
-      spill: this.retentionSpill(),
+      spill: this.completionSpill(finalMessage),
     };
   }
 
@@ -75,5 +76,16 @@ export class ToolOutputAccumulator {
       totalChars: this.totalCharsValue,
       suffix: suffix !== undefined && suffix.length > 0 ? suffix : undefined,
     };
+  }
+
+  private completionSpill(suffix: string): ToolResultSpill | undefined {
+    const retentionSpill = this.retentionSpill();
+    if (retentionSpill !== undefined) {
+      return suffix.length > 0 ? { ...retentionSpill, suffix } : retentionSpill;
+    }
+    if (suffix.length === 0 || this.totalCharsValue <= DEFAULT_TOOL_RESULT_MAX_CHARS) {
+      return undefined;
+    }
+    return { suffix };
   }
 }
