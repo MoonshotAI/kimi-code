@@ -1,18 +1,16 @@
-import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
-import { Service } from "#/_base/di/service";
-import { LifecycleScope } from '#/app/scopes';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Service } from '#/_base/di/service';
 import { ILogService } from '#/_base/log/log';
-import { IInstantiationService } from '#/_base/di/instantiation';
-
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
+import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type BeforeStepContext } from '#/agent/loop/loop';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { LifecycleScope } from '#/app/scopes';
+
 import {
   IAgentContextInjectorService,
   type ContextInjectionContent,
@@ -32,15 +30,15 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   private readonly entries = new Set<ContextInjectionEntry>();
   private compactionRearmPending = false;
   private pendingReconcileName: string | undefined;
-  private fullCompactionService: IAgentFullCompactionService | undefined;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentContextMemoryService
+    private readonly context: IAgentContextMemoryService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentSystemReminderService
+    private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this._register(
@@ -53,21 +51,9 @@ export class AgentContextInjectorService extends Service implements IAgentContex
         if (isCompactionSplice(splice)) this.compactionRearmPending = true;
       }),
     );
-    this._register(
-      this.fullCompaction.onDidFinishCompaction(() => {
-        const pending = this.pendingReconcileName;
-        this.pendingReconcileName = undefined;
-        if (pending !== undefined) {
-          void this.reconcileWhenIdle(pending);
-        }
-      }),
-    );
   }
 
-  register<D = unknown>(
-    name: string,
-    provider: ContextInjectionProvider<D>,
-  ): IDisposable {
+  register<D = unknown>(name: string, provider: ContextInjectionProvider<D>): IDisposable {
     const entry: ContextInjectionEntry = {
       provider: provider as ContextInjectionProvider<unknown>,
       name,
@@ -79,10 +65,6 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   }
 
   async reconcileWhenIdle(name: string): Promise<void> {
-    if (this.fullCompaction.compacting !== null) {
-      this.pendingReconcileName = name;
-      return;
-    }
     const quiescence = this.loopService.tryAcquireQuiescence();
     if (quiescence === undefined) return;
     try {
@@ -93,15 +75,6 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     } finally {
       quiescence.dispose();
     }
-  }
-
-  private get fullCompaction(): IAgentFullCompactionService {
-    if (this.fullCompactionService === undefined) {
-      this.fullCompactionService = this.instantiation.invokeFunction((accessor) =>
-        accessor.get(IAgentFullCompactionService),
-      );
-    }
-    return this.fullCompactionService;
   }
 
   private async reconcileAroundStep(
@@ -124,7 +97,6 @@ export class AgentContextInjectorService extends Service implements IAgentContex
   }
 
   private async inject(isNewTurn: boolean): Promise<void> {
-    if (this.fullCompaction.compacting !== null) return;
     for (const entry of this.entries) {
       await this.injectEntry(entry, isNewTurn);
     }
@@ -135,11 +107,13 @@ export class AgentContextInjectorService extends Service implements IAgentContex
     try {
       content = await entry.provider(this.providerContext(entry, isNewTurn));
     } catch (error) {
-      this.log.error('context provider failed; skipping it', { name: entry.name, error });
+      this.log.error('context provider failed; skipping it', {
+        name: entry.name,
+        error,
+      });
       return;
     }
     if (!this.entries.has(entry)) return;
-    if (this.fullCompaction.compacting !== null) return;
     this.appendResult(entry, content);
   }
 
@@ -156,9 +130,7 @@ export class AgentContextInjectorService extends Service implements IAgentContex
       lastInjectedAt,
       lastInjection,
       lastDisclosure:
-        lastInjection?.origin?.kind === 'injection'
-          ? lastInjection.origin.disclosure
-          : undefined,
+        lastInjection?.origin?.kind === 'injection' ? lastInjection.origin.disclosure : undefined,
       isNewTurn,
     };
   }
@@ -233,10 +205,7 @@ function isInjectionResult(
   );
 }
 
-function findInjections(
-  history: readonly ContextMessage[],
-  variant: string,
-): number[] {
+function findInjections(history: readonly ContextMessage[], variant: string): number[] {
   const positions: number[] = [];
   history.forEach((message, index) => {
     if (message.origin?.kind === 'injection' && message.origin.variant === variant) {

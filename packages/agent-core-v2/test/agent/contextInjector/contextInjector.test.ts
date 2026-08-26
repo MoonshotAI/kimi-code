@@ -1,17 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import {
-  createServices,
-  type TestInstantiationService,
-} from '#/_base/di/test';
-import {
-  IAgentContextInjectorService,
-} from '#/agent/contextInjector/contextInjector';
+import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { Emitter, Event } from '#/_base/event';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
-import { IAgentFullCompactionService, type FullCompactionTask } from '#/agent/fullCompaction/fullCompaction';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -22,16 +17,11 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
-import { Emitter, Event } from '#/_base/event';
+
 import { registerLogServices } from '../../_base/log/stubs';
-import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
-import {
-  runWillBeginStepHooks,
-  type StubLoop,
-  stubLoopWithHooks,
-  stubWire,
-} from '../loop/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
+import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
+import { runWillBeginStepHooks, type StubLoop, stubLoopWithHooks, stubWire } from '../loop/stubs';
 
 function injector(ix: TestInstantiationService): IAgentContextInjectorService {
   return ix.get(IAgentContextInjectorService);
@@ -61,13 +51,6 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
   return part?.type === 'text' ? part.text : undefined;
 }
 
-const compactionEmitter = new Emitter<FullCompactionTask>();
-const compactionStub = {
-  compacting: null as FullCompactionTask | null,
-  cancel() {},
-  onDidFinishCompaction: compactionEmitter.event,
-};
-
 describe('AgentContextInjectorService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -86,14 +69,12 @@ describe('AgentContextInjectorService', () => {
         reg.defineInstance(IAgentStateService, new AgentStateService());
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
-        reg.defineInstance(IAgentFullCompactionService, compactionStub as unknown as IAgentFullCompactionService);
       },
     });
     context = ix.get(IAgentContextMemoryService);
   });
 
   afterEach(() => {
-    compactionStub.compacting = null;
     disposables.dispose();
   });
 
@@ -179,7 +160,10 @@ describe('AgentContextInjectorService', () => {
       { type: 'text', text: 'caption' },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
     ]);
-    expect(message?.origin).toEqual({ kind: 'injection', variant: 'media_test' });
+    expect(message?.origin).toEqual({
+      kind: 'injection',
+      variant: 'media_test',
+    });
   });
 
   it('skips injection when the provider returns an empty content array', async () => {
@@ -220,7 +204,10 @@ describe('AgentContextInjectorService', () => {
 
     expect(seen).toEqual(['target']);
     expect(context.get()).toHaveLength(1);
-    expect(context.get()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
+    expect(context.get()[0]?.origin).toEqual({
+      kind: 'injection',
+      variant: 'target',
+    });
   });
 
   it('leaves reconciliation to the next step head when quiescence cannot be acquired', async () => {
@@ -272,10 +259,7 @@ describe('AgentContextInjectorService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([null, 0, 0]);
-    expect(context.get().map((message) => message.origin?.kind)).toEqual([
-      'injection',
-      'user',
-    ]);
+    expect(context.get().map((message) => message.origin?.kind)).toEqual(['injection', 'user']);
   });
 
   it('resets every stored injection index after context clear', async () => {
@@ -313,11 +297,7 @@ describe('AgentContextInjectorService', () => {
     });
 
     await runInjectionStep();
-    spliceContext(
-      0,
-      2,
-      [compactionSummary('Compacted summary.')],
-    );
+    spliceContext(0, 2, [compactionSummary('Compacted summary.')]);
     await runInjectionStep();
 
     expect(seen).toEqual([null, null]);
@@ -331,10 +311,7 @@ describe('AgentContextInjectorService', () => {
     const seenA: Array<number | null> = [];
     const seenB: Array<number | null> = [];
 
-    context.append(
-      userMessage('old request'),
-      userMessage('old follow-up'),
-    );
+    context.append(userMessage('old request'), userMessage('old follow-up'));
     injector(ix).register('recording_a', ({ lastInjectedAt }) => {
       seenA.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder A' : undefined;
@@ -415,7 +392,13 @@ describe('AgentContextInjectorService', () => {
       message: {
         role: 'system',
         content: [],
-        tools: [{ name: 'TestTool', description: 'test tool', parameters: { type: 'object' } }],
+        tools: [
+          {
+            name: 'TestTool',
+            description: 'test tool',
+            parameters: { type: 'object' },
+          },
+        ],
       },
     }));
 
@@ -424,14 +407,23 @@ describe('AgentContextInjectorService', () => {
     const message = context.get().at(-1);
     expect(message?.role).toBe('system');
     expect(message?.tools).toEqual([
-      { name: 'TestTool', description: 'test tool', parameters: { type: 'object' } },
+      {
+        name: 'TestTool',
+        description: 'test tool',
+        parameters: { type: 'object' },
+      },
     ]);
-    expect(message?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
+    expect(message?.origin).toEqual({
+      kind: 'injection',
+      variant: 'schema_test',
+    });
   });
 
   it('stamps the disclosure on tagged raw messages returned through the result wrapper', async () => {
     injector(ix).register('schema_test', () => ({
-      content: { message: { role: 'user', content: [{ type: 'text', text: 'raw' }] } },
+      content: {
+        message: { role: 'user', content: [{ type: 'text', text: 'raw' }] },
+      },
       disclosure: { kind: 'test_receipt', id: 'r1' },
     }));
 
@@ -445,7 +437,9 @@ describe('AgentContextInjectorService', () => {
   });
 
   it('skips tagged raw messages with neither content nor tools', async () => {
-    injector(ix).register('empty_raw_test', () => ({ message: { role: 'system', content: [] } }));
+    injector(ix).register('empty_raw_test', () => ({
+      message: { role: 'system', content: [] },
+    }));
 
     await runInjectionStep();
 
@@ -472,84 +466,5 @@ describe('AgentContextInjectorService', () => {
 
     expect(context.get()).toHaveLength(1);
     expect(lastText(context)).toContain('surviving reminder');
-  });
-
-  it('does not append reminders while a compaction is in flight, then resumes after', async () => {
-    const seen: string[] = [];
-    injector(ix).register('todolist_reminder', () => {
-      seen.push('called');
-      return 'todo list reminder';
-    });
-
-    compactionStub.compacting = {} as FullCompactionTask;
-    await runInjectionStep();
-
-    expect(seen).toEqual([]);
-    expect(context.get()).toHaveLength(0);
-
-    compactionStub.compacting = null;
-    await runInjectionStep();
-
-    expect(seen).toEqual(['called']);
-    expect(context.get()).toHaveLength(1);
-    expect(lastText(context)).toContain('todo list reminder');
-  });
-
-  it('preserves pending reconcileWhenIdle request during compaction and replays after compaction completes', async () => {
-    const seen: string[] = [];
-    injector(ix).register('idle_test', () => {
-      seen.push('called');
-      return 'idle reminder';
-    });
-
-    const task = {} as FullCompactionTask;
-    compactionStub.compacting = task;
-    await injector(ix).reconcileWhenIdle('idle_test');
-
-    expect(seen).toEqual([]);
-    expect(context.get()).toHaveLength(0);
-
-    compactionStub.compacting = null;
-    compactionEmitter.fire(task);
-    await new Promise(resolve => setImmediate(resolve));
-
-    expect(seen).toEqual(['called']);
-    expect(context.get()).toHaveLength(1);
-    expect(lastText(context)).toContain('idle reminder');
-  });
-
-  it('does not append when a step starts during compaction', async () => {
-    const seen: string[] = [];
-    injector(ix).register('step_test', () => {
-      seen.push('called');
-      return 'step reminder';
-    });
-
-    compactionStub.compacting = {} as FullCompactionTask;
-    await runInjectionStep(true);
-
-    expect(seen).toEqual([]);
-    expect(context.get()).toHaveLength(0);
-
-    compactionStub.compacting = null;
-    await runInjectionStep(true);
-
-    expect(seen).toEqual(['called']);
-    expect(context.get()).toHaveLength(1);
-  });
-
-  it('does not append when compaction starts during provider await', async () => {
-    const seen: string[] = [];
-    injector(ix).register('deferred_test', async () => {
-      await new Promise(resolve => setImmediate(resolve));
-      compactionStub.compacting = {} as FullCompactionTask;
-      seen.push('called');
-      return 'deferred reminder';
-    });
-
-    await runInjectionStep(true);
-
-    expect(seen).toEqual(['called']);
-    expect(context.get()).toHaveLength(0);
   });
 });

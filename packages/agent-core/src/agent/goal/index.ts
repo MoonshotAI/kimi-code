@@ -6,9 +6,6 @@ import type { AgentRecordOf } from '../records/types';
 import {
   type TelemetryProperties,
 } from '../../telemetry';
-import type { ContentPart } from '@moonshot-ai/kosong';
-
-import { GOAL_CONTINUATION_ORIGIN, GOAL_CONTINUATION_PROMPT } from '../turn';
 
 /**
  * Durable goal-mode state owned by {@link GoalMode}.
@@ -42,15 +39,6 @@ const GOAL_FORK_CLEARED_REMINDER = [
   'Ignore earlier active-goal reminders from the source session.',
   'Handle requests normally unless the user starts a new goal.',
 ].join(' ');
-
-/**
- * Pause reason while an auto compaction is in flight: the goal parks itself so
- * the continuation driver stops launching turns, then auto-resumes once the
- * compaction completes. Surfaced verbatim through `goal.updated` (paused) so
- * the UI can explain the pause and the promised resume.
- */
-export const GOAL_COMPACTION_PAUSE_REASON =
-  'Paused due to context compaction; will resume after compaction completes';
 
 /**
  * Lifecycle status of a goal — deliberately minimal. The durable record only
@@ -238,9 +226,6 @@ interface GoalReasonInput {
  */
 export class GoalMode {
   private state: GoalState | undefined;
-
-  /** Goal parked for an in-flight auto compaction; resumed on compaction.completed. */
-  private pausedForCompactionGoalId: string | undefined;
 
   constructor(private readonly agent: Agent) {
   }
@@ -581,52 +566,6 @@ export class GoalMode {
    */
   async pauseOnInterrupt(input: { reason?: string } = {}): Promise<GoalSnapshot | null> {
     return this.pauseActiveGoal(input, 'user');
-  }
-
-  // --- Compaction coordination --------------------------------------------
-
-  /**
-   * Parks an active goal while an auto compaction runs, so the continuation
-   * driver stops launching turns until the compaction finishes. Unlike a user
-   * pause this never touches the live turn: the in-flight goal turn is the
-   * turn the compaction blocks on, and aborting it would cancel the
-   * compaction (the loop this fixes). No-ops for a goal that is missing or
-   * not active, so a user pause / clear is never overwritten.
-   */
-  async pauseForCompaction(): Promise<GoalSnapshot | null> {
-    const state = this.state;
-    if (state === undefined || state.status !== 'active') return null;
-    this.pausedForCompactionGoalId = state.goalId;
-    return this.pauseActiveGoal({ reason: GOAL_COMPACTION_PAUSE_REASON }, 'runtime');
-  }
-
-  /**
-   * Re-activates a goal parked by {@link pauseForCompaction} once the
-   * compaction completes, then continues pursuit: the goal driver picks the
-   * next continuation turn up naturally while its turn is still live
-   * (blocking compaction), and a fresh continuation turn is launched when the
-   * loop has gone idle (non-blocking compaction configs). A goal that was
-   * cancelled, replaced, resumed by hand, or parked for another reason is
-   * left alone.
-   */
-  async resumeAfterCompaction(): Promise<GoalSnapshot | null> {
-    const goalId = this.pausedForCompactionGoalId;
-    if (goalId === undefined) return null;
-    this.pausedForCompactionGoalId = undefined;
-    const state = this.state;
-    if (state === undefined || state.goalId !== goalId) return null;
-    if (state.status !== 'paused' || state.terminalReason !== GOAL_COMPACTION_PAUSE_REASON) {
-      return null;
-    }
-    const snapshot = await this.resumeGoal({}, 'runtime');
-    if (this.agent.turn.hasActiveTurn || this.agent.fullCompaction.isCompacting) {
-      return snapshot;
-    }
-    this.agent.turn.prompt(
-      [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }] satisfies ContentPart[],
-      GOAL_CONTINUATION_ORIGIN,
-    );
-    return snapshot;
   }
 
   // --- Accounting & reporting -------------------------------------------
