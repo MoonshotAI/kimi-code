@@ -8,7 +8,8 @@ import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
-import { IAgentUsageService } from '#/agent/usage/usage';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
 import type { AgentRunHandle, AgentRunRequest } from './subagent';
@@ -77,7 +78,7 @@ async function awaitRun(
       },
       cancelTurn,
     );
-    const usage = target.accessor.get(IAgentUsageService)?.status().total;
+    const usage = target.accessor.get(ISessionUsageService)?.status(agentContextOf(target)).total;
     return { summary, usage };
   } finally {
     unlink();

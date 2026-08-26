@@ -2,17 +2,23 @@
 import { z } from 'zod';
 
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
-const permissionSetModeSchema = z.object({ mode: z.custom<PermissionMode>() });
+const permissionSetModeSchema = z.object({
+  agentId: z.string(),
+  mode: z.custom<PermissionMode>(),
+});
 
-export class PermissionSetMode extends Event2<z.infer<typeof permissionSetModeSchema>> {
+export class PermissionSetMode extends AgentEvent2<z.infer<typeof permissionSetModeSchema>> {
   static override readonly type = 'permission.set_mode';
   static override readonly durable = true;
   static override readonly schema = permissionSetModeSchema;
 }
-export interface PermissionSetMode extends z.infer<typeof permissionSetModeSchema> {}
+export interface PermissionSetMode {
+  readonly agentId: string;
+  readonly mode: PermissionMode;
+}
 
 export const permissionModeKey = defineState('permissionMode', (): PermissionMode => 'manual')
   .replayable({ schema: z.custom<PermissionMode>() })

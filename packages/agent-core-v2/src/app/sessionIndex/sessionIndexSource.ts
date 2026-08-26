@@ -32,9 +32,6 @@ export function recoverCwd(meta: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/** The single construction path for summaries — field order is fixed so a
- *  stored summary deep-compares equal to a fresh projection of the same
- *  metadata document. */
 export function buildSessionSummary(fields: {
   id: string;
   workspaceId: string;
@@ -75,9 +72,6 @@ export function summaryMatchesChildOf(
   );
 }
 
-/** Deep-enough equality for reconciliation: the projection-relevant fields,
- *  with `custom` compared structurally (both sides are JSON-round-tripped
- *  values built by `buildSessionSummary`, so key order is stable). */
 export function summaryEquals(a: SessionSummary, b: SessionSummary): boolean {
   return (
     a.id === b.id &&
@@ -157,8 +151,6 @@ async function readMeta(
   }
 }
 
-/** Bounded-concurrency map: resolves every item through `fn`, dropping
- *  `undefined` results, with at most `concurrency` calls in flight. */
 export async function mapBounded<T, R>(
   items: readonly T[],
   concurrency: number,

@@ -18,6 +18,7 @@ import {
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
+import { refreshKimiRegion } from '#/utils/region';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
@@ -89,8 +90,11 @@ async function handleProviderManagerDeleteSource(
 async function handleProviderDelete(host: SlashCommandHost, providerId: string): Promise<void> {
   if (providerId === DEFAULT_OAUTH_PROVIDER_NAME) {
     await host.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
+    // Drop the process-wide region cache with the credential: derived
+    // endpoints (updates, marketplace, site links, telemetry) must fall back
+    // to the marker/default profile, not the logged-out region.
+    refreshKimiRegion();
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
     return;
   }
 
@@ -99,7 +103,6 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
   const config = await host.harness.removeProvider(providerId);
   if (activeProvider === providerId) {
     await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     host.setAppState({
       availableProviders: config.providers ?? {},
@@ -304,7 +307,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   host.mountEditorReplacement(selector);
 }
 
-async function setDefaultModel(
+export async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
@@ -312,16 +315,23 @@ async function setDefaultModel(
   // Resolve efforts the same way the /model path does (effectiveModelForHost
   // applies overrides and the protocol-profile inference): catalog entries for
   // e.g. Anthropic models declare no support_efforts on the alias, and without
-  // the inference a top-tier pick would slip through as a persisted effort.
+  // the inference an above-default pick would slip through as a persisted effort.
   const model = host.state.appState.availableModels[alias];
+  const thinking = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model),
+  );
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(
-      effort,
-      model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
-    ),
+    thinking,
   });
   await host.authFlow.refreshConfigAfterLogin();
+  // refreshConfigAfterLogin reactivates from the persisted config, so a pick
+  // the gate keeps session-only never reaches the runtime — apply it after
+  // the refresh, or the persisted value would clobber it.
+  if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
+    await host.authFlow.activateModelAfterLogin(alias, effort);
+  }
   host.track('model_switch', { model: alias });
   host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }

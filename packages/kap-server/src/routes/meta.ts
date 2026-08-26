@@ -1,7 +1,7 @@
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
-import type { MetaResponse } from '../protocol/rest-meta';
+import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
 
 interface RouteHost {
   get(
@@ -18,24 +18,10 @@ export interface MetaRouteOptions {
   readonly serverVersion: string;
   readonly serverId: string;
   readonly startedAt: string;
-  /**
-   * Whether the server was started with `--dangerous-bypass-auth`. Surfaced so
-   * the web UI can skip the token prompt and connect without a credential.
-   */
   readonly dangerousBypassAuth: boolean;
-  /**
-   * Custom browser tab title for this instance (the CLI's `--web-title`).
-   * Surfaced as `web_title` in the `/meta` payload; instance-level and frozen
-   * at boot, so it joins the frozen static fields. Omitted when unset.
-   */
   readonly webTitle?: string;
-  /**
-   * Resolves the effective experimental-flag map (flag id → enabled) at
-   * request time. Backed by `IFlagService.snapshot()` in production; tests may
-   * stub it. May return a promise — the handler awaits it, so flag state
-   * always reflects the fully loaded config (never pre-load defaults).
-   */
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
+  readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
@@ -69,6 +55,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       const data: MetaResponse = {
         ...staticData,
         experimental_flags: await opts.getExperimentalFlags(),
+        features: await opts.getFeatures(),
       };
       reply.send(okEnvelope(data, req.id));
     },

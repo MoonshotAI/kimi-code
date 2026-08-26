@@ -23,6 +23,7 @@ import {
   type RunnableToolExecution,
   type ToolExecution,
   type ToolResult,
+  type ToolResultSpill,
   type ToolUpdate,
 } from '#/tool/toolContract';
 import type {
@@ -33,6 +34,7 @@ import type {
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
@@ -148,6 +150,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   }
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -572,6 +575,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   ): void {
     void this.dispatcher.dispatch(
       new ToolCallStarted({
+        agentId: this.scopeContext.agentId,
         turnId: options.turnId,
         toolCallId: call.toolCall.id,
         name: call.toolName,
@@ -594,6 +598,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   ): void {
     void this.dispatcher.dispatch(
       new ToolResultEvent({
+        agentId: this.scopeContext.agentId,
         turnId: options.turnId,
         toolCallId: call.toolCall.id,
         output: result.output,
@@ -609,6 +614,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   ): void {
     void this.dispatcher.dispatch(
       new ToolProgress({
+        agentId: this.scopeContext.agentId,
         turnId: options.turnId,
         toolCallId: call.toolCall.id,
         update,
@@ -879,7 +885,14 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     stopTurn?: boolean;
     truncated?: true;
     note?: string;
-  } = { output, stopTurn: result.stopTurn };
+    spill?: ToolResultSpill;
+    spillExempt?: true;
+  } = {
+    output,
+    stopTurn: result.stopTurn,
+    spill: result.spill,
+    spillExempt: result.spillExempt,
+  };
   if (result.truncated === true) base.truncated = true;
   if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {

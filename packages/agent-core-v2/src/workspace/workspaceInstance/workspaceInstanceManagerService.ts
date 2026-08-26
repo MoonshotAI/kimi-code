@@ -7,15 +7,16 @@ import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAge
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IEventService } from '#/app/event/event';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
-import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { IAppStateService } from '#/app/state/appState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';
@@ -28,6 +29,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
+import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
@@ -54,7 +56,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IHostEnvironment private readonly environment: IHostEnvironment,
     @IAppStateService private readonly appState: IAppStateService,
     @IConfigService private readonly config: IConfigService,
-    @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
     @IEventService private readonly event: IEventService,
     @IFlagService private readonly flags: IFlagService,
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
@@ -64,7 +65,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @ILogService private readonly log: ILogService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
-    @IMcpOAuthStore private readonly oauthStore: IMcpOAuthStore,
+    @IMcpOAuthService private readonly oauth: McpOAuthService,
+    @IMcpConfigStore private readonly configStore: IMcpConfigStore,
     @IPluginService private readonly plugins: IPluginService,
     @IProviderService private readonly modelProviders: IProviderService,
     @ref(ISessionManager) private readonly sessionManager: LiveRef<ISessionManager>,
@@ -86,6 +88,20 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   findByRoot(root: string): WorkspaceInstance | undefined {
     const normalized = root.replace(/[\\/]$/, '');
     return [...this.instances.values()].find((instance) => instance.root.replace(/[\\/]$/, '') === normalized);
+  }
+
+  findContaining(cwd: string): WorkspaceInstance | undefined {
+    const probe = canonicalWorkspaceRoot(cwd);
+    let best: { readonly instance: WorkspaceInstance; readonly rootLength: number } | undefined;
+    for (const instance of this.instances.values()) {
+      const root = canonicalWorkspaceRoot(instance.root);
+      const prefix = root.endsWith('/') ? root : `${root}/`;
+      if (probe !== root && !probe.startsWith(prefix)) continue;
+      if (best === undefined || root.length > best.rootLength) {
+        best = { instance, rootLength: root.length };
+      }
+    }
+    return best?.instance;
   }
 
   list(): readonly WorkspaceInstance[] {
@@ -191,7 +207,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         git: this.git,
         identity: this.identity,
         log: this.log,
-        oauthStore: this.oauthStore,
+        oauth: this.oauth,
+        configStore: this.configStore,
         plugins: this.plugins,
         sessionManager: this.sessionManager,
         agentProfiles: this.agentProfiles,
@@ -209,7 +226,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.appendLogStore,
           this.docs,
           input.fs,
-          this.cronStore,
           this.event,
           this.telemetry,
           input.workspaceAgentProfiles,

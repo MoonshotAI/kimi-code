@@ -23,6 +23,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
+export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
@@ -30,7 +31,7 @@ export { handleGoalCommand, parseGoalCommand, goalObjectiveLengthWarning } from 
 export { goalArgumentCompletions } from './registry';
 export { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
 export { handleUndoCommand } from './undo';
-export { handleWebCommand } from './web';
+export { handleRemoteControlCommand, handleWebCommand } from './web';
 export {
   promptApiKey,
   promptCatalogProviderSelection,

@@ -68,10 +68,10 @@ There is no domain-layer numbering — a domain may import any other domain, gui
 
 ## Comment convention
 
-`packages/agent-core-v2/AGENTS.md` bans comments: no file headers, no section banners, no statement-level narration — the code is the source of truth. The only exception is JSDoc attached to exported symbols, which flows into the generated `.d.ts` and the consumers' IDE hover. Tooling directives (`eslint-disable`, `@ts-expect-error`, …) are banned too: fix the underlying lint/type problem instead, and put negative type-safety cases in compiler-asserted fixtures. Scope is carried by the filename: `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md).
+`packages/agent-core-v2/AGENTS.md` bans comments entirely: no file headers, no section banners, no statement-level narration, no JSDoc (not even on exported symbols) — the code is the source of truth. The only exception is a load-bearing lint-suppression directive (`oxlint-disable` / `eslint-disable`) for a deliberate pattern; other tooling directives (`@ts-expect-error`, …) are banned: fix the underlying lint/type problem instead, and put negative type-safety cases in compiler-asserted fixtures. Scope is carried by the filename: `workspace*.ts` = Workspace, `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md).
 
 ## Red lines (this stage)
 
 - Import via the `#/...` alias (mapped to `src/`); never reach into another domain's internals by relative path.
 - Short-lived may inject long-lived; never the reverse.
-- No comments — not file headers, not beside statements; exported-symbol JSDoc is the only exception.
+- No comments — not file headers, not beside statements, no JSDoc anywhere; `oxlint-disable` / `eslint-disable` are the only exception.

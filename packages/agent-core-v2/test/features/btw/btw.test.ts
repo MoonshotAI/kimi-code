@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import {
@@ -16,6 +16,7 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 describe('SessionBtwService', () => {
   let disposables: DisposableStore;
@@ -36,17 +37,38 @@ describe('SessionBtwService', () => {
       id: 'agent-btw-1',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
         },
       },
     };
-    fork = vi.fn(async () => child);
+    const main = {
+      id: 'main',
+      accessor: {
+        get: (id: unknown) => {
+          if (id === IAgentScopeContext) {
+            return {
+              _serviceBrand: undefined,
+              agentId: 'main',
+              agentContext: stubAgentContext('main', 1),
+              scope: (subKey?: string) => subKey ?? '',
+            };
+          }
+          return undefined;
+        },
+      },
+    };
+    fork = vi.fn(async () => stubAgentContext('agent-btw-1', 2));
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
+      resolve: () => ({ notify: appendReminder }),
+      handleOf: (id: string) => {
+        if (id === 'main') return main;
+        if (id === 'agent-btw-1') return child;
+        return undefined;
+      },
     } as unknown as IAgentLifecycleService);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
@@ -57,9 +79,8 @@ describe('SessionBtwService', () => {
     const id = await svc.start();
 
     expect(id).toBe('agent-btw-1');
-    expect(fork).toHaveBeenCalledWith('main');
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main', generation: 1 }));
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
-      kind: 'injection',
       variant: 'btw',
     });
   });

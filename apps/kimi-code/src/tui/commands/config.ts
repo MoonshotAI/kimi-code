@@ -597,7 +597,7 @@ async function persistModelSelection(
   const model = host.state.appState.availableModels[alias];
   const full = thinkingEffortToConfig(
     effort,
-    model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+    model === undefined ? undefined : effectiveModelForHost(host, model),
   );
   // Re-confirming the effort shown when the picker opened is not an explicit
   // choice — persist the model but leave the stored effort preference alone.
@@ -806,6 +806,12 @@ export async function applyExperimentalFeatureChanges(
       );
     } else {
       host.showStatus('Experimental features updated.', 'success');
+    }
+    if (changes.some((change) => change.id === 'tower')) {
+      // TowerFeature assembles its tool/profile contributions once at App
+      // scope construction, so a live flag flip cannot install or retract
+      // them; only the mode machinery (enter/injection/guards) reacts live.
+      host.showNotice('Tower mode takes effect after restarting Kimi Code.');
     }
     host.track('experimental_features_apply', { changed: changes.length });
   } catch (error) {

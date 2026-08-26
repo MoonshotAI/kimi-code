@@ -12,10 +12,12 @@ import type { Event } from '@moonshot-ai/agent-core';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  IAgentScopeContext,
   IEventBus,
-  ISessionInteractionService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
+  makeAgentScopeContext,
+  type InteractionRuntime,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
@@ -48,8 +50,12 @@ class FakeAgentHandle {
   readonly kind = 2;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  readonly context;
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    const scopeContext = makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` });
+    this.context = scopeContext.agentContext;
+    this.services.set(IAgentScopeContext, scopeContext);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -62,19 +68,22 @@ class FakeAgentHandle {
 }
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
-  const lifecycle = {
-    list: () => agents,
-    onDidCreate: () => ({ dispose: () => {} }),
-    onDidDispose: () => ({ dispose: () => {} }),
-  };
   const interactions = {
     onDidChangePending: () => ({ dispose: () => {} }),
+    onDidResolve: () => ({ dispose: () => {} }),
     listPending: () => [],
+  } as unknown as InteractionRuntime;
+  const lifecycle = {
+    list: () => agents.map((agent) => agent.context),
+    get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
+    resolve: () => interactions,
+    onDidCreate: () => ({ dispose: () => {} }),
+    onDidClose: () => ({ dispose: () => {} }),
   };
   const accessor = {
     get: (token: unknown): unknown => {
       if (token === IAgentLifecycleService) return lifecycle;
-      if (token === ISessionInteractionService) return interactions;
       return undefined;
     },
   };
@@ -101,12 +110,12 @@ const USAGE = {
 };
 
 function bindStatusServices(agent: FakeAgentHandle, model: string): void {
-  agent.set(IAgentTokenCountingService, { statusSize: () => 10 });
+  agent.set(ISessionTokenCountingService, { statusSize: () => 10 });
   agent.set(IAgentProfileService, {
     getModel: () => model,
     getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
   });
-  agent.set(IAgentUsageService, { status: () => USAGE });
+  agent.set(ISessionUsageService, { status: () => USAGE });
 }
 
 // ---------------------------------------------------------------------------

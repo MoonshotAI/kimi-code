@@ -1,10 +1,10 @@
 import {
-  ensureMainAgent,
+  IAgentLifecycleService,
   IAgentPromptService,
   ISessionContext,
-  ISessionInteractionService,
   ISessionMetadata,
   IWorkspaceService,
+  listSessionPendingInteractions,
   resumeSessionById,
   type IAgentScopeHandle,
   type Scope,
@@ -12,6 +12,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { ensureMainAgent } from '../transport/mainAgent';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -19,6 +20,11 @@ import {
   type InFlightTurn,
   type SessionSnapshotResponse,
 } from '../protocol/rest-snapshot';
+import { emptySessionUsage, type SessionUsage } from '../protocol/session';
+import {
+  readLegacyStatus,
+  type LegacyStatusSnapshot,
+} from '../services/legacyStatus/legacyStatus';
 import { loadMessageHistory } from '../services/messages/messageHistory';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
@@ -104,13 +110,19 @@ async function assembleSnapshot(
   const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
   const cwd = workspace?.root ?? '';
   const meta = await handle.accessor.get(ISessionMetadata).read();
-  const session = toWireSession(
-    { ...meta, workspaceId },
-    cwd,
-    resolveSessionFacts(core, sessionId),
-  );
 
   const main = await ensureMainAgent(handle);
+  const status = readLegacyStatus(main);
+  const session = {
+    ...toWireSession(
+      { ...meta, workspaceId },
+      cwd,
+      resolveSessionFacts(core, sessionId),
+    ),
+    agent_config: { model: status?.model ?? '' },
+    usage: toSnapshotUsage(status),
+  };
+
   const all = await loadMessageHistory(core, main, sessionId, meta.createdAt);
   const hasMore = all.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
   const items = all.slice(-SNAPSHOT_MESSAGE_PAGE_SIZE);
@@ -118,12 +130,10 @@ async function assembleSnapshot(
   const currentPromptId = snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  const interaction = handle.accessor.get(ISessionInteractionService);
-  const pendingApprovals = interaction
-    .listPending('approval')
+  const agents = handle.accessor.get(IAgentLifecycleService);
+  const pendingApprovals = listSessionPendingInteractions(agents, 'approval')
     .map((i) => toWireApproval(i, sessionId));
-  const pendingQuestions = interaction
-    .listPending('question')
+  const pendingQuestions = listSessionPendingInteractions(agents, 'question')
     .map((i) => toWireQuestion(i, sessionId));
 
   return {
@@ -145,6 +155,19 @@ function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | unde
   } catch {
     return undefined;
   }
+}
+
+function toSnapshotUsage(status: LegacyStatusSnapshot | undefined): SessionUsage {
+  if (status === undefined) return emptySessionUsage();
+  const total = status.usage?.total;
+  return {
+    input_tokens: total?.inputOther ?? 0,
+    output_tokens: total?.output ?? 0,
+    cache_read_tokens: total?.inputCacheRead ?? 0,
+    cache_creation_tokens: total?.inputCacheCreation ?? 0,
+    context_tokens: status.contextTokens,
+    context_limit: status.maxContextTokens,
+  };
 }
 
 function attachCurrentPromptIdToInFlight(

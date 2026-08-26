@@ -25,7 +25,8 @@ import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -234,11 +235,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
     @ISessionContext session: ISessionContext,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
@@ -253,12 +254,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.states.contributeState(taskDeliveredNotificationKeysKey);
     this.states.contributeState(taskActiveTaskReminderPendingKey);
     const fallbackRoot =
-      scopeContext.agentId === 'main'
+      this.scopeContext.agentId === 'main'
         ? { dir: session.sessionDir, scope: session.scope() }
         : undefined;
     this.persistence = new AgentTaskPersistence(
-      join(session.sessionDir, 'agents', scopeContext.agentId),
-      scopeContext.scope(),
+      join(session.sessionDir, 'agents', this.scopeContext.agentId),
+      this.scopeContext.scope(),
       atomicDocs,
       byteStore,
       fallbackRoot,
@@ -291,8 +292,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      injector.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
-        this.activeBackgroundTaskReminder(),
+      activateReminderWhenReady(agentLifecycle, this.scopeContext, (reminder) =>
+        reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
+          this.activeBackgroundTaskReminder(),
+        ),
       ),
     );
   }
@@ -627,7 +630,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       this.markDeliveredNotification(origin);
       keys.push(key);
     }
-    void this.dispatcher.dispatch(new TaskWaitDelivered({ keys }));
+    void this.dispatcher.dispatch(
+      new TaskWaitDelivered({ agentId: this.scopeContext.agentId, keys }),
+    );
   }
 
   detach(taskId: string): AgentTaskInfo | undefined {
@@ -1068,7 +1073,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
-    void this.dispatcher.dispatch(new TaskStarted({ info }));
+    void this.dispatcher.dispatch(
+      new TaskStarted({ agentId: this.scopeContext.agentId, info }),
+    );
     this.telemetry.track2('background_task_created', {
       task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
@@ -1076,7 +1083,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
-    void this.dispatcher.dispatch(new TaskTerminated({ info, outputTail }));
+    void this.dispatcher.dispatch(
+      new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
+    );
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,
@@ -1205,6 +1214,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private fireNotificationHook(notification: AgentTaskNotification): void {
     void this.dispatcher.dispatch(
       new TaskNotified({
+        agentId: this.scopeContext.agentId,
         notificationType: notification.type,
         title: notification.title,
         body: notification.body,

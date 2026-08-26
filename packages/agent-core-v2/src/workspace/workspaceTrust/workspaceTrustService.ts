@@ -1,23 +1,20 @@
-import { dirname, normalize } from 'pathe';
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { defineState } from '#/state/state';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
+import {
+  deleteWorkspaceTrust,
+  readWorkspaceTrust,
+  workspaceTrustWatchKeys,
+  writeUntrustedWorkspaceTrust,
+  writeWorkspaceTrust,
+} from './trustRecord';
 
 const TRUST_SCOPE = 'workspace-trust';
-
-interface TrustRecord {
-  readonly root: string;
-  readonly trusted?: boolean;
-  readonly trustedAt?: number;
-  readonly untrustedAt?: number;
-}
 
 export const workspaceTrustTrustedKey = defineState<boolean>(
   'workspaceTrust.trusted',
@@ -29,7 +26,6 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
 
   readonly ready: Promise<void>;
   private readonly root: string;
-  private readonly storeKey: string;
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
@@ -41,7 +37,6 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
-    this.storeKey = encodeWorkDirKey(workspace.cwd);
     this.watchTrustRecords();
     this.ready = this.initialize();
   }
@@ -65,66 +60,34 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
 
   async trust(): Promise<void> {
     if (this.trusted) return;
-    await this.docs.set(TRUST_SCOPE, this.storeKey, {
-      root: this.root,
-      trusted: true,
-      trustedAt: Date.now(),
-    });
+    await writeWorkspaceTrust(this.docs, this.root, Date.now());
     this.updateTrusted(true);
   }
 
   async untrust(): Promise<void> {
     if (!this.trusted) return;
-    await this.docs.set(TRUST_SCOPE, this.storeKey, {
-      root: this.root,
-      trusted: false,
-      untrustedAt: Date.now(),
-    });
+    await deleteWorkspaceTrust(this.docs, this.root);
+    if (await readWorkspaceTrust(this.docs, this.root)) {
+      await writeUntrustedWorkspaceTrust(this.docs, this.root, Date.now());
+    }
     this.updateTrusted(false);
   }
 
   private async initialize(): Promise<void> {
-    try {
-      this.trusted = await this.readTrusted();
-    } catch {
-      this.trusted = false;
-    }
+    this.trusted = await readWorkspaceTrust(this.docs, this.root);
   }
 
   private async refresh(): Promise<void> {
-    try {
-      this.updateTrusted(await this.readTrusted());
-    } catch {
-      this.updateTrusted(false);
-    }
-  }
-
-  private async readTrusted(): Promise<boolean> {
-    for (const key of this.trustRecordKeys()) {
-      const record = await this.docs.get<TrustRecord>(TRUST_SCOPE, key);
-      if (record !== undefined) return record.trusted !== false;
-    }
-    return false;
+    this.updateTrusted(await readWorkspaceTrust(this.docs, this.root));
   }
 
   private watchTrustRecords(): void {
-    for (const key of this.trustRecordKeys()) {
+    for (const key of workspaceTrustWatchKeys(this.root)) {
       this._register(
         this.docs.watch(TRUST_SCOPE, key)(() => {
           void this.refresh();
         }),
       );
-    }
-  }
-
-  private trustRecordKeys(): readonly string[] {
-    const keys = [this.storeKey];
-    let current = dirname(normalize(this.root));
-    while (true) {
-      keys.push(encodeWorkDirKey(current));
-      const parent = dirname(current);
-      if (parent === current) return keys;
-      current = parent;
     }
   }
 
@@ -134,4 +97,3 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     this.changeEmitter.fire({ trusted: value });
   }
 }
-

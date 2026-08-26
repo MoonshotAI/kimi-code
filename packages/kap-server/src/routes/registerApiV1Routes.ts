@@ -1,9 +1,12 @@
 import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
+import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
+import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import type { TranscriptService } from '../services/transcript/transcriptService';
@@ -56,10 +59,6 @@ interface ApiV1RouteHost {
 
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
-  /**
-   * Host product identity from `startServer` — the session export route stamps
-   * its manifest from `hostIdentity.version`.
-   */
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
@@ -69,21 +68,9 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly transcriptService: TranscriptService;
-  /** Catalog URL for the `/plugins/marketplace` route (resolved by start.ts). */
-  readonly pluginMarketplaceUrl: string;
-  /** True when the catalog URL is the built-in default (no option/env set). */
+  readonly pluginMarketplaceUrl: () => string;
   readonly pluginMarketplaceIsDefault: boolean;
-  /**
-   * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
-   * from the `disableAuth` server option (the `--dangerous-bypass-auth` CLI
-   * flag).
-   */
   readonly dangerousBypassAuth?: boolean;
-  /**
-   * Custom browser tab title for this instance, surfaced as `web_title` in the
-   * `/meta` payload. Set by `start.ts` from the `webTitle` server option (the
-   * CLI's `--web-title` flag).
-   */
   readonly webTitle?: string;
 }
 
@@ -110,6 +97,15 @@ export async function registerApiV1Routes(
           await core.accessor.get(IConfigService).ready;
           return core.accessor.get(IFlagService).snapshot();
         },
+        getFeatures: () =>
+          core.accessor
+            .get(IFeatureManager)
+            .units()
+            .map((unit) => ({
+              name: unit.name,
+              state: FiberState[unit.state] as MetaFeature['state'],
+              meta: unit.meta,
+            })),
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);

@@ -69,8 +69,9 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
-import { handleWebCommand } from './web';
+import { handleRemoteControlCommand, handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -96,6 +97,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
+export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
@@ -108,7 +110,7 @@ export {
   handleTitleCommand,
 } from './session';
 export { handleUndoCommand } from './undo';
-export { handleWebCommand } from './web';
+export { handleRemoteControlCommand, handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -269,6 +271,7 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: false,
     isCompacting: false,
+    engineV2: host.engineV2,
   });
   if (intent.kind !== 'skill' && intent.kind !== 'message') return false;
 
@@ -306,6 +309,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    engineV2: host.engineV2,
   });
 
   switch (intent.kind) {
@@ -573,6 +577,9 @@ async function handleBuiltInSlashCommand(
     case 'swarm':
       await handleSwarmCommand(host, args);
       return;
+    case 'tower':
+      await handleTowerCommand(host, args);
+      return;
     case 'compact':
       await handleCompactCommand(host, args);
       return;
@@ -605,6 +612,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'web':
       await handleWebCommand(host);
+      return;
+    case 'remote-control':
+      await handleRemoteControlCommand(host);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

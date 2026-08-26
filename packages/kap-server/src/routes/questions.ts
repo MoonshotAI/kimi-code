@@ -1,7 +1,9 @@
 import {
   type Interaction,
-  ISessionInteractionService,
+  IAgentLifecycleService,
   ISessionQuestionService,
+  isSessionInteractionRecentlyResolved,
+  listSessionPendingInteractions,
   resumeSessionById,
   type QuestionAnswers,
   type QuestionItem,
@@ -30,6 +32,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { type ActionTable, runAction } from './action-dispatch';
 import { parseActionSuffix } from './action-suffix';
 
 interface QuestionRouteHost {
@@ -86,7 +89,7 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         );
         return;
       }
-      const pending = handle.accessor.get(ISessionInteractionService).listPending('question');
+      const pending = listSessionPendingInteractions(handle.accessor.get(IAgentLifecycleService), 'question');
       const items = pending.map((i) => toWireQuestion(i, session_id));
       reply.send(okEnvelope({ items }, req.id));
     },
@@ -130,14 +133,14 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         return;
       }
 
-      const interaction = handle.accessor.get(ISessionInteractionService);
+      const agents = handle.accessor.get(IAgentLifecycleService);
 
       let questionId: string;
       let action: 'resolve' | 'dismiss';
       if (parsed.kind === 'invalid') {
         if (
-          interaction.listPending('question').some((i) => i.id === tail) ||
-          interaction.isRecentlyResolved(tail)
+          listSessionPendingInteractions(agents, 'question').some((i) => i.id === tail) ||
+          isSessionInteractionRecentlyResolved(agents, tail)
         ) {
           questionId = tail;
           action = 'resolve';
@@ -150,12 +153,11 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         action = parsed.kind === 'bare' ? 'resolve' : parsed.action;
       }
 
-      const pendingInteraction = interaction
-        .listPending('question')
+      const pendingInteraction = listSessionPendingInteractions(agents, 'question')
         .find((i) => i.id === questionId);
 
       if (pendingInteraction === undefined) {
-        if (interaction.isRecentlyResolved(questionId)) {
+        if (isSessionInteractionRecentlyResolved(agents, questionId)) {
           reply.send({
             code: ErrorCode.APPROVAL_ALREADY_RESOLVED,
             msg: `question ${questionId} already resolved`,
@@ -172,56 +174,12 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
 
       const questions = handle.accessor.get(ISessionQuestionService);
 
-      if (action === 'dismiss') {
-        questions.dismiss(questionId);
-        requestLog(req)?.info(
-          { session_id, question_id: questionId, action: 'dismiss' },
-          'question dismissed',
-        );
-        reply.send({
-          code: ErrorCode.QUESTION_DISMISSED,
-          msg: `question ${questionId} dismissed`,
-          data: { dismissed: true as const, dismissed_at: new Date().toISOString() },
-          request_id: req.id,
-        });
-        return;
-      }
-
-      const bodyParse = questionResolveRequestSchema.safeParse(req.body);
-      if (!bodyParse.success) {
-        const details = bodyParse.error.issues.map((issue) => ({
-          path: issue.path.join('.'),
-          message: issue.message,
-        }));
-        const first = details[0];
-        const msg =
-          first === undefined
-            ? 'validation failed'
-            : first.path === ''
-              ? first.message
-              : `${first.path}: ${first.message}`;
-        reply.send({
-          code: ErrorCode.VALIDATION_FAILED,
-          msg,
-          data: null,
-          request_id: req.id,
-          details,
-        });
-        return;
-      }
-
-      const result = toInProcessResponse(
-        bodyParse.data,
-        toWireQuestion(pendingInteraction, session_id),
-      );
-      questions.answer(questionId, result);
-      requestLog(req)?.info(
-        { session_id, question_id: questionId, action: 'answer' },
-        'question answered',
-      );
-      reply.send(
-        okEnvelope({ resolved: true as const, resolved_at: new Date().toISOString() }, req.id),
-      );
+      await runAction({
+        action,
+        id: questionId,
+        actions: questionActions,
+        extra: { questions, pendingInteraction, session_id, req, reply },
+      });
     },
   );
   app.post(
@@ -229,6 +187,64 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
     resolveRoute.options,
     resolveRoute.handler as Parameters<QuestionRouteHost['post']>[2],
   );
+}
+
+type QuestionActionExtra = {
+  readonly questions: ISessionQuestionService;
+  readonly pendingInteraction: Interaction;
+  readonly session_id: string;
+  readonly req: { readonly id: string; readonly body: unknown };
+  readonly reply: { readonly send: (payload: unknown) => unknown };
+};
+
+type QuestionActionCtx = QuestionActionExtra & { readonly id: string; readonly body: unknown };
+
+const questionActions: ActionTable<'resolve' | 'dismiss', QuestionActionExtra> = {
+  resolve: { handle: resolveQuestionAction },
+  dismiss: { handle: dismissQuestionAction },
+};
+
+async function resolveQuestionAction(ctx: QuestionActionCtx): Promise<void> {
+  const { questions, pendingInteraction, session_id, req, reply, id } = ctx;
+  const bodyParse = questionResolveRequestSchema.safeParse(req.body);
+  if (!bodyParse.success) {
+    const details = bodyParse.error.issues.map((issue) => ({
+      path: issue.path.join('.'),
+      message: issue.message,
+    }));
+    const first = details[0];
+    const msg =
+      first === undefined
+        ? 'validation failed'
+        : first.path === ''
+          ? first.message
+          : `${first.path}: ${first.message}`;
+    reply.send({
+      code: ErrorCode.VALIDATION_FAILED,
+      msg,
+      data: null,
+      request_id: req.id,
+      details,
+    });
+    return;
+  }
+
+  const result = toInProcessResponse(bodyParse.data, toWireQuestion(pendingInteraction, session_id));
+  questions.answer(id, result);
+  requestLog(req)?.info({ session_id, question_id: id, action: 'answer' }, 'question answered');
+  reply.send(okEnvelope({ resolved: true as const, resolved_at: new Date().toISOString() }, req.id));
+}
+
+async function dismissQuestionAction(ctx: QuestionActionCtx): Promise<void> {
+  const { questions, session_id, req, reply, id } = ctx;
+  questions.dismiss(id);
+  requestLog(req)?.info({ session_id, question_id: id, action: 'dismiss' }, 'question dismissed');
+  reply.send({
+    code: ErrorCode.QUESTION_DISMISSED,
+    msg: `question ${id} dismissed`,
+    data: { dismissed: true as const, dismissed_at: new Date().toISOString() },
+    request_id: req.id,
+  });
 }
 
 function buildOption(opt: QuestionOption, itemIdx: number, optIdx: number): ProtocolQuestionOption {
@@ -251,7 +267,6 @@ function buildItem(item: QuestionItem, itemIdx: number): ProtocolQuestionItem {
   return out;
 }
 
-/** In-process request + interaction metadata → protocol wire shape. */
 export function toWireQuestion(
   interaction: Interaction,
   sessionId: string,

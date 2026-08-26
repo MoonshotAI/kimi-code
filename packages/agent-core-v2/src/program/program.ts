@@ -1,5 +1,5 @@
 import { Emitter, type Event } from '#/_base/event';
-import { UserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
+import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
@@ -33,13 +33,13 @@ import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
-import { ExplicitFileSkillSource } from '#/workspace/workspaceSkillCatalog/explicitFileSkillSource';
-import { ExtraFileSkillSource } from '#/workspace/workspaceSkillCatalog/extraFileSkillSource';
-import { PluginSkillSource } from '#/workspace/workspaceSkillCatalog/pluginSkillSource';
-import { WorkspaceRootSkillSource } from '#/workspace/workspaceSkillCatalog/rootFileSkillSource';
-import { RuntimeSkillDiscovery } from '#/workspace/workspaceSkillCatalog/runtimeSkillDiscovery';
-import type { IWorkspaceSkillCatalog } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalog';
-import { WorkspaceSkillCatalogService } from '#/workspace/workspaceSkillCatalog/workspaceSkillCatalogService';
+import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
+import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
+import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
+import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
+import { RuntimeSkillDiscovery } from '#/features/skill/workspace/runtimeSkillDiscovery';
+import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
 import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import type { ProgramDependencies } from './programDependencies';
@@ -290,8 +290,8 @@ export class Program {
       const watch = own(new WorkspaceFsWatchService(this.context, dirs, runtime.watch!, runtime.fs!));
       const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, runtime.watch!, this.dependencies.log, state));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.docs, state));
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.watch!, runtime.fs!, trust));
-      const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauthStore, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
+      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.watch!, runtime.fs!, trust, this.dependencies.configStore));
+      const mcp = own(new WorkspaceMcpService(this.context, this.resolver, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
       const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, runtime.fs!, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, runtime.fs!, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));

@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import { Event2 } from '#/app/event/event2';
+import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
 import '#/agent/contextMemory/conversationTime';
@@ -13,34 +13,50 @@ export interface PlanState {
   readonly revisionCount?: Readonly<Record<string, number>>;
 }
 
-const planModeEnterSchema = z.object({ id: z.string() });
+const planModeEnterSchema = z.object({ agentId: z.string(), id: z.string() });
 
-export class PlanModeEnter extends Event2<z.infer<typeof planModeEnterSchema>> {
+export class PlanModeEnter extends AgentEvent2<z.infer<typeof planModeEnterSchema>> {
   static override readonly type = 'plan_mode.enter';
   static override readonly durable = true;
   static override readonly schema = planModeEnterSchema;
 }
-export interface PlanModeEnter extends z.infer<typeof planModeEnterSchema> {}
+export interface PlanModeEnter {
+  readonly agentId: string;
+  readonly id: string;
+}
 
-const planModeCancelSchema = z.object({ id: z.string().optional() });
+const planModeCancelSchema = z.object({
+  agentId: z.string(),
+  id: z.string().optional(),
+});
 
-export class PlanModeCancel extends Event2<z.infer<typeof planModeCancelSchema>> {
+export class PlanModeCancel extends AgentEvent2<z.infer<typeof planModeCancelSchema>> {
   static override readonly type = 'plan_mode.cancel';
   static override readonly durable = true;
   static override readonly schema = planModeCancelSchema;
 }
-export interface PlanModeCancel extends z.infer<typeof planModeCancelSchema> {}
+export interface PlanModeCancel {
+  readonly agentId: string;
+  readonly id?: string;
+}
 
-const planModeExitSchema = z.object({ id: z.string().optional() });
+const planModeExitSchema = z.object({
+  agentId: z.string(),
+  id: z.string().optional(),
+});
 
-export class PlanModeExit extends Event2<z.infer<typeof planModeExitSchema>> {
+export class PlanModeExit extends AgentEvent2<z.infer<typeof planModeExitSchema>> {
   static override readonly type = 'plan_mode.exit';
   static override readonly durable = true;
   static override readonly schema = planModeExitSchema;
 }
-export interface PlanModeExit extends z.infer<typeof planModeExitSchema> {}
+export interface PlanModeExit {
+  readonly agentId: string;
+  readonly id?: string;
+}
 
 export interface PlanRevisionRecordedEvent {
+  readonly agentId: string;
   readonly id: string;
   readonly version: number;
   readonly path: string;
@@ -49,6 +65,7 @@ export interface PlanRevisionRecordedEvent {
 }
 
 const planRevisionSchema = z.object({
+  agentId: z.string(),
   id: z.string(),
   version: z.number(),
   path: z.string(),
@@ -56,7 +73,7 @@ const planRevisionSchema = z.object({
   bytes: z.number(),
 });
 
-export class PlanRevision extends Event2<PlanRevisionRecordedEvent> {
+export class PlanRevision extends AgentEvent2<PlanRevisionRecordedEvent> {
   static override readonly type = 'plan.revision';
   static override readonly durable = true;
   static override readonly observable = true;
@@ -72,21 +89,21 @@ export const planKey = defineState('plan', (): PlanState => ({ active: false }))
       s.active = true;
       s.id = e.id;
     }
-    ctx.emit(new AgentStatusUpdated({ planMode: true }));
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, planMode: true }));
   })
   .on(PlanModeCancel, (s, e, ctx) => {
     if (s.active) {
       s.active = false;
       delete s.id;
     }
-    ctx.emit(new AgentStatusUpdated({ planMode: false }));
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, planMode: false }));
   })
   .on(PlanModeExit, (s, e, ctx) => {
     if (s.active) {
       s.active = false;
       delete s.id;
     }
-    ctx.emit(new AgentStatusUpdated({ planMode: false }));
+    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, planMode: false }));
   })
   .on(PlanRevision, (s, e) => {
     s.revisionCount = { ...s.revisionCount, [e.id]: e.version };

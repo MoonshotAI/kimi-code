@@ -232,6 +232,51 @@ describe('server-v2 boot', () => {
     expect(() => core.accessor.get(IBootstrapService)).toThrow();
     expect(await listLiveServerInstances(home)).toEqual([]);
   });
+
+  it('installs process-level rejection handlers while running and removes them on close', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore + 1);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore + 1);
+
+    await server.close();
+    server = undefined;
+
+    expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+    expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+  });
+
+  it('does not leave process handlers installed when startup fails', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-'));
+    const emptyAssets = await mkdtemp(join(tmpdir(), 'kimi-server-v2-assets-'));
+    const rejectionBefore = process.listenerCount('unhandledRejection');
+    const exceptionBefore = process.listenerCount('uncaughtException');
+    try {
+      await expect(
+        startServer({
+          hostIdentity: TEST_HOST_IDENTITY,
+          host: '127.0.0.1',
+          port: 0,
+          homeDir: home,
+          logLevel: 'silent',
+          webAssetsDir: emptyAssets,
+        }),
+      ).rejects.toThrow('web assets');
+      expect(process.listenerCount('unhandledRejection')).toBe(rejectionBefore);
+      expect(process.listenerCount('uncaughtException')).toBe(exceptionBefore);
+    } finally {
+      await rm(emptyAssets, { recursive: true, force: true });
+    }
+  });
 });
 
 function silentLogger() {

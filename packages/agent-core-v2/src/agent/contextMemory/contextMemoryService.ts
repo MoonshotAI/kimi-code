@@ -1,13 +1,9 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import {
-  TokenCountingRebased,
-  TokenCountingTruncated,
-  tokenCountingKey,
-} from '#/agent/tokenCounting/tokenCountingOps';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
@@ -39,7 +35,8 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
@@ -62,13 +59,17 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     if (messages.length === 0) return;
     const start = this.get().length;
     for (const message of messages) {
-      void this.dispatcher.dispatch(new ContextAppendMessage({ message }));
+      void this.dispatcher.dispatch(
+        new ContextAppendMessage({ agentId: this.scopeContext.agentId, message }),
+      );
     }
     this.publishSplice({ start, deleteCount: 0, messages: [...messages] });
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
-    void this.dispatcher.dispatch(new ContextAppendLoopEvent({ event }));
+    void this.dispatcher.dispatch(
+      new ContextAppendLoopEvent({ agentId: this.scopeContext.agentId, event }),
+    );
   }
 
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
@@ -89,10 +90,12 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;
-    void this.dispatcher.dispatch(new ContextClear({}));
-    void this.dispatcher.dispatch(
-      new TokenCountingRebased({ length: 0, tokens: 0, measured: true }),
-    );
+    void this.dispatcher.dispatch(new ContextClear({ agentId: this.scopeContext.agentId }));
+    this.tokenCounting.rebase(this.scopeContext.agentContext, {
+      length: 0,
+      tokens: 0,
+      measured: true,
+    });
     this.publishSplice({ start: 0, deleteCount, messages: [] });
   }
 
@@ -100,7 +103,9 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     const history = this.get();
     const cut = computeUndoCut(history, count);
     if (isFullyUndoable(cut, count)) {
-      void this.dispatcher.dispatch(new ContextUndo({ count }));
+      void this.dispatcher.dispatch(
+        new ContextUndo({ agentId: this.scopeContext.agentId, count }),
+      );
       this.dispatchCutEvents(cut.cutIndex);
       this.publishSplice({
         start: cut.cutIndex,
@@ -116,6 +121,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     const result = buildContextCompactionShape(history, input, this.tokenEstimateFns);
     void this.dispatcher.dispatch(
       new ContextApplyCompaction({
+        agentId: this.scopeContext.agentId,
         summary: result.summary,
         contextSummary: result.contextSummary,
         compactedCount: result.compactedCount,
@@ -127,13 +133,11 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
         droppedCount: result.droppedCount,
       }),
     );
-    void this.dispatcher.dispatch(
-      new TokenCountingRebased({
-        length: result.messages.length,
-        tokens: result.tokensAfter,
-        measured: false,
-      }),
-    );
+    this.tokenCounting.rebase(this.scopeContext.agentContext, {
+      length: result.messages.length,
+      tokens: result.tokensAfter,
+      measured: false,
+    });
     this.publishSplice({
       start: 0,
       deleteCount: history.length,
@@ -145,19 +149,14 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     return publicResult;
   }
 
-  private publishSplice(input: ContextSplicedPayload): void {
-    void this.dispatcher.dispatch(new ContextSpliced(input));
+  private publishSplice(input: Omit<ContextSplicedPayload, 'agentId'>): void {
+    void this.dispatcher.dispatch(
+      new ContextSpliced({ agentId: this.scopeContext.agentId, ...input }),
+    );
   }
 
   private dispatchCutEvents(cutIndex: number): void {
-    const model = this.agentState.get(tokenCountingKey);
-    if (!model.anchors.some((anchor) => anchor.length > cutIndex)) return;
-    void this.dispatcher.dispatch(
-      new TokenCountingTruncated({
-        length: cutIndex,
-        tokens: this.tokenCounting.get(0, cutIndex).size,
-      }),
-    );
+    this.tokenCounting.recordTruncation(this.scopeContext.agentContext, cutIndex);
   }
 }
 

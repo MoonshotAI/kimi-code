@@ -6,7 +6,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 
@@ -52,7 +52,7 @@ export class WebSearchTool implements IWebSearchTool {
     }
     try {
       const results = await provider.search(args.query, { toolCallId, signal });
-      const builder = new ToolResultBuilder({ maxLineLength: null });
+      const builder = new ToolOutputAccumulator();
 
       if (results.length === 0) {
         builder.write('No search results found.');

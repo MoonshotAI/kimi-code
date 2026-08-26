@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.19.1
+
+### Patch Changes
+
+- [#2862](https://github.com/MoonshotAI/kimi-code/pull/2862) [`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an optional region parameter to the auth login API for selecting the OAuth login endpoint (.com or .ai deployment).
+
 ## 0.19.0
 
 ### Minor Changes

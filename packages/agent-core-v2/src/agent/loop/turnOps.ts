@@ -2,9 +2,15 @@
 import { z } from 'zod';
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
-import { ContextAppendLoopEvent } from '#/agent/contextMemory/contextEvents';
+import {
+  ContextAppendLoopEvent,
+  ContextApplyCompaction,
+  ContextClear,
+  ContextUndo,
+} from '#/agent/contextMemory/contextEvents';
+import { isUndoAnchorOrigin } from '#/agent/contextMemory/conversationTime';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import { Event2, type SerializedEvent2 } from '#/app/event/event2';
+import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#/kosong/contract/message';
 import { defineState } from '#/state/state';
 
@@ -13,6 +19,7 @@ import type { TurnInterruptReason } from './turnEvents';
 export interface TurnModelState {
   readonly nextTurnId: number;
   readonly cancelledTurnIds: readonly number[];
+  readonly anchorTurnIds: readonly number[];
   readonly lastEnded?: {
     readonly turnId: number;
     readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
@@ -21,42 +28,59 @@ export interface TurnModelState {
 }
 
 const turnInputShape = {
+  agentId: z.string(),
   input: z.custom<readonly ContentPart[]>(),
   origin: z.custom<PromptOrigin>(),
 };
 
 const turnPromptSchema = z.object(turnInputShape);
 
-export class TurnPrompt extends Event2<z.infer<typeof turnPromptSchema>> {
+export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
   static override readonly durable = true;
   static override readonly schema = turnPromptSchema;
 }
-export interface TurnPrompt extends z.infer<typeof turnPromptSchema> {}
+export interface TurnPrompt {
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+}
 
 const turnSteerSchema = z.object(turnInputShape);
 
-export class TurnSteer extends Event2<z.infer<typeof turnSteerSchema>> {
+export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
   static override readonly durable = true;
+  static override readonly observable = true;
   static override readonly schema = turnSteerSchema;
 }
-export interface TurnSteer extends z.infer<typeof turnSteerSchema> {}
+export interface TurnSteer {
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+}
 
 const turnCancelSchema = z.object({
+  agentId: z.string(),
   turnId: z.number().optional(),
   target: z.enum(['active', 'queued']).optional(),
   reason: z.enum(['user_cancelled', 'aborted']).optional(),
 });
 
-export class TurnCancel extends Event2<z.infer<typeof turnCancelSchema>> {
+export class TurnCancel extends AgentEvent2<z.infer<typeof turnCancelSchema>> {
   static override readonly type = 'turn.cancel';
   static override readonly durable = true;
   static override readonly schema = turnCancelSchema;
 }
-export interface TurnCancel extends z.infer<typeof turnCancelSchema> {}
+export interface TurnCancel {
+  readonly agentId: string;
+  readonly turnId?: number;
+  readonly target?: 'active' | 'queued';
+  readonly reason?: 'user_cancelled' | 'aborted';
+}
 
 const turnEndedSchema = z.object({
+  agentId: z.string(),
   turnId: z.number(),
   reason: z.enum(['completed', 'cancelled', 'failed', 'blocked']),
   error: z.custom<KimiErrorPayload>().optional(),
@@ -64,6 +88,7 @@ const turnEndedSchema = z.object({
 });
 
 export interface TurnEndedPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
   readonly error?: KimiErrorPayload;
@@ -71,7 +96,7 @@ export interface TurnEndedPayload {
   readonly interruptReason?: TurnInterruptReason;
 }
 
-export class TurnEnded extends Event2<TurnEndedPayload> {
+export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
   static override readonly type = 'turn.ended';
   static override readonly durable = true;
   static override readonly observable = true;
@@ -80,6 +105,7 @@ export class TurnEnded extends Event2<TurnEndedPayload> {
   override serialize(): SerializedEvent2 {
     const record: Record<string, unknown> = {
       type: this.type,
+      agentId: this.agentId,
       turnId: this.turnId,
       reason: this.reason,
     };
@@ -93,7 +119,7 @@ export interface TurnEnded extends TurnEndedPayload {}
 
 export const turnKey = defineState(
   'turn',
-  (): TurnModelState => ({ nextTurnId: 0, cancelledTurnIds: [] }),
+  (): TurnModelState => ({ nextTurnId: 0, cancelledTurnIds: [], anchorTurnIds: [] }),
 ).replayable({ schema: z.custom<TurnModelState>() })
   .on(ContextAppendLoopEvent, (s, e) => {
     const { event } = e;
@@ -107,8 +133,18 @@ export const turnKey = defineState(
     }
     if (next !== s) return next;
   })
-  .on(TurnPrompt, (s) => advanceTurnClock(s, s.nextTurnId + 1))
+  .on(TurnPrompt, (s, e) => {
+    const next = advanceTurnClock(s, s.nextTurnId + 1);
+    if (!isUndoAnchorOrigin(e.origin)) return next;
+    return { ...next, anchorTurnIds: [...s.anchorTurnIds, s.nextTurnId] };
+  })
   .on(TurnSteer, () => {})
+  .on(ContextUndo, (s, e) => ({
+    ...s,
+    anchorTurnIds: s.anchorTurnIds.slice(0, Math.max(0, s.anchorTurnIds.length - e.count)),
+  }))
+  .on(ContextApplyCompaction, (s) => ({ ...s, anchorTurnIds: [] }))
+  .on(ContextClear, (s) => ({ ...s, anchorTurnIds: [] }))
   .on(TurnCancel, (s, e) => {
     if (e.target === undefined || e.turnId === undefined) return;
     if (e.turnId < s.nextTurnId) return;

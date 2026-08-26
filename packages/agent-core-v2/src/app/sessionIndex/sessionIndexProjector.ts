@@ -44,7 +44,6 @@ export interface ReconcileResult {
   readonly removed: number;
 }
 
-/** One consistent pass over the authoritative session metadata set. */
 export interface AuthoritativeScan {
   readonly summaries: SessionSummary[];
   readonly counts: Map<string, { active: number; archived: number }>;
@@ -61,14 +60,6 @@ export class SessionIndexProjector {
 
   constructor(private readonly deps: SessionIndexProjectorDeps) {}
 
-  /**
-   * The projection's scan: joins a running shared scan, reuses one that
-   * settled within the reuse window, or starts a fresh one. The projection
-   * publishes a point-in-time derived model by design, so a just-finished
-   * snapshot is safe for it (the mirror queue and reconciliation heal the
-   * gap) — and this is what keeps a fast first read + kicked projection
-   * from scanning the directory tree twice.
-   */
   sharedScan(): Promise<AuthoritativeScan> {
     const slot = this.scanSlot;
     if (slot !== undefined && (!slot.settled || Date.now() < slot.reusableUntil)) {
@@ -77,15 +68,6 @@ export class SessionIndexProjector {
     return this.startScan();
   }
 
-  /**
-   * A fallback read's scan: joins a scan that is still in flight or starts a
-   * fresh one. A settled snapshot is NEVER served to a read — it could
-   * predate a session this process just created, breaking read-your-writes.
-   * Joining an in-flight scan is NOT the same freshness as enumerating here
-   * and now: the scan may have started (and passed a directory) before this
-   * call, so the caller folds the mirror's pending queue into the result —
-   * every pending entry is known to be durable on disk.
-   */
   sharedScanForRead(): Promise<AuthoritativeScan> {
     const slot = this.scanSlot;
     if (slot !== undefined && !slot.settled) return slot.promise;
@@ -106,7 +88,6 @@ export class SessionIndexProjector {
     return slot.promise;
   }
 
-  /** Scan the authoritative set into a fresh generation and publish it. */
   async project(generation: number): Promise<ProjectionResult> {
     const scan = this.sharedScan();
     try {
@@ -164,7 +145,6 @@ export class SessionIndexProjector {
     return { generation, sessions: summaries.length };
   }
 
-  /** Re-scan the authoritative set and repair the published generation. */
   async reconcile(generation: number): Promise<ReconcileResult> {
     const { queryStore, log } = this.deps;
     const collection = sessionCollection(generation);

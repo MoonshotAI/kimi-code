@@ -45,10 +45,6 @@ import {
 
 import { discoverTools, executeTool, fakeMcpClient } from '../../mcpCore/stubs';
 
-const MCP_OUTPUT_TRUNCATED_TEXT =
-  '\n\n[Output truncated: exceeded 100000 character limit. ' +
-  'Use pagination or more specific queries to get remaining content.]';
-
 interface ResolvedServer {
   readonly client: MCPClient;
   readonly tools: readonly KosongTool[];
@@ -1018,7 +1014,7 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(0);
   });
 
-  it('truncates oversized MCP text output through the wrapped tool path', async () => {
+  it('passes oversized MCP text through for the pipeline to shape', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
       async listTools() {
@@ -1051,7 +1047,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('x'.repeat(100_000) + MCP_OUTPUT_TRUNCATED_TEXT);
+    expect(result.output).toBe('x'.repeat(100_001));
   });
 
   it('wraps MCP image output in mcp_tool_result companions through the wrapped tool path', async () => {
@@ -1205,6 +1201,34 @@ describe('AgentMcpService', () => {
         source: 'mcp',
       }),
     ]);
+  });
+
+  it('registers the synthetic authenticate tool for a server that settled needs-auth before attach', () => {
+    const oauthService = {
+      beginAuthorization: async () => ({
+        authorizationUrl: new URL('https://example.com/authorize'),
+        complete: async () => {},
+        cancel: async () => {},
+      }),
+    } as unknown as McpOAuthService;
+    const manager = new FakeMcpManager({ oauthService });
+    manager.needsAuth();
+
+    createService(manager);
+
+    const tools = ix.get(IAgentToolRegistryService).list();
+    expect(tools).toEqual([
+      expect.objectContaining({
+        name: 'mcp__needs-auth__authenticate',
+        source: 'mcp',
+      }),
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
+      }),
+    );
   });
 
   it('keeps tools registered when a connected server fails so later calls can heal', async () => {

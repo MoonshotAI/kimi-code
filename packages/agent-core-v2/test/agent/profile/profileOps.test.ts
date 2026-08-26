@@ -30,7 +30,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -233,7 +233,7 @@ function buildHost(key: string): {
     agentsMd: undefined,
     agentsMdWarning: undefined,
     agentsMdPaths: undefined,
-    onDidChange: Event.None as Event<void>,
+    onDidChange: Event.None as ISessionInstructionsProvider['onDidChange'],
   } satisfies ISessionInstructionsProvider);
   host.stub(IAgentAgentsMdReminderService, {
     _serviceBrand: undefined,
@@ -308,11 +308,12 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(records).toEqual([
       {
         type: 'config.update',
+        agentId: 'test-agent',
         profileName: DEFAULT_AGENT_PROFILE_NAME,
         systemPrompt: 'You are helpful.',
         time: expect.any(Number),
       },
-      { type: 'config.update', thinkingEffort: 'on', time: expect.any(Number) },
+      { type: 'config.update', agentId: 'test-agent', thinkingEffort: 'on', time: expect.any(Number) },
     ]);
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });

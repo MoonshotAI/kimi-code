@@ -13,6 +13,7 @@ export interface ManagedUnitInfo {
   readonly name: string;
   readonly state: FiberState;
   readonly uid: number | undefined;
+  readonly meta: Record<string, unknown>;
 }
 
 export interface IFeatureManager {

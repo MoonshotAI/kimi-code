@@ -225,6 +225,56 @@ describe('RuntimeUnitHost', () => {
     disposables.dispose();
   });
 
+  it('re-registers the same runtime id after its registration was removed', async () => {
+    const { disposables, host, registry } = setup();
+    let providerHost!: RuntimeProviderHost;
+    const handle = await host.provide(emptyImports(), async (provider) => {
+      providerHost = provider;
+      return { dispose: () => {} };
+    });
+
+    const first = runtime('one');
+    const registration = providerHost.registerRuntime(first);
+    await registration.remove();
+    expect(registry.current('local')).toBeUndefined();
+
+    const second = runtime('two');
+    providerHost.registerRuntime(second);
+    expect(registry.current('local')).toBe(second);
+
+    await handle.remove();
+    expect(registry.current('local')).toBeUndefined();
+    expect(second.disposed).toBe(true);
+    await host.dispose();
+    disposables.dispose();
+  });
+
+  it('re-registers the same runtime id even when removal teardown fails', async () => {
+    const { disposables, host, registry } = setup();
+    let providerHost!: RuntimeProviderHost;
+    const handle = await host.provide(emptyImports(), async (provider) => {
+      providerHost = provider;
+      return { dispose: () => {} };
+    });
+
+    const failing = runtime('one');
+    failing.dispose = () => {
+      throw new Error('boom');
+    };
+    const registration = providerHost.registerRuntime(failing);
+    await expect(registration.remove()).rejects.toThrow('boom');
+    expect(registry.current('local')).toBeUndefined();
+
+    const second = runtime('two');
+    providerHost.registerRuntime(second);
+    expect(registry.current('local')).toBe(second);
+
+    await handle.remove();
+    expect(registry.current('local')).toBeUndefined();
+    await host.dispose();
+    disposables.dispose();
+  });
+
   it('waits for in-flight prepare, rejects new transactions, and tears down in reverse order', async () => {
     const { disposables, host } = setup();
     const order: string[] = [];

@@ -7,11 +7,6 @@ export const MAX_LINES: number = 1000;
 export const MAX_LINE_LENGTH: number = 2000;
 export const MAX_BYTES: number = 100 * 1024;
 
-/**
- * Largest file the Read tool transcodes from UTF-16 in memory. Unlike the
- * streaming UTF-8 path, transcoding needs the whole file decoded at once;
- * 10 MiB mirrors kap-server's `FS_READ_MAX_BYTES`.
- */
 export const TRANSCODE_MAX_BYTES: number = 10 * 1024 * 1024;
 
 const PositiveLineOffsetSchema = z.number().int().min(1);
