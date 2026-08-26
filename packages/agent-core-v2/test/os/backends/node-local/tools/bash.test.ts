@@ -819,12 +819,12 @@ describe('BashTool', () => {
     expect(properties['timeout']?.default).toBe(60);
   });
 
-  it('renders the available commands section and the /tasks hint', () => {
+  it('renders the available commands section and the background-task panel hint', () => {
     const { runner } = createTestRunner(processWithOutput());
     const tool = bashTool(runner);
 
     expect(tool.description).toContain('Commands available');
-    expect(tool.description).toContain('/tasks');
+    expect(tool.description).toContain('background-task panel');
   });
 
   it('runs through runner.spawn, injects cwd, noninteractive env, and closes stdin', async () => {
