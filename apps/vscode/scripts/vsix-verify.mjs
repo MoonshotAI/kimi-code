@@ -205,19 +205,47 @@ function verifyForbiddenFiles(files) {
   }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function pathVariants(value) {
+  return [value, value.replaceAll('\\', '/'), value.replaceAll('/', '\\')];
+}
+
 async function verifyNoSensitiveContent(extractionRoot, files, sourceRoot, extraForbiddenText) {
   const secretValues = [process.env.VSCE_PAT, process.env.OVSX_PAT]
     .filter((value) => typeof value === 'string' && value.length >= 8);
-  const forbidden = [sourceRoot, homedir(), ...extraForbiddenText, ...secretValues]
+  // Marketplace tokens never appear legitimately, so plain substring matching is
+  // kept for them.
+  const secretMatchers = secretValues
+    .flatMap(pathVariants)
+    .map((value) => ({ value, isSecret: true, test: (content) => content.includes(value) }));
+  // Local filesystem paths (sourceRoot, homedir, extra forbidden text) are
+  // matched with path boundaries instead of naive substring matching. When the
+  // builder's home directory is a common word fragment (e.g. homedir() is
+  // "/root" when building as root), naive matching false-positives on
+  // legitimate bundled strings like "agentfile/roots.ts" or
+  // "workspace/rootFileSkillSource.ts". A path only counts as leaked when it
+  // appears standalone: not preceded by a word character or path separator (it
+  // starts at line start, a quote, whitespace, etc.) and not followed by a word
+  // character or "-" ("/root/" or end-of-token matches; "/rootFile..." and
+  // "/roots..." do not). Real leaks such as "/root/kimi-code/..." still match.
+  const pathMatchers = [sourceRoot, homedir(), ...extraForbiddenText]
     .filter((value) => typeof value === 'string' && value.length >= 4)
-    .flatMap((value) => [value, value.replaceAll('\\', '/'), value.replaceAll('/', '\\')]);
+    .flatMap(pathVariants)
+    .map((value) => {
+      const pattern = new RegExp(`(?<![\\w/\\\\])${escapeRegExp(value)}(?![\\w-])`);
+      return { value, isSecret: false, test: (content) => pattern.test(content) };
+    });
+  const matchers = [...secretMatchers, ...pathMatchers];
 
   for (const file of files) {
     if (!TEXT_EXTENSIONS.has(extname(file).toLowerCase())) continue;
     const content = await readFile(join(extractionRoot, file), 'utf8');
-    const match = forbidden.find((value) => content.includes(value));
+    const match = matchers.find((matcher) => matcher.test(content));
     if (match === undefined) continue;
-    const label = secretValues.includes(match) ? 'a marketplace token' : 'a local filesystem path';
+    const label = match.isSecret ? 'a marketplace token' : 'a local filesystem path';
     throw new Error(`Packaged text file ${file} contains ${label}.`);
   }
 }
