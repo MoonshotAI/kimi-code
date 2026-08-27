@@ -498,6 +498,48 @@ describe('server-v2 /api/v1 prompts', () => {
     await expect(source!.firstUserPrompts(3)).resolves.toEqual(prompts);
   });
 
+  it('enters plan mode when the first prompt requests it', async () => {
+    const id = await createSession(home as string);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      plan_mode: true,
+      content: [{ type: 'text', text: 'investigate the bug' }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const status = await call<{ plan_mode: boolean }>(
+      'GET',
+      `/api/v1/sessions/${id}/status`,
+    );
+    expect(status.body.code).toBe(0);
+    expect(status.body.data.plan_mode).toBe(true);
+  });
+
+  it('exits plan mode when a prompt disables it', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const profile = await call<unknown>('POST', `/api/v1/sessions/${id}/profile`, {
+      agent_config: { plan_mode: true },
+    });
+    expect(profile.body.code).toBe(0);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      plan_mode: false,
+      content: [{ type: 'text', text: 'implement the fix' }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const status = await call<{ plan_mode: boolean }>(
+      'GET',
+      `/api/v1/sessions/${id}/status`,
+    );
+    expect(status.body.code).toBe(0);
+    expect(status.body.data.plan_mode).toBe(false);
+  });
+
   it('rejects a stale file reference without creating the agent or mutating the model', async () => {
     const id = await createSession(home as string);
     const session = getLiveSessionById(server!.core.accessor, id);
