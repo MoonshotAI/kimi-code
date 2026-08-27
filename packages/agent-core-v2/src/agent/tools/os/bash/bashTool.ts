@@ -9,11 +9,16 @@ import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBindin
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
-import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
-  type ExecutableToolResultBuilderResult,
-  ToolResultBuilder,
-} from '#/tool/result-builder';
+  DEFAULT_TOOL_RESULT_MAX_CHARS,
+  type ExecutableToolResult,
+  type ToolExecution,
+  type ToolUpdate,
+} from '#/tool/toolContract';
+import {
+  type ToolOutputAccumulatorResult,
+  ToolOutputAccumulator,
+} from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
@@ -186,7 +191,7 @@ export class BashTool implements IBashTool {
         : normalizeTimeoutMs(args.timeout, true)
       : foregroundTimeoutMs;
 
-    const builder = new ToolResultBuilder();
+    const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
       proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
@@ -208,7 +213,11 @@ export class BashTool implements IBashTool {
           if (!collectForegroundOutput) return;
           onUpdate?.({ kind, text });
           builder.write(text);
-          if (!foregroundOutputPersisted && builder.truncated && foregroundTaskId !== undefined) {
+          if (
+            !foregroundOutputPersisted &&
+            builder.totalChars > DEFAULT_TOOL_RESULT_MAX_CHARS &&
+            foregroundTaskId !== undefined
+          ) {
             this.tasks.persistOutput(foregroundTaskId);
             foregroundOutputPersisted = true;
           }
@@ -302,12 +311,12 @@ export class BashTool implements IBashTool {
   private async foregroundCompletionResult(
     taskId: string,
     proc: IHostProcess,
-    builder: ToolResultBuilder,
+    builder: ToolOutputAccumulator,
     foregroundTimeoutMs: number,
   ): Promise<ExecutableToolResult> {
     const current = this.tasks.getTask(taskId);
     const exitCode = current?.kind === 'process' ? current.exitCode : proc.exitCode;
-    let result: ExecutableToolResultBuilderResult;
+    let result: ToolOutputAccumulatorResult;
     if (current?.status === 'timed_out') {
       const timeoutLabel = formatTimeoutLabel(foregroundTimeoutMs);
       result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
@@ -331,27 +340,33 @@ export class BashTool implements IBashTool {
         brief: `Failed with exit code: ${String(exitCode)}`,
       });
     }
-    return this.addForegroundOutputReference(taskId, result);
+    return this.addForegroundOutputReference(taskId, result, builder.totalChars);
   }
 
   private async addForegroundOutputReference(
     taskId: string,
-    result: ExecutableToolResultBuilderResult,
+    result: ToolOutputAccumulatorResult,
+    totalChars: number,
   ): Promise<ExecutableToolResult> {
-    if (!result.truncated) return result;
+    if (totalChars <= DEFAULT_TOOL_RESULT_MAX_CHARS) return result;
     const output = await this.tasks.getOutputSnapshot(taskId, 0);
-    if (!output.fullOutputAvailable || output.outputPath === undefined) return result;
+    if (!output.fullOutputAvailable || output.outputPath === undefined) {
+      return result;
+    }
 
     const taskOutputHint = this.allowBackground()
-      ? `, or TaskOutput(task_id="${taskId}")`
+      ? `\nnext_step: Use TaskOutput(task_id="${taskId}") to query the task output.`
       : '';
-    const reference =
-      `\n\n[Full output saved]\n` +
-      `task_id: ${taskId}\n` +
-      `output_path: ${output.outputPath}\n` +
-      `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
-      `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
-    return { ...result, output: `${result.output}${reference}` };
+    const taskInfo = `task_id: ${taskId}\noutput_size_bytes: ${String(output.outputSizeBytes)}${taskOutputHint}`;
+    const existingSuffix = result.spill?.suffix;
+    return {
+      ...result,
+      spill: {
+        outputPath: output.outputPath,
+        totalChars,
+        suffix: existingSuffix !== undefined ? `${existingSuffix}\n${taskInfo}` : taskInfo,
+      },
+    };
   }
 
   private backgroundStartedResult(
@@ -359,7 +374,7 @@ export class BashTool implements IBashTool {
     proc: IHostProcess,
     description: string,
     labels: { title: string; brief: string },
-    builder = new ToolResultBuilder(),
+    builder = new ToolOutputAccumulator(),
     scenario: 'background_started' | 'foreground_detached' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
@@ -376,7 +391,6 @@ export class BashTool implements IBashTool {
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
     const result: ExecutableToolResult & {
       readonly brief: string;
-      readonly truncated: boolean;
     } = {
       isError: false,
       output:
@@ -384,7 +398,6 @@ export class BashTool implements IBashTool {
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
       brief: labels.brief,
-      truncated: foregroundResult.truncated,
     };
     return result;
   }

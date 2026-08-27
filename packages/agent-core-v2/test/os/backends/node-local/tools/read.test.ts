@@ -14,6 +14,7 @@ import {
   TRANSCODE_MAX_BYTES,
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
@@ -86,7 +87,7 @@ function createReadTool(
     inspect: () => runtime,
     acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
   };
-  return new ReadTool(resolver, workspace, skillCatalog);
+  return new ReadTool(resolver, workspace, skillCatalog, stubToolResultTruncationService());
 }
 
 function createSpiedFs(content: string) {
@@ -639,7 +640,7 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/long.txt' });
 
-    expect(result.note).toContain('Lines [1, 3] were truncated.');
+    expect(result.note).toContain('Lines [1, 3] were truncated to 2000 characters; use Bash (e.g. cut or sed) to read the elided content of those lines.');
     expect(result.output).toContain('...');
   });
 
@@ -862,7 +863,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.note).toContain('Total lines in file: 5.');
-    expect(result.note).toContain('Lines [4] were truncated.');
+    expect(result.note).toContain('Lines [4] were truncated to 2000 characters; use Bash (e.g. cut or sed) to read the elided content of those lines.');
   });
 
   it('rechecks runtime availability when execution starts after the tool was shown', async () => {
@@ -895,6 +896,7 @@ describe('ReadTool', () => {
       runtime,
       stubWorkspaceContext('/workspace'),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+      stubToolResultTruncationService(),
     );
     const execution = tool.resolveExecution({ path: '/workspace/a.txt' });
     expect('execute' in execution).toBe(true);

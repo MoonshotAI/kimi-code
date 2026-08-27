@@ -49,7 +49,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import { toWireApproval } from '../../../routes/approvals';
-import { toWireQuestion } from '../../../routes/questions';
+import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
@@ -884,7 +884,7 @@ export class SessionEventBroadcaster {
         promptAttachments?: unknown;
       };
       wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
-    } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued') {
+    } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued' || event.type === 'prompt.submitted') {
       const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
       wireEvent = Object.assign({}, event, {
         content: projectPromptContentParts(content),
@@ -1149,9 +1149,11 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.status.updated',
   'hook.result',
   'prompt.submitted',
+  'prompt.started',
   'prompt.completed',
   'prompt.aborted',
   'prompt.steered',
+  'turn.steer',
   'event.question.requested',
   'event.question.dismissed',
   'event.question.answered',

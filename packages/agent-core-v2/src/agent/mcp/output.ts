@@ -1,5 +1,6 @@
 import type { ContentPart } from '#/kosong/contract/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { compressImageContentParts } from '#/agent/media/image-compress';
 import {
@@ -14,11 +15,6 @@ export interface McpOutputOptions {
   readonly telemetry?: ITelemetryService;
 }
 
-export const MCP_MAX_OUTPUT_CHARS = 100_000;
-const MCP_OUTPUT_TRUNCATED_TEXT = `\n\n[Output truncated: exceeded ${String(
-  MCP_MAX_OUTPUT_CHARS,
-)} character limit. Use pagination or more specific queries to get remaining content.]`;
-
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
 const MCP_MAX_BINARY_PART_CHARS = Math.ceil((MCP_MAX_BINARY_PART_BYTES * 4) / 3);
 
@@ -28,7 +24,11 @@ function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: 
   return `[${kind}_url dropped: ~${approxMb} MB exceeds ${capMb} MB per-part limit. Try a smaller resource.]`;
 }
 
-export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | null {
+function droppedBlockNotice(reason: string): ContentPart {
+  return { type: 'text', text: `[MCP content dropped: ${reason}]` };
+}
+
+export function convertMCPContentBlock(block: MCPContentBlock): ContentPart {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { type: 'text', text: block.text };
   }
@@ -74,9 +74,12 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
           videoUrl: { url: `data:${mimeType};base64,${res.blob}` },
         };
       }
-      return null;
+      const approxMb = ((res.blob.length * 3) / 4 / (1024 * 1024)).toFixed(1);
+      return droppedBlockNotice(
+        `resource blob with unsupported mimeType "${mimeType}" (~${approxMb} MB, uri: ${res.uri}) was not delivered.`,
+      );
     }
-    return null;
+    return droppedBlockNotice(`resource (uri: ${res.uri}) carried no text or blob payload.`);
   }
 
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
@@ -93,28 +96,22 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
     if (mimeType.startsWith('video/')) {
       return { type: 'video_url', videoUrl: { url: block.uri } };
     }
-    return null;
+    return droppedBlockNotice(
+      `resource_link with unsupported mimeType "${mimeType}" was not delivered. Fetch it directly if needed: ${block.uri}`,
+    );
   }
 
-  return null;
+  return droppedBlockNotice(`content block of unsupported type "${block.type}" was not delivered.`);
 }
 
 export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
   options: McpOutputOptions = {},
-): Promise<{
-  output: string | ContentPart[];
-  isError: boolean;
-  note?: string;
-  truncated?: true;
-}> {
+): Promise<ExecutableToolResult> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
-    const part = convertMCPContentBlock(block);
-    if (part !== null) {
-      converted.push(part);
-    }
+    converted.push(convertMCPContentBlock(block));
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
@@ -138,8 +135,7 @@ export async function mcpResultToExecutableOutput(
     }
   }
 
-  const budgeted = applyTextBudget(wrapped);
-  const compressed = await compressImageContentParts(budgeted.parts, {
+  const compressed = await compressImageContentParts(wrapped, {
     telemetry:
       options.telemetry === undefined
         ? undefined
@@ -154,15 +150,15 @@ export async function mcpResultToExecutableOutput(
     },
   });
   const capped = applyBinaryPartCap(compressed.parts);
-  const truncated = budgeted.truncated || capped.truncated;
   const output = collapseSingleText(capped.parts);
   const note = compressed.captions.length > 0 ? compressed.captions.join('\n') : undefined;
-  return {
+  const base = {
     output,
-    isError: result.isError,
     note,
-    truncated: truncated ? true : undefined,
+    truncated: capped.truncated ? true : undefined,
+    spill: capped.notices.length > 0 ? { suffix: capped.notices.join('\n') } : undefined,
   };
+  return result.isError ? { ...base, isError: true } : base;
 }
 
 function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
@@ -208,63 +204,14 @@ function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string)
   ];
 }
 
-function applyTextBudget(parts: readonly ContentPart[]): {
-  readonly parts: ContentPart[];
-  readonly truncated: boolean;
-} {
-  let remaining = MCP_MAX_OUTPUT_CHARS;
-  let truncated = false;
-  const out: ContentPart[] = [];
-
-  for (const part of parts) {
-    if (part.type === 'text') {
-      if (remaining <= 0) {
-        truncated = true;
-        continue;
-      }
-      if (part.text.length > remaining) {
-        out.push({ type: 'text', text: part.text.slice(0, remaining) });
-        remaining = 0;
-        truncated = true;
-      } else {
-        out.push(part);
-        remaining -= part.text.length;
-      }
-      continue;
-    }
-
-    if (part.type === 'think') {
-      const size = part.think.length + (part.encrypted?.length ?? 0);
-      if (remaining <= 0) {
-        truncated = true;
-        continue;
-      }
-      if (size > remaining) {
-        out.push({ type: 'think', think: part.think.slice(0, remaining) });
-        remaining = 0;
-        truncated = true;
-      } else {
-        out.push(part);
-        remaining -= size;
-      }
-      continue;
-    }
-
-    out.push(part);
-  }
-
-  if (truncated) {
-    appendTruncationNotice(out);
-  }
-  return { parts: out, truncated };
-}
-
 function applyBinaryPartCap(parts: readonly ContentPart[]): {
   readonly parts: ContentPart[];
   readonly truncated: boolean;
+  readonly notices: string[];
 } {
   let truncated = false;
   const out: ContentPart[] = [];
+  const notices: string[] = [];
 
   for (const part of parts) {
     if (part.type === 'text' || part.type === 'think') {
@@ -281,25 +228,16 @@ function applyBinaryPartCap(parts: readonly ContentPart[]): {
     if (url.length > MCP_MAX_BINARY_PART_CHARS) {
       const kind =
         part.type === 'image_url' ? 'image' : part.type === 'audio_url' ? 'audio' : 'video';
-      out.push({ type: 'text', text: binaryPartTooLargeNotice(kind, url.length) });
+      const notice = binaryPartTooLargeNotice(kind, url.length);
+      out.push({ type: 'text', text: notice });
+      notices.push(notice);
       truncated = true;
       continue;
     }
     out.push(part);
   }
 
-  return { parts: out, truncated };
-}
-
-function appendTruncationNotice(out: ContentPart[]): void {
-  for (let i = out.length - 1; i >= 0; i--) {
-    const candidate = out[i];
-    if (candidate?.type === 'text') {
-      out[i] = { type: 'text', text: candidate.text + MCP_OUTPUT_TRUNCATED_TEXT };
-      return;
-    }
-  }
-  out.push({ type: 'text', text: MCP_OUTPUT_TRUNCATED_TEXT });
+  return { parts: out, truncated, notices };
 }
 
 function collapseSingleText(parts: readonly ContentPart[]): string | ContentPart[] {

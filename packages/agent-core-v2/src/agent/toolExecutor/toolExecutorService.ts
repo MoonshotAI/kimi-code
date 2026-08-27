@@ -23,6 +23,7 @@ import {
   type RunnableToolExecution,
   type ToolExecution,
   type ToolResult,
+  type ToolResultSpill,
   type ToolUpdate,
 } from '#/tool/toolContract';
 import type {
@@ -884,7 +885,14 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     stopTurn?: boolean;
     truncated?: true;
     note?: string;
-  } = { output, stopTurn: result.stopTurn };
+    spill?: ToolResultSpill;
+    spillExempt?: true;
+  } = {
+    output,
+    stopTurn: result.stopTurn,
+    spill: result.spill,
+    spillExempt: result.spillExempt,
+  };
   if (result.truncated === true) base.truncated = true;
   if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {

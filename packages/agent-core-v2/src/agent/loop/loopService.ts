@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 import { createControlledPromise } from '@antfu/utils';
 
@@ -81,6 +82,8 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
   () => undefined as string | undefined,
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
+
+const MAX_STEP_SIGNAL_LISTENERS = 64;
 
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
@@ -702,6 +705,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ? runtime.turnSignal
         : AbortSignal.any([runtime.turnSignal, mutableStep.controller.signal]),
     };
+    EventEmitter.setMaxListeners(MAX_STEP_SIGNAL_LISTENERS, step.signal);
     this.materializeBatch(batch);
     return { step };
   }
@@ -846,7 +850,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       try {
         response = await request.result;
       } catch (error) {
-        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts, turnSignal);
+        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts);
         throw error;
       }
       this.lastRequestTraceId = request.trace.traceId;
@@ -938,9 +942,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     currentStep: number,
     stepUuid: string,
     streamParts: StreamPartCollector,
-    turnSignal: AbortSignal,
   ): void {
-    if (!turnSignal.aborted) return;
     for (const part of streamParts.drainInterruptedContent()) {
       this.context.appendLoopEvent({
         type: 'content.part',

@@ -297,6 +297,93 @@ describe('AgentConversationUndoService', () => {
     expect(ctx.agentState.get(turnKey).nextTurnId).toBe(2);
   });
 
+  it('reports the earliest removed turn id when a trailing non-anchor turn follows the anchor', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    const loop = ctx.get(IAgentLoopService);
+
+    ctx.mockNextResponse({ type: 'text', text: 'a1' });
+    const userTurn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'u1' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await expect(userTurn.result).resolves.toMatchObject({ type: 'completed' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'cron done' });
+    const cronTurn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'cron work' }],
+            toolCalls: [],
+            origin: {
+              kind: 'cron_job',
+              jobId: 'j1',
+              cron: '0 9 * * *',
+              recurring: true,
+              coalescedCount: 0,
+              stale: false,
+            },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await expect(cronTurn.result).resolves.toMatchObject({ type: 'completed' });
+
+    let fromTurnId: number | undefined;
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      fromTurnId = event.fromTurnId;
+    });
+    try {
+      await undo.undo(1);
+      expect(fromTurnId).toBe(userTurn.id);
+      expect(ctx.agentState.get(turnKey).anchorTurnIds).toEqual([]);
+      expect(ctx.context.get()).toHaveLength(0);
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('omits the removed turn id when context anchors were not opened by engine turns', async () => {
+    setup();
+    const undo = ctx.get(IAgentConversationUndoService);
+    ctx.get(IAgentContextMemoryService).append(
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'u1' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'a1' }],
+        toolCalls: [],
+      },
+    );
+
+    let fromTurnId: number | undefined = Number.NaN;
+    const subscription = ctx.get(IEventBus).subscribe(ContextUndone, (event) => {
+      fromTurnId = event.fromTurnId;
+    });
+    try {
+      await undo.undo(1);
+      expect(fromTurnId).toBeUndefined();
+    } finally {
+      subscription.dispose();
+    }
+  });
+
   it('flushes state reconciliation before publishing undo', async () => {
     setup();
     const wire = ctx.get(IWireService);

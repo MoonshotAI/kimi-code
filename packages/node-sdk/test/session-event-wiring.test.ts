@@ -147,6 +147,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       usage: USAGE,
       contextTokens: 10,
       maxContextTokens: 128_000,
+      contextUsage: 10 / 128_000,
       model: 'sub-model',
     });
     expect(events[1]).toMatchObject({

@@ -88,7 +88,9 @@
 - V3 resume 期 signal 靠 `emitLive` 隐式压制（skill/swarm）——"这个 signal 发不发
   得出去"取决于调用时相位，调用点看不出来。
 - V4 `IEventService` payload 无类型、事件名裸字符串、同一事件两处发布者。
-- V5 `prompt.submitted` 协议里存在但无人发；`AsyncEmitter/handleVetos` 是死代码。
+- V5 `prompt.submitted` 曾长期只存在于协议而无人发，现已由 `AgentPromptService`
+  在提交时发出（排队/运行以 `status` 区分，启动时再发 `prompt.started`）；
+  `AsyncEmitter/handleVetos` 是死代码。
 
 **回环与相位**
 - L1 订阅者回写链真实存在且无统一约束：turn.onEnded→goal 续跑→再 launch turn；
