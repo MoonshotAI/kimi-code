@@ -86,6 +86,7 @@ interface FlowState {
   readonly loginBaseUrl: string | undefined;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
+  tokenGranted: boolean;
   expiresAt: number;
   gcTimer: ReturnType<typeof setTimeout> | undefined;
   errorMessage: string | undefined;
@@ -135,6 +136,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       loginBaseUrl: loginAuth.baseUrl,
       device: undefined,
       status: 'pending',
+      tokenGranted: false,
       expiresAt: Date.now() + DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
       gcTimer: undefined,
       errorMessage: undefined,
@@ -469,6 +471,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     for (const state of this.flows.values()) {
       if (!affected.has(state.provider)) continue;
       if (state.status !== 'pending') continue;
+      if (state.tokenGranted) continue;
       state.controller.abort();
       state.errorMessage = 'Provider configuration changed during login.';
       this.setTerminal(state, 'cancelled');
@@ -477,13 +480,13 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private handleSuccess(state: FlowState): void {
     if (state.status !== 'pending') return;
-    this.setTerminal(state, 'authenticated');
+    state.tokenGranted = true;
     void this.provisionAfterSuccess(state);
   }
 
   private async completeAlreadyAuthenticatedLogin(state: FlowState): Promise<void> {
     if (state.status !== 'pending') return;
-    this.setTerminal(state, 'authenticated');
+    state.tokenGranted = true;
     await this.provisionAfterSuccess(state);
   }
 
@@ -499,6 +502,10 @@ export class OAuthService extends Disposable implements IOAuthService {
         provider: state.provider,
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      if (state.status === 'pending') {
+        this.setTerminal(state, 'authenticated');
+      }
     }
   }
 

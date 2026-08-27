@@ -98,7 +98,7 @@ describe('OAuthService', () => {
   let defaultModel: string | undefined;
   let thinking: { enabled?: boolean; effort?: string } | undefined;
   let toolkit: FakeToolkit;
-  let providerSet: ReturnType<typeof vi.fn>;
+  let providerSet: ReturnType<typeof vi.fn<(name: string, config: ProviderConfig) => Promise<void>>>;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
   let events: Event2[];
@@ -579,10 +579,8 @@ describe('OAuthService', () => {
 
     await svc.startLogin(OAUTH_PROVIDER);
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
-    await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(providerSet).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
       expect.objectContaining({
@@ -663,6 +661,33 @@ describe('OAuthService', () => {
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
   });
 
+  it('reports pending until provisioning finishes after the grant settles', async () => {
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    let resolveProvision!: () => void;
+    providerSet.mockImplementation((name: string, config: ProviderConfig) => {
+      providers = { ...providers, [name]: config };
+      return new Promise<void>((resolve) => {
+        resolveProvision = resolve;
+      });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    await vi.waitFor(() => {
+      expect(providerSet).toHaveBeenCalled();
+    });
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    resolveProvision();
+    await vi.waitFor(() => {
+      expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated');
+    });
+  });
+
   it('keeps the login authenticated when its own provisioning fires a provider change', async () => {
     stubManagedModelsFetch();
     toolkit.login.mockImplementation((_provider, options) => {
@@ -672,6 +697,7 @@ describe('OAuthService', () => {
     providerSet.mockImplementation((name: string, config: ProviderConfig) => {
       providers = { ...providers, [name]: config };
       providerChangedEmitter.fire({ added: [], removed: [], changed: [name] });
+      return Promise.resolve();
     });
     const svc = createService();
     await svc.startLogin(OAUTH_PROVIDER);
