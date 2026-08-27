@@ -31,6 +31,9 @@ export const taskSchema = z.object({
   /** Subagent tasks only: the child's effective thinking effort at spawn. */
   thinking_effort: z.string().optional(),
   agent_id: z.string().optional(),
+  /** The tool call that spawned this task, when the task is bound to one
+   *  (foreground or background Bash / subagent calls). */
+  parent_tool_call_id: z.string().optional(),
   /** Whether the task runs detached from the caller's turn (background).
    *  Optional: producers that predate the field (e.g. the agent-core v1
    *  task service) omit it — consumers apply the foreground fallback. */
