@@ -14,10 +14,12 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { ILogService } from '#/_base/log/log';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
 import { createVideoUploader, registerMediaTools } from './registerMediaTools';
+import { ISessionMediaStore } from './sessionMediaStore';
 
 export const mediaRegisteredKeyKey = defineState<string | undefined>(
   'media.registeredKey',
@@ -38,6 +40,8 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
+    @ILogService private readonly log: ILogService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     super();
@@ -130,6 +134,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       }),
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       telemetry: this.telemetry,
+      sessionMedia: { mediaStore: this.mediaStore, log: this.log },
     });
   }
 }

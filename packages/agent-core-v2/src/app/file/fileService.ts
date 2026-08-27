@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 
 import { z } from 'zod';
@@ -44,6 +45,10 @@ export interface IFileService {
 export const IFileService: ServiceIdentifier<IFileService> = createDecorator<IFileService>('fileService');
 
 export const FILE_ID_REGEX = /^f_[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+export function newFileId(): string {
+  return `f_${randomUUID()}`;
+}
 
 export function isFileId(value: string): boolean {
   return FILE_ID_REGEX.test(value);

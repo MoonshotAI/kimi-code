@@ -865,7 +865,7 @@ describe('video blocks', () => {
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
-  it('openai: no uploadVideo capability — the tool result is an error text, no files call', async () => {
+  it('openai: no uploadVideo capability — the tool result degrades to a video path tag, no files call', async () => {
     const ctx = await newCase(M_OPENAI_VISION, 'openai-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
 
@@ -882,9 +882,12 @@ describe('video blocks', () => {
     expect(chatCalls).toHaveLength(2);
     const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
-    // ModelRequesterImpl.uploadVideo throws for providers without the hook;
-    // ReadMediaFile converts that into an error tool result (engine fallback).
-    expect(String(toolMessage?.['content'])).toContain('does not support video upload');
+    // ReadMediaFile now stages the video into the session media store and
+    // returns a kimi-file:// reference; the media resolver cannot upload or
+    // inline for an openai-protocol model, so the request carries the
+    // degraded <video path> tag instead of a media part.
+    expect(JSON.stringify(toolMessage)).toContain('<video path=');
+    expect(JSON.stringify(toolMessage)).not.toContain('ms://');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 

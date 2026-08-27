@@ -16,12 +16,18 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
+import { isFileId } from '#/app/file/fileService';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
+import type { ILogService } from '#/_base/log/log';
 import {
   ReadMediaFileInputSchema,
   type ReadMediaFileInput,
   type VideoUploader,
 } from '#/agent/tools/read-media-file/read-media-file';
-import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
+import {
+  ReadMediaFileTool,
+  type ReadMediaSessionMediaDeps,
+} from '#/agent/tools/read-media-file/readMediaFileTool';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
@@ -196,12 +202,32 @@ function runtimeFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()
   };
 }
 
+function stubSessionMedia(options?: {
+  pathless?: boolean;
+  throwMaterialize?: boolean;
+}): ReadMediaSessionMediaDeps {
+  const mediaStore: ISessionMediaStore = {
+    _serviceBrand: undefined,
+    pathFor: () => undefined,
+    resolveDisplayPath: async () => undefined,
+    read: async () => undefined,
+    open: async () => undefined,
+    materialize: vi.fn(async (input) => {
+      if (options?.throwMaterialize === true) throw new Error('disk full');
+      return options?.pathless === true ? undefined : `/session/media/${input.fileId}.mp4`;
+    }),
+  };
+  const log = { warn: vi.fn() } as unknown as ILogService;
+  return { mediaStore, log };
+}
+
 function makeTool(
   files: Record<string, FakeFile>,
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
   telemetry?: ITelemetryService,
   inlineVideoSupported?: boolean,
+  sessionMedia?: ReadMediaSessionMediaDeps,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
     runtimeFor(createTestFs(files)),
@@ -210,12 +236,14 @@ function makeTool(
     videoUploader,
     telemetry,
     inlineVideoSupported,
+    sessionMedia,
   );
 }
 
 async function execute(
   tool: ReadMediaFileTool,
   args: ReadMediaFileInput,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<ExecutableToolResult> {
   const execution = tool.resolveExecution(args);
   if (!('execute' in execution)) {
@@ -224,7 +252,7 @@ async function execute(
   const ctx: ExecutableToolContext = {
     turnId: 1,
     toolCallId: 'call_media',
-    signal: new AbortController().signal,
+    signal,
   };
   return execution.execute(ctx);
 }
@@ -710,8 +738,127 @@ describe('ReadMediaFileTool', () => {
     expect(videoUploader).toHaveBeenCalledOnce();
     expect(videoUploader).toHaveBeenCalledWith(
       expect.objectContaining({ mimeType: 'video/mp4', filename: 'clip.mp4' }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(parts[1]).toEqual(uploadResult);
+  });
+
+  it('returns a daemon file reference when the session media store is available', async () => {
+    const videoUploader = vi.fn<VideoUploader>();
+    const sessionMedia = stubSessionMedia();
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    const staged = vi.mocked(sessionMedia.mediaStore.materialize).mock.calls[0]?.[0];
+    expect(staged?.fileId).toBeDefined();
+    expect(isFileId(staged!.fileId)).toBe(true);
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `kimi-file://${staged!.fileId}`, id: staged!.fileId },
+    });
+    expect(sessionMedia.mediaStore.materialize).toHaveBeenCalledOnce();
+    expect(videoUploader).not.toHaveBeenCalled();
+  });
+
+  it('passes the execution signal through to session media staging', async () => {
+    const sessionMedia = stubSessionMedia();
+    const controller = new AbortController();
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        undefined,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+      controller.signal,
+    );
+    expect(result.isError).not.toBe(true);
+    const staged = vi.mocked(sessionMedia.mediaStore.materialize).mock.calls[0]?.[0];
+    expect(staged?.signal).toBe(controller.signal);
+  });
+
+  it('rethrows an aborted read without staging the video', async () => {
+    const sessionMedia = stubSessionMedia();
+    const videoUploader = vi.fn<VideoUploader>();
+    await expect(
+      execute(
+        makeTool(
+          { '/workspace/clip.mp4': { data: mp4Buffer() } },
+          capabilities(),
+          videoUploader,
+          undefined,
+          undefined,
+          sessionMedia,
+        ),
+        { path: '/workspace/clip.mp4' },
+        AbortSignal.abort(),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(sessionMedia.mediaStore.materialize).not.toHaveBeenCalled();
+    expect(videoUploader).not.toHaveBeenCalled();
+  });
+
+  it('returns a daemon file reference when the backend stores bytes without a local path', async () => {
+    const videoUploader = vi.fn<VideoUploader>();
+    const sessionMedia = stubSessionMedia({ pathless: true });
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    const staged = vi.mocked(sessionMedia.mediaStore.materialize).mock.calls[0]?.[0];
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `kimi-file://${staged!.fileId}`, id: staged!.fileId },
+    });
+    expect(videoUploader).not.toHaveBeenCalled();
+    expect(sessionMedia.log?.warn).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the video uploader and logs when materialization throws', async () => {
+    const uploadResult = {
+      type: 'video_url' as const,
+      videoUrl: { url: 'https://example.com/uploaded.mp4' },
+    };
+    const videoUploader = vi.fn<VideoUploader>().mockResolvedValue(uploadResult);
+    const sessionMedia = stubSessionMedia({ throwMaterialize: true });
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        undefined,
+        sessionMedia,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual(uploadResult);
+    expect(sessionMedia.log?.warn).toHaveBeenCalledOnce();
+    expect(videoUploader).toHaveBeenCalledOnce();
   });
 
   it('falls back to an inline base64 video part when the upload fails', async () => {
@@ -903,6 +1050,8 @@ describe('AgentMediaToolsRegistrar', () => {
       workspaceCtx,
       recordingTelemetry([]),
       new AgentStateService(),
+      stubSessionMedia().mediaStore,
+      { warn: () => {} } as unknown as ILogService,
     );
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;

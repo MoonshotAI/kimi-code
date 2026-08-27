@@ -108,16 +108,30 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
-  it('projects a provider video url to a structured url source carrying its id', () => {
+  it('degrades a provider video url to a text placeholder instead of leaking the scheme', () => {
     const msg: ContextMessage = {
       role: 'user',
       content: [{ type: 'video_url', videoUrl: { url: 'ms://prov-7', id: 'prov-7' } }],
       toolCalls: [],
     };
 
-    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'video', source: { kind: 'url', url: 'ms://prov-7', id: 'prov-7' } },
-    ]);
+    const content = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content;
+    expect(content).toEqual([{ type: 'text', text: '[video unavailable]' }]);
+    expect(JSON.stringify(content)).not.toContain('ms://');
+    expect(JSON.stringify(content)).not.toContain('prov-7');
+  });
+
+  it('degrades a non-renderable image url scheme to a text placeholder', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: 'ms://prov-9', id: 'prov-9' } }],
+      toolCalls: [],
+    };
+
+    const content = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content;
+    expect(content).toEqual([{ type: 'text', text: '[image unavailable]' }]);
+    expect(JSON.stringify(content)).not.toContain('ms://');
+    expect(JSON.stringify(content)).not.toContain('prov-9');
   });
 
   it('appends assistant tool calls as tool_use parts with parsed input', () => {
@@ -165,6 +179,51 @@ describe('toProtocolMessage', () => {
     expect(toProtocolMessage(SESSION_ID, 0, result, 0).content).toEqual([
       { type: 'tool_result', tool_call_id: 'call_media', output: result.content },
     ]);
+  });
+
+  it('keeps daemon-ref media parts raw in the tool_result output', () => {
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'text', text: '<video path="/tmp/clip.mp4">' },
+        { type: 'video_url', videoUrl: { url: 'kimi-file://f_abc', id: 'f_abc' } },
+        { type: 'text', text: '</video>' },
+      ],
+      toolCalls: [],
+      toolCallId: 'call_video',
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, result, 0).content).toEqual([
+      { type: 'tool_result', tool_call_id: 'call_video', output: result.content },
+    ]);
+  });
+
+  it('replaces non-renderable media url schemes in the tool_result output with text', () => {
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'text', text: '<video path="/tmp/clip.mp4">' },
+        { type: 'video_url', videoUrl: { url: 'ms://prov-7', id: 'prov-7' } },
+        { type: 'text', text: '</video>' },
+      ],
+      toolCalls: [],
+      toolCallId: 'call_video',
+    };
+
+    const content = toProtocolMessage(SESSION_ID, 0, result, 0).content;
+    expect(content).toEqual([
+      {
+        type: 'tool_result',
+        tool_call_id: 'call_video',
+        output: [
+          { type: 'text', text: '<video path="/tmp/clip.mp4">' },
+          { type: 'text', text: '[video unavailable]' },
+          { type: 'text', text: '</video>' },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(content)).not.toContain('ms://');
+    expect(JSON.stringify(content)).not.toContain('prov-7');
   });
 
   it('marks failed tool results with is_error', () => {

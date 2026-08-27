@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
@@ -37,6 +38,11 @@ const IMAGE_UNAVAILABLE_TEXT =
 const IMAGE_MEMO_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_MEMO_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
+const VIDEO_INPUT_UNSUPPORTED_NOTE =
+  'The current model cannot receive video input; only the file path is shown.';
+const VIDEO_UPLOAD_FAILED_NOTE =
+  'The video could not be uploaded for the model; only the file path is shown.';
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -54,6 +60,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly mediaStore: ISessionMediaStore,
+    @ILogService private readonly log: ILogService,
   ) {
     this.states.contributeState(mediaResolvedKey);
   }
@@ -175,7 +182,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const model = requester.model;
-    if (!model.capabilities.video_in) return videoTag(await this.displayPath(ref));
+    if (!model.capabilities.video_in) {
+      return videoTag(await this.displayPath(ref), VIDEO_INPUT_UNSUPPORTED_NOTE);
+    }
     const providerKey = model.providerType ?? model.protocol;
     const cacheKey = `${ref.fileId}\0${providerKey}`;
 
@@ -189,11 +198,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
   private async memoedOutcome(ref: DaemonFileRef, memoed: ContentPart): Promise<ContentPart> {
     if (memoed.type !== 'text') return memoed;
-    const tag = matchSingleMediaPathTag(memoed.text);
+    const newlineAt = memoed.text.indexOf('\n');
+    const head = newlineAt === -1 ? memoed.text : memoed.text.slice(0, newlineAt);
+    const suffix = newlineAt === -1 ? '' : memoed.text.slice(newlineAt);
+    const tag = matchSingleMediaPathTag(head);
     if (tag === undefined) return memoed;
     const path = await this.displayPath(ref);
     if (path === undefined || path === tag.path) return memoed;
-    return { type: 'text', text: buildMediaPathTag(tag.kind, path) };
+    return { type: 'text', text: `${buildMediaPathTag(tag.kind, path)}${suffix}` };
   }
 
   private async resolveVideoUncached(
@@ -237,7 +249,9 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     });
     if (uploader === undefined) {
       return {
-        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+        part: inlineSupported
+          ? inlineVideoPart(bytes, mimeType)
+          : videoTag(tagPath, VIDEO_INPUT_UNSUPPORTED_NOTE),
         memoize: true,
       };
     }
@@ -249,14 +263,22 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       return { part: uploaded, memoize: true };
     } catch (error) {
       if (signal?.aborted) throw error;
-      if (isVideoUploadAuthError(error)) throw error;
       if (isVideoUploadUnsupportedError(error)) {
         return {
-          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+          part: inlineSupported
+            ? inlineVideoPart(bytes, mimeType)
+            : videoTag(tagPath, VIDEO_INPUT_UNSUPPORTED_NOTE),
           memoize: true,
         };
       }
-      return { part: videoTag(tagPath), memoize: false };
+      this.log.warn('video upload failed; degrading the video to a path tag', {
+        file_id: ref.fileId,
+        provider_type: model.providerType ?? model.protocol,
+        protocol: model.protocol,
+        auth_failure: isVideoUploadAuthError(error),
+        error_message: error instanceof Error ? error.message : String(error),
+      });
+      return { part: videoTag(tagPath, VIDEO_UPLOAD_FAILED_NOTE), memoize: false };
     }
   }
 
@@ -305,11 +327,12 @@ function unavailableMediaText(kind: 'image' | 'video'): ContentPart {
   return { type: 'text', text: kind === 'video' ? VIDEO_UNAVAILABLE_TEXT : IMAGE_UNAVAILABLE_TEXT };
 }
 
-function videoTag(path: string | undefined): ContentPart {
+function videoTag(path: string | undefined, note?: string): ContentPart {
   if (path === undefined) {
     return { type: 'text', text: VIDEO_UNAVAILABLE_TEXT };
   }
-  return { type: 'text', text: buildMediaPathTag('video', path) };
+  const tag = buildMediaPathTag('video', path);
+  return { type: 'text', text: note === undefined ? tag : `${tag}\n${note}` };
 }
 
 function msFileIdFromUrl(url: string): string | undefined {

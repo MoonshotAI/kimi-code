@@ -13,6 +13,7 @@ import {
 } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
@@ -41,6 +42,15 @@ const VIDEO_UNAVAILABLE_TEXT = '[video omitted: the uploaded file is no longer a
 const VIDEO_TAG = '<video path="/cache/file_abc.mp4"></video>';
 const IMAGE_TAG = '<image path="/cache/file_abc.png"></image>';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
+
+const VIDEO_INPUT_UNSUPPORTED_NOTE =
+  'The current model cannot receive video input; only the file path is shown.';
+const VIDEO_UPLOAD_FAILED_NOTE =
+  'The video could not be uploaded for the model; only the file path is shown.';
+
+function notedVideoTag(canonical: string, note: string): string {
+  return `<video path="${canonical}"></video>\n${note}`;
+}
 
 function videoMessage(url: string): Message {
   return { role: 'user', content: [{ type: 'video_url', videoUrl: { url } }], toolCalls: [] };
@@ -125,6 +135,7 @@ function blobStore(): IBlobStore {
 }
 
 const telemetry = { track2: () => {} } as unknown as ITelemetryService;
+const logStub = { warn: () => {} } as unknown as ILogService;
 
 function stubMediaStore(sessionDir = '/nonexistent-session'): ISessionMediaStore {
   return {
@@ -211,6 +222,7 @@ function resolver(
       reg.defineInstance(IFileService, fileService(files));
       reg.defineInstance(IBlobStore, blobStore());
       reg.defineInstance(ITelemetryService, telemetry);
+      reg.defineInstance(ILogService, logStub);
       reg.defineInstance(ISessionMediaStore, mediaStore);
       reg.define(IAgentMediaResolverService, AgentMediaResolverService);
     },
@@ -251,7 +263,7 @@ describe('AgentMediaResolverService video strategy', () => {
     );
     expect(firstPart(incapable)).toEqual({
       type: 'text',
-      text: `<video path="${canonical}"></video>`,
+      text: notedVideoTag(canonical, VIDEO_INPUT_UNSUPPORTED_NOTE),
     });
     expect(upload).toHaveBeenCalledTimes(1);
   });
@@ -262,13 +274,13 @@ describe('AgentMediaResolverService video strategy', () => {
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
 
     const upload1 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
-    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), logStub).resolve(
       [message],
       requester({ uploadVideo: upload1 }),
     );
 
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
-    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore()).resolve(
+    const out = await new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), logStub).resolve(
       [message],
       requester({ uploadVideo: upload2 }),
     );
@@ -283,6 +295,7 @@ describe('AgentMediaResolverService video strategy', () => {
     files: Map<string, { name: string; bytes: Buffer }>;
     fileId: string;
     req: (upload: ModelRequester['uploadVideo']) => ModelRequester;
+    note?: string;
   };
 
   it.each<TagCase>([
@@ -291,12 +304,14 @@ describe('AgentMediaResolverService video strategy', () => {
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
       fileId: FILE_ID,
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
+      note: VIDEO_INPUT_UNSUPPORTED_NOTE,
     },
     {
       name: 'a no-upload provider whose wire drops inline video (openai family)',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
       fileId: FILE_ID,
       req: () => requester({ protocol: 'openai', uploadVideo: undefined }),
+      note: VIDEO_INPUT_UNSUPPORTED_NOTE,
     },
     {
       name: 'the bytes do not sniff as a video',
@@ -310,7 +325,7 @@ describe('AgentMediaResolverService video strategy', () => {
       fileId: 'missing',
       req: (upload) => requester({ uploadVideo: upload }),
     },
-  ])('degrades when $name', async ({ files, fileId, req }) => {
+  ])('degrades when $name', async ({ files, fileId, req, note }) => {
     const upload = vi.fn();
     const canonical =
       fileId === FILE_ID ? await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES) : undefined;
@@ -321,20 +336,39 @@ describe('AgentMediaResolverService video strategy', () => {
 
     expect(firstPart(out)).toEqual({
       type: 'text',
-      text: canonical === undefined ? VIDEO_UNAVAILABLE_TEXT : `<video path="${canonical}"></video>`,
+      text:
+        canonical === undefined
+          ? VIDEO_UNAVAILABLE_TEXT
+          : note === undefined
+            ? `<video path="${canonical}"></video>`
+            : notedVideoTag(canonical, note),
     });
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it('rethrows an auth failure so it can drive credential refresh', async () => {
-    const upload = vi.fn(async () => {
-      throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+  it('retries the upload on a later step after an auth failure instead of freezing the tag', async () => {
+    let uploadCalls = 0;
+    const upload = vi.fn(async (): Promise<VideoURLPart> => {
+      uploadCalls += 1;
+      if (uploadCalls === 1) {
+        throw Object.assign(new Error('unauthorized'), { statusCode: 401 });
+      }
+      return msPart('prov-1');
     });
-    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]));
+    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
+    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+    const message = videoMessage(buildKimiFileUrl(FILE_ID));
+    const req = requester({ uploadVideo: upload });
 
-    await expect(
-      res.resolve([videoMessage(buildKimiFileUrl(FILE_ID))], requester({ uploadVideo: upload })),
-    ).rejects.toThrow('unauthorized');
+    const failed = await res.resolve([message], req);
+    expect(firstPart(failed)).toEqual({
+      type: 'text',
+      text: notedVideoTag(canonical, VIDEO_UPLOAD_FAILED_NOTE),
+    });
+
+    const retried = await res.resolve([message], req);
+    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
   });
 
   it('rethrows a cancelled upload without memoizing the fallback', async () => {
@@ -371,7 +405,7 @@ describe('AgentMediaResolverService video strategy', () => {
     const failed = await res.resolve([message], req);
     expect(firstPart(failed)).toEqual({
       type: 'text',
-      text: `<video path="${canonical}"></video>`,
+      text: notedVideoTag(canonical, VIDEO_UPLOAD_FAILED_NOTE),
     });
 
     const retried = await res.resolve([message], req);
@@ -424,6 +458,22 @@ describe('AgentMediaResolverService canonical session bytes', () => {
       expect(firstPart(out)).toEqual(expected);
     },
   );
+
+  it('uploads canonical session bytes under the original persisted filename', async () => {
+    const mediaStore = stubMediaStore();
+    mediaStore.read = async () => ({ data: VIDEO_BYTES, name: 'clip.mp4' });
+    const res = resolver(new Map(), undefined, mediaStore);
+    const upload = vi.fn<NonNullable<ModelRequester['uploadVideo']>>(async () => msPart('prov-1'));
+
+    const out = await res.resolve(
+      [videoMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadVideo: upload }),
+    );
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[0]).toMatchObject({ filename: 'clip.mp4' });
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+  });
 });
 
 describe('AgentMediaResolverService image strategy', () => {
@@ -477,6 +527,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
 
     await expect(
@@ -559,6 +610,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
     const expected = { type: 'image_url', imageUrl: { url: PNG_DATA_URL } };
@@ -585,6 +637,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -607,6 +660,7 @@ describe('AgentMediaResolverService image strategy', () => {
       telemetry,
       new AgentStateService(),
       stubMediaStore(),
+      logStub,
     );
     const req = requester({});
 
@@ -649,6 +703,7 @@ describe('AgentMediaResolverService image strategy', () => {
         telemetry,
         new AgentStateService(),
         stubMediaStore(sessionDir),
+        logStub,
       );
       const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
@@ -701,7 +756,10 @@ describe('AgentMediaResolverService session-canonical display path', () => {
 
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const second = await res.resolve([message], req);
-    expect(firstPart(second)).toEqual({ type: 'text', text: `<video path="${canonical}"></video>` });
+    expect(firstPart(second)).toEqual({
+      type: 'text',
+      text: notedVideoTag(canonical, VIDEO_INPUT_UNSUPPORTED_NOTE),
+    });
   });
 
   it('keeps a legacy persisted tag as text and degrades the reference with a synthesized tag', async () => {
@@ -720,7 +778,7 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     );
     expect(out[0]!.content).toEqual([
       { type: 'text', text: VIDEO_TAG },
-      { type: 'text', text: `<video path="${canonical}"></video>` },
+      { type: 'text', text: notedVideoTag(canonical, VIDEO_INPUT_UNSUPPORTED_NOTE) },
     ]);
   });
 
@@ -776,6 +834,7 @@ describe('AgentMediaResolverService scoped registration', () => {
       stubPair(IFileService, fileService(files)),
       stubPair(IBlobStore, blobStore()),
       stubPair(ITelemetryService, telemetry),
+      stubPair(ILogService, logStub),
     ]);
     return host.child(LifecycleScope.Agent, 'main', [
       stubPair(IAgentStateService, new AgentStateService()),
