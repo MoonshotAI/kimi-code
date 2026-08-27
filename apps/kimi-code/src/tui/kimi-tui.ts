@@ -275,6 +275,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
     renderLatex: input.tuiConfig.renderLatex,
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
+    thinkingLiveDisplay: input.tuiConfig.thinkingLiveDisplay,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,

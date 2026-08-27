@@ -3,10 +3,18 @@
  * Supports live in-place updates while thinking streams, then finalizes
  * without replacing the component.
  * Supports expand/collapse via Ctrl+O (shared with tool output).
+ *
+ * The live display has two modes (tui.toml `thinking_live_display`):
+ * 'preview' scrolls the last few streamed lines; 'stats' shows just the
+ * elapsed thinking time, leaving a one-line "Thought for …" summary once
+ * thinking finishes (ctrl+o reveals the streaming text in both modes).
+ * Replayed thinking has no persisted duration, so untimed blocks fall back
+ * to a plain "Thought for a while" summary instead of a fabricated 0s.
  */
 
 import { Text, truncateToWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
 
+import type { ThinkingLiveDisplay } from '#/tui/config';
 import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
@@ -19,10 +27,23 @@ import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
+export interface ThinkingComponentOptions {
+  mode?: ThinkingRenderMode;
+  ui?: TUI;
+  liveDisplay?: ThinkingLiveDisplay;
+  /** False for replayed blocks: their duration is not persisted, so no elapsed
+   * time is shown anywhere. */
+  timed?: boolean;
+}
+
 export class ThinkingComponent implements Component {
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
+  private readonly liveDisplay: ThinkingLiveDisplay;
+  private readonly startedAt: number;
+  private readonly timed: boolean;
+  private finalizedElapsedSeconds: number | undefined;
   private expanded = false;
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
@@ -38,15 +59,17 @@ export class ThinkingComponent implements Component {
   constructor(
     text: string,
     showMarker: boolean = true,
-    mode: ThinkingRenderMode = 'finalized',
-    ui?: TUI,
+    options: ThinkingComponentOptions = {},
   ) {
     this.text = text;
     this.showMarker = showMarker;
-    this.mode = mode;
-    this.ui = ui;
+    this.mode = options.mode ?? 'finalized';
+    this.ui = options.ui;
+    this.liveDisplay = options.liveDisplay ?? 'preview';
+    this.timed = options.timed ?? true;
+    this.startedAt = Date.now();
     this.textComponent = new Text(this.styled(text), 0, 0);
-    if (mode === 'live') {
+    if (this.mode === 'live') {
       this.startSpinner();
     }
   }
@@ -73,6 +96,7 @@ export class ThinkingComponent implements Component {
 
   finalize(): void {
     this.mode = 'finalized';
+    this.finalizedElapsedSeconds = Math.floor((Date.now() - this.startedAt) / 1000);
     this.markRenderDirty();
     this.stopSpinner();
   }
@@ -97,22 +121,49 @@ export class ThinkingComponent implements Component {
     }
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
-    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    // Stats mode hides the text unless explicitly expanded, so skip the re-wrap.
+    const showContent = this.liveDisplay === 'preview' || this.expanded;
+    const contentLines =
+      showContent && this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
 
     let rendered: string[];
     if (this.mode === 'live') {
-      const visibleLines =
-        contentLines.length > THINKING_PREVIEW_LINES
-          ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
-          : contentLines;
       const spinner = currentTheme.fg(
         'textDim',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
+      if (this.liveDisplay === 'stats' && !this.expanded) {
+        const label = this.timed
+          ? `thinking... (${formatThinkingDuration(Math.floor((Date.now() - this.startedAt) / 1000))})`
+          : 'thinking...';
+        rendered = ['', spinner + currentTheme.fg('textDim', label)];
+      } else {
+        // Preview tail — also the expanded view of a live stats block (ctrl+o).
+        const visibleLines =
+          contentLines.length > THINKING_PREVIEW_LINES
+            ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
+            : contentLines;
+        rendered = [
+          '',
+          spinner + currentTheme.fg('textDim', 'thinking...'),
+          ...visibleLines.map((line) => MESSAGE_INDENT + line),
+        ];
+      }
+    } else if (this.liveDisplay === 'stats' && !this.expanded) {
+      // Stats mode leaves a one-line summary instead of the content preview;
+      // ctrl+o expands into the full text. Untimed (replayed) blocks have no
+      // persisted duration, so they get a plain "a while" instead of a fake 0s.
+      const p = this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
+      const hint = this.text.length > 0 ? ' (ctrl+o to expand)' : '';
+      const duration = this.timed
+        ? formatThinkingDuration(this.finalizedElapsedSeconds ?? 0)
+        : 'a while';
+      const summary = `Thought for ${duration}${hint}`;
+      // Both prefixes occupy two cells (STATUS_BULLET is '● ').
+      const summaryWidth = Math.max(0, width - MESSAGE_INDENT.length);
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking...'),
-        ...visibleLines.map((line) => MESSAGE_INDENT + line),
+        p + currentTheme.fg('textDim', truncateToWidth(summary, summaryWidth, '…')),
       ];
     } else {
       const lines: string[] = [''];
@@ -157,4 +208,14 @@ export class ThinkingComponent implements Component {
     clearInterval(this.spinnerInterval);
     this.spinnerInterval = undefined;
   }
+}
+
+/** Compact elapsed time for the live stats line: 10s, 1m12s, 5h3m33s. */
+function formatThinkingDuration(totalSeconds: number): string {
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  if (hours > 0) return `${String(hours)}h${String(minutes)}m${String(seconds)}s`;
+  if (minutes > 0) return `${String(minutes)}m${String(seconds)}s`;
+  return `${String(seconds)}s`;
 }

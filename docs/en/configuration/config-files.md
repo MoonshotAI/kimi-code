@@ -520,6 +520,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions (`$…$`, `$$…$$`) in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | Show a dialog when resuming a long-idle session or submitting after a long idle stretch, warning that the context cache has likely expired and offering to compact or start a new session (v2 engine only) |
+| `thinking_live_display` | `string` | `preview` | What to show while thinking streams: `preview` scrolls the last lines of the thinking text; `stats` hides the text and shows the elapsed thinking time instead, leaving a one-line "Thought for …" summary when thinking finishes (Ctrl-O reveals the text in both modes) |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
@@ -533,6 +534,7 @@ theme = "auto" # "auto" | "dark" | "light" | custom theme name
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
+thinking_live_display = "preview" # "preview" scrolls the last lines while thinking streams; "stats" shows the elapsed time
 
 [editor]
 command = "" # empty uses $VISUAL / $EDITOR

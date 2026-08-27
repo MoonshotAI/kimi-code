@@ -12,7 +12,7 @@ const longThinking = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'lin
 
 describe('ThinkingComponent', () => {
   it('shows the live spinner header before thinking content', () => {
-    const component = new ThinkingComponent('working it out', true, 'live');
+    const component = new ThinkingComponent('working it out', true, { mode: 'live' });
     const out = strip(component.render(80).join('\n'));
 
     expect(out).toContain('⠋ thinking...');
@@ -22,7 +22,7 @@ describe('ThinkingComponent', () => {
   });
 
   it('keeps live thinking height-limited to the tail', () => {
-    const component = new ThinkingComponent(longThinking, true, 'live');
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live' });
     const out = strip(component.render(80).join('\n'));
 
     expect(out).not.toContain('line1');
@@ -36,9 +36,10 @@ describe('ThinkingComponent', () => {
   it('animates the live spinner and stops on finalize', () => {
     vi.useFakeTimers();
     const requestRender = vi.fn();
-    const component = new ThinkingComponent('step', true, 'live', {
-      requestRender,
-    } as unknown as TUI);
+    const component = new ThinkingComponent('step', true, {
+      mode: 'live',
+      ui: { requestRender } as unknown as TUI,
+    });
 
     expect(strip(component.render(80).join('\n'))).toContain('⠋ thinking...');
 
@@ -54,7 +55,7 @@ describe('ThinkingComponent', () => {
   });
 
   it('finalizes in place into a collapsed preview', () => {
-    const component = new ThinkingComponent(longThinking, true, 'live');
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live' });
 
     component.finalize();
 
@@ -67,7 +68,7 @@ describe('ThinkingComponent', () => {
   });
 
   it('expands and collapses after finalization', () => {
-    const component = new ThinkingComponent(longThinking, true, 'live');
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live' });
     component.finalize();
 
     component.setExpanded(true);
@@ -82,11 +83,125 @@ describe('ThinkingComponent', () => {
   });
 
   it('keeps the finalized truncation footer within the requested render width', () => {
-    const component = new ThinkingComponent(longThinking, true, 'live');
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live' });
     component.finalize();
 
     for (const line of component.render(37)) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
     }
+  });
+
+  it('shows only the elapsed time instead of content in live stats mode', () => {
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live', liveDisplay: 'stats' });
+    const out = strip(component.render(80).join('\n'));
+
+    expect(out).toContain('⠋ thinking... (0s)');
+    expect(out).not.toContain('tokens');
+    expect(out).not.toContain('line6');
+    expect(out).not.toContain('line7');
+  });
+
+  it('reveals the streaming tail on expand in live stats mode, like preview mode', () => {
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live', liveDisplay: 'stats' });
+
+    component.setExpanded(true);
+    const expanded = strip(component.render(80).join('\n'));
+    expect(expanded).toContain('⠋ thinking...');
+    expect(expanded).not.toContain('(0s)');
+    expect(expanded).not.toContain('line5');
+    expect(expanded).toContain('line6');
+    expect(expanded).toContain('line7');
+
+    component.setExpanded(false);
+    const collapsed = strip(component.render(80).join('\n'));
+    expect(collapsed).toContain('thinking... (0s)');
+    expect(collapsed).not.toContain('line7');
+  });
+
+  it('ticks the elapsed time in live stats mode', () => {
+    vi.useFakeTimers();
+    const component = new ThinkingComponent('working it out', true, { mode: 'live', liveDisplay: 'stats' });
+
+    vi.advanceTimersByTime(72_000);
+    component.invalidate();
+    expect(strip(component.render(80).join('\n'))).toContain('1m12s');
+
+    vi.advanceTimersByTime(18_213_000 - 72_000);
+    component.invalidate();
+    expect(strip(component.render(80).join('\n'))).toContain('5h3m33s');
+
+    vi.useRealTimers();
+  });
+
+  it('finalizes stats mode into a "Thought for" summary line', () => {
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live', liveDisplay: 'stats' });
+
+    component.finalize();
+
+    const out = strip(component.render(80).join('\n'));
+    expect(out).toContain(`${STATUS_BULLET}Thought for 0s`);
+    expect(out).toContain('(ctrl+o to expand)');
+    expect(out).not.toContain('line1');
+    expect(out).not.toContain('line7');
+  });
+
+  it('freezes the elapsed time in the stats summary on finalize', () => {
+    vi.useFakeTimers();
+    const component = new ThinkingComponent('working it out', true, { mode: 'live', liveDisplay: 'stats' });
+
+    vi.advanceTimersByTime(72_000);
+    component.finalize();
+    expect(strip(component.render(80).join('\n'))).toContain('Thought for 1m12s');
+
+    vi.advanceTimersByTime(60_000);
+    component.invalidate();
+    expect(strip(component.render(80).join('\n'))).toContain('Thought for 1m12s');
+
+    vi.useRealTimers();
+  });
+
+  it('expands a finalized stats summary into the full thinking text', () => {
+    const component = new ThinkingComponent(longThinking, true, { mode: 'live', liveDisplay: 'stats' });
+    component.finalize();
+
+    component.setExpanded(true);
+    const expanded = strip(component.render(80).join('\n'));
+    expect(expanded).toContain('line7');
+    expect(expanded).not.toContain('Thought for');
+
+    component.setExpanded(false);
+    const collapsed = strip(component.render(80).join('\n'));
+    expect(collapsed).toContain('Thought for 0s');
+    expect(collapsed).not.toContain('line7');
+  });
+
+  it('shows "Thought for a while" for untimed (replayed) stats blocks', () => {
+    const component = new ThinkingComponent(longThinking, true, {
+      mode: 'live',
+      liveDisplay: 'stats',
+      timed: false,
+    });
+
+    component.finalize();
+
+    const out = strip(component.render(80).join('\n'));
+    expect(out).toContain(`${STATUS_BULLET}Thought for a while`);
+    expect(out).toContain('(ctrl+o to expand)');
+    expect(out).not.toContain('0s');
+    expect(out).not.toContain('line1');
+  });
+
+  it('omits the stats from the untimed live line', () => {
+    const component = new ThinkingComponent('working it out', true, {
+      mode: 'live',
+      liveDisplay: 'stats',
+      timed: false,
+    });
+
+    const out = strip(component.render(80).join('\n'));
+    expect(out).toContain('⠋ thinking...');
+    expect(out).not.toContain('(0s)');
+    expect(out).not.toContain('tokens');
+    expect(out).not.toContain('working it out');
   });
 });

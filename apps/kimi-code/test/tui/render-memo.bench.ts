@@ -67,7 +67,7 @@ function buildMessages(turns: number): Component[] {
     assistant.updateContent(`[${i}] ${ASSISTANT_TEXT}`);
     components.push(assistant);
 
-    components.push(new ThinkingComponent(`[${i}] ${THINKING_TEXT}`, true, 'finalized'));
+    components.push(new ThinkingComponent(`[${i}] ${THINKING_TEXT}`, true, { mode: 'finalized' }));
   }
   return components;
 }

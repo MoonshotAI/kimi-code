@@ -70,6 +70,7 @@ export async function applyReloadedTuiConfig(
     disablePasteBurst: config.disablePasteBurst,
     renderLatex: config.renderLatex,
     cacheExpiryHint: config.cacheExpiryHint,
+    thinkingLiveDisplay: config.thinkingLiveDisplay,
     notifications: config.notifications,
     upgrade: config.upgrade,
     statusLine: config.statusLine,
