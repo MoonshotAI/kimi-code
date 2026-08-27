@@ -1064,49 +1064,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.items).toBe(base.items);
   });
 
-  it('patches a tool frame with real before/after content from a file.edit_snapshot record', () => {
-    const base = groupMessagesIntoSnapshot([
-      { role: 'user', content: [{ type: 'text', text: 'edit it' }], toolCalls: [], origin: { kind: 'user' } },
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ id: 'call_1', name: 'Edit', arguments: '{"path":"a.ts"}' }],
-      },
-      { role: 'tool', toolCallId: 'call_1', content: [{ type: 'text', text: 'Replaced 1 occurrence' }], toolCalls: [] },
-    ]);
-    const folded = foldWireRecordFacts(
-      [
-        {
-          type: 'file.edit_snapshot',
-          toolCallId: 'call_1',
-          path: 'a.ts',
-          before: 'old content',
-          after: 'new content',
-          time: 1000,
-        },
-      ],
-      base,
-    );
-    const turn = folded.items[0];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    const frame = turn.steps[0]?.frames.find((f) => f.kind === 'tool');
-    expect(frame?.kind === 'tool' && frame.edit).toEqual({
-      path: 'a.ts',
-      before: 'old content',
-      after: 'new content',
-      truncated: undefined,
-    });
-  });
-
-  it('ignores a file.edit_snapshot record for a toolCallId with no matching frame', () => {
-    const base = baseWithMarker();
-    const folded = foldWireRecordFacts(
-      [{ type: 'file.edit_snapshot', toolCallId: 'no-such-call', path: 'a.ts', before: 'x', after: 'y', time: 1000 }],
-      base,
-    );
-    expect(folded.items).toEqual(base.items);
-  });
-
   it('folds todo records into the global todo document, last write wins', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(

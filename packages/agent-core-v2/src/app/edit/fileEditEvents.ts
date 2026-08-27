@@ -13,22 +13,47 @@ export interface FileEditSnapshotPayload {
   readonly truncated?: boolean;
 }
 
-const fileEditSnapshotSchema = z.object({
+export class FileEditSnapshot extends AgentEvent2<FileEditSnapshotPayload> {
+  static override readonly type = 'file.edit_snapshot';
+  static override readonly observable = true;
+}
+export interface FileEditSnapshot extends FileEditSnapshotPayload {}
+
+export interface FileBlobRef {
+  readonly key: string;
+  readonly bytes: number;
+}
+
+export interface FileEditSnapshotRecordedPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly toolCallId: string;
+  readonly path: string;
+  readonly before?: FileBlobRef | null;
+  readonly after?: FileBlobRef;
+  readonly truncated?: boolean;
+}
+
+const fileBlobRefSchema = z.object({
+  key: z.string(),
+  bytes: z.number(),
+}) satisfies z.ZodType<FileBlobRef>;
+
+const fileEditSnapshotRecordedSchema = z.object({
   agentId: z.string(),
   turnId: z.number(),
   toolCallId: z.string(),
   path: z.string(),
-  before: z.string().nullable().optional(),
-  after: z.string().optional(),
+  before: fileBlobRefSchema.nullable().optional(),
+  after: fileBlobRefSchema.optional(),
   truncated: z.boolean().optional(),
-}) satisfies z.ZodType<FileEditSnapshotPayload>;
+}) satisfies z.ZodType<FileEditSnapshotRecordedPayload>;
 
-export class FileEditSnapshot extends AgentEvent2<FileEditSnapshotPayload> {
-  static override readonly type = 'file.edit_snapshot';
+export class FileEditSnapshotRecorded extends AgentEvent2<FileEditSnapshotRecordedPayload> {
+  static override readonly type = 'file.edit_snapshot.recorded';
   static override readonly durable = true;
-  static override readonly observable = true;
-  static override readonly schema = fileEditSnapshotSchema;
+  static override readonly schema = fileEditSnapshotRecordedSchema;
 }
-export interface FileEditSnapshot extends FileEditSnapshotPayload {}
+export interface FileEditSnapshotRecorded extends FileEditSnapshotRecordedPayload {}
 
-registerEvent2Class(FileEditSnapshot);
+registerEvent2Class(FileEditSnapshotRecorded);

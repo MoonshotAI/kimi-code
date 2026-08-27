@@ -1,4 +1,3 @@
-import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
@@ -55,14 +54,6 @@ interface PlanRevisionPayload {
   readonly path?: unknown;
   readonly sha256?: unknown;
   readonly bytes?: unknown;
-}
-
-interface FileEditSnapshotPayload {
-  readonly toolCallId?: unknown;
-  readonly path?: unknown;
-  readonly before?: unknown;
-  readonly after?: unknown;
-  readonly truncated?: unknown;
 }
 
 interface TurnEndedPayload {
@@ -179,45 +170,6 @@ function readTodoItems(raw: unknown): TodoItem[] {
   return items;
 }
 
-function patchToolFrameEdits(
-  items: readonly TranscriptItem[],
-  snapshots: ReadonlyMap<string, HistoryWireRecord>,
-): TranscriptItem[] {
-  return items.map((item) => {
-    if (item.kind !== 'turn') return item;
-    let turnChanged = false;
-    const steps = item.steps.map((step) => {
-      let stepChanged = false;
-      const frames = step.frames.map((frame): TranscriptFrame => {
-        if (frame.kind !== 'tool') return frame;
-        const record = snapshots.get(frame.toolCallId);
-        if (record === undefined) return frame;
-        stepChanged = true;
-        const payload = record as FileEditSnapshotPayload;
-        return {
-          ...frame,
-          edit: {
-            path: typeof payload.path === 'string' ? payload.path : '',
-            before:
-              typeof payload.before === 'string'
-                ? payload.before
-                : payload.before === null
-                  ? null
-                  : undefined,
-            after: typeof payload.after === 'string' ? payload.after : undefined,
-            truncated: typeof payload.truncated === 'boolean' ? payload.truncated : undefined,
-          },
-        };
-      });
-      if (!stepChanged) return step;
-      turnChanged = true;
-      return { ...step, frames };
-    });
-    if (!turnChanged) return item;
-    return { ...item, steps };
-  });
-}
-
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
@@ -225,7 +177,6 @@ export function foldWireRecordFacts(
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
-  const fileEditSnapshots = new Map<string, HistoryWireRecord>();
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
@@ -381,11 +332,6 @@ export function foldWireRecordFacts(
         pushMarker('plan.revision', record);
         break;
       }
-      case 'file.edit_snapshot': {
-        const payload = record as FileEditSnapshotPayload;
-        if (typeof payload.toolCallId === 'string') fileEditSnapshots.set(payload.toolCallId, record);
-        break;
-      }
       case 'swarm_mode.enter': {
         swarmActive = true;
         pushMarker('swarm.enter', record);
@@ -498,7 +444,7 @@ export function foldWireRecordFacts(
     endedByOrdinal.set(turnId - hidden, record);
   }
 
-  const endedItems =
+  const items =
     endedByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
@@ -515,9 +461,6 @@ export function foldWireRecordFacts(
           };
         })
       : base.items;
-
-  const items =
-    fileEditSnapshots.size > 0 ? patchToolFrameEdits(endedItems, fileEditSnapshots) : endedItems;
 
   const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
   const meta: TranscriptMeta = {

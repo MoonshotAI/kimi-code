@@ -34,7 +34,7 @@
 //   cron.add                           (none)                                                src/features/cron/cronOps.ts
 //   cron.cursor                        (none)                                                src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                src/features/cron/cronOps.ts
-//   file.edit_snapshot                 (none)                                                src/app/edit/fileEditEvents.ts
+//   file.edit_snapshot.recorded        (none)                                                src/app/edit/fileEditEvents.ts
 //   forked                             (none)                                                src/features/goal/goalOps.ts
 //   full_compaction.begin              fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
 //   full_compaction.cancel             fullCompaction                                        src/agent/fullCompaction/compactionOps.ts
@@ -219,14 +219,17 @@ interface CronDeletePayload {
  * states: (none)
  * owner: src/app/edit/fileEditEvents.ts
  */
-interface FileEditSnapshotPayload {
-  _name: 'file.edit_snapshot';
+interface FileEditSnapshotRecordedPayload {
+  _name: 'file.edit_snapshot.recorded';
   agentId: string;
   turnId: number;
   toolCallId: string;
   path: string;
-  before?: string | null;
-  after?: string;
+  before?: object | null;
+  after?: {
+    key: string;
+    bytes: number;
+  };
   truncated?: boolean;
 }
 
@@ -853,7 +856,7 @@ interface WirePayloadMap {
   "cron.add": CronAddPayload;
   "cron.cursor": CronCursorPayload;
   "cron.delete": CronDeletePayload;
-  "file.edit_snapshot": FileEditSnapshotPayload;
+  "file.edit_snapshot.recorded": FileEditSnapshotRecordedPayload;
   "forked": ForkedPayload;
   "full_compaction.begin": FullCompactionBeginPayload;
   "full_compaction.cancel": FullCompactionCancelPayload;

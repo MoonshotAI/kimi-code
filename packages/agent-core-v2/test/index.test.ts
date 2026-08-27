@@ -87,7 +87,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'interaction.request',
   'interaction.resolved',
   'plan.revision',
-  'file.edit_snapshot',
+  'file.edit_snapshot.recorded',
   'interruptionReminder.recorded',
   'plugin.session_start',
   'runtime.set_binding',

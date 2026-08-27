@@ -39,6 +39,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { profileKey } from '#/agent/profile/profileOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -126,6 +128,7 @@ function createHarness(
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
+        reg.define(IBlobStore, BlobStoreService);
         reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
         registerLogServices(reg);
       } else {

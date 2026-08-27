@@ -55,7 +55,10 @@ export class WriteTool implements IWriteTool {
       operation: 'write',
     });
     return {
-      accesses: ToolAccesses.writeFile(path),
+      accesses:
+        (args.mode ?? 'overwrite') === 'append'
+          ? ToolAccesses.writeFile(path)
+          : ToolAccesses.readWriteFile(path),
       description: `Writing ${args.path}`,
       display: { kind: 'file_io', operation: 'write', path, content: args.content },
       approvalRule: literalRulePattern(this.name, path),

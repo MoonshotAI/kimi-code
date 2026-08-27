@@ -43,6 +43,9 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -82,6 +85,8 @@ beforeEach(() => {
         truncateForModel: (input) => truncateForModel(input),
         isSpillFilePath: () => false,
       });
+      reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+      reg.define(IBlobStore, BlobStoreService);
       reg.defineInstance(IEventBus, {
         publish: (event: ProtocolEvent) => {
           if (event.type.startsWith('tool.')) {

@@ -22,6 +22,10 @@ import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/too
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
@@ -95,6 +99,8 @@ function createHarness(
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
+      reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+      reg.define(IBlobStore, BlobStoreService);
       if (events === undefined) {
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       } else {

@@ -151,6 +151,22 @@ describe('WriteTool', () => {
     });
   });
 
+  it('declares readwrite access for overwrite mode and write-only access for append mode', () => {
+    const { tool } = makeTool();
+    const overwrite = tool.resolveExecution({ path: '/tmp/out.txt', content: 'hello' });
+    const append = tool.resolveExecution({ path: '/tmp/out.txt', content: 'hello', mode: 'append' });
+    if (overwrite.isError === true || append.isError === true) {
+      throw new TypeError('expected runnable execution');
+    }
+
+    expect(overwrite.accesses).toEqual([
+      { kind: 'file', operation: 'readwrite', path: '/tmp/out.txt', recursive: undefined },
+    ]);
+    expect(append.accesses).toEqual([
+      { kind: 'file', operation: 'write', path: '/tmp/out.txt', recursive: undefined },
+    ]);
+  });
+
   it('matches permission args with negated glob path semantics', () => {
     const { tool } = makeTool({}, stubWorkspaceContext('/workspace'));
     const insideSrc = tool.resolveExecution({ path: './src/a.ts', content: 'x' });
