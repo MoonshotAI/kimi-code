@@ -6,13 +6,13 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
 import { ContextApplyCompaction } from '#/features/contextMemory/contextEvents';
 import type { TaskOrigin } from '#/features/contextMemory/types';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import { AgentLoop } from '#/features/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
@@ -149,24 +149,36 @@ describe('AgentConversationUndoService', () => {
     setup();
     ctx.appendTurnExchange('u1', 'a1');
     const history = ctx.context.get();
-    const compaction = ctx.get(IAgentFullCompactionService);
-    const abortController = new AbortController();
-    const active = vi.spyOn(compaction, 'compacting', 'get').mockReturnValue({
-      abortController,
-      promise: new Promise<never>(() => {}),
-      trigger: 'manual',
-      tokenCount: 2,
+    const compaction = ctx.resolve(AgentFullCompaction);
+    let release!: () => void;
+    const canCompact = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const hook = compaction.registerBeforeCompactHook('test-undo-busy', async () => {
+      await canCompact;
     });
 
     try {
+      ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+      const started = compaction.begin({ source: 'auto' });
       await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
         code: ErrorCodes.SESSION_BUSY,
         details: { reason: 'compaction' },
       });
-      expect(abortController.signal.aborted).toBe(false);
+      expect(compaction.status()).toBe('running');
       expect(ctx.context.get()).toBe(history);
+
+      release();
+      await started;
+      const finished = new Promise<void>((resolve) => {
+        const subscription = compaction.onDidFinish(() => {
+          subscription.dispose();
+          resolve();
+        });
+      });
+      await finished;
     } finally {
-      active.mockRestore();
+      hook.dispose();
     }
   });
 

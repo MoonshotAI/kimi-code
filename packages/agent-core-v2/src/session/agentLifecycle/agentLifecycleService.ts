@@ -37,8 +37,8 @@ import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentR
 import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { IWireService } from '#/wire/wire';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -431,18 +431,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = managed.handle;
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     const loop = handle.accessor.get(LoopControlToken);
-    const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
-    const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
+    const compaction = managed.runtimeSet.resolve(AgentFullCompaction);
     const reason = abortError('Agent removed');
     const prompt = managed.runtimeSet.resolve(AgentPrompt);
     for (const turnId of loop.status().pendingTurnIds) {
       loop.cancel(turnId, reason);
     }
     loop.cancel(undefined, reason);
-    if (compaction !== null && !compaction.abortController.signal.aborted) {
-      compaction.abortController.abort(reason);
-    }
-    await Promise.all([loop.settled(), compactionSettled, prompt.drain(reason)]);
+    await Promise.all([loop.settled(), compaction.cancel(), prompt.drain(reason)]);
     await managed.runtimeSet.close();
     await handle.dispose();
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);

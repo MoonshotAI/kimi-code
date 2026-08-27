@@ -17,6 +17,10 @@ import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRu
 import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { AgentUsage, usageAgentRuntimeProvider } from '#/features/usage/usageAgentRuntime';
 import {
+  AgentFullCompaction,
+  fullCompactionAgentRuntimeProvider,
+} from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import {
   AgentPermissionRules,
   permissionRulesAgentRuntimeProvider,
 } from '#/features/permissionRules/permissionRulesAgentRuntime';
@@ -178,6 +182,22 @@ export function attachInteractionRuntime(
   runtimes.apply({
     definition: AgentInteraction,
     provider: interactionAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  });
+  runtimes.attachDurable(dispatcher);
+  return runtimes;
+}
+
+export function attachFullCompactionRuntime(
+  ix: TestInstantiationService,
+  dispatcher: IEventDispatcher,
+): AgentRuntimeSet {
+  const agent = ix.get(IAgentScopeContext).agentContext;
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  runtimes.apply({
+    definition: AgentFullCompaction,
+    provider: fullCompactionAgentRuntimeProvider,
     generation: 1,
     active: true,
   });

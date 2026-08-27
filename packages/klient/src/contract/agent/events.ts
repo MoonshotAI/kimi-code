@@ -152,7 +152,7 @@ export const compactionCancelledEventSchema = z.object({
 /**
  * Protocol `CompactionResult` — mirrored field-for-field. The engine's
  * internal result additionally carries `contextSummary`, but the service
- * strips it before publishing (`fullCompactionService.ts`), so it never
+ * strips it before publishing (`features/fullCompaction`), so it never
  * reaches the wire.
  */
 export const compactionCompletedEventSchema = z.object({

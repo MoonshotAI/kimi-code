@@ -8,7 +8,7 @@ import type { Tool } from '#/kosong/contract/tool';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
+import { CompactionCompleted } from '#/features/fullCompaction/fullCompactionEvents';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';

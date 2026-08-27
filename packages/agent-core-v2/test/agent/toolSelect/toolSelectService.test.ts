@@ -17,7 +17,7 @@ import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderHarness, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { stubProfileRuntime } from '../../features/profile/stubs';
-import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
+import { CompactionCompleted } from '#/features/fullCompaction/fullCompactionEvents';
 import {
   LoopControlToken,
   type AfterStepContext,

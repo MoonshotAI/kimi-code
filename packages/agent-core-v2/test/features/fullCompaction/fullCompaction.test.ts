@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DefaultCompactionStrategy,
-} from '#/agent/fullCompaction/strategy';
+} from '#/features/fullCompaction/internal/strategy';
 import { COMPACTION_SUMMARY_PREFIX } from '#/features/contextMemory/compactionHandoff';
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
@@ -27,7 +27,6 @@ import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } fro
 import { agentService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent as createTestAgent } from '../../harness';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import {
-  IAgentFullCompactionService,
   IModelOAuthTokens,
   AgentProfile,
   IAgentToolRegistryService,
@@ -38,6 +37,7 @@ import {
   type ToolExecution,
 } from '#/index';
 import { LoopControlToken } from '#/features/loop/internal/loop';
+import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -245,6 +245,7 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({ instruction: 'Keep the important test facts.' });
     await compacted;
     await completed;
+    expect(ctx.resolve(AgentFullCompaction).status()).toBe('completed');
 
     const events = ctx.newEvents();
     expect(countEvents(events, 'context.append_message')).toBeGreaterThanOrEqual(6);
@@ -329,22 +330,27 @@ describe('FullCompaction', () => {
     const compactionStarted = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const hook = ctx.get(IAgentFullCompactionService).hooks.onWillCompact.register(
+    const hook = ctx.resolve(AgentFullCompaction).registerBeforeCompactHook(
       'test-quiescence',
-      async (_task, next) => {
+      async () => {
         started();
         await canCompact;
-        await next();
       },
     );
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
 
-    expect(ctx.get(IAgentFullCompactionService).begin({ source: 'manual' })).toBe(true);
+    const task = await ctx.resolve(AgentFullCompaction).begin({ source: 'manual' });
+    expect(task.status).toBe('running');
     await compactionStarted;
     expect(ctx.get(LoopControlToken).tryAcquireQuiescence()).toBeUndefined();
 
     release();
-    await ctx.get(IAgentFullCompactionService).compacting?.promise;
+    const finished = new Promise<void>((resolve) => {
+      void ctx.resolve(AgentFullCompaction).onDidFinish(() => {
+        resolve();
+      });
+    });
+    await finished;
     const lease = ctx.get(LoopControlToken).tryAcquireQuiescence();
     expect(lease).toBeDefined();
     lease?.dispose();
@@ -407,7 +413,7 @@ describe('FullCompaction', () => {
     const events = ctx.newEvents();
     expect(eventIndex(events, 'full_compaction.begin')).toBe(-1);
     expect(eventIndex(events, 'compaction.started')).toBe(-1);
-    expect(ctx.get(IAgentFullCompactionService).compacting).toBeNull();
+    expect(ctx.resolve(AgentFullCompaction).status()).toBe('idle');
     expect(ctx.llmCalls).toHaveLength(1);
 
     ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
@@ -557,7 +563,7 @@ describe('FullCompaction', () => {
     const compacted = ctx.once('full_compaction.complete');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
-    ctx.get(IAgentFullCompactionService).begin({ source: 'auto', instruction: undefined });
+    void ctx.resolve(AgentFullCompaction).begin({ source: 'auto', instruction: undefined });
     await compacted;
     await vi.waitFor(() => {
       expect(readHookPayloads(hookLog).map((payload) => payload['hook_event_name'])).toEqual([
@@ -1065,14 +1071,14 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
-    const fullCompaction = ctx.get(IAgentFullCompactionService);
-    for (let i = 0; i < 10 && fullCompaction.compacting?.traceId === undefined; i += 1) {
+    for (let i = 0; i < 10; i += 1) {
       await Promise.resolve();
     }
-    expect(fullCompaction.compacting?.traceId).toBe('trace-compact-retry');
+    expect(ctx.resolve(AgentFullCompaction).status()).toBe('running');
 
     void ctx.rpc.cancelCompaction({});
     await cancelled;
+    expect(ctx.resolve(AgentFullCompaction).status()).toBe('cancelled');
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(attempts).toBe(1);
@@ -1104,6 +1110,7 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.beginCompaction({});
     await failed;
+    expect(ctx.resolve(AgentFullCompaction).status()).toBe('failed');
 
     const events = ctx.newEvents();
     expect(events).toEqual(
@@ -1567,7 +1574,7 @@ describe('FullCompaction', () => {
     const completed = ctx.once('compaction.completed');
     ctx.mockNextResponse({ type: 'text', text: 'Auto summary.' });
 
-    ctx.get(IAgentFullCompactionService).begin({ source: 'auto', instruction: undefined });
+    void ctx.resolve(AgentFullCompaction).begin({ source: 'auto', instruction: undefined });
     await completed;
     await ctx.wire.flush();
 
@@ -1762,7 +1769,8 @@ describe('FullCompaction', () => {
     ctx.get(LoopControlToken).hooks.onDidFinishStep.register(
       'test-auto-compaction',
       async (_step, next) => {
-        if (!ctx.get(IAgentFullCompactionService).begin({ source: 'auto' })) {
+        const task = await ctx.resolve(AgentFullCompaction).begin({ source: 'auto' });
+        if (task.status !== 'running') {
           throw new Error('Expected auto compaction to start');
         }
         await next();
@@ -3435,10 +3443,9 @@ describe('goal reminder re-injection after full compaction', () => {
       ?.properties?.['tokens_after'];
     expect(typeof tokensAfter).toBe('number');
     const floor = (
-      ctx.get(IAgentFullCompactionService) as unknown as {
-        lastCompactedTokenCount: number | null;
-      }
-    ).lastCompactedTokenCount;
+      ctx.runtimeSnapshot().contributions.find((entry) => entry.id === 'fullCompaction')
+        ?.state as { lastCompactedTokenCount: number | null } | undefined
+    )?.lastCompactedTokenCount;
     expect(floor).toBe(ctx.tokenCounting.get().size);
     expect(floor).toBe(tokensAfter);
 

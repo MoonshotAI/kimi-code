@@ -15,7 +15,7 @@ import {
   isUndoAnchor,
   isValidUndoCount,
 } from '#/features/contextMemory/conversationTime';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { promptMetadataTextFromContentParts } from '#/features/prompt/promptMetadataText';
@@ -55,7 +55,6 @@ export class AgentConversationUndoService
 
   constructor(
     @LoopControlToken private readonly loop: LoopControlToken,
-    @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentConversationUndoParticipantRegistry
     private readonly participants: IAgentConversationUndoParticipantRegistry,
@@ -104,7 +103,9 @@ export class AgentConversationUndoService
       if (quiescence === undefined) {
         throw this.busyError('loop');
       }
-      if (this.fullCompaction.compacting !== null) {
+      if (
+        this.manager.resolve(this.agentCtx.agentContext, AgentFullCompaction).status() === 'running'
+      ) {
         throw this.busyError('compaction');
       }
       this.assertUndoAvailable(turns);

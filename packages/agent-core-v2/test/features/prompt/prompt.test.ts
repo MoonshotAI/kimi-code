@@ -9,7 +9,6 @@ import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
 import type { PromptRuntime } from '#/features/prompt/prompt';
@@ -24,7 +23,6 @@ import { IEventService } from '#/app/event/event';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
-import { createHooks } from '#/hooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -37,6 +35,7 @@ import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire, type StubLoopOptions } from '../../agent/loop/stubs';
 import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
+import { lifecycleWithFullCompaction, stubFullCompactionRuntime } from '../fullCompaction/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { SteerStepRequest } from '#/features/prompt/internal/promptStepRequests';
 import { stubWireJournal } from '../../wire/stubs';
@@ -80,13 +79,6 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
     },
   });
   const loop = stubLoopWithHooks({ pendingTurnResult: true, ...options });
-  const fullCompaction = {
-    _serviceBrand: undefined,
-    compacting: null,
-    begin: () => false,
-    hooks: createHooks(['onWillCompact']),
-    onDidFinishCompaction: Event.None,
-  } as unknown as IAgentFullCompactionService;
   const intake = {
     get: vi.fn(async () => ({
       meta: {
@@ -102,7 +94,9 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
   };
   let runtimes: AgentRuntimeSet | undefined;
   const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
-  const lifecycle: IAgentLifecycleService = lifecycleWithToolExecutor(
+  const lifecycle: IAgentLifecycleService = lifecycleWithFullCompaction(
+    stubFullCompactionRuntime(),
+    lifecycleWithToolExecutor(
     stubToolExecutor(),
     {
       resolve: (agent: unknown, definition: unknown) => {
@@ -113,6 +107,7 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
       onDidCreateScope: () => ({ dispose: () => {} }),
     } as unknown as IAgentLifecycleService,
     agentScope.agentContext,
+  ),
   );
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
@@ -122,7 +117,6 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
       reg.defineInstance(IAgentBlobService, noopBlob);
       reg.define(IEventDispatcher, EventDispatcherService);
       reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
-      reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);
       reg.defineInstance(IAgentLifecycleService, lifecycle);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
@@ -153,7 +147,6 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
     runtimes,
     loop,
     context,
-    fullCompaction,
     eventBus: ix.get(IEventBus),
     intake,
     ix,

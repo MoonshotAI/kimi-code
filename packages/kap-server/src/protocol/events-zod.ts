@@ -24,8 +24,8 @@ import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
   CompactionStartedPayload,
-} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type { CompactionResult } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/types';
+} from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionEvents';
+import type { CompactionResult } from '@moonshot-ai/agent-core-v2/features/fullCompaction/types';
 import type {
   GoalActor,
   GoalBudgetLimits,

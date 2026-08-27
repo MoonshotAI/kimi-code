@@ -6,7 +6,7 @@ import type {
   CompactionCancelled,
   CompactionCompleted,
   CompactionStarted,
-} from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
+} from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionEvents';
 import type { ContentPart, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,

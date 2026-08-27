@@ -26,11 +26,12 @@ import {
   CompactionCancelled,
   CompactionCompleted,
   CompactionStarted,
-} from '#/agent/fullCompaction/compactionOps';
+} from '#/features/fullCompaction/fullCompactionEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import type { PromptOrigin } from '#/features/contextMemory/types';
 import type { TurnEndReason } from '#/features/loop/turnEvents';
@@ -80,7 +81,7 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     @IEventBus private readonly eventBus: IEventBus,
     @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
+    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -267,7 +268,13 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
   }
 
   private seedFromFullCompaction(): void {
-    if (this.fullCompaction.compacting === null) return;
+    if (
+      this.manager
+        .resolve(this.scopeContext.agentContext, AgentFullCompaction)
+        .status() !== 'running'
+    ) {
+      return;
+    }
     this.background.set(FULL_COMPACTION_BACKGROUND_ID, {
       kind: 'compaction',
       id: FULL_COMPACTION_BACKGROUND_ID,

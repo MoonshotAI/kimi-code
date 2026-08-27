@@ -168,7 +168,7 @@ import {
   AgentCron,
   AgentGoal,
   IAgentConversationUndoService,
-  IAgentFullCompactionService,
+  AgentFullCompaction,
   IAgentPluginService,
   IAgentLifecycleService,
   AgentLoop,
@@ -1801,7 +1801,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentFullCompactionService.begin`) — no klient
+   * Through the agent runtime (`AgentFullCompaction.begin`) — no klient
    * facade exists. Same semantics as v1's `beginCompaction`: a manual
    * compaction launches the summarizer immediately in the background, is a
    * silent no-op while one is already running, and rejects with
@@ -1809,20 +1809,26 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async compact(input: SessionIdRpcInput & CompactOptions): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentFullCompactionService).begin({
-      source: 'manual',
-      instruction: input.instruction,
-    });
+    await agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentFullCompaction)
+      .begin({
+        source: 'manual',
+        instruction: input.instruction,
+      });
   }
 
   /**
-   * Through the agent scope (`IAgentFullCompactionService.cancel`) — no
-   * klient facade exists. Aborts the in-flight compaction; a no-op when idle,
-   * like v1.
+   * Through the agent runtime (`AgentFullCompaction.cancel`) — no
+   * klient facade exists. Aborts the in-flight compaction and waits for it
+   * to settle; a no-op when idle, like v1.
    */
   override async cancelCompaction(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentFullCompactionService).cancel();
+    await agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentFullCompaction)
+      .cancel();
   }
 
   /**
@@ -1873,7 +1879,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     if (
       agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status() === 'running' ||
-      agent.accessor.get(IAgentFullCompactionService).compacting !== null
+      agent.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentFullCompaction)
+        .status() === 'running'
     ) {
       throw new KimiError(
         ErrorCodes.TURN_AGENT_BUSY,

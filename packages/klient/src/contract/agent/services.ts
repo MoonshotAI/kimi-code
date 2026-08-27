@@ -114,7 +114,7 @@ export const agentMcpContract = {
   list: { input: z.tuple([]), output: z.array(mcpServerEntrySchema) },
 } satisfies ServiceContract;
 
-/** `FullCompactionInput` from the engine's `agent/fullCompaction`. */
+/** `FullCompactionInput` from the engine's `features/fullCompaction`. */
 export const fullCompactionInputSchema = z.object({
   source: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),

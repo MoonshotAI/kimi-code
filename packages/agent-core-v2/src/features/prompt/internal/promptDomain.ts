@@ -4,7 +4,7 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { newMessageId } from '#/features/contextMemory/messageId';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/features/contextMemory/types';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { AgentFullCompaction, type FullCompactionRuntime } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { LoopControlToken, type Turn, type TurnResult } from '#/features/loop/internal/loop';
 import { TurnSteer } from '#/features/loop/turnOps';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
@@ -111,7 +111,7 @@ export class PromptDomain {
   private readonly reservedPromptIds = new Set<string>();
   private steering = 0;
   private launching = false;
-  private fullCompactionService: IAgentFullCompactionService | undefined;
+  private fullCompactionRuntime: FullCompactionRuntime | undefined;
   private fullCompactionSubscription: IDisposable | undefined;
   private readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -278,7 +278,7 @@ export class PromptDomain {
     };
     this.pending.push(record);
     if (this.active === undefined && !this.launching) {
-      if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') {
+      if (this.fullCompaction.status() === 'running' && this.loop.status().state !== 'running') {
         this.publishQueued(record);
         return record.handle;
       }
@@ -405,7 +405,7 @@ export class PromptDomain {
     const item = this.pending.shift(); if (item === undefined) return;
     this.launching = true;
     try {
-      if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
+      if (this.fullCompaction.status() === 'running' && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
       await this.materializeDaemonRefs(message);
       if (await this.blockedByHook(message, false)) {
@@ -449,12 +449,14 @@ export class PromptDomain {
   private async blockedByHook(promptMessage: ContextMessage, isSteer: boolean): Promise<boolean> {
     const ctx = { promptMessage, isSteer, block: false }; await this.hooks.onBeforeSubmitPrompt.run(ctx); return ctx.block;
   }
-  private get fullCompaction(): IAgentFullCompactionService {
-    if (this.fullCompactionService === undefined) {
-      this.fullCompactionService = this.runtime.get(IAgentFullCompactionService);
-      this.fullCompactionSubscription = this.fullCompactionService.onDidFinishCompaction(() => { void this.startNext(); });
+  private get fullCompaction(): FullCompactionRuntime {
+    if (this.fullCompactionRuntime === undefined) {
+      this.fullCompactionRuntime = this.runtime
+        .get(IAgentLifecycleService)
+        .resolve(this.runtime.agent, AgentFullCompaction);
+      this.fullCompactionSubscription = this.fullCompactionRuntime.onDidFinish(() => { void this.startNext(); });
     }
-    return this.fullCompactionService;
+    return this.fullCompactionRuntime;
   }
   private extractCompressionCaptions(message: ContextMessage): { message: ContextMessage; captions: readonly string[] } {
     if ((message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return { message, captions: [] };

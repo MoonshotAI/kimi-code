@@ -657,11 +657,19 @@ import '#/features/tokenCounting/tokenCountingFeature';
 export * from '#/agent/plugin/agentPlugin';
 export * from '#/agent/plugin/agentPluginOps';
 export * from '#/agent/plugin/agentPluginService';
-export * from '#/agent/fullCompaction/strategy';
-export * from '#/agent/fullCompaction/fullCompaction';
-export * from '#/agent/fullCompaction/fullCompactionService';
-export * from '#/agent/fullCompaction/compactionOps';
-export * from '#/agent/fullCompaction/types';
+export * from '#/features/fullCompaction/internal/strategy';
+export {
+  AgentFullCompaction,
+  type FullCompactionBeginInput,
+  type FullCompactionHookContext,
+  type FullCompactionRuntime,
+  type FullCompactionStatus,
+  type FullCompactionTask,
+} from '#/features/fullCompaction/fullCompactionAgentRuntime';
+export * from '#/features/fullCompaction/compactionOps';
+export * from '#/features/fullCompaction/fullCompactionEvents';
+export * from '#/features/fullCompaction/types';
+import '#/features/fullCompaction/fullCompactionFeature';
 export * from '#/features/llmRequester/llmRequester';
 export * from '#/features/llmRequester/llmRequesterOps';
 export {

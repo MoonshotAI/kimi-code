@@ -1,25 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { createHooks } from '#/hooks';
 import {
-  fullCompactionKey,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
-} from '#/agent/fullCompaction/compactionOps';
+} from '#/features/fullCompaction/compactionOps';
+import { AgentFullCompaction, type FullCompactionStatus } from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  attachFullCompactionRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -31,12 +35,12 @@ const KEY = 'full-compaction-test';
 
 let disposables: DisposableStore;
 let dispatcher: IEventDispatcher;
-let agentState: IAgentStateService;
+let runtimes: AgentRuntimeSet;
 let log: IAppendLogStore;
 
 function buildHost(key: string): {
   dispatcher: IEventDispatcher;
-  agentState: IAgentStateService;
+  runtimes: AgentRuntimeSet;
   log: IAppendLogStore;
   eventBus: IEventBus;
 } {
@@ -44,15 +48,20 @@ function buildHost(key: string): {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
+  ix.stub(LoopControlToken, {
+    _serviceBrand: undefined,
+    hooks: createHooks(['onWillBeginStep', 'onDidFinishStep']),
+    registerLoopErrorHandler: () => toDisposable(() => {}),
+  } as unknown as LoopControlToken);
   registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
   const dispatcher = registerTestEventDispatcher(ix);
-  ix.get(IAgentStateService).contributeState(fullCompactionKey);
+  const runtimes = attachFullCompactionRuntime(ix, ix.get(IEventDispatcher));
   return {
     dispatcher,
-    agentState: ix.get(IAgentStateService),
+    runtimes,
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   };
@@ -62,11 +71,15 @@ beforeEach(() => {
   disposables = new DisposableStore();
   const host = buildHost(KEY);
   dispatcher = host.dispatcher;
-  agentState = host.agentState;
+  runtimes = host.runtimes;
   log = host.log;
 });
 
 afterEach(() => disposables.dispose());
+
+function status(): FullCompactionStatus {
+  return runtimes.resolve(AgentFullCompaction).status();
+}
 
 async function readRecords(key = KEY): Promise<WireRecord[]> {
   await dispatcher.flush();
@@ -79,18 +92,18 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
 
 describe('fullCompaction ops (wire-backed)', () => {
   it('begin/complete/cancel drive the phase and persist flat records', async () => {
-    expect(agentState.get(fullCompactionKey).phase).toBe('idle');
+    expect(status()).toBe('idle');
 
     void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'manual', instruction: 'keep facts' }));
-    expect(agentState.get(fullCompactionKey).phase).toBe('running');
+    expect(status()).toBe('running');
 
     void dispatcher.dispatch(new FullCompactionComplete({ agentId: 'test-agent' }));
-    expect(agentState.get(fullCompactionKey).phase).toBe('idle');
+    expect(status()).toBe('idle');
 
     void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'auto' }));
-    expect(agentState.get(fullCompactionKey).phase).toBe('running');
+    expect(status()).toBe('running');
     void dispatcher.dispatch(new FullCompactionCancel({ agentId: 'test-agent' }));
-    expect(agentState.get(fullCompactionKey).phase).toBe('idle');
+    expect(status()).toBe('idle');
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual([
@@ -114,16 +127,16 @@ describe('fullCompaction ops (wire-backed)', () => {
     });
   });
 
-  it('fold keeps the same reference on a no-op (state stays quiet)', () => {
+  it('keeps the phase unchanged on a no-op fold (state stays quiet)', () => {
     void dispatcher.dispatch(new FullCompactionCancel({ agentId: 'test-agent' }));
-    const idle = agentState.get(fullCompactionKey);
+    expect(status()).toBe('idle');
     void dispatcher.dispatch(new FullCompactionCancel({ agentId: 'test-agent' }));
-    expect(agentState.get(fullCompactionKey)).toBe(idle);
+    expect(status()).toBe('idle');
 
     void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'manual' }));
-    const running = agentState.get(fullCompactionKey);
+    expect(status()).toBe('running');
     void dispatcher.dispatch(new FullCompactionBegin({ agentId: 'test-agent', source: 'auto' }));
-    expect(agentState.get(fullCompactionKey)).toBe(running);
+    expect(status()).toBe('running');
   });
 
   it('replay rebuilds the phase silently', async () => {
@@ -142,7 +155,7 @@ describe('fullCompaction ops (wire-backed)', () => {
       testWireScope(SCOPE, 'full-compaction-replay'),
       records,
     );
-    expect(host.agentState.get(fullCompactionKey).phase).toBe('idle');
+    expect(host.runtimes.resolve(AgentFullCompaction).status()).toBe('idle');
     expect(emissions).toEqual([]);
 
     const stranded = buildHost('full-compaction-stranded');
@@ -152,7 +165,7 @@ describe('fullCompaction ops (wire-backed)', () => {
       testWireScope(SCOPE, 'full-compaction-stranded'),
       [{ type: 'full_compaction.begin', source: 'auto' }],
     );
-    expect(stranded.agentState.get(fullCompactionKey).phase).toBe('running');
+    expect(stranded.runtimes.resolve(AgentFullCompaction).status()).toBe('running');
   });
 
   it('replays legacy complete payloads that carried accounting numbers', async () => {
@@ -168,6 +181,6 @@ describe('fullCompaction ops (wire-backed)', () => {
       ],
     );
 
-    expect(host.agentState.get(fullCompactionKey).phase).toBe('idle');
+    expect(host.runtimes.resolve(AgentFullCompaction).status()).toBe('idle');
   });
 });

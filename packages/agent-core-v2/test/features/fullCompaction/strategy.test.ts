@@ -2,7 +2,7 @@ import { type Message } from '#/kosong/contract/message';
 import { describe, expect, it } from 'vitest';
 
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
-import { DefaultCompactionStrategy } from '#/agent/fullCompaction/strategy';
+import { DefaultCompactionStrategy } from '#/features/fullCompaction/internal/strategy';
 
 describe('DefaultCompactionStrategy', () => {
   it('keeps an oversized trailing user message as recent', () => {

@@ -54,7 +54,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/app/mcpRegistry/mcpRegistry';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import type { McpServerConfigView } from '@moonshot-ai/agent-core-v2/mcpCore/configView';
-import type { FullCompactionInput } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/fullCompaction';
+import type { FullCompactionBeginInput } from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionAgentRuntime';
 import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import type {
   CreateChildSessionOptions,
@@ -710,8 +710,10 @@ const _getTaskOutputPayload: AssertWire<typeof getTaskOutputPayloadSchema, GetTa
 
 // agent/services.ts (mcp / fullCompaction)
 const _mcpServerEntry: AssertWire<typeof mcpServerEntrySchema, McpServerEntry> = true;
-const _fullCompactionInput: AssertWire<typeof fullCompactionInputSchema, FullCompactionInput> =
-  true;
+const _fullCompactionInput: AssertWireToEngine<
+  typeof fullCompactionInputSchema,
+  FullCompactionBeginInput
+> = true;
 
 // ── agent scope (events.ts) ─────────────────────────────────────────────────
 // Parity against the protocol event types (the stream carries flat

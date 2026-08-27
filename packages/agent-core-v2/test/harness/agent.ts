@@ -11,6 +11,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type {
   AgentRuntimeDefinition,
+  AgentRuntimeSnapshot,
   RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
 import { IFeatureManager } from '#/app/feature/featureManager';
@@ -48,6 +49,7 @@ import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAge
 import { type AgentConfigData } from '#/features/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/features/contextMemory/types';
@@ -125,7 +127,6 @@ import {
   AgentExternalHooksService,
   FileStorageService,
   InMemoryStorageService,
-  AgentFullCompactionService,
   IAgentActivityView,
   IAppendLogStore,
   IFileSystemStorageService,
@@ -141,7 +142,6 @@ import {
   IAgentContextProjectorService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
-  IAgentFullCompactionService,
   ILogService,
   ISessionPermissionModeService,
   AgentPermissionMode,
@@ -1356,10 +1356,6 @@ export class AgentTestContext {
               new SyncDescriptor(AgentExternalHooksService),
             );
             reg.defineDescriptor(
-              IAgentFullCompactionService,
-              new SyncDescriptor(AgentFullCompactionService),
-            );
-            reg.defineDescriptor(
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
@@ -1417,6 +1413,10 @@ export class AgentTestContext {
     definition: Definition,
   ): RuntimeOf<Definition> {
     return this.session.accessor.get(IAgentLifecycleService).resolve(this.agentContext, definition);
+  }
+
+  runtimeSnapshot(): AgentRuntimeSnapshot {
+    return this.session.accessor.get(IAgentLifecycleService).inspect(this.agentContext);
   }
 
   get modelResolver(): IModelCatalog {
@@ -1575,7 +1575,7 @@ export class AgentTestContext {
     void plan.status();
 
     this.get(IAgentUserToolService);
-    this.get(IAgentFullCompactionService);
+    this.resolve(AgentFullCompaction);
     this.resolve(AgentProfile);
     const agentState = this.get(IAgentStateService);
     const expected = new Set(BUILTIN_REPLAYABLE_STATE_KEYS.map((key) => key.name));
@@ -2179,7 +2179,7 @@ export class AgentTestContext {
       undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
       setPermission: (payload) =>
         this.get(ISessionPermissionModeService).setModeAndBroadcast(this.agentContext, payload.mode),
-      cancelCompaction: () => this.get(IAgentFullCompactionService).cancel(),
+      cancelCompaction: () => this.resolve(AgentFullCompaction).cancel(),
       activateSkill: (payload) => this.resolve(AgentSkill).activate(payload),
       activatePluginCommand: (payload) =>
         this.get(IAgentPluginCommandService).activate(payload),
@@ -2203,11 +2203,12 @@ export class AgentTestContext {
       exitSwarm: () => this.get(IAgentSwarmService).exit(),
       getSwarmMode: () => this.get(IAgentSwarmService).isActive,
       startBtw: () => this.get(ISessionBtwService).start(),
-      beginCompaction: (payload) =>
-        this.get(IAgentFullCompactionService).begin({
+      beginCompaction: async (payload) => {
+        await this.resolve(AgentFullCompaction).begin({
           source: 'manual',
           instruction: payload.instruction,
-        }),
+        });
+      },
       registerTool: (payload) => this.get(IAgentUserToolService).register(payload),
       unregisterTool: (payload) => this.get(IAgentUserToolService).unregister(payload.name),
       setActiveTools: (payload) =>

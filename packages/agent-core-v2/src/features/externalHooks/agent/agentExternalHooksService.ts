@@ -10,10 +10,11 @@ import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContex
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import {
-  IAgentFullCompactionService,
-  type FullCompactionTask,
-} from '#/agent/fullCompaction/fullCompaction';
-import type { CompactionResult } from '#/agent/fullCompaction/types';
+  AgentFullCompaction,
+  type FullCompactionHookContext,
+  type FullCompactionRuntime,
+} from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import type { CompactionResult } from '#/features/fullCompaction/types';
 import { LoopControlToken, type AfterStepContext } from '#/features/loop/internal/loop';
 import { ContinuationStepRequest } from '#/features/loop/internal/stepRequest';
 import { TurnStarted } from '#/features/loop/turnEvents';
@@ -154,7 +155,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
 
     this.registerFullCompactionHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentFullCompactionService)),
+      this.manager.resolve(this.scopeContext.agentContext, AgentFullCompaction),
     );
 
     this.registerTaskHooks(
@@ -271,14 +272,13 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerFullCompactionHooks(fullCompaction: IAgentFullCompactionService): void {
+  private registerFullCompactionHooks(fullCompaction: FullCompactionRuntime): void {
     this._register(
-      fullCompaction.hooks.onWillCompact.register('externalHooks', async (ctx, next) => {
+      fullCompaction.registerBeforeCompactHook('externalHooks', async (ctx) => {
         await this.runPreCompact(ctx);
-        void ctx.promise
+        void ctx.settlement
           .then((result) => this.notifyPostCompact(ctx, result))
           .catch(() => undefined);
-        await next();
       }),
     );
   }
@@ -434,8 +434,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     return block?.reason;
   }
 
-  private async runPreCompact(ctx: FullCompactionTask): Promise<void> {
-    const signal = ctx.abortController.signal;
+  private async runPreCompact(ctx: FullCompactionHookContext): Promise<void> {
+    const signal = ctx.signal;
     signal.throwIfAborted();
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
@@ -449,7 +449,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     signal.throwIfAborted();
   }
 
-  private notifyPostCompact(ctx: FullCompactionTask, result: CompactionResult): void {
+  private notifyPostCompact(ctx: FullCompactionHookContext, result: CompactionResult): void {
     this.fireAndForget(
       'PostCompact',
       {

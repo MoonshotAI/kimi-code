@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 46 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 40 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -47,52 +47,46 @@
 //     workspaceContext.additionalDirs    src/session/workspaceContext/workspaceContextService.ts
 //     workspaceContext.workDir           src/session/workspaceContext/workspaceContextService.ts
 //   Agent
-//     activityView.background                         src/agent/activityView/activityViewService.ts
-//     activityView.current                            src/agent/activityView/activityViewService.ts
-//     activityView.lastTurn                           src/agent/activityView/activityViewService.ts
-//     activityView.lifecycle                          src/agent/activityView/activityViewService.ts
-//     activityView.turn                               src/agent/activityView/activityViewService.ts
-//     agentPlugin.sessionStartRefreshPending          src/agent/plugin/agentPluginService.ts
-//     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
-//     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
-//     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
-//     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
-//     fullCompaction.activeTurnId                     src/agent/fullCompaction/fullCompactionService.ts
-//     fullCompaction.compactionCountInTurn            src/agent/fullCompaction/fullCompactionService.ts
-//     fullCompaction.consecutiveOverflowCompactions   src/agent/fullCompaction/fullCompactionService.ts
-//     fullCompaction.lastCompactedTokenCount          src/agent/fullCompaction/fullCompactionService.ts
-//     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
-//     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
-//     loop.disposing                                  src/features/loop/internal/loopLogic.ts
-//     loop.lastRequestTraceId                         src/features/loop/internal/loopLogic.ts
-//     loop.nextReservedTurnId                         src/features/loop/internal/loopLogic.ts
-//     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
-//     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
-//     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
-//     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
-//     media.resolved                                  src/agent/media/mediaResolverService.ts
-//     plan                                            src/features/plan/planOps.ts
-//     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
-//     pluginSessionStartSnapshot                      src/agent/plugin/agentPluginOps.ts
-//     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
-//     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
-//     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
-//     staleGuard                                      src/features/staleGuard/staleGuardOps.ts
-//     stepRetry.failedAttempts                        src/agent/stepRetry/stepRetryService.ts
-//     stepRetry.lastFailedDriverId                    src/agent/stepRetry/stepRetryService.ts
-//     swarm                                           src/features/swarm/swarmOps.ts
-//     task                                            src/agent/task/taskOps.ts
-//     task.activeTaskReminderPending                  src/agent/task/taskService.ts
-//     task.deliveredNotificationKeys                  src/agent/task/taskService.ts
-//     task.ghosts                                     src/agent/task/taskService.ts
-//     task.notificationDelivery                       src/agent/task/taskService.ts
-//     task.scheduledNotificationKeys                  src/agent/task/taskService.ts
-//     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
-//     tower                                           src/features/tower/towerOps.ts
-//     tower.owner                                     src/features/tower/towerOps.ts
-//     userTool                                        src/agent/userTool/userToolOps.ts
+//     activityView.background                 src/agent/activityView/activityViewService.ts
+//     activityView.current                    src/agent/activityView/activityViewService.ts
+//     activityView.lastTurn                   src/agent/activityView/activityViewService.ts
+//     activityView.lifecycle                  src/agent/activityView/activityViewService.ts
+//     activityView.turn                       src/agent/activityView/activityViewService.ts
+//     agentPlugin.sessionStartRefreshPending  src/agent/plugin/agentPluginService.ts
+//     agentsMdReminder.cwd                    src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     agentsMdReminder.known                  src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     agentsMdReminder.seeded                 src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     contextProjector.lastRepairSignature    src/agent/contextProjector/contextProjectorService.ts
+//     externalHooks.stopHookContinuationUsed  src/features/externalHooks/agent/agentExternalHooksService.ts
+//     interruptionReminder                    src/agent/interruptionReminder/interruptionReminderOps.ts
+//     loop.disposing                          src/features/loop/internal/loopLogic.ts
+//     loop.lastRequestTraceId                 src/features/loop/internal/loopLogic.ts
+//     loop.nextReservedTurnId                 src/features/loop/internal/loopLogic.ts
+//     mcp.discovery                           src/agent/mcp/mcpDiscoveryOps.ts
+//     mcp.discoveryWritesReady                src/agent/mcp/mcpService.ts
+//     mcp.mcpToolsByServer                    src/agent/mcp/mcpService.ts
+//     media.registeredKey                     src/agent/media/mediaToolsRegistrar.ts
+//     media.resolved                          src/agent/media/mediaResolverService.ts
+//     plan                                    src/features/plan/planOps.ts
+//     plan.wasActive                          src/features/plan/injection/planModeInjection.ts
+//     pluginSessionStartSnapshot              src/agent/plugin/agentPluginOps.ts
+//     runtime.binding                         src/agent/runtimeBinding/runtimeBindingService.ts
+//     runtimeBinding                          src/agent/runtimeBinding/runtimeBindingOps.ts
+//     shellCommand.tasks                      src/agent/shellCommand/shellCommandService.ts
+//     staleGuard                              src/features/staleGuard/staleGuardOps.ts
+//     stepRetry.failedAttempts                src/agent/stepRetry/stepRetryService.ts
+//     stepRetry.lastFailedDriverId            src/agent/stepRetry/stepRetryService.ts
+//     swarm                                   src/features/swarm/swarmOps.ts
+//     task                                    src/agent/task/taskOps.ts
+//     task.activeTaskReminderPending          src/agent/task/taskService.ts
+//     task.deliveredNotificationKeys          src/agent/task/taskService.ts
+//     task.ghosts                             src/agent/task/taskService.ts
+//     task.notificationDelivery               src/agent/task/taskService.ts
+//     task.scheduledNotificationKeys          src/agent/task/taskService.ts
+//     toolSelect.pendingLoaded                src/agent/toolSelect/toolSelectService.ts
+//     tower                                   src/features/tower/towerOps.ts
+//     tower.owner                             src/features/tower/towerOps.ts
+//     userTool                                src/agent/userTool/userToolOps.ts
 
 /** App-scope keys registered into IAppStateService. */
 export interface AppStateSnapshot {
@@ -971,17 +965,6 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.seeded': boolean;
   // src/agent/contextProjector/contextProjectorService.ts
   'contextProjector.lastRepairSignature': string | null;
-  // src/agent/fullCompaction/compactionOps.ts
-  // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
-  'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
-    readonly phase: /* CompactionPhase — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ 'completed' | 'cancelled' | 'running' | 'idle';
-  };
-  // src/agent/fullCompaction/fullCompactionService.ts
-  'fullCompaction.activeTurnId': number | undefined;
-  'fullCompaction.compactionCountInTurn': number;
-  'fullCompaction.consecutiveOverflowCompactions': number;
-  'fullCompaction.lastCompactedTokenCount': number | null;
-  'fullCompaction.observedMaxContextTokensByModel': Map<string, number>;
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;

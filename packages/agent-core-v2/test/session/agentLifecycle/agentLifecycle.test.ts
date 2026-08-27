@@ -31,6 +31,10 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentContextMemory, contextMemoryAgentRuntimeProvider } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import {
+  stubFullCompactionRuntime,
+  stubFullCompactionRuntimeProvider,
+} from '../../features/fullCompaction/stubs';
 import { reminderAgentRuntimeProvider } from '#/features/reminder/reminderAgentRuntime';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/features/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/features/contextMemory/types';
@@ -93,7 +97,6 @@ import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promp
 import type { PromptRuntime } from '#/features/prompt/prompt';
 import { defineAgentRuntimeProvider } from '#/agent/runtime/agentRuntime';
 import { stubToolExecutor } from '../../agent/loop/stubs';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -205,6 +208,7 @@ const stubToolExecutorRuntimeProvider = defineAgentRuntimeProvider(AgentToolExec
 });
 
 describe('AgentLifecycleService', () => {
+  let stubFullCompactionCancel: () => Promise<void> = () => Promise.resolve();
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
@@ -218,6 +222,7 @@ describe('AgentLifecycleService', () => {
   let withdrawStubToolExecutor: () => void = () => {};
 
   beforeEach(() => {
+    stubFullCompactionCancel = () => Promise.resolve();
     _clearAgentToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
@@ -434,10 +439,14 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       stopAllOnExit,
     } as unknown as IAgentTaskService);
-    ix.stub(IAgentFullCompactionService, {
-      _serviceBrand: undefined,
-      compacting: null,
-    } as unknown as IAgentFullCompactionService);
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-full-compaction',
+      new Ledger('test-full-compaction'),
+      stubFullCompactionRuntimeProvider(() =>
+        stubFullCompactionRuntime({ cancel: () => stubFullCompactionCancel() }),
+      ),
+    );
     withdrawStubToolExecutor = ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
       'test-stub-tool-executor',
@@ -761,15 +770,10 @@ describe('AgentLifecycleService', () => {
         { once: true },
       );
     });
-    ix.stub(IAgentFullCompactionService, {
-      _serviceBrand: undefined,
-      compacting: {
-        abortController,
-        promise,
-        trigger: 'manual',
-        tokenCount: 100,
-      },
-    } as unknown as IAgentFullCompactionService);
+    stubFullCompactionCancel = async () => {
+      abortController.abort();
+      await promise.catch(() => undefined);
+    };
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
 

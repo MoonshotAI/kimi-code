@@ -4,6 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
+import { Event } from '#/_base/event';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { registerLoopControl, type LoopDurableState } from '#/features/loop/internal/access';
@@ -18,15 +19,19 @@ import type { AgentTaskInfo } from '#/agent/task/types';
 import {
   CompactionCancelled,
   CompactionStarted,
-} from '#/agent/fullCompaction/compactionOps';
+} from '#/features/fullCompaction/fullCompactionEvents';
 import { AgentActivityView } from '#/agent/activityView/activityViewService';
 import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
-import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
-import type { FullCompactionTask } from '#/agent/fullCompaction/fullCompaction';
+import {
+  AgentFullCompaction,
+  type FullCompactionRuntime,
+  type FullCompactionStatus,
+} from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -74,7 +79,7 @@ let disposables: DisposableStore;
 
 function harness(
   seedTasks: readonly AgentTaskInfo[] = [],
-  compacting: FullCompactionTask | null = null,
+  compactionStatus: FullCompactionStatus = 'idle',
   lastEnded?: LoopDurableState['lastEnded'],
 ) {
   const bus = new FakeBus();
@@ -115,10 +120,20 @@ function harness(
     agentContext,
     scope: (subKey?: string) => subKey ?? '',
   });
-  ix.stub(IAgentFullCompactionService, {
+  const fullCompaction: FullCompactionRuntime = {
+    begin: () => Promise.resolve({ id: 'compaction-1', status: compactionStatus }),
+    cancel: () => Promise.resolve(),
+    status: () => compactionStatus,
+    onDidFinish: Event.None as FullCompactionRuntime['onDidFinish'],
+    registerBeforeCompactHook: () => ({ dispose: () => {} }),
+  };
+  ix.stub(IAgentLifecycleService, {
     _serviceBrand: undefined,
-    compacting,
-  } as unknown as IAgentFullCompactionService);
+    resolve: (_agent: unknown, definition: unknown) => {
+      if (definition === AgentFullCompaction) return fullCompaction;
+      throw new Error(`unexpected runtime resolution: ${String(definition)}`);
+    },
+  } as unknown as IAgentLifecycleService);
   ix.set(IAgentActivityView, new SyncDescriptor(AgentActivityView));
   const view = ix.get(IAgentActivityView);
   const updates = (): AgentActivityState[] =>
@@ -160,7 +175,7 @@ describe('AgentActivityView', () => {
   });
 
   it('seeds lastTurn from the wire turnKey when the view is built after restore', () => {
-    const { view } = harness([], null, { turnId: 7, reason: 'failed', durationMs: 1234 });
+    const { view } = harness([], undefined, { turnId: 7, reason: 'failed', durationMs: 1234 });
     expect(view.state().lastTurn).toMatchObject({ turnId: 7, reason: 'failed', durationMs: 1234 });
   });
 
@@ -172,7 +187,7 @@ describe('AgentActivityView', () => {
   });
 
   it('does not overwrite a live lastTurn when the restore hook runs', async () => {
-    const { bus, view, restore } = harness([], null, { turnId: 7, reason: 'failed' });
+    const { bus, view, restore } = harness([], undefined, { turnId: 7, reason: 'failed' });
     bus.publish(new TurnEnded({ agentId: 'main', turnId: 9, reason: 'completed' }));
     await restore({ turnId: 7, reason: 'failed' });
     expect(view.state().lastTurn).toMatchObject({ turnId: 9, reason: 'completed' });
@@ -196,14 +211,7 @@ describe('AgentActivityView', () => {
   });
 
   it('seeds an in-flight full compaction on creation', () => {
-    const compacting: FullCompactionTask = {
-      abortController: new AbortController(),
-      promise: new Promise(() => {}),
-      trigger: 'manual',
-      tokenCount: 100,
-    };
-
-    const { view } = harness([], compacting);
+    const { view } = harness([], 'running');
 
     expect(view.state().background).toEqual([
       expect.objectContaining({ kind: 'compaction', id: 'full-compaction' }),

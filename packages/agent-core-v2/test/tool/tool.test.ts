@@ -106,6 +106,11 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { AgentToolExecutor, toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
+import {
+  AgentFullCompaction,
+  fullCompactionAgentRuntimeProvider,
+} from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import { stubFullCompactionRuntime } from '../features/fullCompaction/stubs';
 import { stubToolExecutorEvents } from '../features/toolExecutor/stubs';
 import { stubPermissionModeRuntime } from '../features/permissionMode/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -368,6 +373,12 @@ const adoptedRuntimeRecords: readonly AgentRuntimeDefinitionRecord[] = [
     generation: 1,
     active: true,
   },
+  {
+    definition: AgentFullCompaction,
+    provider: fullCompactionAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
 ];
 
 function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): AgentLifecycleStub {
@@ -566,6 +577,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       if (definition === AgentPrompt) {
         return { list: () => ({ active: undefined, pending: [] }) };
       }
+      if (definition === AgentFullCompaction) return stubFullCompactionRuntime();
       if (definition === AgentLoop) {
         const state = scoped?.accessor.get(LoopControlToken)?.status?.().state;
         return { status: () => (state === 'running' ? 'running' : 'idle') };

@@ -1,11 +1,11 @@
 import {
   ErrorCodes,
   AgentContextMemory,
+  AgentFullCompaction,
   AgentLoop,
   AgentProfile,
   IAgentLifecycleService,
   IAgentConversationUndoService,
-  IAgentFullCompactionService,
   IAuthSummaryService,
   ISessionActivityView,
   ISessionBtwService,
@@ -904,8 +904,9 @@ async function compactSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor
-    .get(IAgentFullCompactionService)
+  await agent.accessor
+    .get(IAgentLifecycleService)
+    .resolve(agentContextOf(agent), AgentFullCompaction)
     .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));

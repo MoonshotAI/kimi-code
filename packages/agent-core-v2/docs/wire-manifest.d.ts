@@ -35,9 +35,9 @@
 //   cron.cursor                        (none)                           src/features/cron/cronOps.ts
 //   cron.delete                        (none)                           src/features/cron/cronOps.ts
 //   forked                             (none)                           src/features/goal/goalOps.ts
-//   full_compaction.begin              fullCompaction                   src/agent/fullCompaction/compactionOps.ts
-//   full_compaction.cancel             fullCompaction                   src/agent/fullCompaction/compactionOps.ts
-//   full_compaction.complete           fullCompaction                   src/agent/fullCompaction/compactionOps.ts
+//   full_compaction.begin              (none)                           src/features/fullCompaction/compactionOps.ts
+//   full_compaction.cancel             (none)                           src/features/fullCompaction/compactionOps.ts
+//   full_compaction.complete           (none)                           src/features/fullCompaction/compactionOps.ts
 //   goal.clear                         (none)                           src/features/goal/goalOps.ts
 //   goal.create                        (none)                           src/features/goal/goalOps.ts
 //   goal.update                        (none)                           src/features/goal/goalOps.ts
@@ -224,8 +224,8 @@ interface ForkedPayload {
 }
 
 /**
- * states: fullCompaction
- * owner: src/agent/fullCompaction/compactionOps.ts
+ * states: (none)
+ * owner: src/features/fullCompaction/compactionOps.ts
  */
 interface FullCompactionBeginPayload {
   _name: 'full_compaction.begin';
@@ -236,8 +236,8 @@ interface FullCompactionBeginPayload {
 }
 
 /**
- * states: fullCompaction
- * owner: src/agent/fullCompaction/compactionOps.ts
+ * states: (none)
+ * owner: src/features/fullCompaction/compactionOps.ts
  */
 interface FullCompactionCancelPayload {
   _name: 'full_compaction.cancel';
@@ -245,8 +245,8 @@ interface FullCompactionCancelPayload {
 }
 
 /**
- * states: fullCompaction
- * owner: src/agent/fullCompaction/compactionOps.ts
+ * states: (none)
+ * owner: src/features/fullCompaction/compactionOps.ts
  */
 interface FullCompactionCompletePayload {
   _name: 'full_compaction.complete';

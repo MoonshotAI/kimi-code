@@ -26,6 +26,7 @@ import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextM
 import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
 import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
+import { AgentFullCompaction } from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionAgentRuntime';
 import type { PromptSubmitResult } from '@moonshot-ai/agent-core-v2/features/prompt/prompt';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
@@ -336,6 +337,21 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       return {
         cancelFromUser: () => runtime.cancelByUser(),
         status: () => runtime.status(),
+      };
+    }
+    if (service === 'agentFullCompactionService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      const agent = resolved.like as IAgentScopeHandle;
+      const runtime = agent.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentFullCompaction);
+      return {
+        begin: ([input]: [{ source?: 'manual' | 'auto'; instruction?: string }]) => {
+          const already = runtime.status() === 'running';
+          return runtime.begin(input).then(() => !already);
+        },
       };
     }
     const token = serviceTokens[service];
