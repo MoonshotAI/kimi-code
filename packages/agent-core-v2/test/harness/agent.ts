@@ -54,7 +54,7 @@ import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/features/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
-import { IAgentConversationUndoService } from '#/agent/undo/undo';
+import { AgentUndo, type UndoResult } from '#/features/undo/undoAgentRuntime';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
 import type { ProfileSetModelResult } from '#/features/profile/profile';
@@ -372,7 +372,7 @@ interface AgentRpcPassthroughAPI {
   promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptWithSkillsResult>;
   steer: (payload: SteerRpcPayload) => Promisable<PromptLaunchRpcResult>;
   cancel: (payload: CancelPayload) => void;
-  undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
+  undoHistory: (payload: UndoHistoryPayload) => Promisable<UndoResult>;
   setPermission: (payload: SetPermissionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
   activateSkill: (payload: SkillActivationInput) => Promisable<{ turn_id: number }>;
@@ -1708,8 +1708,8 @@ export class AgentTestContext {
     this.resolve(AgentPrompt).clear();
   }
 
-  async undoHistory(count: number): Promise<number> {
-    return this.get(IAgentConversationUndoService).undo(count);
+  async undoHistory(count: number): Promise<UndoResult> {
+    return this.resolve(AgentUndo).undo(count);
   }
 
   newEvents(): EventSnapshot {
@@ -2176,7 +2176,7 @@ export class AgentTestContext {
         return result.turnId === undefined ? undefined : { turn_id: result.turnId };
       },
       cancel: (payload) => this.get(LoopControlToken).cancelFromUser(payload.turnId),
-      undoHistory: (payload) => this.get(IAgentConversationUndoService).undo(payload.count),
+      undoHistory: (payload) => this.resolve(AgentUndo).undo(payload.count),
       setPermission: (payload) =>
         this.get(ISessionPermissionModeService).setModeAndBroadcast(this.agentContext, payload.mode),
       cancelCompaction: () => this.resolve(AgentFullCompaction).cancel(),

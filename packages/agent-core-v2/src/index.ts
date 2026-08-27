@@ -629,7 +629,6 @@ export {
 } from '#/features/contextMemory/contextMemoryAgentRuntime';
 export * from '#/features/contextMemory/contextOps';
 export * from '#/features/contextMemory/compactionHandoff';
-export * from '#/features/contextMemory/conversationUndoParticipants';
 export * from '#/features/contextMemory/conversationTime';
 export * from '#/features/contextMemory/loopEventFold';
 export * from '#/features/contextMemory/messageId';
@@ -764,8 +763,15 @@ export * from '#/features/prompt/promptMetadataText';
 import '#/features/prompt/promptFeature';
 export * from '#/agent/replayBuilder/types';
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-export * from '#/agent/undo/undo';
-export * from '#/agent/undo/undoService';
+export {
+  AgentUndo,
+  type AgentConversationUndoParticipant,
+  type UndoAvailability,
+  type UndoResult,
+  type UndoRuntime,
+} from '#/features/undo/undoAgentRuntime';
+export * from '#/features/undo/undoEvents';
+import '#/features/undo/undoFeature';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/agentContext/agentContext';

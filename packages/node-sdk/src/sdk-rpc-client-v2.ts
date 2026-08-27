@@ -167,7 +167,7 @@ import {
   AgentContextMemory,
   AgentCron,
   AgentGoal,
-  IAgentConversationUndoService,
+  AgentUndo,
   AgentFullCompaction,
   IAgentPluginService,
   IAgentLifecycleService,
@@ -1831,14 +1831,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .cancel();
   }
 
-  /**
-   * Through the agent scope (`IAgentConversationUndoService.undo`) — no
-   * klient facade exists; the returned count is
-   * dropped (v1 returns void). Failure semantics differ by design: v2
-   * prechecks and rejects atomically with `session.undo_unavailable`, while
-   * v1 splices a partial suffix out of the live history and then throws
-   * `request.invalid` — pinned in the parity KNOWN_DIFFS.
-   */
   override async getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]> {
     const session = this.requireLiveSession(input.sessionId);
     const agents = session.accessor.get(IAgentLifecycleService);
@@ -1848,9 +1840,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return todos.map((todo) => ({ title: todo.title, status: todo.status }));
   }
 
+  /**
+   * Through the agent runtime (`AgentUndo.undo`) — no
+   * klient facade exists; the returned result is
+   * dropped (v1 returns void). Failure semantics differ by design: v2
+   * prechecks and rejects atomically with `session.undo_unavailable`, while
+   * v1 splices a partial suffix out of the live history and then throws
+   * `request.invalid` — pinned in the parity KNOWN_DIFFS.
+   */
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
+    await agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentUndo)
+      .undo(input.count);
   }
 
   /**

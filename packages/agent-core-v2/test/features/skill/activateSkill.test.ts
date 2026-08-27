@@ -177,7 +177,7 @@ describe('promptWithSkills', () => {
     expect(ctx.context.get().length).toBeGreaterThan(0);
 
     const undone = await ctx.rpc.undoHistory({ count: 1 });
-    expect(undone).toBe(1);
+    expect(undone).toEqual({ applied: true });
     expect(ctx.context.get()).toHaveLength(0);
   });
 

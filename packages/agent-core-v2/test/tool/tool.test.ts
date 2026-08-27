@@ -111,6 +111,8 @@ import {
   fullCompactionAgentRuntimeProvider,
 } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { stubFullCompactionRuntime } from '../features/fullCompaction/stubs';
+import { AgentUndo, undoAgentRuntimeProvider } from '#/features/undo/undoAgentRuntime';
+import { stubUndoRuntime } from '../features/undo/stubs';
 import { stubToolExecutorEvents } from '../features/toolExecutor/stubs';
 import { stubPermissionModeRuntime } from '../features/permissionMode/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -379,6 +381,12 @@ const adoptedRuntimeRecords: readonly AgentRuntimeDefinitionRecord[] = [
     generation: 1,
     active: true,
   },
+  {
+    definition: AgentUndo,
+    provider: undoAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
 ];
 
 function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): AgentLifecycleStub {
@@ -578,6 +586,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         return { list: () => ({ active: undefined, pending: [] }) };
       }
       if (definition === AgentFullCompaction) return stubFullCompactionRuntime();
+      if (definition === AgentUndo) return stubUndoRuntime();
       if (definition === AgentLoop) {
         const state = scoped?.accessor.get(LoopControlToken)?.status?.().state;
         return { status: () => (state === 'running' ? 'running' : 'idle') };

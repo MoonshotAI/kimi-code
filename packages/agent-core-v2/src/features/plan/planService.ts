@@ -29,7 +29,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import { ContextUndone } from '#/agent/undo/undoService';
+import { ContextUndone } from '#/features/undo/undoEvents';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import {
   IAgentPlanService,

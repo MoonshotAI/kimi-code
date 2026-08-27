@@ -15,8 +15,8 @@ import {
   type IOAuthService as IOAuthServiceType,
   AgentCron,
   AgentGoal,
+  AgentUndo,
   agentContextOf,
-  IAgentConversationUndoService,
   IAgentLifecycleService,
   IEventBus,
   IEventService,
@@ -865,7 +865,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const res = await postJson<{ messages: unknown }>(`/api/v1/sessions/${id}:undo`, { count: 1 });
     expect(res.body.code).toBe(40911);
     expect(res.body.msg).toMatch(/nothing to undo/i);
-    expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
+    expect(res.body.stack).toEqual(expect.stringContaining('undoDomain'));
   });
 
   it('returns 40901 when :undo reports a busy session', async () => {
@@ -879,7 +879,12 @@ describe('server-v2 /api/v1/sessions', () => {
       .create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const undo = vi
-      .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
+      .spyOn(
+        session.accessor
+          .get(IAgentLifecycleService)
+          .resolve(agentContextOf(agent), AgentUndo),
+        'undo',
+      )
       .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
 
     try {

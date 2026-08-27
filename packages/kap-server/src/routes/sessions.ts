@@ -4,8 +4,8 @@ import {
   AgentFullCompaction,
   AgentLoop,
   AgentProfile,
+  AgentUndo,
   IAgentLifecycleService,
-  IAgentConversationUndoService,
   IAuthSummaryService,
   ISessionActivityView,
   ISessionBtwService,
@@ -917,7 +917,10 @@ async function undoSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  await agent.accessor
+    .get(IAgentLifecycleService)
+    .resolve(agentContextOf(agent), AgentUndo)
+    .undo(body.count);
   const history = agent.accessor
     .get(IAgentLifecycleService)
     .resolve(agentContextOf(agent), AgentContextMemory)

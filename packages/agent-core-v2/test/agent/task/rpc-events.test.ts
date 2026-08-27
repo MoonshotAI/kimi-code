@@ -22,7 +22,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
-import { IAgentConversationUndoService } from '#/agent/undo/undo';
+import { AgentUndo } from '#/features/undo/undoAgentRuntime';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
@@ -744,7 +744,7 @@ describe('AgentTaskService — notification delivery', () => {
         new Error('output unavailable'),
       );
 
-      await ctx.get(IAgentConversationUndoService).undo(1);
+      await ctx.resolve(AgentUndo).undo(1);
 
       expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
       expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
@@ -797,7 +797,7 @@ describe('AgentTaskService — notification delivery', () => {
       });
       expect(notifiedCount(ctx)).toBe(0);
 
-      await expect(ctx.get(IAgentConversationUndoService).undo(1)).rejects.toMatchObject({
+      await expect(ctx.resolve(AgentUndo).undo(1)).rejects.toMatchObject({
         code: ErrorCodes.SESSION_BUSY,
         details: { reason: 'loop' },
       });

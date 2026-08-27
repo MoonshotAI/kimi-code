@@ -6,13 +6,13 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
 import type {
   ContextInjectionContext,
   ContextInjectionProvider,
 } from '#/features/reminder/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { lifecycleWithUndo, stubUndoRuntime } from '../../features/undo/stubs';
 import {
   IAgentTaskService,
   type AgentTask,
@@ -109,21 +109,20 @@ describe('AgentTaskService', () => {
     injectionProviders = new Map();
     contextMemory = stubContextMemory();
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentConversationUndoParticipantRegistry, {
-      register: () => toDisposable(() => {}),
-      list: () => [],
-    });
     ix.stub(IWireService, stubWireService());
     ix.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub({
-        register: (name, provider) => {
-          injectionProviders.set(name, provider as ContextInjectionProvider);
-          return toDisposable(() => {
-            injectionProviders.delete(name);
-          });
-        },
-      }), contextMemory),
+      lifecycleWithUndo(
+        stubUndoRuntime(),
+        lifecycleWithReminder(createReminderStub({
+          register: (name, provider) => {
+            injectionProviders.set(name, provider as ContextInjectionProvider);
+            return toDisposable(() => {
+              injectionProviders.delete(name);
+            });
+          },
+        }), contextMemory),
+      ),
     );
     ix.stub(ITaskService, {
       run: () => {
@@ -696,14 +695,13 @@ describe('AgentTaskService', () => {
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentConversationUndoParticipantRegistry, {
-      register: () => toDisposable(() => {}),
-      list: () => [],
-    });
     ix.stub(IWireService, stubWireService());
     ix.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub(), stubContextMemory()),
+      lifecycleWithUndo(
+        stubUndoRuntime(),
+        lifecycleWithReminder(createReminderStub(), stubContextMemory()),
+      ),
     );
     ix.stub(ITaskService, {
       run: () => {
@@ -753,13 +751,12 @@ describe('AgentTaskService', () => {
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentConversationUndoParticipantRegistry, {
-      register: () => toDisposable(() => {}),
-      list: () => [],
-    });
     ix.stub(
       IAgentLifecycleService,
-      lifecycleWithReminder(createReminderStub(), context),
+      lifecycleWithUndo(
+        stubUndoRuntime(),
+        lifecycleWithReminder(createReminderStub(), context),
+      ),
     );
     ix.stub(ITaskService, {
       run: () => {

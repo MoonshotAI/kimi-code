@@ -22,7 +22,7 @@ import {
   ContextSpliced,
 } from '#/features/contextMemory/contextEvents';
 import '#/features/contextMemory/conversationTime';
-import { IAgentConversationUndoParticipantRegistry } from '#/features/contextMemory/conversationUndoParticipants';
+import { AgentUndo } from '#/features/undo/undoAgentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/features/contextMemory/types';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
@@ -244,8 +244,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @LoopControlToken private readonly loop: LoopControlToken,
-    @IAgentConversationUndoParticipantRegistry
-    undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
@@ -269,10 +267,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       fallbackRoot,
     );
     this._register(
-      undoParticipants.register({
-        id: 'task.notificationDelivery',
-        reconcileAfterUndo: () => this.reconcileNotificationDeliveryAfterUndo(),
-      }),
+      agentLifecycle
+        .resolve(scopeContext.agentContext, AgentUndo)
+        .registerUndoParticipant({
+          id: 'task.notificationDelivery',
+          reconcileAfterUndo: () => this.reconcileNotificationDeliveryAfterUndo(),
+        }),
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('task', async (_ctx, next) => {
