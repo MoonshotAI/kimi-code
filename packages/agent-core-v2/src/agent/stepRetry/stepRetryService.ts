@@ -10,8 +10,20 @@ import {
   retryErrorFields,
   sleepForRetry,
 } from '#/_base/utils/retry';
-import { isRetryableGenerateError } from '#/kosong/contract/errors';
+import {
+  APIProviderQuotaExhaustedError,
+  isProviderRateLimitError,
+  isRetryableGenerateError,
+} from '#/kosong/contract/errors';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { WarningIssued } from '#/agent/profile/profileOps';
+import {
+  resolveSubstituteCooldownMs,
+  resolveSubstituteModelAlias,
+} from '#/session/substitute/configSection';
+import { substituteModelActiveKey } from '#/session/substitute/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import { unwrapErrorCause } from '#/errors';
@@ -66,14 +78,21 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
     super();
     this.states.contributeState(stepRetryLastFailedDriverIdKey);
     this.states.contributeState(stepRetryFailedAttemptsKey);
+    this.states.contributeState(substituteModelActiveKey);
     this._register(
       this.loopService.registerLoopErrorHandler({
         id: 'step-retry',
-        match: (context) => isRetryableGenerateError(unwrapErrorCause(context.error)),
+        match: (context) => {
+          const raw = unwrapErrorCause(context.error);
+          if (isRetryableGenerateError(raw)) return true;
+          return raw instanceof APIProviderQuotaExhaustedError && this.substituteCandidate() !== undefined;
+        },
         handle: (context) => this.recover(context),
       }),
     );
@@ -122,6 +141,19 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
         DEFAULT_MAX_RETRY_ATTEMPTS,
       1,
     );
+    const raw = unwrapErrorCause(context.error);
+    const rateLimited =
+      isProviderRateLimitError(raw) || raw instanceof APIProviderQuotaExhaustedError;
+    if (rateLimited && this.activateSubstitute(raw)) {
+      this.resetAttempts();
+      if (context.currentStep?.signal.aborted === true) return false;
+      context.retry(driver, { at: 'head' });
+      return true;
+    }
+    if (!isRetryableGenerateError(raw)) {
+      this.resetAttempts();
+      return false;
+    }
     if (this.failedAttempts >= maxAttempts) {
       this.resetAttempts();
       return false;
@@ -149,6 +181,49 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     context.retry(driver, { at: 'head' });
     return true;
   }
+
+  private substituteCandidate(): { alias: string; primaryAlias: string } | undefined {
+    const alias = resolveSubstituteModelAlias(this.config, this.flags);
+    if (alias === undefined) return undefined;
+    if (this.states.get(substituteModelActiveKey) !== undefined) return undefined;
+    const primaryAlias = this.profile.data().modelAlias;
+    if (primaryAlias === undefined || alias === primaryAlias) return undefined;
+    try {
+      this.profile.resolveModelContextFor(alias);
+    } catch {
+      return undefined;
+    }
+    return { alias, primaryAlias };
+  }
+
+  private activateSubstitute(error: unknown): boolean {
+    const candidate = this.substituteCandidate();
+    if (candidate === undefined) return false;
+    const { alias, primaryAlias } = candidate;
+    const cooldownMs = Math.max(
+      resolveSubstituteCooldownMs(this.config, this.flags),
+      readRetryAfterMs(unwrapErrorCause(error)) ?? 0,
+    );
+    this.states.set(substituteModelActiveKey, {
+      alias,
+      primaryAlias,
+      until: Date.now() + cooldownMs,
+    });
+    void this.dispatcher.dispatch(
+      new WarningIssued({
+        agentId: this.scopeContext.agentId,
+        code: 'substitute-model',
+        message: `Model ${primaryAlias} is unavailable, switching to substitute model ${alias} for ${formatCooldown(cooldownMs)}`,
+      }),
+    );
+    return true;
+  }
+}
+
+function formatCooldown(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 120) return `${String(seconds)}s`;
+  return `${String(Math.round(seconds / 60))}m`;
 }
 
 registerScopedService(

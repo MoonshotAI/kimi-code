@@ -520,6 +520,7 @@ import '#/session/compaction/flag';
 import '#/session/compaction/configSection';
 import '#/session/substitute/flag';
 import '#/session/substitute/configSection';
+import '#/session/substitute/state';
 import '#/session/updateAllSessionModels/flag';
 export {
   VISUAL_MODEL_FLAG_ID,
@@ -568,6 +569,7 @@ export {
   substituteModelEnvBindings,
   type SubstituteModelConfig,
 } from '#/session/substitute/configSection';
+export * from '#/session/substitute/state';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
 export * from '#/app/sessionManager/sessionLookup';
