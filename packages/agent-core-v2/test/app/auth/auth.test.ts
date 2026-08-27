@@ -579,8 +579,10 @@ describe('OAuthService', () => {
 
     await svc.startLogin(OAUTH_PROVIDER);
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(providerSet).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
       expect.objectContaining({

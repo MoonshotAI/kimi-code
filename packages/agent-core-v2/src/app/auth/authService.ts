@@ -86,7 +86,6 @@ interface FlowState {
   readonly loginBaseUrl: string | undefined;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
-  provisioning: boolean;
   expiresAt: number;
   gcTimer: ReturnType<typeof setTimeout> | undefined;
   errorMessage: string | undefined;
@@ -136,7 +135,6 @@ export class OAuthService extends Disposable implements IOAuthService {
       loginBaseUrl: loginAuth.baseUrl,
       device: undefined,
       status: 'pending',
-      provisioning: false,
       expiresAt: Date.now() + DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
       gcTimer: undefined,
       errorMessage: undefined,
@@ -471,7 +469,6 @@ export class OAuthService extends Disposable implements IOAuthService {
     for (const state of this.flows.values()) {
       if (!affected.has(state.provider)) continue;
       if (state.status !== 'pending') continue;
-      if (state.provisioning) continue;
       state.controller.abort();
       state.errorMessage = 'Provider configuration changed during login.';
       this.setTerminal(state, 'cancelled');
@@ -480,32 +477,28 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private handleSuccess(state: FlowState): void {
     if (state.status !== 'pending') return;
-    void this.finalizeAuthentication(state);
+    this.setTerminal(state, 'authenticated');
+    void this.provisionAfterSuccess(state);
   }
 
   private async completeAlreadyAuthenticatedLogin(state: FlowState): Promise<void> {
-    await this.finalizeAuthentication(state);
+    if (state.status !== 'pending') return;
+    this.setTerminal(state, 'authenticated');
+    await this.provisionAfterSuccess(state);
   }
 
-  private async finalizeAuthentication(state: FlowState): Promise<void> {
-    state.provisioning = true;
+  private async provisionAfterSuccess(state: FlowState): Promise<void> {
     try {
       await this.provisionProvider(state.provider, state.oauthRef, state.loginBaseUrl);
-      if (state.status !== 'pending') return;
+      if (this.flows.get(state.provider) !== state) return;
       if (state.provider === KIMI_CODE_PROVIDER_NAME) {
         await this.refreshOAuthProviderModelsBestEffort(state.provider);
-        if (state.status !== 'pending') return;
       }
     } catch (error) {
       this.log.warn('oauth provider provisioning failed', {
         provider: state.provider,
         error: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      state.provisioning = false;
-      if (state.status === 'pending') {
-        this.setTerminal(state, 'authenticated');
-      }
     }
   }
 
