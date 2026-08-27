@@ -413,14 +413,19 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
   if (items.length === state.items.length) return { state, changed: false };
   let pending = state.pendingInteractions;
   let interactions = state.interactions;
+  let prompts = state.prompts;
   if (removedTurns.length > 0) {
     const anchoredToolCallIds = new Set<string>();
+    const removedPromptIds = new Set<PromptId>();
     const nextPending = new Set(pending);
     const deadEntityIds = new Set<InteractionId>();
     for (const turn of removedTurns) {
       for (const step of turn.steps) {
         for (const frame of step.frames) {
           if (frame.kind === 'tool') anchoredToolCallIds.add(frame.toolCallId);
+          if (frame.kind === 'text' && frame.role === 'user' && frame.promptIds !== undefined) {
+            for (const promptId of frame.promptIds) removedPromptIds.add(promptId);
+          }
         }
       }
     }
@@ -436,8 +441,34 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
       interactions = nextInteractions;
     }
     pending = nextPending;
+    // A turn's own prompt entity shares the turn's time bounds; a steered
+    // prompt's entity is paired by the frame's promptIds. Drop both so a
+    // rewound turn can't leave its prompts behind to cover a fresh send.
+    const removedTimeBounds = removedTurns.map((turn) => ({
+      startedAt: turn.startedAt,
+      endedAt: turn.endedAt,
+    }));
+    const nextPrompts = new Map(prompts);
+    let promptsChanged = false;
+    for (const [promptId, prompt] of prompts) {
+      if (removedPromptIds.has(promptId)) {
+        nextPrompts.delete(promptId);
+        promptsChanged = true;
+        continue;
+      }
+      for (const bounds of removedTimeBounds) {
+        if (bounds.startedAt === undefined) continue;
+        const end = bounds.endedAt ?? bounds.startedAt;
+        if (prompt.createdAt >= bounds.startedAt && prompt.createdAt <= end) {
+          nextPrompts.delete(promptId);
+          promptsChanged = true;
+          break;
+        }
+      }
+    }
+    if (promptsChanged) prompts = nextPrompts;
   }
-  return { state: { ...state, items, interactions, pendingInteractions: pending }, changed: true };
+  return { state: { ...state, items, interactions, prompts, pendingInteractions: pending }, changed: true };
 }
 
 function applyTaskUpsert(state: AgentState, task: TranscriptTask): ApplyResult {

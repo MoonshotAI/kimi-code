@@ -357,6 +357,71 @@ describe('AgentTranscript', () => {
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
+  it('items.remove drops prompts paired by steered frames and time bounds', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      {
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: 'p-turn',
+          status: 'completed',
+          createdAt: '2026-08-26T15:00:00.000Z',
+        },
+      },
+      {
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: 'p-steer',
+          status: 'completed',
+          createdAt: '2026-08-26T15:01:00.000Z',
+          steeredAt: '2026-08-26T15:01:30.000Z',
+        },
+      },
+      {
+        op: 'prompt.upsert',
+        prompt: {
+          promptId: 'p-other',
+          status: 'completed',
+          createdAt: '2026-08-26T14:00:00.000Z',
+        },
+      },
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn',
+          turnId: 't1',
+          ordinal: 1,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'hi',
+          startedAt: '2026-08-26T15:00:00.000Z',
+          endedAt: '2026-08-26T15:02:00.000Z',
+        },
+      },
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: { kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'completed' },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't1',
+        stepId: 't1.1',
+        frame: {
+          kind: 'text',
+          frameId: 't1.1.f1',
+          role: 'user',
+          text: 'steered',
+          promptIds: ['p-steer'],
+        },
+      },
+    ]);
+
+    expect(tx.snapshot().prompts.map((p) => p.promptId)).toEqual(['p-turn', 'p-steer', 'p-other']);
+    tx.apply([{ op: 'items.remove', ids: ['t1'] }]);
+    expect(tx.snapshot().prompts.map((p) => p.promptId)).toEqual(['p-other']);
+  });
+
   it('receive() equals full reset seed; snapshot windowing keeps newest turns', () => {
     const tx = new AgentTranscript('main');
     for (let n = 1; n <= 5; n += 1) {
