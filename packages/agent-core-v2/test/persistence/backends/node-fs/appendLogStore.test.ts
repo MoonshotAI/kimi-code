@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { AppendLogCorruptedError, IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { AppendLogCorruptedError, IAppendLogStore, type AppendLogTruncation } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -632,6 +632,56 @@ describe('AppendLogStore', () => {
       expect(corrupted.cause).toBeInstanceOf(SyntaxError);
       return true;
     });
+  });
+
+  it('stops at a corrupted middle line and reports it when onTruncate is given', async () => {
+    const raw = `${JSON.stringify({ n: 1 })}\nGARBAGE\n${JSON.stringify({ n: 3 })}\n`;
+    await storage.append(SCOPE, KEY, enc.encode(raw));
+    const truncations: AppendLogTruncation[] = [];
+
+    const out: Rec[] = [];
+    for await (const r of record.read<Rec>(SCOPE, KEY, {
+      onTruncate: (truncation) => truncations.push(truncation),
+    })) {
+      out.push(r);
+    }
+
+    expect(out).toEqual([{ n: 1 }]);
+    expect(truncations).toHaveLength(1);
+    expect(truncations[0]).toMatchObject({ lineNumber: 2, reason: 'corrupted' });
+    expect(truncations[0]!.cause).toBeInstanceOf(AppendLogCorruptedError);
+  });
+
+  it('reports a torn final line as truncation when onTruncate is given', async () => {
+    const raw = `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 }).slice(0, 4)}`;
+    await storage.append(SCOPE, KEY, enc.encode(raw));
+    const truncations: AppendLogTruncation[] = [];
+
+    const out: Rec[] = [];
+    for await (const r of record.read<Rec>(SCOPE, KEY, {
+      onTruncate: (truncation) => truncations.push(truncation),
+    })) {
+      out.push(r);
+    }
+
+    expect(out).toEqual([{ n: 1 }]);
+    expect(truncations).toEqual([{ lineNumber: 2, reason: 'truncated' }]);
+  });
+
+  it('does not report truncation for a clean log when onTruncate is given', async () => {
+    const raw = `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 })}\n`;
+    await storage.append(SCOPE, KEY, enc.encode(raw));
+    const truncations: AppendLogTruncation[] = [];
+
+    const out: Rec[] = [];
+    for await (const r of record.read<Rec>(SCOPE, KEY, {
+      onTruncate: (truncation) => truncations.push(truncation),
+    })) {
+      out.push(r);
+    }
+
+    expect(out).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(truncations).toEqual([]);
   });
 
   it('reads across chunk boundaries (stream read splits lines)', async () => {
