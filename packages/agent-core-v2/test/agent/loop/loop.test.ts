@@ -844,6 +844,32 @@ describe('Agent loop', () => {
     expect(prompts).toEqual([undefined, 'hi']);
   });
 
+  it('carries the turn.started prompt for subagent system triggers', async () => {
+    const prompts: Array<string | undefined> = [];
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      prompts.push(event.prompt);
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'scanned' });
+
+    const subagent = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'scan the repo' }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'subagent' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await subagent.result;
+    subscription.dispose();
+
+    expect(prompts).toEqual(['scan the repo']);
+  });
+
   it('carries kimi-file prompt attachments on turn.started, falling back to the URL file id', async () => {
     const payloads: Array<readonly { kind: string; fileId: string }[] | undefined> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {

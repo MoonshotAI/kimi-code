@@ -175,6 +175,31 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('projects the live prompt for subagent system triggers and keeps it through turn.ended', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'system_trigger', name: 'subagent' },
+        prompt: 'scan the repo',
+        promptAttachments: [{ kind: 'image', fileId: 'file_1' }],
+      }),
+    );
+    feed(ev({ type: 'assistant.delta', turnId: 0, delta: 'scanning' }));
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('scan the repo');
+    expect(turn.attachmentIds).toEqual(['t0.att1']);
+    expect(turn.state).toBe('completed');
+  });
+
   it('projects turn.started promptAttachments into attachment entities and turn.attachmentIds', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');

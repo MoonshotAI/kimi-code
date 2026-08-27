@@ -991,7 +991,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     if (subTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(subTurn.ordinal).toBe(1);
     expect(subTurn.origin.kind).toBe('other');
-    expect(subTurn.prompt).toBeUndefined();
+    expect(subTurn.prompt).toBe('scan the repo');
     expect(subTurn.steps).toHaveLength(1);
   });
 

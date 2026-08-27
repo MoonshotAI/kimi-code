@@ -1055,9 +1055,10 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const main = byAgent.get('main')!;
     expect(main.messages.map((m) => [m.turn_id, m.prompt])).toEqual([
       ['t0', 'hi'],
+      ['t1', 'subagent run prompt'],
       ['t2', 'second question'],
     ]);
-    expect(main.messages[1]!.attachment_ids).toEqual(['att_1']);
+    expect(main.messages[2]!.attachment_ids).toEqual(['att_1']);
     expect(main.attachments).toEqual([
       expect.objectContaining({
         attachmentId: 'att_1',
