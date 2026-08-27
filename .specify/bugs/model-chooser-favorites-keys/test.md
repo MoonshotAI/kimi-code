@@ -33,12 +33,12 @@ missing `qrcode` dependency in web tests, `agent-core-v2` fullCompactionService
 
 ## Output Excerpts
 
-```
+```text
  Test Files  5 passed (5)
       Tests  67 passed (67)
 ```
 
-```
+```text
 $ grep -iE "model-selector|tabbed-model-selector|commands/config|printable-key" <typecheck output>
 (no matches → none of the changed modules produced a type error)
 ```

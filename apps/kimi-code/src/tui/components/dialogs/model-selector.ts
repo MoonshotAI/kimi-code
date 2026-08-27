@@ -236,9 +236,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
     // filter would swallow the character. Only the Shift variants (uppercase
     // letters) are shortcuts, so lowercase letters still type-filter the list.
     const ch = printableChar(data);
-    if (ch === 'A' || ch === 'R') {
+    if ((ch === 'A' || ch === 'R') && this.opts.onToggleFavorite !== undefined) {
       const selected = this.selectedChoice();
-      if (selected !== undefined && this.opts.onToggleFavorite !== undefined) {
+      if (selected !== undefined) {
         const isFavorite = this.opts.favoriteAliases?.has(selected.alias) ?? false;
         // 'A' adds only when not already a favorite; 'R' removes only when it is.
         if ((ch === 'A') !== isFavorite) this.opts.onToggleFavorite(selected.alias);

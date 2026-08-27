@@ -654,4 +654,32 @@ describe('ModelSelectorComponent favorites', () => {
     expect(out).toContain('No favorites yet — press Shift+A');
     expect(out).not.toContain('No matches');
   });
+
+  it('passes uppercase A/R through to search filtering when onToggleFavorite is not provided', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        alpha: model('Alpha Model'),
+        arena: model('Arena Model'),
+        rocket: model('Rocket Model'),
+      },
+      currentValue: 'alpha',
+      currentThinkingEffort: 'on',
+      searchable: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput('A');
+    const outA = text(picker);
+    expect(outA).toContain('Alpha Model');
+    expect(outA).toContain('Arena Model');
+    expect(outA).not.toContain('Rocket Model');
+
+    picker.handleInput(ESC);
+    picker.handleInput('R');
+    const outR = text(picker);
+    expect(outR).toContain('Arena Model');
+    expect(outR).toContain('Rocket Model');
+    expect(outR).not.toContain('Alpha Model');
+  });
 });

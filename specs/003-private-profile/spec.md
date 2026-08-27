@@ -38,7 +38,7 @@ As a user, I want to toggle private mode on and off, so that I can temporarily a
 
 1. **Given** the user has a configured private profile, **When** they activate private mode (via slash command or keybinding), **Then** the current session immediately uses the four models from the private profile for all subsequent operations.
 2. **Given** private mode is active, **When** the user deactivates private mode, **Then** the current session immediately reverts to using the global default models for primary, secondary, squeeze, and vision.
-3. **Given** private mode is active, **When** the user starts a new session, **Then** private mode remains active for that session (session-scoped, not persistent across sessions).
+3. **Given** private mode is active in the current session, **When** the user starts a new session, **Then** the new session starts with private mode inactive.
 
 ---
 
@@ -76,7 +76,7 @@ As a user, I want clear visual indication of whether private mode is currently a
 - **FR-005**: When private mode is deactivated, System MUST revert the session to using global default models for all four model slots.
 - **FR-006**: System MUST maintain private mode state per session (session-scoped, not persisted across sessions).
 - **FR-007**: System MUST provide visual indication of private mode status (active/inactive) in the TUI.
-- **FR-008**: System MUST handle the case where private mode is activated without a configured private profile by prompting the user to configure it first or using sensible defaults.
+- **FR-008**: System MUST handle the case where private mode is activated without a configured private profile by opening the Private tab in the model selector dialog and notifying the user to configure the profile; private mode remains inactive until the user completes configuration.
 - **FR-009**: System MUST gracefully handle unavailable models in the private profile by falling back to global defaults for those specific slots and notifying the user.
 - **FR-010**: System MUST NOT modify global configuration when private mode is activated; changes are session-scoped only.
 
@@ -92,7 +92,7 @@ As a user, I want clear visual indication of whether private mode is currently a
 
 - **SC-001**: Users can configure a private profile in under 2 minutes.
 - **SC-002**: Users can toggle private mode on/off with a single action (keybinding or command).
-- **SC-003**: When private mode is activated, the session uses the private profile models for 100% of subsequent operations (until deactivated).
+- **SC-003**: When private mode is activated, the session uses the private profile models for all available model slots; unavailable slots fall back to global defaults.
 - **SC-004**: When private mode is deactivated, the session reverts to global defaults within 1 second.
 - **SC-005**: Private profile configuration persists across application restarts with 100% fidelity.
 - **SC-006**: Visual indication of private mode status is immediately apparent to users.
