@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,6 +50,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
+import { toWireQuestion } from '../../src/protocol/question-wire';
 import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
@@ -68,6 +69,8 @@ const execFileAsync = promisify(execFile);
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
 }
+
+const TEST_SESSION_ID = 'session-test';
 
 function turnOps(turnId: string, items: ReturnType<AgentTranscript['getItems']>): TranscriptTurn {
   const turn = items.find(
@@ -97,7 +100,7 @@ function coldTranscriptService(home: string): TranscriptService {
 
 describe('AgentTranscriptProjector', () => {
   it('projects a full turn: headers, delta appends, flush, tool frames', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
     const feed = (event: ProjectorBusEvent): void => {
@@ -157,7 +160,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects the live prompt from turn.started and keeps it through turn.ended', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => {
       tx.apply(projector.map(event));
@@ -172,8 +175,33 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('projects the live prompt for subagent system triggers and keeps it through turn.ended', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'system_trigger', name: 'subagent' },
+        prompt: 'scan the repo',
+        promptAttachments: [{ kind: 'image', fileId: 'file_1' }],
+      }),
+    );
+    feed(ev({ type: 'assistant.delta', turnId: 0, delta: 'scanning' }));
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('scan the repo');
+    expect(turn.attachmentIds).toEqual(['t0.att1']);
+    expect(turn.state).toBe('completed');
+  });
+
   it('projects turn.started promptAttachments into attachment entities and turn.attachmentIds', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
     const feed = (event: ProjectorBusEvent): void => {
@@ -216,7 +244,7 @@ describe('AgentTranscriptProjector', () => {
 
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       stepOrdinal: (turnId) => (turnId === 't0' ? 2 : undefined),
     });
 
@@ -247,7 +275,7 @@ describe('AgentTranscriptProjector', () => {
         frame: { kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 'Hello ' },
       },
     ]);
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       stepFrames: (turnId, stepId) =>
         tx.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
     });
@@ -292,7 +320,7 @@ describe('AgentTranscriptProjector', () => {
         },
       },
     ]);
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       toolFrame: (toolCallId) => {
         for (const item of tx.getItems()) {
           if (item.kind !== 'turn') continue;
@@ -342,7 +370,7 @@ describe('AgentTranscriptProjector', () => {
         },
       },
     ]);
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       toolFrame: (toolCallId) => {
         for (const item of tx.getItems()) {
           if (item.kind !== 'turn') continue;
@@ -374,7 +402,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('gives live markers their own namespace so they never collide with backfilled markers', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     tx.apply([{ op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'skill' } }]);
 
@@ -483,7 +511,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('flushes open frames on turn.ended even without step completion', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -506,7 +534,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('marks a user-cancelled turn with an interruption marker, but not programmatic aborts', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -530,7 +558,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('carries usage / finishReason / the full timing breakdown on turn.step.completed', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -590,7 +618,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('carries endReason / endMessage on turn.step.interrupted', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -613,7 +641,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('sets retry on turn.step.retrying and clears it at the terminal upsert', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const step = (): TranscriptTurn['steps'][number] => turnOps('t1', tx.getItems()).steps[0]!;
@@ -652,7 +680,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('fills durationMs / error / accumulated step usage on turn.ended', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -698,7 +726,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('takes the turn header endedAt from the turn.ended event time', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -712,7 +740,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('accumulates tool.call.delta into inputText, kept across tool.call.started', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const toolFrame = (toolCallId: string): TranscriptFrame | undefined =>
@@ -762,7 +790,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('overwrites tool frame progress and drops progress for unknown calls', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -807,7 +835,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('marks tool.result errors and keeps the display payload', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -835,7 +863,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects process tasks as shell tasks with streaming output', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
     const feed = (event: ProjectorBusEvent): void => {
@@ -887,7 +915,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('fills the shell task output from late stderr chunks before completing', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
@@ -900,7 +928,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('routes shell output/completion via the event taskId when shell.started was missed', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(
@@ -916,7 +944,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('emits a taskref when only shell.completed arrives for a command', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: true })));
@@ -926,7 +954,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects no-taskId shell failures under a synthetic per-command task id', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(
@@ -940,7 +968,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('marks a foreground shell task terminal on shell.completed', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
@@ -956,12 +984,12 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('ignores task.notified (it re-surfaces as an origin:task turn)', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     expect(projector.map(ev({ type: 'task.notified', taskId: 't' }))).toEqual([]);
   });
 
   it('links spawned subagents to the spawning tool frame (member for swarm)', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1008,7 +1036,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('keys an Agent-tool subagent row by its registered task id and folds the lifecycle', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1067,7 +1095,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('drops the stale task mapping when a child respawns without a task id', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1100,7 +1128,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('recovers the agent → task association from a backfilled task.started', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1126,7 +1154,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects goal updates into meta.goal plus an inline marker', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const snapshot = {
       goalId: 'g1',
@@ -1158,7 +1186,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('mirrors plan / swarm mode slices into meta.modes (only when provided)', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
@@ -1172,7 +1200,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('mirrors the tower mode slice into meta.modes', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: true })));
@@ -1183,7 +1211,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1224,7 +1252,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('maps agent.activity.updated into meta.agent.phase', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
     const turn = (overrides: Record<string, unknown>): Record<string, unknown> => ({
@@ -1298,7 +1326,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects plan.revision as a marker and refines the active plan badge', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     const revision = {
@@ -1347,7 +1375,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1404,7 +1432,7 @@ describe('AgentTranscriptProjector', () => {
 
   it('removes trailing turns and the undo marker on context.undone', () => {
     const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       items: () => tx.getItems(),
     });
     const feed = (event: ProjectorBusEvent): void => {
@@ -1427,7 +1455,7 @@ describe('AgentTranscriptProjector', () => {
 
   it('removes multiple trailing turns and keeps taskrefs appended during them', () => {
     const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       items: () => tx.getItems(),
     });
     const feed = (event: ProjectorBusEvent): void => {
@@ -1463,16 +1491,16 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('ignores context.undone when no removable turns exist', () => {
-    const bare = new AgentTranscriptProjector('main');
+    const bare = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     expect(bare.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
 
-    const projector = new AgentTranscriptProjector('main', { items: () => [] });
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, { items: () => [] });
     expect(projector.map(ev({ type: 'context.undone', agentId: 'main', turns: 1 }))).toEqual([]);
   });
 
   it('removes every turn from fromTurnId onward, including trailing non-anchor turns', () => {
     const tx = new AgentTranscript('main');
-    const projector = new AgentTranscriptProjector('main', {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       items: () => tx.getItems(),
     });
     const feed = (event: ProjectorBusEvent): void => {
@@ -1498,7 +1526,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects error / warning events as notice markers outside any step', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(
@@ -1521,7 +1549,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('emits interactions as global entities only (no inline frame), back-links on resolve', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1549,6 +1577,7 @@ describe('AgentTranscriptProjector', () => {
         kind: 'approval',
         payload: request,
         origin: { agentId: 'main', turnId: 2 },
+        createdAt: 1000,
       }),
     );
 
@@ -1575,7 +1604,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('surfaces a mid-turn task notification as a user input frame linked to the task', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1604,7 +1633,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('attaches a between-steps task notification to the following step', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1633,7 +1662,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('drops a task notification that is the turn prompt itself', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1654,7 +1683,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('keeps a different task’s notification in a task-origin turn', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1676,7 +1705,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('drops a buffered task notification when the turn ends before the next step', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1702,7 +1731,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('replaces the global todo document on a confirmed TodoList write', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1747,7 +1776,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('emits an unanchored entity when the payload has no toolCallId', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(
@@ -1756,6 +1785,7 @@ describe('AgentTranscriptProjector', () => {
         kind: 'question',
         payload: { questions: [{ question: 'Pick', options: [] }] },
         origin: { agentId: 'main', turnId: 3 },
+        createdAt: 1000,
       }),
     );
     expect(tx.getItems()).toHaveLength(0);
@@ -1769,8 +1799,85 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
+  it('projects question requests onto the wire shape with stable question/option ids', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'q-wire',
+        kind: 'question',
+        payload: {
+          toolCallId: 'call_q',
+          turnId: 3,
+          questions: [
+            {
+              question: 'Pick one',
+              header: 'h',
+              body: 'b',
+              multiSelect: false,
+              otherLabel: 'Other',
+              otherDescription: 'free text',
+              options: [{ label: 'A', description: 'first' }, { label: 'B' }],
+            },
+          ],
+        },
+        origin: { agentId: 'main', turnId: 3 },
+        createdAt: 7000,
+      }),
+    );
+
+    const entity = tx.getInteraction('q-wire');
+    expect(entity?.toolCallId).toBe('call_q');
+    expect(entity?.request).toEqual({
+      question_id: 'q-wire',
+      session_id: TEST_SESSION_ID,
+      questions: [
+        {
+          id: 'q_0',
+          question: 'Pick one',
+          header: 'h',
+          body: 'b',
+          multi_select: false,
+          allow_other: true,
+          other_label: 'Other',
+          other_description: 'free text',
+          options: [
+            { id: 'opt_0_0', label: 'A', description: 'first' },
+            { id: 'opt_0_1', label: 'B' },
+          ],
+        },
+      ],
+      created_at: new Date(7000).toISOString(),
+      turn_id: 3,
+      tool_call_id: 'call_q',
+    });
+
+    tx.apply(projector.mapInteractionResolved('q-wire', { q_0: 'A' }));
+    expect(tx.getInteraction('q-wire')).toMatchObject({ state: 'answered' });
+  });
+
+  it('keeps a malformed question payload raw instead of failing the projection', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'q-raw',
+        kind: 'question',
+        payload: { toolCallId: 'call_x' },
+        origin: { agentId: 'main' },
+        createdAt: 1000,
+      }),
+    );
+
+    const entity = tx.getInteraction('q-raw');
+    expect(entity?.toolCallId).toBe('call_x');
+    expect(entity?.request).toEqual({ toolCallId: 'call_x' });
+  });
+
   it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1873,7 +1980,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects prompt.steered media content to the wire shape (no daemon ref or path leak)', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -1898,6 +2005,197 @@ describe('AgentTranscriptProjector', () => {
       { type: 'text', text: 'look at this' },
       { type: 'image', source: { kind: 'session_media', file_id: 'f_img1' } },
     ]);
+  });
+
+  it('projects turn.steer as a user frame at the next step start, pairing promptIds from prompt.steered', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 3, step: 1 }));
+    feed(ev({ type: 'turn.step.completed', turnId: 3, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'steered in' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'steered in' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    expect(turnOps('t3', tx.getItems()).steps).toHaveLength(1);
+
+    feed(ev({ type: 'turn.step.started', turnId: 3, step: 2 }));
+    const turn = turnOps('t3', tx.getItems());
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'steered in',
+      promptIds: ['p2'],
+    });
+  });
+
+  it('projects turn.steer into the running step immediately, with daemon media as attachments', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: ProjectorBusEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 4, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 4, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2', 'p3'],
+        content: [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png' },
+          },
+        ],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png' },
+          },
+        ],
+        origin: { kind: 'user' },
+      }),
+    );
+
+    const attachmentOp = ops.find((op) => op.op === 'attachment.upsert');
+    expect(attachmentOp).toMatchObject({
+      attachment: { mediaType: 'image/*', source: { kind: 'session_media', fileId: 'f_img9' } },
+    });
+    const frame = turnOps('t4', tx.getItems()).steps[0]?.frames[0];
+    expect(frame).toMatchObject({ kind: 'text', role: 'user', text: 'look at this', promptIds: ['p2', 'p3'] });
+    expect(frame?.kind === 'text' ? frame.attachmentIds : undefined).toEqual([
+      attachmentOp?.op === 'attachment.upsert' ? attachmentOp.attachment.attachmentId : undefined,
+    ]);
+  });
+
+  it('ignores turn.steer for non-user origins and for turns that are not running', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 5, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 5, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'backgrounded output' }],
+        origin: { kind: 'injection', variant: 'shell_command_backgrounded' },
+      }),
+    );
+    expect(turnOps('t5', tx.getItems()).steps[0]?.frames).toHaveLength(0);
+
+    feed(ev({ type: 'turn.step.completed', turnId: 5, step: 1 }));
+    feed(ev({ type: 'turn.ended', turnId: 5, reason: 'completed' }));
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'too late' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    expect(
+      turnOps('t5', tx.getItems()).steps.flatMap((step) => step.frames),
+    ).toHaveLength(0);
+  });
+
+  it('flushes a pending steer into the last step when the turn ends before the next step', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 6, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(ev({ type: 'turn.step.started', turnId: 6, step: 1 }));
+    feed(ev({ type: 'turn.step.completed', turnId: 6, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'last word' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'last word' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 6, reason: 'cancelled', interruptReason: 'user_cancelled' }));
+
+    const turn = turnOps('t6', tx.getItems());
+    const lastStep = turn.steps.at(-1);
+    expect(lastStep?.frames.at(-1)).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'last word',
+      promptIds: ['p2'],
+    });
+  });
+
+  it('buffers turn.steer seen before the projector ever saw turn.started (mid-turn attach)', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: ProjectorBusEvent): void => {
+      ops.push(...projector.map(event));
+    };
+
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'steered mid-attach' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [{ type: 'text', text: 'steered mid-attach' }],
+        origin: { kind: 'user' },
+      }),
+    );
+    expect(ops).toHaveLength(2);
+    expect(ops.every((op) => op.op === 'prompt.upsert')).toBe(true);
+
+    feed(ev({ type: 'turn.step.started', turnId: 3, step: 2 }));
+    const frameOp = ops.find((op) => op.op === 'frame.upsert');
+    expect(frameOp).toMatchObject({
+      turnId: 't3',
+      stepId: 't3.2',
+      frame: { kind: 'text', role: 'user', text: 'steered mid-attach', promptIds: ['p2'] },
+    });
   });
 
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
@@ -2062,6 +2360,92 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot projects question requests onto the wire shape without rewriting the log', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-question-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'interaction.request',
+          id: 'q-cold',
+          kind: 'question',
+          toolCallId: 'call_q',
+          request: {
+            toolCallId: 'call_q',
+            questions: [{ question: 'Pick', options: [{ label: 'A' }, { label: 'B' }] }],
+          },
+          time: 7000,
+        },
+        {
+          type: 'interaction.request',
+          id: 'q-inner',
+          kind: 'question',
+          request: {
+            toolCallId: 'call_inner',
+            questions: [{ question: 'Inner', options: [{ label: 'X' }] }],
+          },
+          time: 8500,
+        },
+        {
+          type: 'interaction.request',
+          id: 'q-bad',
+          kind: 'question',
+          request: { toolName: 'nope' },
+          time: 8000,
+        },
+        {
+          type: 'interaction.request',
+          id: 'apr-1',
+          kind: 'approval',
+          toolCallId: 'call_1',
+          request: { toolName: 'Bash' },
+          time: 9000,
+        },
+      ];
+      const wireFile = join(wireDir, 'wire.jsonl');
+      const content = `${records.map((r) => JSON.stringify(r)).join('\n')}\n`;
+      await writeFile(wireFile, content);
+
+      const service = coldTranscriptService(home);
+      const snapshot = await service.readColdSnapshot('s1', 'main');
+      const byId = new Map(snapshot!.interactions.map((i) => [i.interactionId, i]));
+      expect(byId.get('q-cold')).toMatchObject({
+        interactionKind: 'question',
+        toolCallId: 'call_q',
+        state: 'cancelled',
+      });
+      expect(byId.get('q-cold')?.request).toEqual({
+        question_id: 'q-cold',
+        session_id: 's1',
+        questions: [
+          {
+            id: 'q_0',
+            question: 'Pick',
+            options: [
+              { id: 'opt_0_0', label: 'A' },
+              { id: 'opt_0_1', label: 'B' },
+            ],
+            allow_other: true,
+          },
+        ],
+        created_at: new Date(7000).toISOString(),
+        tool_call_id: 'call_q',
+      });
+      expect(byId.get('q-bad')?.request).toEqual({ toolName: 'nope' });
+      expect(byId.get('q-inner')).toMatchObject({ toolCallId: 'call_inner' });
+      expect(byId.get('q-inner')?.request).toMatchObject({
+        question_id: 'q-inner',
+        tool_call_id: 'call_inner',
+      });
+      expect(byId.get('apr-1')?.request).toEqual({ toolName: 'Bash' });
+      await expect(readFile(wireFile, 'utf-8')).resolves.toBe(content);
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot derives meta.activity from the final turn state when no live session exists', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-activity-'));
     try {
@@ -2118,6 +2502,36 @@ describe('AgentTranscriptProjector', () => {
       expect(
         turn.steps.flatMap((step) => step.frames).some((f) => f.kind === 'text' && f.role === 'user'),
       ).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot folds a steered user message into its turn instead of opening a new one', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-steer-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] }, time: 2000 },
+        { type: 'turn.steer', input: [{ type: 'text', text: 'steered in' }], origin: { kind: 'user' }, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } }, time: 3001 },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] }, time: 4000 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = snapshot!.items.filter((item) => item.kind === 'turn');
+      expect(turns).toHaveLength(1);
+      const turn = turns[0];
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      expect(turn.steps).toHaveLength(2);
+      expect(turn.steps[1]?.frames[0]).toMatchObject({
+        kind: 'text',
+        role: 'user',
+        text: 'steered in',
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -2268,7 +2682,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('folds blocked turn endings into failed (engine wire contract)', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } })));
     tx.apply(projector.map(ev({ type: 'turn.ended', turnId: 0, reason: 'blocked' })));
@@ -2276,7 +2690,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('tracks the prompt queue from accepted/queued through terminal', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -2290,7 +2704,7 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p1')).toMatchObject({ status: 'aborted' });
   });
 
-  it('mirrors turn liveness into meta.activity', () => {    const projector = new AgentTranscriptProjector('main');
+  it('mirrors turn liveness into meta.activity', () => {    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -2305,7 +2719,7 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getMeta().activity).toBe('idle');
   });
 
-  it('maps cron / task origins onto the turn header', () => {    const projector = new AgentTranscriptProjector('main');
+  it('maps cron / task origins onto the turn header', () => {    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -2337,7 +2751,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('treats subagent.started/failed/suspended within the running→failed vocabulary', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
@@ -2983,6 +3397,32 @@ describe('bindSessionTranscript', () => {
 
     binding.seedPendingInteractions('sub-1');
     expect([...byAgent.keys()].toSorted()).toEqual(['main', 'sub-1']);
+    binding.dispose();
+  });
+
+  it('projects live question entities with the same wire shape as the legacy question event', () => {
+    const interactions = new FakeInteractionHub();
+    const asked = interactions.enqueue({
+      id: 'q-parity',
+      kind: 'question',
+      payload: {
+        questions: [
+          {
+            question: 'Pick one',
+            options: [{ label: 'A', description: 'first' }, { label: 'B' }],
+          },
+        ],
+      },
+      origin: { agentId: 'main', turnId: 0 },
+    });
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(store, fakeSession(interactions));
+
+    binding.seedPendingInteractions('main');
+
+    const entity = store.getAgent('main')?.getInteraction('q-parity');
+    expect(entity?.state).toBe('pending');
+    expect(entity?.request).toEqual(toWireQuestion(asked, 's1'));
     binding.dispose();
   });
 

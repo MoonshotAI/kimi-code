@@ -44,8 +44,9 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
-import { readWireRecords } from './wireRecords';
+import { readWireRecords, type ContextRecord } from './wireRecords';
 import { resolveColdFileEditSnapshots } from './fileEditSnapshot/resolveColdFileEditSnapshots';
+import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
   bindSessionTranscript,
@@ -470,6 +471,7 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
+    const steeredContents = new Map<string, number>();
     const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
@@ -494,6 +496,14 @@ export class TranscriptService {
         }
         continue;
       }
+      if (record.type === 'turn.steer') {
+        const input = record['input'];
+        if (Array.isArray(input)) {
+          const key = JSON.stringify(input);
+          steeredContents.set(key, (steeredContents.get(key) ?? 0) + 1);
+        }
+        continue;
+      }
       if (record.type !== 'turn.prompt') continue;
       sawTurnPrompt = true;
       const origin = (record as { origin?: { kind?: unknown; taskId?: unknown } }).origin;
@@ -507,9 +517,9 @@ export class TranscriptService {
     }
     const base = groupMessagesIntoSnapshot(
       messages,
-      sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
+      sawTurnPrompt || steeredContents.size > 0 ? { taskOriginTurnTaskIds, steeredContents } : undefined,
     );
-    const folded = foldWireRecordFacts(records, base);
+    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base);
     const status = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId)
@@ -623,6 +633,38 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'failed',
   'cancelled',
 ]);
+
+function projectQuestionInteractionRecords(
+  records: readonly ContextRecord[],
+  sessionId: string,
+): ContextRecord[] {
+  return records.map((record) => {
+    if (record.type !== 'interaction.request' || record['kind'] !== 'question') return record;
+    const id = record['id'];
+    const request = record['request'];
+    const time = record['time'];
+    if (typeof id !== 'string' || typeof time !== 'number' || !Number.isFinite(time)) {
+      return record;
+    }
+    if (request === null || typeof request !== 'object') return record;
+    try {
+      const innerToolCallId = (request as { toolCallId?: unknown }).toolCallId;
+      const toolCallId =
+        typeof record['toolCallId'] === 'string'
+          ? record['toolCallId']
+          : typeof innerToolCallId === 'string'
+            ? innerToolCallId
+            : undefined;
+      return {
+        ...record,
+        toolCallId,
+        request: toWireQuestion({ id, createdAt: time, payload: request }, sessionId),
+      };
+    } catch {
+      return record;
+    }
+  });
+}
 
 function supersededColdAttachmentIds(
   snapshot: AgentTranscriptSnapshot,

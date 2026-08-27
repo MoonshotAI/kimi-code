@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
@@ -993,6 +993,48 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
     ]);
+  });
+
+  it('fork heals a corrupted source wire through the shared repair path', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    const mainContext = await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const cron = session!.accessor.get(IAgentLifecycleService).resolve(mainContext, AgentCron);
+    const task = cron.addTask({ cron: '0 9 * * *', prompt: 'survives corruption', recurring: true });
+    await closeSessionById((server as RunningServer).core.accessor, parentId);
+
+    const wireRelatives = (await readdir(home as string, { recursive: true })).filter((path) =>
+      path.endsWith(join(parentId, 'agents', 'main', 'wire.jsonl')),
+    );
+    expect(wireRelatives).toHaveLength(1);
+    const wirePath = join(home as string, wireRelatives[0]!);
+    const originalLines = (await readFile(wirePath, 'utf8'))
+      .split('\n')
+      .filter((line) => line.length > 0);
+    expect(originalLines.length).toBeGreaterThan(1);
+    const corrupted = `${[...originalLines, 'GARBAGE'].join('\n')}\n`;
+    await writeFile(wirePath, corrupted);
+
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+
+    expect(await readFile(wirePath, 'utf8')).toBe(`${originalLines.join('\n')}\n`);
+    expect(await readFile(`${wirePath}.bak`, 'utf8')).toBe(corrupted);
+
+    const forkedId = forked.body.data.id;
+    const forkedLive = getLiveSessionById((server as RunningServer).core.accessor, forkedId);
+    expect(forkedLive).toBeDefined();
+    const forkedManager = forkedLive!.accessor.get(IAgentLifecycleService);
+    const forkedCron = forkedManager.resolve(forkedManager.get(MAIN_AGENT_ID)!, AgentCron);
+    expect(forkedCron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
+      { id: task.id, prompt: 'survives corruption' },
+    ]);
+
+    const fetched = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
+    expect(fetched.body.code).toBe(0);
   });
 
   it('keeps cron tasks across a server restart through the wire', async () => {

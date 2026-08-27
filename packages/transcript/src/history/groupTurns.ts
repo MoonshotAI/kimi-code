@@ -67,12 +67,20 @@ export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
+    readonly steeredContents?: ReadonlyMap<string, number>;
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
+  const steeredContents = new Map(options?.steeredContents ?? []);
   let turn: TurnDraft | undefined;
-  let pendingNotificationFrames: { text: string; taskId: string | undefined }[] = [];
+  let pendingNotificationFrames: {
+    text: string;
+    taskId: string | undefined;
+    attachmentIds?: string[];
+    promptIds?: readonly string[];
+    steered?: boolean;
+  }[] = [];
   let nextOrdinal = 0;
   let markerCount = 0;
 
@@ -141,7 +149,30 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
+  const flushSteeredLeftovers = (): void => {
+    const leftovers = pendingNotificationFrames.filter((pending) => pending.steered);
+    if (leftovers.length === 0) return;
+    pendingNotificationFrames = pendingNotificationFrames.filter((pending) => !pending.steered);
+    for (const pending of leftovers) {
+      const lastStep = turn?.steps.at(-1);
+      if (turn === undefined || lastStep === undefined) {
+        startTurn({ kind: 'user' }, pending.text, pending.attachmentIds);
+        continue;
+      }
+      lastStep.frames.push({
+        kind: 'text',
+        frameId: `${lastStep.stepId}.f${lastStep.frames.length + 1}`,
+        role: 'user',
+        text: pending.text,
+        attachmentIds: pending.attachmentIds,
+        promptIds: pending.promptIds,
+      });
+      syncTurnItem(items, turn);
+    }
+  };
+
   const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+    flushSteeredLeftovers();
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
     pendingNotificationFrames = [];
@@ -168,8 +199,34 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          startTurn(mapOrigin(message));
+          const opening =
+            (message.origin as { name?: unknown }).name === 'subagent'
+              ? foldTurnOpeningInput(message)
+              : undefined;
+          startTurn(mapOrigin(message), opening?.text || undefined, opening?.attachmentIds);
         }
+        continue;
+      }
+      const contentKey = JSON.stringify(message.content ?? []);
+      const steeredRemaining = steeredContents.get(contentKey) ?? 0;
+      if (steeredRemaining > 0) {
+        steeredContents.set(contentKey, steeredRemaining - 1);
+        const bundled = bundledSkillActivations(message);
+        const parts = message.content ?? [];
+        bundled.forEach((activation, index) => {
+          const block = parts[index];
+          pushMarker('skill', {
+            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
+            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+          });
+        });
+        const opening = foldTurnOpeningInput({ ...message, content: parts.slice(bundled.length) });
+        pendingNotificationFrames.push({
+          text: opening.text,
+          taskId: undefined,
+          attachmentIds: opening.attachmentIds,
+          steered: true,
+        });
         continue;
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
@@ -238,6 +295,8 @@ export function groupMessagesIntoSnapshot(
           role: 'user',
           text: pending.text,
           taskId: pending.taskId,
+          attachmentIds: pending.attachmentIds,
+          promptIds: pending.promptIds,
         });
       }
       pendingNotificationFrames = [];
@@ -277,6 +336,8 @@ export function groupMessagesIntoSnapshot(
       }
     }
   }
+
+  flushSteeredLeftovers();
 
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
