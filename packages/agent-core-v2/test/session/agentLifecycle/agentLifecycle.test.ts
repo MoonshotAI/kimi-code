@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
+import { IInstantiationService } from '#/_base/di/instantiation';
+import type { InstantiationService } from '#/_base/di/instantiationService';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { type ISessionScopeHandle } from '#/_base/di/scope';
@@ -52,6 +54,11 @@ import '#/agent/mcp/mcpService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
+import {
+  AgentActivityUpdated,
+  IAgentActivityView,
+} from '#/agent/activityView/activityView';
+import '#/agent/activityView/activityViewService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
@@ -1261,5 +1268,49 @@ describe('AgentLifecycleService', () => {
 
     expect(second).toBe(first);
     expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('remove keeps the agent event context active until async scope teardown settles', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    loopActiveTurnId = 1;
+    ix.stub(IAgentTaskService, {
+      _serviceBrand: undefined,
+      stopAllOnExit,
+      list: () => [],
+    } as unknown as IAgentTaskService);
+    const main = await svc.create({ agentId: 'main' });
+    const handle = svc.handleOf('main')!;
+    expect(handle.accessor.get(IAgentActivityView).state().lifecycle).toBe('ready');
+
+    (handle.accessor.get(IInstantiationService) as InstantiationService).ledger.register(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      },
+      'test-async-teardown',
+    );
+
+    const activityEvents: AgentActivityUpdated[] = [];
+    disposables.add(
+      ix.get(ISessionEventBus).subscribe(AgentActivityUpdated, (event) => {
+        activityEvents.push(event);
+      }),
+    );
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await svc.remove(main);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(unhandled).toEqual([]);
+      expect(
+        activityEvents.some((event) => event.agentId === 'main' && event.lifecycle === 'disposed'),
+      ).toBe(true);
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled);
+    }
   });
 });

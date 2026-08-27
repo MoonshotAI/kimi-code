@@ -5,6 +5,7 @@ import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
 import { Emitter } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import type { Ledger } from '#/_base/lifecycle/ledger';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -71,6 +72,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   declare readonly _serviceBrand: undefined;
   private readonly roster = new Map<string, ManagedAgent>();
   private readonly creating = new Map<string, Promise<AgentContext>>();
+  private readonly agentScopeLedgers = new Map<string, Ledger>();
   private nextLifecycleGeneration = 0;
   private readonly records = new Map<string, AgentRuntimeDefinitionRecord>();
   private readonly recordGenerations = new Map<string, number>();
@@ -237,6 +239,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             }],
           ],
           configureContainer: (container) => {
+            this.agentScopeLedgers.set(agentId, container.ledger);
             this.adopt({
               id: agentId,
               kind: LifecycleScope.Agent,
@@ -275,8 +278,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         managed.killSpace();
         try {
           managed.handle.dispose();
+          await this.agentScopeLedgers.get(agentId)?.teardown();
         } catch { }
       }
+      this.agentScopeLedgers.delete(agentId);
       eventBus?.deactivateAgent(agent);
       if (didCreate) this.onDidCloseEmitter.fire(agent);
       throw error;
@@ -447,6 +452,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     await managed.runtimeSet.close();
     managed.killSpace();
     handle.dispose();
+    await this.agentScopeLedgers.get(agent.agentId)?.teardown();
+    this.agentScopeLedgers.delete(agent.agentId);
     this.instantiation.invokeFunction((accessor) =>
       (accessor.get(ISessionEventBus) as ISessionEventBus | undefined)?.deactivateAgent(agent),
     );

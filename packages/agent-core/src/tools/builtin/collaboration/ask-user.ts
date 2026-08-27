@@ -198,7 +198,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       return this.executeInBackground(args, { toolCallId, turnId, signal, traceId });
     }
 
-    return this.executeQuestion(args, { toolCallId, turnId, signal, traceId });
+    return this.executeQuestion(args, { toolCallId, turnId, signal, traceId, emitEvents: true });
   }
 
   private async executeQuestion(
@@ -208,8 +208,27 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       signal,
       traceId,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'traceId' | 'turnId'>,
+      emitEvents = false,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'traceId' | 'turnId'> & {
+      emitEvents?: boolean;
+    },
   ): Promise<ExecutableToolResult> {
+    const fireHook = (event: 'PermissionRequest' | 'PermissionResult', decision?: string, error?: string): void => {
+      if (!emitEvents) return;
+      void this.agent.hooks?.fireAndForgetTrigger?.(event, {
+        matcherValue: this.name,
+        inputData: {
+          turnId: numericTurnId(turnId),
+          toolCallId,
+          toolName: this.name,
+          action: questionDescription(args.questions),
+          toolInput: { questions: args.questions },
+          decision,
+          error,
+        },
+      });
+    };
+    fireHook('PermissionRequest');
     try {
       const result = await this.agent.rpc!.requestQuestion!(
         {
@@ -230,12 +249,14 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
+        fireHook('PermissionResult', 'dismissed');
         this.agent.telemetry.track('question_dismissed', {
           trace_id: traceId,
         });
         return dismissedQuestionResult();
       }
 
+      fireHook('PermissionResult', 'answered');
       const properties: Record<string, TelemetryPropertyValue> = {
         answered: Object.keys(normalized.answers).length,
         trace_id: traceId,
@@ -247,15 +268,20 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
         output: JSON.stringify({ answers: normalized.answers }),
       };
     } catch (error) {
-      if (isAbortError(error) || signal.aborted) throw error;
+      if (isAbortError(error) || signal.aborted) {
+        fireHook('PermissionResult', 'dismissed');
+        throw error;
+      }
 
       if (error instanceof KimiError && error.code === ErrorCodes.NOT_IMPLEMENTED) {
+        fireHook('PermissionResult', 'error', error.message);
         return {
           isError: true,
           output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,
         };
       }
 
+      fireHook('PermissionResult', 'error', errorMessage(error));
       return dismissedQuestionResult();
     }
   }

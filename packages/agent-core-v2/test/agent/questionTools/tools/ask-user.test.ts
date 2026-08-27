@@ -19,6 +19,8 @@ import {
   type QuestionRequest,
   type QuestionResult,
 } from '#/session/question/question';
+import { QuestionRequested, QuestionResolved } from '#/session/question/questionOps';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import type {
   QuestionBackgroundTask,
   QuestionTaskInfo,
@@ -63,10 +65,12 @@ function makeTool(
   readonly telemetryTrack: ReturnType<typeof vi.fn>;
   readonly registerTask: ReturnType<typeof vi.fn>;
   readonly getTask: ReturnType<typeof vi.fn>;
+  readonly dispatch: ReturnType<typeof vi.fn>;
   readonly lastRegisteredTask: () => QuestionBackgroundTask | undefined;
 } {
   const request = vi.fn(options.request ?? (async () => ({ Postgres: true }) as QuestionResult));
   const telemetryTrack = vi.fn();
+  const dispatch = vi.fn(async () => {});
   let lastTask: QuestionBackgroundTask | undefined;
   const registerTask = vi.fn((task: QuestionBackgroundTask) => {
     lastTask = task;
@@ -98,12 +102,13 @@ function makeTool(
       reg.definePartialInstance(IAgentToolPolicyService, {
         isToolActive: (name: string) => activeTaskTools.has(name),
       });
+      reg.definePartialInstance(IEventDispatcher, { dispatch });
       reg.define(IAskUserQuestionTool, AskUserQuestionTool);
     },
     strict: true,
   });
   const tool = ix.get(IAskUserQuestionTool);
-  return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
+  return { tool, request, telemetryTrack, registerTask, getTask, dispatch, lastRegisteredTask: () => lastTask };
 }
 
 describe('AskUserQuestionTool', () => {
@@ -351,6 +356,73 @@ describe('AskUserQuestionTool', () => {
       answered: 1,
       trace_id: undefined,
     });
+  });
+
+  it('emits QuestionRequested and QuestionResolved around a foreground question', async () => {
+    const { tool, dispatch } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 3,
+      toolCallId: 'call_question_events',
+      args: input(),
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    const [requested, resolved] = dispatch.mock.calls.map((call) => call[0]);
+    expect(requested).toBeInstanceOf(QuestionRequested);
+    expect(requested).toMatchObject({
+      agentId: 'main',
+      turnId: 3,
+      toolCallId: 'call_question_events',
+      toolName: 'AskUserQuestion',
+      action: 'Which database?',
+      toolInput: { questions: input().questions },
+    });
+    expect(resolved).toBeInstanceOf(QuestionResolved);
+    expect(resolved).toMatchObject({
+      agentId: 'main',
+      toolCallId: 'call_question_events',
+      toolName: 'AskUserQuestion',
+      decision: 'answered',
+    });
+  });
+
+  it('resolves the question events as dismissed when the user does not answer', async () => {
+    const { tool, dispatch } = makeTool({ request: async () => null });
+
+    await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_question_dismissed',
+      args: input(),
+      signal,
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    const resolved = dispatch.mock.calls[1]?.[0];
+    expect(resolved).toBeInstanceOf(QuestionResolved);
+    expect(resolved).toMatchObject({ decision: 'dismissed' });
+  });
+
+  it('does not emit question lifecycle events for background questions', async () => {
+    const { tool, dispatch, lastRegisteredTask } = makeTool();
+
+    await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_bg_silent',
+      args: { ...input(), background: true },
+      signal,
+    });
+    const task = lastRegisteredTask();
+    expect(task).toBeDefined();
+    await task!.start({
+      signal,
+      appendOutput: () => {},
+      settle: async () => true,
+    });
+
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it('passes empty headers and option descriptions through verbatim (v1 wire parity)', async () => {

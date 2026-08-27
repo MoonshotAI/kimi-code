@@ -107,8 +107,8 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; the payload includes `turn_id`, `origin_kind`, `origin_name`, and `prompt` (observation only) |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked (observation only) |
-| `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval (observation only) |
-| `PermissionResult` | Tool name | — | Triggered after approval completes (observation only) |
+| `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval or an `AskUserQuestion` answer (observation only) |
+| `PermissionResult` | Tool name | — | Triggered after approval completes or an `AskUserQuestion` answer arrives (observation only) |
 | `SessionStart` | `startup` or `resume` | — | Triggered after a new session starts or a previous session resumes; the payload includes `source`, `model`, and `profile` |
 | `SessionEnd` | `exit` or `archive` | — | Triggered after a session closes; `archive` means the session was archived rather than exited |
 | `SessionHeartbeat` | Empty string | — | Triggered every 60 seconds while the session is alive; the timer only runs when this event is configured. The payload includes `uptime_ms` (observation only) |

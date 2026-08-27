@@ -107,8 +107,8 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `TurnStarted` | 回合来源类型（如 `user`、`task`、`system_trigger`） | — | 新回合开始时触发；payload 含 `turn_id`、`origin_kind`、`origin_name` 和 `prompt`（观察用） |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发（观察用） |
-| `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发（观察用） |
-| `PermissionResult` | 工具名 | — | 审批结束后触发（观察用） |
+| `PermissionRequest` | 工具名 | — | 即将等待用户审批或 `AskUserQuestion` 回答前触发（观察用） |
+| `PermissionResult` | 工具名 | — | 审批结束或 `AskUserQuestion` 回答后触发（观察用） |
 | `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model` 和 `profile` |
 | `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出 |
 | `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次；仅当配置了本事件时计时器才会运行。payload 含 `uptime_ms`（观察用） |

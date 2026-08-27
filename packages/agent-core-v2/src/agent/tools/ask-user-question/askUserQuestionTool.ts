@@ -21,6 +21,12 @@ import type {
   QuestionResponse,
   QuestionResult,
 } from '#/session/question/question';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import {
+  QuestionRequested,
+  QuestionResolved,
+  type QuestionResolvedPayload,
+} from '#/session/question/questionOps';
 import {
   AskUserQuestionInputSchema,
   AskUserQuestionInputSchemaWithBackground,
@@ -55,6 +61,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {}
 
   get description(): string {
@@ -93,7 +100,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       return this.executeInBackground(args, { toolCallId, turnId, signal, trace });
     }
 
-    return this.executeQuestion(args, { toolCallId, turnId, signal, trace });
+    return this.executeQuestion(args, { toolCallId, turnId, signal, trace, emitEvents: true });
   }
 
   private allowBackground(): boolean {
@@ -157,8 +164,31 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       signal,
       turnId,
       trace,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
+      emitEvents = false,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'> & {
+      emitEvents?: boolean;
+    },
   ): Promise<ExecutableToolResult> {
+    const requested = emitEvents
+      ? {
+          agentId: this.scopeContext.agentId,
+          turnId,
+          toolCallId,
+          toolName: this.name,
+          action: questionDescription(args.questions),
+          toolInput: { questions: args.questions },
+        }
+      : undefined;
+    const notifyResolved = (
+      decision: QuestionResolvedPayload['decision'],
+      error?: string,
+    ): void => {
+      if (requested === undefined) return;
+      void this.dispatcher.dispatch(new QuestionResolved({ ...requested, decision, error }));
+    };
+    if (requested !== undefined) {
+      void this.dispatcher.dispatch(new QuestionRequested(requested));
+    }
     try {
       const result = await this.question.request(
         {
@@ -179,6 +209,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
+        notifyResolved('dismissed');
         const properties: QuestionDismissedEvent = {
           trace_id: trace?.traceId,
         };
@@ -186,6 +217,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
         return dismissedQuestionResult();
       }
 
+      notifyResolved('answered');
       const properties: QuestionAnsweredEvent = {
         answered: Object.keys(normalized.answers).length,
         trace_id: trace?.traceId,
@@ -197,15 +229,20 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
         output: JSON.stringify({ answers: normalized.answers }),
       };
     } catch (error) {
-      if (isAbortError(error) || signal.aborted) throw error;
+      if (isAbortError(error) || signal.aborted) {
+        notifyResolved('dismissed');
+        throw error;
+      }
 
       if (error instanceof Error2 && error.code === CoreErrors.codes.NOT_IMPLEMENTED) {
+        notifyResolved('error', error.message);
         return {
           isError: true,
           output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,
         };
       }
 
+      notifyResolved('error', error instanceof Error ? error.message : String(error));
       return dismissedQuestionResult();
     }
   }

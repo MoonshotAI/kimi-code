@@ -6,6 +6,10 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
+import {
+  QuestionRequested,
+  QuestionResolved,
+} from '#/session/question/questionOps';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import {
@@ -134,6 +138,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private registerListeners(): void {
     this.registerPermissionHooks();
 
+    this.registerQuestionHooks();
+
     this.registerToolHooks(
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
     );
@@ -183,6 +189,21 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
     this._register(
       this.eventBus.subscribe(PermissionApprovalResolved, (e) => {
+        const { type: _type, time: _time, ...inputData } = e;
+        this.fireAndForget('PermissionResult', inputData, e.toolName);
+      }),
+    );
+  }
+
+  private registerQuestionHooks(): void {
+    this._register(
+      this.eventBus.subscribe(QuestionRequested, (e) => {
+        const { type: _type, time: _time, ...inputData } = e;
+        this.fireAndForget('PermissionRequest', inputData, e.toolName);
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe(QuestionResolved, (e) => {
         const { type: _type, time: _time, ...inputData } = e;
         this.fireAndForget('PermissionResult', inputData, e.toolName);
       }),

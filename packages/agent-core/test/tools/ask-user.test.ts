@@ -46,6 +46,7 @@ function makeTool(
   readonly tool: AskUserQuestionTool;
   readonly requestQuestion: ReturnType<typeof vi.fn>;
   readonly telemetryTrack: ReturnType<typeof vi.fn>;
+  readonly fireHook: ReturnType<typeof vi.fn>;
 } {
   const requestQuestion = vi.fn(
     options.requestQuestion ??
@@ -54,15 +55,18 @@ function makeTool(
       })),
   );
   const telemetryTrack = vi.fn();
+  const fireHook = vi.fn(async () => []);
   const agent = {
     permission: { mode: options.mode ?? 'manual' },
     rpc: { requestQuestion },
     telemetry: { track: telemetryTrack },
+    hooks: { fireAndForgetTrigger: fireHook },
   } as unknown as Agent;
   return {
     tool: new AskUserQuestionTool(agent, { allowBackground: options.allowBackground }),
     requestQuestion,
     telemetryTrack,
+    fireHook,
   };
 }
 
@@ -548,5 +552,94 @@ describe('AskUserQuestionTool', () => {
     expect(result.output).toContain('does not support interactive questions');
     expect(result.output).toContain('Do NOT call this tool again');
     expect(result.output).toContain('Ask the user directly in your text response instead');
+  });
+
+  it('fires PermissionRequest and PermissionResult hooks around a foreground question', async () => {
+    const { tool, fireHook } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: '3',
+      toolCallId: 'call_question_hooks',
+      args: input(),
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(fireHook.mock.calls).toEqual([
+      [
+        'PermissionRequest',
+        expect.objectContaining({
+          matcherValue: 'AskUserQuestion',
+          inputData: expect.objectContaining({
+            turnId: 3,
+            toolCallId: 'call_question_hooks',
+            toolName: 'AskUserQuestion',
+            action: 'Which database?',
+            toolInput: { questions: input().questions },
+          }),
+        }),
+      ],
+      [
+        'PermissionResult',
+        expect.objectContaining({
+          matcherValue: 'AskUserQuestion',
+          inputData: expect.objectContaining({
+            toolCallId: 'call_question_hooks',
+            decision: 'answered',
+          }),
+        }),
+      ],
+    ]);
+  });
+
+  it('resolves the question hooks as dismissed when the user does not answer', async () => {
+    const { tool, fireHook } = makeTool({ requestQuestion: async () => null });
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_question_dismissed',
+      args: input(),
+      signal,
+    });
+
+    expect(fireHook).toHaveBeenCalledTimes(2);
+    expect(fireHook.mock.calls[1]?.[0]).toBe('PermissionResult');
+    expect(fireHook.mock.calls[1]?.[1]).toMatchObject({
+      inputData: expect.objectContaining({ decision: 'dismissed' }),
+    });
+  });
+
+  it('does not fire question hooks for background questions', async () => {
+    let resolveQuestion!: (result: QuestionResult) => void;
+    const questionResult = new Promise<QuestionResult>((resolve) => {
+      resolveQuestion = resolve;
+    });
+    const { manager } = createBackgroundManager();
+    const requestQuestion = vi.fn(async () => questionResult);
+    const fireHook = vi.fn(async () => []);
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: vi.fn() },
+      turn: { traceIdForTurn: () => undefined },
+      background: manager,
+      hooks: { fireAndForgetTrigger: fireHook },
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent);
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_bg_hooks',
+      args: { ...input(), background: true },
+      signal,
+    });
+    expect(result.isError).toBe(false);
+    const outputText = typeof result.output === 'string' ? result.output : '';
+    const taskId = /task_id: (?<taskId>question-[0-9a-z]{8})/.exec(outputText)?.groups?.['taskId'];
+    expect(taskId).toBeDefined();
+
+    resolveQuestion({ answers: { Postgres: true } });
+    await manager.wait(taskId!);
+
+    expect(fireHook).not.toHaveBeenCalled();
   });
 });

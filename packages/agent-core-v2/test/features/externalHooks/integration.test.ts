@@ -47,6 +47,10 @@ import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
+import {
+  QuestionRequested,
+  QuestionResolved,
+} from '#/session/question/questionOps';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
@@ -518,6 +522,98 @@ describe('IExternalHooksRunnerService integration', () => {
             ...requestContext,
             decision: 'approved',
             selectedLabel: 'Approve once',
+          },
+        },
+      ]);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('passes question contexts through to PermissionRequest and PermissionResult hooks', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const fired: Array<{
+        event: string;
+        matcherValue?: unknown;
+        inputData?: unknown;
+      }> = [];
+      const hookEngine = {
+        trigger: async () => [],
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (
+          event: string,
+          args: { matcherValue?: unknown; inputData?: unknown },
+        ) => {
+          fired.push({
+            event,
+            matcherValue: args.matcherValue,
+            inputData: args.inputData,
+          });
+        },
+      };
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.definePartialInstance(IConfigService, {});
+          reg.definePartialInstance(IPluginService, {});
+          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+          reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+          registerAgentEventBus(reg);
+          reg.definePartialInstance(IAgentPromptService, {
+            hooks: createHooks(['onBeforeSubmitPrompt']),
+          });
+          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentFullCompactionService, {
+            hooks: createHooks(['onWillCompact']),
+          });
+          reg.definePartialInstance(IAgentTaskService, {});
+        },
+      });
+      activateAgentEventBus(ix);
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+      const eventBus = ix.get(IEventBus);
+
+      const requestContext = {
+        agentId: 'main',
+        turnId: 7,
+        toolCallId: 'call-question',
+        toolName: 'AskUserQuestion',
+        action: 'Which database?',
+        toolInput: { questions: [{ question: 'Which database?' }] },
+      };
+      eventBus.publish(new QuestionRequested(requestContext));
+      eventBus.publish(
+        new QuestionResolved({
+          ...requestContext,
+          decision: 'answered',
+        }),
+      );
+      await flushMicrotasks();
+
+      expect(fired).toEqual([
+        {
+          event: 'PermissionRequest',
+          matcherValue: 'AskUserQuestion',
+          inputData: requestContext,
+        },
+        {
+          event: 'PermissionResult',
+          matcherValue: 'AskUserQuestion',
+          inputData: {
+            ...requestContext,
+            decision: 'answered',
           },
         },
       ]);
