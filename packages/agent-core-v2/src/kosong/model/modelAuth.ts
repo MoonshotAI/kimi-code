@@ -234,6 +234,7 @@ export function resolveModelForReady(
   modelId: string | undefined,
   models: Readonly<Record<string, ModelRecord>>,
   providers: Readonly<Record<string, ProviderConfig>>,
+  defaultProvider?: string,
 ): ModelReadyResolution {
   const alias = nonEmpty(modelId);
   if (alias === undefined) {
@@ -244,7 +245,7 @@ export function resolveModelForReady(
     return { resolved: false, reason: 'dangling-alias' };
   }
   const model = effectiveModelConfig(configured);
-  const providerId = model.providerId ?? model.provider;
+  const providerId = model.providerId ?? model.provider ?? nonEmpty(defaultProvider);
   const provider = providerId === undefined ? undefined : providers[providerId];
   if (providerId !== undefined && provider === undefined) {
     return { resolved: false, reason: 'provider-missing' };

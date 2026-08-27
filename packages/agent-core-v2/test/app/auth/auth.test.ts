@@ -1518,6 +1518,7 @@ describe('AuthSummaryService', () => {
         reg.definePartialInstance(IProviderService, {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
+          getDefaultProvider: (() => undefined) as IProviderService['getDefaultProvider'],
         });
         reg.definePartialInstance(IModelService, {
           get: ((id: string) => models[id]) as IModelService['get'],

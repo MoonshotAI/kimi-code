@@ -654,7 +654,7 @@ export class AuthSummaryService implements IAuthSummaryService {
     if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
       throw new AuthProvisioningRequiredError();
     }
-    const resolution = resolveModelForReady(modelId, models, providers);
+    const resolution = resolveModelForReady(modelId, models, providers, this.providerService.getDefaultProvider());
     if (!resolution.resolved) {
       throw unresolvedModelError(modelId, resolution.reason, configured);
     }

@@ -6,6 +6,7 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import {
   DEFAULT_MODEL_SECTION,
+  DEFAULT_PROVIDER_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
@@ -34,8 +35,9 @@ export class AuthLegacyService implements IAuthLegacyService {
     >;
     const models = (snapshot[MODELS_SECTION] ?? {}) as Readonly<Record<string, ModelRecord>>;
     const defaultModel = snapshot[DEFAULT_MODEL_SECTION] as string | undefined;
+    const defaultProvider = snapshot[DEFAULT_PROVIDER_SECTION] as string | undefined;
     const providers_count = Object.keys(providers).length;
-    const models_ready = resolveModelForReady(defaultModel, models, providers).resolved;
+    const models_ready = resolveModelForReady(defaultModel, models, providers, defaultProvider).resolved;
 
     let managed_provider: AuthSummary['managed_provider'] = null;
     if (providers[MANAGED_PROVIDER_NAME] !== undefined) {

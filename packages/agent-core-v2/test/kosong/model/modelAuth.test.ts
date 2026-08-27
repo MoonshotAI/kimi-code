@@ -196,6 +196,19 @@ describe('resolveModelForReady', () => {
     expect(resolveModelForReady('m', models, {})).toEqual({ resolved: true });
   });
 
+  it('resolves a model omitting provider fields through the configured defaultProvider', () => {
+    const models = { m: { model: 'gpt', maxContextSize: 4096 } };
+    expect(resolveModelForReady('m', models, providers, 'prov-a')).toEqual({ resolved: true });
+  });
+
+  it('reports provider-missing when the configured defaultProvider is absent from the providers table', () => {
+    const models = { m: { model: 'gpt', maxContextSize: 4096 } };
+    expect(resolveModelForReady('m', models, providers, 'gone')).toEqual({
+      resolved: false,
+      reason: 'provider-missing',
+    });
+  });
+
   it('reports unresolvable when provider id, provider field, and baseUrl are all absent', () => {
     expect(resolveModelForReady('m', { m: { model: 'gpt' } }, providers)).toEqual({
       resolved: false,
