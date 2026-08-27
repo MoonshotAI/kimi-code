@@ -1,5 +1,6 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';
@@ -32,12 +33,15 @@ export class AgentPermissionPolicyService
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
     this.policies = [
       this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
-      this.instantiation.createInstance(DangerousCommandAskPermissionPolicyService),
+      ...(bootstrap.args.nonInteractive
+        ? []
+        : [this.instantiation.createInstance(DangerousCommandAskPermissionPolicyService)]),
       this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
       this.instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
       this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService),

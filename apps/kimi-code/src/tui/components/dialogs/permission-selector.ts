@@ -16,7 +16,7 @@ const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'auto',
     label: 'Auto',
-    description: 'Fully autonomous, but dangerous commands always ask.',
+    description: 'Fully autonomous, but dangerous commands are blocked.',
   },
 ];
 

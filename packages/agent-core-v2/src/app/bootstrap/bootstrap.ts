@@ -21,6 +21,7 @@ export interface HostArgs {
   readonly requestHeaders: Readonly<Record<string, string>>;
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
+  readonly nonInteractive?: boolean;
 }
 
 export interface HostArgsInput {
@@ -29,6 +30,7 @@ export interface HostArgsInput {
   readonly requestHeaders?: Readonly<Record<string, string>>;
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
+  readonly nonInteractive?: boolean;
 }
 
 export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
@@ -38,6 +40,7 @@ export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
     requestHeaders: input?.requestHeaders ?? {},
     displayName: input?.displayName,
     replyStyleGuide: input?.replyStyleGuide,
+    nonInteractive: input?.nonInteractive,
   };
 }
 

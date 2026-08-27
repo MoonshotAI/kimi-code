@@ -39,7 +39,7 @@ export const ACP_MODES = [
   {
     id: 'auto',
     name: 'Auto',
-    description: 'Fully autonomous, but dangerous commands always ask.',
+    description: 'Fully autonomous, but dangerous commands are blocked.',
   },
   {
     id: 'yolo',

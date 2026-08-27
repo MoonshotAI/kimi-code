@@ -28,6 +28,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
+import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -49,6 +50,7 @@ describe('AgentPermissionPolicyService chain', () => {
   let rules: PermissionRule[];
   let sessionApprovalRulePatterns: string[];
   let workspace: ReturnType<typeof workspaceStub>;
+  let hostArgs: HostArgs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -56,9 +58,15 @@ describe('AgentPermissionPolicyService chain', () => {
     rules = [];
     sessionApprovalRulePatterns = [];
     workspace = workspaceStub('/workspace');
+    hostArgs = { requestHeaders: {}, nonInteractive: false };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.definePartialInstance(IBootstrapService, {
+          get args() {
+            return hostArgs;
+          },
+        });
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
@@ -201,7 +209,7 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it.each(['manual', 'auto', 'yolo'] as const)(
+  it.each(['manual', 'yolo'] as const)(
     'asks for shutdown in %s mode',
     async (currentMode) => {
       mode = currentMode;
@@ -215,6 +223,23 @@ describe('AgentPermissionPolicyService chain', () => {
       });
     },
   );
+
+  it.each([
+    ['shutdown -h now', 'shutdown'],
+    ['reboot', 'reboot'],
+    ['rm -rf /tmp/build', 'rm -rf'],
+    ['dd if=/dev/zero of=/dev/sda bs=1M', 'dd'],
+  ] as const)('denies `%s` in auto mode', async (command, matched) => {
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command, timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'deny', reason: { dangerous_command: matched } },
+    });
+  });
 
   it.each([
     ['sudo reboot', 'reboot'],
@@ -247,8 +272,24 @@ describe('AgentPermissionPolicyService chain', () => {
     ['sudo rm -rf dir', 'rm -rf'],
     ['sudo -u root rm --recursive --force dir', 'rm -rf'],
     ['echo ok && rm -rf dir', 'rm -rf'],
-  ] as const)('asks for `%s` in auto mode', async (command, matched) => {
-    mode = 'auto';
+    ['env rm -rf dir', 'rm -rf'],
+    ['env FOO=bar rm -rf dir', 'rm -rf'],
+    ['env -i FOO=bar shutdown now', 'shutdown'],
+    ['nohup rm -rf dir', 'rm -rf'],
+    ['exec reboot', 'reboot'],
+    ['command reboot', 'reboot'],
+    ['builtin shutdown now', 'shutdown'],
+    ['nice -n 5 poweroff', 'poweroff'],
+    ['nice --adjustment=5 shutdown now', 'shutdown'],
+    ['busybox poweroff', 'poweroff'],
+    ['busybox rm -rf dir', 'rm -rf'],
+    ['eval "shutdown now"', 'shutdown'],
+    ['eval rm -rf dir', 'rm -rf'],
+    ['bash -lc "shutdown now"', 'shutdown'],
+    ['bash -c "env rm -rf dir"', 'rm -rf'],
+    ["bash -c 'eval \"shutdown now\"'", 'shutdown'],
+  ] as const)('asks for `%s` in yolo mode', async (command, matched) => {
+    mode = 'yolo';
 
     await expect(evaluate({
       toolName: 'Bash',
@@ -271,6 +312,13 @@ describe('AgentPermissionPolicyService chain', () => {
     'rm --recursive dir',
     'rm --force file',
     'rm dir',
+    'env FOO=bar echo ok',
+    'command -v rm',
+    'command echo ok',
+    'nohup echo ok',
+    'nice echo ok',
+    'busybox --list',
+    'eval "echo ok"',
   ])('does not flag `%s` in auto mode', async (command) => {
     mode = 'auto';
 
@@ -297,6 +345,34 @@ describe('AgentPermissionPolicyService chain', () => {
       });
     },
   );
+
+  it.each(['$CMD --force', 'bash -c "echo $HOME"', 'env $FLAGS'])(
+    'denies unanalyzable command `%s` in auto mode',
+    async (command) => {
+      mode = 'auto';
+
+      await expect(evaluate({
+        toolName: 'Bash',
+        args: { command, timeout: 60 },
+      })).resolves.toMatchObject({
+        policyName: 'dangerous-command-ask',
+        result: { kind: 'deny', reason: { unanalyzable_command: true } },
+      });
+    },
+  );
+
+  it('does not load the dangerous command policy for non-interactive hosts', async () => {
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    mode = 'auto';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'rm -rf /tmp/build', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
 
   it('does not let session approval history exempt dangerous commands', async () => {
     sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
@@ -355,6 +431,9 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.definePartialInstance(IBootstrapService, {
+          args: { requestHeaders: {}, nonInteractive: false },
+        });
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: '' }),

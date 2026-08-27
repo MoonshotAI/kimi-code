@@ -3,6 +3,7 @@ import {
   type BashParseResult,
   type BashSyntaxNode,
 } from '#/app/bashParser/bashParser';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type {
   PermissionPolicy,
@@ -60,6 +61,27 @@ const PRIVILEGE_VALUE_OPTIONS: ReadonlySet<string> = new Set([
 
 const NESTED_SHELLS: ReadonlySet<string> = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash']);
 
+const LAUNCH_WRAPPERS: ReadonlySet<string> = new Set([
+  'env',
+  'command',
+  'exec',
+  'nohup',
+  'builtin',
+  'nice',
+]);
+
+const WRAPPER_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  '-u',
+  '--unset',
+  '-C',
+  '--chdir',
+  '-S',
+  '--split-string',
+  '-a',
+  '-n',
+  '--adjustment',
+]);
+
 const SYSTEMCTL_DANGEROUS_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'poweroff',
   'reboot',
@@ -87,7 +109,10 @@ type DangerousVerdict =
 export class DangerousCommandAskPermissionPolicyService implements PermissionPolicy {
   readonly name = 'dangerous-command-ask';
 
-  constructor(@IBashParserService private readonly bashParser: IBashParserService) {}
+  constructor(
+    @IBashParserService private readonly bashParser: IBashParserService,
+    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
+  ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
     if (context.toolCall.name !== 'Bash') return undefined;
@@ -99,8 +124,24 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
             this.bashParser.parse(source, PARSE_OPTIONS),
           );
     if (verdict === undefined) return undefined;
+    const auto = this.modeService.mode === 'auto';
     if (verdict.kind === 'dangerous') {
+      if (auto) {
+        return {
+          kind: 'deny',
+          reason: { dangerous_command: verdict.command },
+          message: `Bash command '${verdict.command}' is blocked in auto permission mode because it is considered dangerous. Ask the user to switch permission mode or run it themselves.`,
+        };
+      }
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
+    }
+    if (auto) {
+      return {
+        kind: 'deny',
+        reason: { unanalyzable_command: true },
+        message:
+          'This Bash command could not be analyzed and is blocked in auto permission mode. Rewrite it with a literal command name and arguments, or ask the user to run it themselves.',
+      };
     }
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
@@ -170,14 +211,49 @@ function analyzeInvocation(
     if (inner === undefined) return dropped ? { kind: 'unanalyzable' } : undefined;
     return analyzeInvocation(normalizeCommandName(inner), rest.slice(1), dropped, depth, parse);
   }
+  if (LAUNCH_WRAPPERS.has(name)) {
+    if (name === 'command') {
+      for (const arg of args) {
+        if (arg === '--') break;
+        if (arg === '-') continue;
+        if (!arg.startsWith('-')) break;
+        if (/[vV]/.test(arg)) return undefined;
+      }
+    }
+    const rest = dropLaunchWrapperOperands(name, args);
+    const inner = rest[0];
+    if (inner === undefined) return dropped ? { kind: 'unanalyzable' } : undefined;
+    return analyzeInvocation(normalizeCommandName(inner), rest.slice(1), dropped, depth, parse);
+  }
   if (NESTED_SHELLS.has(name)) {
-    const payloadIndex = args.indexOf('-c') + 1;
-    if (payloadIndex === 0) return undefined;
+    let payloadIndex = -1;
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i]!;
+      if (arg === '--') break;
+      if (/^-[a-zA-Z]+$/.test(arg)) {
+        if (arg.includes('c')) payloadIndex = i + 1;
+      } else {
+        break;
+      }
+    }
+    if (payloadIndex < 0) return dropped ? { kind: 'unanalyzable' } : undefined;
     const payload = args[payloadIndex];
     if (payload === undefined || depth >= MAX_NESTED_SHELL_DEPTH) {
       return { kind: 'unanalyzable' };
     }
     return analyzeSource(payload, depth + 1, parse);
+  }
+  if (name === 'eval') {
+    if (args.length === 0) return dropped ? { kind: 'unanalyzable' } : undefined;
+    if (dropped || depth >= MAX_NESTED_SHELL_DEPTH) return { kind: 'unanalyzable' };
+    return analyzeSource(args.join(' '), depth + 1, parse);
+  }
+  if (name === 'busybox') {
+    const applet = args[0];
+    if (applet === undefined || applet.startsWith('-')) {
+      return dropped ? { kind: 'unanalyzable' } : undefined;
+    }
+    return analyzeInvocation(normalizeCommandName(applet), args.slice(1), dropped, depth, parse);
   }
   if (SIMPLE_DANGEROUS_COMMANDS.has(name) || name.startsWith('mkfs.')) {
     return { kind: 'dangerous', command: name };
@@ -242,6 +318,16 @@ function dropLeadingOptions(args: readonly string[], valueOptions: ReadonlySet<s
     if (!arg.includes('=') && valueOptions.has(arg)) i += 1;
   }
   return [];
+}
+
+function dropLaunchWrapperOperands(name: string, args: readonly string[]): string[] {
+  let rest = dropLeadingOptions(args, WRAPPER_VALUE_OPTIONS);
+  if (name === 'env') {
+    let i = rest[0] === '-' ? 1 : 0;
+    while (i < rest.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[i]!)) i += 1;
+    rest = rest.slice(i);
+  }
+  return rest;
 }
 
 function literalText(node: BashSyntaxNode): string | undefined {
