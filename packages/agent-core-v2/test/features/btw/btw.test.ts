@@ -4,7 +4,6 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import {
@@ -38,7 +37,6 @@ describe('SessionBtwService', () => {
       id: 'agent-btw-1',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
@@ -61,11 +59,16 @@ describe('SessionBtwService', () => {
         },
       },
     };
-    fork = vi.fn(async () => child);
+    fork = vi.fn(async () => stubAgentContext('agent-btw-1', 2));
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
-      findAgentHandle: (id: string) => (id === 'main' ? main : undefined),
+      resolve: () => ({ notify: appendReminder }),
+      handleOf: (id: string) => {
+        if (id === 'main') return main;
+        if (id === 'agent-btw-1') return child;
+        return undefined;
+      },
     } as unknown as IAgentLifecycleService);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
@@ -78,7 +81,6 @@ describe('SessionBtwService', () => {
     expect(id).toBe('agent-btw-1');
     expect(fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main', generation: 1 }));
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
-      kind: 'injection',
       variant: 'btw',
     });
   });

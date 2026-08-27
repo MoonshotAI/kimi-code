@@ -137,14 +137,15 @@ kimi
 | 环境变量 | 用途 | 合法值 |
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | 关闭匿名遥测上报 | `1`、`true`、`yes`、`y`（不区分大小写） |
-| `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码，与 bearer token 同时有效；把服务绑定到非本机地址时建议设置，见[本地服务与 API](../guides/server.md#鉴权) | 任意非空字符串；未设置时仅 token 有效 |
+| `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码，与 bearer token 同时有效；把服务绑定到非本机地址时建议设置，见 [在网页中使用：安全注意](../guides/web.md#安全注意) | 任意非空字符串；未设置时仅 token 有效 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务数上限，优先级高于 `config.toml` 的 `[background] max_running_tasks`（不设置表示无上限） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_MAX_EDGE_PX` | 图片压缩的最长边上限（像素），优先级高于 `config.toml` 的 `[image] max_edge_px`（默认 `2000`） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_READ_BYTE_BUDGET` | 模型自行读图（`ReadMediaFile` 默认读取）的单图字节预算，优先级高于 `config.toml` 的 `[image] read_byte_budget`（默认 `262144`，即 256 KB） | 正整数；非法值被忽略 |
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | 覆盖 `/plugins` 加载的 plugin marketplace JSON，适合 dev loopback server、测试 CDN 文件或替换 marketplace 目录 | `https://code.kimi.com/kimi-code/plugins/marketplace.json`；也接受 `http://`、`file://` URL 和本地路径 |
 | `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | 限制 AgentSwarm 初始提升并发阶段可同时运行的 subagent 数量；不设置表示不限制 | 正整数；非法值会立即失败 |
-| `KIMI_SUBAGENT_TIMEOUT_MS` | 单个 subagent（`Agent` / `AgentSwarm`）可运行的最长时间（毫秒）；优先级高于 `config.toml` 的 `[subagent] timeout_ms`（默认 `7200000`，即 2 小时） | 正整数；非法值回退到配置或默认值 |
+| `KIMI_SUBAGENT_TIMEOUT_MS` | 单个 `Agent` subagent 可运行的最长时间（毫秒）；优先级高于 `config.toml` 的 `[subagent] timeout_ms`（默认 `7200000`，即 2 小时） | 正整数；非法值回退到配置或默认值 |
+| `KIMI_CODE_SWARM_TIMEOUT_MS` | 单个 `AgentSwarm` subagent 可运行的最长时间（毫秒）；优先级高于 `config.toml` 的 `[swarm] timeout_ms`（默认 `7200000`，即 2 小时） | 正整数；非法值回退到配置或默认值 |
 | `KIMI_CODE_IDENTITY_NAME` | Agent 在系统提示词中的自称，优先级高于 `config.toml` 的 `[identity] name`，且不会被写回配置文件 | 任意非空字符串；空值视为未设置 |
 | `KIMI_CODE_IDENTITY_SLUG` | 协议标识，用于发给第三方 provider 的 `User-Agent` 产品名和 MCP 客户端名，优先级高于 `[identity] slug`。未设置时由名称派生 | 任意非空字符串；会转小写并将连续非字母数字字符折叠为 `-` |
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills，优先级高于 `config.toml` 的 `builtin_product_skills`（默认开启） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
@@ -155,6 +156,7 @@ kimi
 | `KIMI_MCP_TOOL_TIMEOUT_MS` | 所有 MCP server 的全局默认单次工具调用超时（毫秒）；优先级高于 `config.toml` 的 `[mcp] tool_timeout_ms`，但低于 `mcp.json` 中单个 server 的 `toolTimeoutMs`（默认 `60000`） | `1` 到 `2147483647` 的整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数；优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`（不设或 `0` 表示无上限） | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` | 单步失败后的最大总尝试次数（含首次尝试）；优先级高于 `config.toml` 的 `[loop_control] max_attempts_per_step`（默认 `10`）。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在本变量未设置时仍生效并给出警告 | 非负整数；非法值被忽略 |
+| `KIMI_CODE_INFINITE_RETRY` | 让所有失败的 LLM 请求无限重试（包括轮次内步骤和 compaction 等后台操作）而不是终止任务；重试等待按指数退避（32 秒封顶）并尊重服务端 `Retry-After` 头，等待期间中断仍立即生效。适用于端点可能短暂故障的长时间无人值守评测 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_TOKEN_COUNTING_STRATEGY` | 对外上报的上下文 token 计数（上下文大小显示）；优先级高于 `config.toml` 的 `[token_counting] strategy`（默认 `measured+estimated`） | `measured+estimated`、`measured`、`estimated`（不区分大小写）；非法值被忽略 |
 | `KIMI_WEB_SEARCH_BASE_URL` | 网页搜索（`WebSearch`）服务的 API URL；优先级高于 `config.toml` 的 `[services.moonshot_search] base_url`，未写配置段时也可启用服务。文件中持久化的凭据和自定义 header 不会发送到环境变量指定的端点 | 非空字符串；空白值被忽略 |
 | `KIMI_WEB_SEARCH_API_KEY` | 网页搜索（`WebSearch`）服务的 API 密钥；设置后同时替换配置中的 API 密钥和 OAuth 凭据 | 非空字符串；空白值被忽略 |
@@ -171,7 +173,7 @@ kimi
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检——不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
-`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这三个变量由默认的 `agent-core-v2` 引擎读取。设置 `KIMI_CODE_LEGACY_FLAG=1` 后，旧版 `kimi` / `kimi -p` 路径会忽略它们。
+`KIMI_CODE_INFINITE_RETRY`、`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这几个变量由默认的 `agent-core-v2` 引擎读取。设置 `KIMI_CODE_LEGACY_FLAG=1` 后，旧版 `kimi` / `kimi -p` 路径会忽略它们。
 
 ## 诊断日志
 

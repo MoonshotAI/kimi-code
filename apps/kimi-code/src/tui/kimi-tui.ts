@@ -1921,6 +1921,55 @@ export class KimiTUI {
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+    const phase = this.state.appState.streamingPhase;
+    // Tower mode keeps the main agent as a long-lived coordinator: while its
+    // turn is live, new input steers into that turn instead of queueing
+    // behind it, so consecutive /tower objectives are accepted immediately
+    // rather than serialized one turn at a time. A foreground shell command
+    // ('shell') has no turn to steer into and keeps queue semantics, as do
+    // input deferral and compaction.
+    const steerIntoCoordinator =
+      this.state.appState.towerMode &&
+      phase !== 'idle' &&
+      phase !== 'shell' &&
+      !this.deferUserMessages &&
+      !this.state.appState.isCompacting;
+    // Submission order must survive a mid-turn compaction: objectives queued
+    // while compacting stay queued when the turn outlives the compaction, so
+    // steering this input ahead of them would reorder the conversation.
+    // Prompt-only backlog rides along in the same steer batch, ahead of the
+    // new input; a non-steerable backlog (bash, slash-skill, inline-skill
+    // bundle) cannot, and then this input queues behind it instead.
+    const backlog = this.state.queuedMessages;
+    const backlogSteerable = backlog.every(
+      (m) => m.inlineSkillActivations === undefined && m.mode !== 'bash' && m.mode !== 'skill',
+    );
+    if (steerIntoCoordinator && backlogSteerable) {
+      // Same lease hand-off as the queue path below: the pre-dispatch lease
+      // defers to the raw ids on the steer item, which re-leases inside
+      // steerMessage and binds to the running turn.
+      this.staging.defer(options?.lease);
+      const items: SteerInputItem[] = [
+        ...backlog.map((m) => ({
+          text: m.text,
+          parts: m.parts,
+          imageAttachmentIds: m.imageAttachmentIds,
+          videoAttachmentIds: m.videoAttachmentIds,
+        })),
+        {
+          text: input,
+          parts: options?.parts,
+          imageAttachmentIds: options?.imageAttachmentIds,
+          videoAttachmentIds: options?.videoAttachmentIds,
+        },
+      ];
+      if (backlog.length > 0) {
+        this.state.queuedMessages = [];
+        this.updateQueueDisplay();
+      }
+      this.steerMessage(session, items);
+      return;
+    }
     if (
       this.deferUserMessages ||
       this.state.appState.streamingPhase !== 'idle' ||

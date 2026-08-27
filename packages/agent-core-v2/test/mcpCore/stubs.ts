@@ -6,10 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import { z } from 'zod';
 
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
+import type {
+  McpOAuthScheduledTask,
+  McpOAuthScheduler,
+} from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import type {
   ExecutableTool,
@@ -51,7 +55,46 @@ export function createMemoryMcpOAuthStore(): McpOAuthStore {
     async remove(key: string): Promise<void> {
       data.delete(key);
     },
+    async list(prefix?: string): Promise<readonly string[]> {
+      const keys = [...data.keys()];
+      return prefix === undefined ? keys : keys.filter((key) => key.startsWith(prefix));
+    },
   };
+}
+
+export class ManualMcpOAuthScheduler implements McpOAuthScheduler {
+  private current: number;
+  private sequence = 0;
+  private readonly tasks = new Map<
+    number,
+    { readonly due: number; readonly task: () => void | Promise<void> }
+  >();
+
+  constructor(now = Date.now()) {
+    this.current = now;
+  }
+
+  now(): number {
+    return this.current;
+  }
+
+  schedule(delayMs: number, task: () => void | Promise<void>): McpOAuthScheduledTask {
+    const id = this.sequence++;
+    this.tasks.set(id, { due: this.current + delayMs, task });
+    return { cancel: () => this.tasks.delete(id) };
+  }
+
+  async advanceBy(deltaMs: number): Promise<void> {
+    this.current += deltaMs;
+    while (true) {
+      const next = [...this.tasks]
+        .filter(([, task]) => task.due <= this.current)
+        .toSorted((left, right) => left[1].due - right[1].due || left[0] - right[0])[0];
+      if (next === undefined) return;
+      this.tasks.delete(next[0]);
+      await next[1].task();
+    }
+  }
 }
 
 export function fakeMcpClient(
@@ -218,6 +261,8 @@ export function closeServer(server: Server): Promise<void> {
   });
 }
 
-function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
+function isPromiseLike(
+  value: ToolExecution | Promise<ToolExecution>,
+): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }

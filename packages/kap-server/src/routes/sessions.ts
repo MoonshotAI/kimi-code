@@ -1019,24 +1019,14 @@ export function toWireSession(
   };
 }
 
-/** Live activity and interaction facts projected onto the wire `Session`. */
 export interface SessionFacts {
   readonly busy: boolean;
   readonly mainTurnActive: boolean;
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
-  /** False when no live handle exists (cold session); live warm sessions
-   *  always report their own outcome, never the persisted fallback. */
   readonly live?: boolean;
 }
 
-/**
- * Resolve a session's live wire facts from the core `ISessionActivityView`
- * aggregate (`busy` = any agent with an active turn or background task; the
- * reason is the main agent's latest turn outcome, `blocked` folds into
- * `failed`). A cold session (no live handle) is not busy and carries no
- * outcome.
- */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = getLiveSessionById(core.accessor, sessionId);
   if (handle === undefined) {

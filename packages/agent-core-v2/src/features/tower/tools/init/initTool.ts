@@ -24,7 +24,7 @@ export class TowerInitTool implements ITowerInitTool {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
-  resolveExecution(_args: TowerInitToolInput): ToolExecution {
+  resolveExecution(args: TowerInitToolInput): ToolExecution {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
       return {
         isError: true,
@@ -50,7 +50,7 @@ export class TowerInitTool implements ITowerInitTool {
               `tower workspace is owned by a live session (${priorOwner}) — adopting it would retire that session's roster. Use the tower from that session, or close it first.`,
             );
           }
-          const result = await store.init(this.sessionContext.sessionId);
+          const result = await store.init(this.sessionContext.sessionId, args.base);
           await this.tower.enter();
           return {
             output: [
@@ -58,7 +58,24 @@ export class TowerInitTool implements ITowerInitTool {
                 ? 'tower workspace initialized'
                 : 'tower workspace already initialized — existing state preserved',
               `base branch: ${result.base}`,
+              ...(result.ignoredBase !== undefined
+                ? [
+                    `requested base "${result.ignoredBase}" ignored — the existing workspace already records base "${result.base}"; tear it down first to rebase the tower`,
+                  ]
+                : []),
+              ...(result.checkout !== result.base
+                ? [
+                    result.checkout === 'HEAD'
+                      ? `note: the main checkout is in a detached HEAD state — merges stay blocked until the base is checked out (git checkout ${result.base})`
+                      : `note: the main checkout is on "${result.checkout}", not base "${result.base}" — merges stay blocked until it is switched over (git checkout ${result.base})`,
+                  ]
+                : []),
               'workspace: .tower/ (comms under .tower/comms/, worktrees under .tower/worktrees/)',
+              ...(result.openMissions.length > 0
+                ? [
+                    `carried-over open missions: ${result.openMissions.join(', ')} — their scopes are still reserved. Continue them (TowerSpawn fresh workers), or — when they belong to an unrelated earlier task — abandon them first (TowerMission status=abandoned) so a new plan can use those files.`,
+                  ]
+                : []),
               ...(result.retiredAgents.length > 0
                 ? [
                     `adopted from a previous session — retired its stale roster entries: ${result.retiredAgents.join(', ')}. ` +

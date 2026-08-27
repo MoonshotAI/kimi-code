@@ -85,7 +85,7 @@ describe('server-v2 /api/v1 skills', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
-    if (agents.findAgentHandle('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   async function registerWorkspace(root: string): Promise<string> {

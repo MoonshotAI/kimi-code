@@ -59,10 +59,6 @@ interface ApiV1RouteHost {
 
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
-  /**
-   * Host product identity from `startServer` — the session export route stamps
-   * its manifest from `hostIdentity.version`.
-   */
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
@@ -72,23 +68,9 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly transcriptService: TranscriptService;
-  /** Catalog URL resolver for the `/plugins/marketplace` route (start.ts
-      applies the option/env override; the default follows the active login
-      region per request). */
   readonly pluginMarketplaceUrl: () => string;
-  /** True when the catalog URL is the built-in default (no option/env set). */
   readonly pluginMarketplaceIsDefault: boolean;
-  /**
-   * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
-   * from the `disableAuth` server option (the `--dangerous-bypass-auth` CLI
-   * flag).
-   */
   readonly dangerousBypassAuth?: boolean;
-  /**
-   * Custom browser tab title for this instance, surfaced as `web_title` in the
-   * `/meta` payload. Set by `start.ts` from the `webTitle` server option (the
-   * CLI's `--web-title` flag).
-   */
   readonly webTitle?: string;
 }
 

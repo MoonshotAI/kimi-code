@@ -36,11 +36,11 @@ function stubWorkspaceContext(): IWorkspaceContext {
   };
 }
 
-function stubWorkspaceDirs(): IWorkspaceDirs {
+function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDirs {
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    additionalDirs: [],
+    additionalDirs: [...additionalDirs],
     onDidChange: () => ({ dispose: () => {} }),
     addDir: () => Promise.reject(new Error('not supported in tests')),
     mergeAdditionalDirs: () => Promise.resolve(),
@@ -71,9 +71,21 @@ function fakeFs(
       dirSet.add(join(WORK_DIR, parts.slice(0, i).join('/')));
     }
   };
+  const addAbsAncestors = (abs: string): void => {
+    let dir = abs.slice(0, abs.lastIndexOf('/'));
+    while (dir.length > 0 && !dirSet.has(dir)) {
+      dirSet.add(dir);
+      dir = dir.slice(0, dir.lastIndexOf('/'));
+    }
+  };
   for (const [rel, content] of Object.entries(files)) {
-    fileMap.set(join(WORK_DIR, rel), content);
-    addAncestors(rel);
+    if (rel.startsWith('/')) {
+      fileMap.set(rel, content);
+      addAbsAncestors(rel);
+    } else {
+      fileMap.set(join(WORK_DIR, rel), content);
+      addAncestors(rel);
+    }
   }
   const symlinkSet = new Set<string>();
   for (const rel of symlinks) {
@@ -359,6 +371,8 @@ function makeSession(
   symlinks: readonly string[] = [],
   runner?: IHostProcessService,
   symlinkTargets: Record<string, string> = {},
+  additionalDirs: readonly string[] = [],
+  pathClass: 'posix' | 'win32' = 'posix',
 ): IWorkspaceFsService {
   host = createScopedTestHost([
     stubPair(IHostEnvironment, {
@@ -373,7 +387,7 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'] });
+  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
   Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
   host.app.instantiation.provide(IRuntimeResolver, {
     _serviceBrand: undefined,
@@ -382,7 +396,7 @@ function makeSession(
   });
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
-    stubPair(IWorkspaceDirs, stubWorkspaceDirs()),
+    stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
     stubPair(IHostFileSystem, fakeFs(files, symlinks, symlinkTargets)),
     stubPair(IHostProcessService, runner ?? fakeRunner(handler)),
     stubPair(ITelemetryService, telemetryStub(events)),
@@ -552,6 +566,26 @@ describe('WorkspaceFsService.suggest', () => {
   function rgMissingHandler(args: readonly string[]): { stdout: string; exitCode: number } {
     if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
     return { stdout: '', exitCode: 0 };
+  }
+
+  function rgMultiRootHandler(perRoot: Record<string, readonly string[]>, captured?: string[][]): RunHandler {
+    return (args) => {
+      captured?.push([...args]);
+      if (args[0] === 'rg' && args[1] === '--version') {
+        return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+      }
+      if (args[0] === 'rg' && args.includes('--files')) {
+        const lines: string[] = [];
+        for (const arg of args) {
+          const rootLines = perRoot[arg];
+          if (rootLines !== undefined) {
+            for (const line of rootLines) lines.push(`${arg === '/' ? '' : arg}/${line}`);
+          }
+        }
+        return { stdout: lines.map((l) => `${l}\n`).join(''), exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 0 };
+    };
   }
 
   it('matches path segments in order and ranks the matched directory first', async () => {
@@ -912,6 +946,264 @@ describe('WorkspaceFsService.suggest', () => {
     });
     expect(result.items.map((i) => i.path)).toEqual(['y.ts']);
     expect(result.truncated).toBe(true);
+  });
+
+  it('merges rg candidates across roots with relative paths for the primary root only', async () => {
+    const fs = makeSession(
+      {
+        'apps/desktop/package.json': '',
+        '/extra/lib/util.ts': '',
+        '/extra/README.md': '',
+      },
+      rgMultiRootHandler({
+        '/repo': ['apps/desktop/package.json'],
+        '/extra': ['lib/util.ts', 'README.md'],
+      }),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const pathResult = await fs.suggest({
+      query: 'apps/de',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(pathResult.items[0]?.path).toBe('apps/desktop');
+    const nameResult = await fs.suggest({
+      query: 'util',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(nameResult.items.map((i) => i.path)).toContain('/extra/lib/util.ts');
+    const readme = await fs.suggest({
+      query: 'readme',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    const item = readme.items.find((i) => i.path === '/extra/README.md');
+    expect(item?.match_positions).toEqual([7, 8, 9, 10, 11, 12]);
+  });
+
+  it('passes every root to rg as a path argument', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession(
+      { '/extra/x.ts': '' },
+      rgMultiRootHandler({ '/repo': [], '/extra': ['x.ts'] }, captured),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    await fs.suggest({ query: 'x', limit: 50, follow_gitignore: true, show_hidden: false });
+    const filesArgs = captured.find((a) => a.includes('--files'))!;
+    expect(filesArgs).toContain('/repo');
+    expect(filesArgs).toContain('/extra');
+  });
+
+  it('parses multi-root rg output joined with the windows path separator', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': '', '/extra/lib/util.ts': '' },
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+        if (args[0] === 'rg' && args.includes('--files')) {
+          return { stdout: '/repo\\src\\a.ts\n/extra\\lib\\util.ts\n', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+      'win32',
+    );
+    const primary = await fs.suggest({ query: 'a.ts', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(primary.items.map((i) => i.path)).toContain('src/a.ts');
+    const extra = await fs.suggest({ query: 'util', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(extra.items.map((i) => i.path)).toContain('/extra/lib/util.ts');
+  });
+
+  it('parses single-root rg output joined with the windows path separator', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': '' },
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+        if (args[0] === 'rg' && args.includes('--files')) {
+          return { stdout: 'src\\a.ts\n', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      [],
+      'win32',
+    );
+    const result = await fs.suggest({ query: 'a.ts', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(result.items.map((i) => i.path)).toContain('src/a.ts');
+  });
+
+  it('deduplicates candidates when roots overlap', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': '', '/other.ts': '' },
+      rgMultiRootHandler({
+        '/repo': ['src/a.ts'],
+        '/': ['repo/src/a.ts', 'other.ts'],
+      }),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/'],
+    );
+    const result = await fs.suggest({
+      query: 'ts',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    const paths = result.items.map((i) => i.path);
+    expect(paths.filter((p) => p === 'src/a.ts')).toHaveLength(1);
+    expect(paths).toContain('/other.ts');
+  });
+
+  it('skips an additional root contained in the primary root', async () => {
+    const fs = makeSession(
+      {},
+      rgLinesHandler(['apps/desktop/package.json']),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/repo/apps'],
+    );
+    const result = await fs.suggest({
+      query: 'apps/de',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(result.items.filter((i) => i.path === 'apps/desktop')).toHaveLength(1);
+  });
+
+  it('does not treat dot segments of an additional root itself as hidden', async () => {
+    const fs = makeSession(
+      { '/x/.config/kimi/foo.ts': '' },
+      rgMultiRootHandler({
+        '/repo': [],
+        '/x/.config/kimi': ['foo.ts'],
+      }),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/x/.config/kimi'],
+    );
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(result.items.map((i) => i.path)).toEqual(['/x/.config/kimi/foo.ts']);
+  });
+
+  it('applies the limit to the merged ranking across roots', async () => {
+    const fs = makeSession(
+      { 'a1.ts': '', '/extra/a2.ts': '', '/extra/a3.ts': '' },
+      rgMultiRootHandler({
+        '/repo': ['a1.ts'],
+        '/extra': ['a2.ts', 'a3.ts'],
+      }),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.suggest({
+      query: 'a',
+      limit: 2,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(result.items).toHaveLength(2);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('merges node-fallback candidates across roots with per-root gitignore', async () => {
+    const fs = makeSession(
+      {
+        'src/foo.ts': '',
+        '/extra/lib/foo-util.ts': '',
+        '/extra/.gitignore': 'skip.ts\n',
+        '/extra/skip.ts': '',
+      },
+      rgMissingHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    const paths = result.items.map((i) => i.path);
+    expect(paths).toContain('src/foo.ts');
+    expect(paths).toContain('/extra/lib/foo-util.ts');
+    const skipped = await fs.suggest({
+      query: 'skip',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(skipped.items.map((i) => i.path)).toEqual([]);
+  });
+
+  it('lists top-level entries of every root for an empty query', async () => {
+    const fs = makeSession(
+      { 'src/foo.ts': '', 'README.md': '', '/extra/lib/util.ts': '', '/extra/notes.md': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.suggest({
+      query: '',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+    expect(result.items.map((i) => i.path)).toEqual([
+      'src',
+      'README.md',
+      '/extra/lib',
+      '/extra/notes.md',
+    ]);
+    expect(result.truncated).toBe(false);
   });
 });
 

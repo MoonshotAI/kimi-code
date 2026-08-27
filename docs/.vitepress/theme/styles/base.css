@@ -229,3 +229,54 @@ body {
   border-top: 1px solid var(--vp-c-divider);
   background: transparent;
 }
+
+/* --- Step rail (numbered steps on guides/web) --- */
+.vp-doc .step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45em;
+  height: 1.45em;
+  border-radius: 50%;
+  background: #f4f5f7;
+  color: #8a919c;
+  font-size: 0.85em;
+  font-weight: 500;
+  line-height: 1;
+  margin-right: 0.6em;
+  vertical-align: 0.1em;
+}
+.vp-doc .step {
+  position: relative;
+  border-left: 2px solid #f0f2f5;
+  padding-left: 1.4em;
+  margin-left: 0.75em;
+  padding-bottom: 0.6em;
+}
+.vp-doc .step:last-of-type {
+  border-left-color: transparent;
+}
+.vp-doc .step .step-num {
+  position: absolute;
+  left: -0.78em;
+  top: 0.15em;
+  margin-right: 0;
+}
+
+/* --- Feature compare table (fixed-width ✓ columns on guides/web) --- */
+.feature-compare-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+.feature-compare-table th:nth-child(1),
+.feature-compare-table td:nth-child(1) {
+  width: 8em;
+  white-space: nowrap;
+}
+.feature-compare-table th:nth-child(2),
+.feature-compare-table td:nth-child(2),
+.feature-compare-table th:nth-child(3),
+.feature-compare-table td:nth-child(3) {
+  width: 4.5em;
+  text-align: center;
+}

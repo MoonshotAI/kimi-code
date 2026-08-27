@@ -196,6 +196,7 @@ export interface IInstantiationService {
   provideAll(entries: ReadonlyArray<ProvideAllEntry>): void;
   unprovide<T>(id: ServiceIdentifier<T>): void;
   dispose(): void;
+  disposeAsync(): Promise<void>;
 }
 
 export const IInstantiationService: ServiceIdentifier<IInstantiationService> =

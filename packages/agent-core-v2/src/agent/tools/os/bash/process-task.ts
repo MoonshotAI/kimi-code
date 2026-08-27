@@ -16,6 +16,7 @@ export interface ProcessTaskInfo extends AgentTaskInfoBase {
   readonly command: string;
   readonly pid: number;
   readonly exitCode: number | null;
+  readonly parentToolCallId?: string;
 }
 
 declare module '#/agent/task/types' {
@@ -44,6 +45,7 @@ export class ProcessTask implements AgentTask {
     readonly description: string,
     private readonly onOutput?: ProcessTaskOutputCallback,
     private release?: () => void,
+    readonly parentToolCallId?: string,
   ) {}
 
   async start(sink: AgentTaskSink): Promise<void> {
@@ -101,6 +103,7 @@ export class ProcessTask implements AgentTask {
       command: this.command,
       pid: this.proc.pid,
       exitCode: this.exitCode,
+      parentToolCallId: this.parentToolCallId,
     };
   }
 

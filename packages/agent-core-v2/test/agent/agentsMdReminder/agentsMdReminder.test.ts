@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -16,6 +17,8 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import type { RuntimeLease } from '#/runtime/runtime';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import {
   ToolAccesses,
   type ToolAccesses as ToolAccessesType,
@@ -42,13 +45,17 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { AgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminderService';
+import {
+  AgentAgentsMdReminderService,
+  agentsMdReminderKnownKey,
+} from '#/agent/agentsMdReminder/agentsMdReminderService';
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
@@ -85,6 +92,7 @@ interface Harness {
   readonly dispatcher: IEventDispatcher;
   readonly telemetryEvents: TelemetryRecord[];
   readonly reminders: CapturedReminder[];
+  readonly instructionsChange: Emitter<readonly HostFsChange[]>;
 }
 
 function createHarness(
@@ -104,6 +112,7 @@ function createHarness(
   const telemetryEvents: TelemetryRecord[] = [];
   const reminders: CapturedReminder[] = [];
   const events = stubToolExecutorEvents();
+  const instructionsChange = disposables.add(new Emitter<readonly HostFsChange[]>());
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       if (options.withRealExecutor === true) {
@@ -114,12 +123,6 @@ function createHarness(
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
-        reg.defineInstance(IAgentScopeContext, {
-          _serviceBrand: undefined,
-          agentId: 'main',
-          agentContext: stubAgentContext('main', 0),
-          scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
-        } satisfies IAgentScopeContext);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
@@ -128,6 +131,12 @@ function createHarness(
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
+      reg.defineInstance(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'main',
+        agentContext: stubAgentContext('main', 0),
+        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
+      } satisfies IAgentScopeContext);
       const dispatcher: IEventDispatcher = {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },
@@ -144,13 +153,14 @@ function createHarness(
         agentsMdPaths: options.restoredProfile?.agentsMdPaths,
       });
       reg.defineInstance(IAgentStateService, agentState);
-      reg.defineInstance(IAgentSystemReminderService, {
-        _serviceBrand: undefined,
-        appendSystemReminder: (content: string, origin: PromptOrigin) => {
-          reminders.push({ content, origin });
-          return { role: 'user', content: [], toolCalls: [], origin };
-        },
-      } satisfies IAgentSystemReminderService);
+      reg.defineInstance(
+        IAgentLifecycleService,
+        lifecycleWithReminder(createReminderStub({
+          notify: (content, notification) => {
+            reminders.push({ content, origin: { kind: 'injection', ...notification } });
+          },
+        })),
+      );
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         sessionId: 'session-1',
@@ -161,6 +171,14 @@ function createHarness(
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
+      reg.defineInstance(ISessionInstructionsProvider, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        agentsMd: undefined,
+        agentsMdWarning: undefined,
+        agentsMdPaths: undefined,
+        onDidChange: instructionsChange.event,
+      } satisfies ISessionInstructionsProvider);
       const hostFs = options.hostFs ?? new HostFileSystem();
       const hostEnvironment = {
         _serviceBrand: undefined,
@@ -214,7 +232,7 @@ function createHarness(
   });
   const reminder = ix.get(IAgentAgentsMdReminderService);
   const dispatcher = ix.get(IEventDispatcher);
-  return { ix, events, reminder, dispatcher, telemetryEvents, reminders };
+  return { ix, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
 }
 
 function didCtx(
@@ -285,6 +303,54 @@ async function writeAgentsMd(dir: string, content = 'instructions'): Promise<str
   await writeFile(path, content, 'utf-8');
   return normalize(path);
 }
+
+describe('agentsMdReminder instructions change announcements', () => {
+  it('appends a path-announcement reminder when an injected AGENTS.md changes on disk', async () => {
+    const h = createHarness();
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    h.reminder.seedInjected([rootAgentsMd], workDir);
+
+    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'modified', kind: 'file' }]);
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.origin).toEqual({ kind: 'injection', variant: 'agents_md_change' });
+    expect(h.reminders[0]?.content).toContain(rootAgentsMd);
+    expect(h.reminders[0]?.content).toContain('stale');
+  });
+
+  it('marks deleted AGENTS.md files in the announcement', async () => {
+    const h = createHarness();
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    h.reminder.seedInjected([rootAgentsMd], workDir);
+
+    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'deleted', kind: 'file' }]);
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain(`${rootAgentsMd} (deleted)`);
+  });
+
+  it('stays silent when the agent has not been seeded yet', async () => {
+    const h = createHarness();
+
+    h.instructionsChange.fire([
+      { path: join(workDir, 'AGENTS.md'), action: 'modified', kind: 'file' },
+    ]);
+
+    expect(h.reminders).toHaveLength(0);
+  });
+
+  it('adds announced paths to the known set so discovery does not repeat them', async () => {
+    const h = createHarness();
+    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
+    h.reminder.seedInjected([], workDir);
+
+    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
+
+    expect(h.reminders).toHaveLength(1);
+    const known = h.ix.get(IAgentStateService).get(agentsMdReminderKnownKey);
+    expect(known.has(normalize(rootAgentsMd))).toBe(true);
+  });
+});
 
 describe('agentsMdReminder path-carrying tools', () => {
   it('appends a reminder listing the uninjected AGENTS.md when Read touches its directory', async () => {

@@ -402,10 +402,12 @@ export interface GetGlobalMcpServerPayload {
 
 export interface PutGlobalMcpServerPayload {
   readonly server: GlobalMcpServerConfig;
+  readonly cwd?: string;
 }
 
 export interface GlobalMcpServerNamePayload {
   readonly name: string;
+  readonly cwd?: string;
 }
 
 /**
@@ -424,10 +426,12 @@ export type McpServerLocator =
 
 export interface McpServerLocatorPayload {
   readonly locator: McpServerLocator;
+  readonly cwd?: string;
 }
 
 export interface InspectAppMcpServersPayload {
   readonly targets?: readonly McpServerLocator[];
+  readonly cwd?: string;
 }
 
 export type GlobalMcpServerAuthState =
@@ -447,9 +451,10 @@ export interface GlobalMcpServerAuthStatus {
 export interface ListGlobalMcpServerAuthStatusesPayload {
   readonly cwd?: string;
   /**
-   * Verify online: run a real connection probe for OAuth-capable servers so
-   * an expired/revoked grant surfaces as `oauth-expired` instead of the
-   * offline `oauth-authorized` guess.
+   * Omitted preserves implicit OAuth detection for unpinned servers without
+   * stored credentials. `false` stays fully offline; `true` verifies every
+   * OAuth-capable server so an expired/revoked grant surfaces as
+   * `oauth-expired` instead of the offline `oauth-authorized` guess.
    */
   readonly verify?: boolean;
 }

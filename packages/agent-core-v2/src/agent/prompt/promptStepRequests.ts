@@ -2,7 +2,7 @@ import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/t
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
-import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 
 abstract class UserMessageStepRequest extends StepRequest {
   protected readonly message: ContextMessage;
@@ -11,7 +11,7 @@ abstract class UserMessageStepRequest extends StepRequest {
   constructor(
     message: ContextMessage,
     private readonly captions: readonly string[],
-    private readonly reminders: IAgentSystemReminderService,
+    private readonly reminders: ReminderRuntime,
     options?: StepRequestOptions,
   ) {
     super(options);
@@ -29,8 +29,7 @@ abstract class UserMessageStepRequest extends StepRequest {
 
   override onWillMaterialize(): void {
     for (const caption of this.captions) {
-      this.reminders.appendSystemReminder(caption, {
-        kind: 'injection',
+      this.reminders.notify(caption, {
         variant: 'image_compression',
         ownerPromptId: this.ownerPromptId,
       });
@@ -48,7 +47,7 @@ export class PromptStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    reminders: IAgentSystemReminderService,
+    reminders: ReminderRuntime,
   ) {
     super(message, captions, reminders, { admission: 'newTurn' });
   }
@@ -68,7 +67,7 @@ export class SteerStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    reminders: IAgentSystemReminderService,
+    reminders: ReminderRuntime,
     private readonly recordSteer: (message: ContextMessage) => void,
     private readonly forgetSteer: (request: SteerStepRequest) => void,
     admission: 'activeTurnOnly' | 'activeOrNewTurn' = 'activeTurnOnly',

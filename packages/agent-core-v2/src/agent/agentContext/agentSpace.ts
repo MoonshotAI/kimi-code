@@ -12,14 +12,6 @@ import type { AgentContext } from './agentContext';
 
 export type AgentModelInstanceOf<D> = D extends AgentModelDefinition<any, infer M> ? M : never;
 
-/**
- * Per-agent store of materialized domain Model instances, minted by the
- * agent lifecycle together with the `AgentContext`. `use` runs `run` against
- * the definition's instance under a lease: synchronous when `run` is
- * synchronous, otherwise the lease extends until the returned promise
- * settles. Stale (disposed) spaces reject every call; contexts not issued by
- * the lifecycle carry no space at all.
- */
 export interface AgentSpace {
   use<D extends AgentModelDefinition<any, any>, R>(
     definition: D,

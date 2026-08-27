@@ -1,5 +1,6 @@
 import { Service } from '#/_base/di/service';
-import { IInstantiationService } from '#/_base/di/instantiation';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -19,7 +20,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IInstantiationService instantiation: IInstantiationService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
@@ -30,9 +31,13 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     super();
     this.agentState.contributeState(swarmKey);
     this._register(
-      instantiation.createInstance(SwarmInjection, {
-        getTrigger: () => this.agentState.get(swarmKey),
-      }),
+      activateReminderWhenReady(agentLifecycle, this.agentCtx, (reminder) =>
+        new SwarmInjection(
+          { getTrigger: () => this.agentState.get(swarmKey) },
+          reminder,
+          this.context,
+        ),
+      ),
     );
     this._register(
       eventBus.subscribe(TurnEnded, () => {

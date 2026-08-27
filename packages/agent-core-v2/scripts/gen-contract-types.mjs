@@ -1,24 +1,3 @@
-/**
- * Generates a black-box "contract" declaration tree for agent-core-v2.
- *
- * The output mirrors `src/` but with every registered service IMPLEMENTATION
- * class removed, leaving only the contract surface: interfaces, types, models,
- * error domains, factory functions, the `ServiceIdentifier` accessors, and the
- * DI primitives. Consumers (kimi-code-mini-bench) type-check against this tree
- * so tests cannot import an impl class, while at runtime the real linked
- * package still binds the real implementations.
- *
- * Pipeline:
- *   1. `tsc --emitDeclarationOnly` over `src/` into a temp dir.
- *   2. Detect impl files = source files containing a top-level
- *      `registerScopedService(...)` call; the 3rd argument is the impl class.
- *   3. In each impl file's emitted `.d.ts`, drop the registered class
- *      declaration(s) and keep everything else, then drop re-export
- *      specifiers elsewhere in the tree that name a dropped class
- *      (deprecated alias modules) — they would otherwise dangle.
- *   4. Copy the scrubbed tree to the output directory.
- */
-
 import { execFileSync } from 'node:child_process';
 import {
   cpSync,
@@ -36,7 +15,7 @@ import { createRequire } from 'node:module';
 import { Project, SyntaxKind } from 'ts-morph';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PKG = join(__dirname, '..'); // packages/agent-core-v2
+const PKG = join(__dirname, '..');
 const SRC = join(PKG, 'src');
 const TMP = join(PKG, '.contract-types-tmp');
 const TSCONFIG = join(PKG, 'tsconfig.contract.json');
@@ -61,13 +40,9 @@ function walk(dir, out) {
   }
 }
 
-// 1. Emit declarations for the whole src tree.
 rmSync(TMP, { recursive: true, force: true });
 mkdirSync(TMP, { recursive: true });
 log(`emitting declarations via tsc -> ${relative(PKG, TMP)}`);
-// tsc exits non-zero on the repo's pre-existing type errors (WIP port), but
-// still emits `.d.ts` for every file when `noEmitOnError` is off. We only need
-// the declarations, so tolerate a non-zero exit and continue.
 try {
   execFileSync(process.execPath, [tscBin, '-p', TSCONFIG, '--outDir', TMP], {
     cwd: PKG,
@@ -78,12 +53,10 @@ try {
   log(`tsc exited ${String(code)} (non-fatal; declarations are still emitted)`);
 }
 
-// 2. Detect impl files + registered class names (AST only).
 log('scanning for registerScopedService(...) bindings');
 const project = new Project();
 project.addSourceFilesAtPaths(join(SRC, '**', '*.ts'));
 
-/** @type {Map<string, Set<string>>} dtsPath -> class names to drop */
 const dropByDts = new Map();
 const implFiles = [];
 
@@ -99,7 +72,6 @@ for (const sf of project.getSourceFiles()) {
     const args = call.getArguments();
     if (args.length < 3) continue;
     const text = args[2].getText().trim();
-    // Only treat a bare identifier as a class name; otherwise signal "drop all".
     names.add(/^[A-Za-z_$][\w$]*$/.test(text) ? text : '*');
   }
 
@@ -112,7 +84,6 @@ for (const sf of project.getSourceFiles()) {
 
 log(`found ${implFiles.length} impl files`);
 
-// 3. Scrub registered classes from each impl .d.ts.
 let scrubbedFiles = 0;
 let scrubbedClasses = 0;
 for (const [dtsPath, names] of dropByDts) {
@@ -136,11 +107,6 @@ for (const [dtsPath, names] of dropByDts) {
 }
 log(`scrubbed ${scrubbedClasses} impl class(es) across ${scrubbedFiles} file(s)`);
 
-// 3b. Scrub re-exports of scrubbed classes. A deprecated alias module (e.g.
-// `export { Impl as OldName } from './implService'`) would otherwise keep
-// naming a class its declaring file no longer exports — a dangling reference
-// for consumers and an impl-name leak. `export *` needs nothing: it only
-// re-exports what survives.
 function resolveReexportTarget(dtsPath, spec) {
   const clean = spec.endsWith('.js') ? spec.slice(0, -'.js'.length) : spec;
   if (clean.startsWith('.')) return join(dirname(dtsPath), `${clean}.d.ts`);
@@ -178,19 +144,15 @@ for (const dtsPath of emittedDts) {
 }
 log(`scrubbed ${scrubbedReexports} re-export(s) of impl classes from alias modules`);
 
-// 4. Copy the scrubbed tree to the output directory.
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(dirname(OUT), { recursive: true });
 cpSync(TMP, OUT, { recursive: true });
 
-// Sanity summary: report emitted files + a quick leak check (any impl class
-// name still declared in its own file).
 const emitted = [];
 walk(OUT, emitted);
 const dtsCount = emitted.filter((f) => f.endsWith('.d.ts')).length;
 log(`wrote ${dtsCount} declaration file(s) -> ${OUT}`);
 
-// Verify no registered class name survives in the file that registered it.
 const leaks = [];
 for (const [dtsPath, names] of dropByDts) {
   const outPath = join(OUT, relative(TMP, dtsPath));

@@ -296,9 +296,8 @@ Importing the package therefore fires every `register*` side effect, exactly as 
 
 ## Comments
 
-- **No comments** (orient.md): no file headers, no statement-level narration; the only exception is JSDoc attached to exported symbols.
-- **Methods and fields carry no comments by default.** Well-named identifiers and types say *what*; the code is the source of truth for *how*.
-- Write an inline comment only when the *why* is non-obvious (a hidden constraint, a subtle invariant, a workaround). One short line.
+- **No comments** (orient.md): no file headers, no statement-level narration, no JSDoc — not on exported symbols either; the only exception is a load-bearing `oxlint-disable` / `eslint-disable` directive.
+- **Methods and fields carry no comments.** Well-named identifiers and types say *what*; the code is the source of truth for *how*.
 - For unimplemented stubs, throw `NotImplementedError('feature')` rather than `throw new Error('TODO: …')` (errors.md).
 
 ## Complete minimal example

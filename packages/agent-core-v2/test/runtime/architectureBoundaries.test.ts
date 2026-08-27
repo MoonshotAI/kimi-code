@@ -93,11 +93,10 @@ describe('runtime architecture boundaries', () => {
     expect(readTool).not.toContain("'acquire' in runtime");
   });
 
-  it('routes terminal, watch, MCP, and external FS through explicit runtime selection', () => {
+  it('routes terminal, MCP, and external FS through explicit runtime selection', () => {
     const terminal = source('session/terminal/terminalService.ts');
     const mcp = source('workspace/workspaceMcp/workspaceMcpService.ts');
     const externalFs = kapSource('routes/fs.ts');
-    const externalWatch = kapSource('transport/ws/v1/fsWatchBridge.ts');
 
     expect(terminal).toContain('this.runtimeResolver.acquire(');
     expect(terminal).toContain('new RuntimeWorkspaceView(');
@@ -106,8 +105,13 @@ describe('runtime architecture boundaries', () => {
     expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)/);
     expect(externalFs).toContain('get(IRuntimeResolver).acquire(');
     expect(externalFs).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)\)/);
-    expect(externalWatch).toContain('get(IRuntimeResolver).acquire(');
-    expect(externalWatch).toContain('new RuntimeWorkspaceView(');
+  });
+
+  it('serves WS fs watch from the engine-owned workspace watch service', () => {
+    const externalWatch = kapSource('transport/ws/v1/fsWatchBridge.ts');
+    expect(externalWatch).toContain('get(IWorkspaceInstanceManager)');
+    expect(externalWatch).toContain('.program.watch');
     expect(externalWatch).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)\)/);
+    expect(externalWatch).not.toContain('runtime.watch');
   });
 });

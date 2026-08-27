@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  AgentGoal,
+  agentContextOf,
+  ErrorCodes,
   IAgentActivityView,
-  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPluginCommandService,
   IAgentPromptService,
@@ -50,22 +52,6 @@ interface SessionMetaWire {
   createdAt: number;
   updatedAt: number;
   archived: boolean;
-}
-
-interface GoalSnapshotWire {
-  goalId: string;
-  objective: string;
-  completionCriterion?: string;
-  status: 'active' | 'paused' | 'blocked' | 'complete';
-  turnsUsed: number;
-  tokensUsed: number;
-  wallClockMs: number;
-  budget: unknown;
-  terminalReason?: string;
-}
-
-interface GoalToolResultWire {
-  goal: GoalSnapshotWire | null;
 }
 
 function rpc(
@@ -146,6 +132,15 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId });
+  }
+
+  function goalFacade(sessionId: string, agentId = 'main') {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    const manager = session.accessor.get(IAgentLifecycleService);
+    const handle = manager.handleOf(agentId);
+    if (handle === undefined) throw new Error(`agent ${agentId} not found`);
+    return manager.resolve(agentContextOf(handle), AgentGoal);
   }
 
   it('describes all channels via GET /api/v1/debug/channels', async () => {
@@ -561,89 +556,52 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.isError).not.toBe(true);
   });
 
-  it('controls goals through RPC', async () => {
+  it('controls goals through the goal runtime facade', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const created = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'createGoal', { sid: id, aid: 'main' }),
-      { objective: 'finish the migration' },
-    );
-    expect(created.body.code).toBe(0);
-    expect(created.body.data).toMatchObject({
+    const goal = goalFacade(id);
+    const created = await goal.createGoal({ objective: 'finish the migration' });
+    expect(created).toMatchObject({
       objective: 'finish the migration',
       status: 'active',
     });
 
-    const read = await call<GoalToolResultWire>(
-      'GET',
-      rpc('agent', IAgentGoalService, 'getGoal', { sid: id, aid: 'main' }),
-    );
-    expect(read.body.code).toBe(0);
-    expect(read.body.data.goal).toMatchObject({
+    expect(goal.getGoal().goal).toMatchObject({
       objective: 'finish the migration',
       status: 'active',
     });
 
-    const paused = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'pauseGoal', { sid: id, aid: 'main' }),
-      {},
-    );
-    expect(paused.body.data.status).toBe('paused');
+    const paused = await goal.pauseGoal({});
+    expect(paused.status).toBe('paused');
 
-    const resumed = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'resumeGoal', { sid: id, aid: 'main' }),
-      {},
-    );
-    expect(resumed.body.data.status).toBe('active');
+    const resumed = await goal.resumeGoal({});
+    expect(resumed.status).toBe('active');
 
-    const cancelled = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'cancelGoal', { sid: id, aid: 'main' }),
-      {},
-    );
-    expect(cancelled.body.code).toBe(0);
-    expect(cancelled.body.data.status).toBe('active');
+    const cancelled = await goal.cancelGoal({});
+    expect(cancelled.status).toBe('active');
 
-    const afterCancel = await call<GoalToolResultWire>(
-      'GET',
-      rpc('agent', IAgentGoalService, 'getGoal', { sid: id, aid: 'main' }),
-    );
-    expect(afterCancel.body.data.goal).toBeNull();
+    expect(goal.getGoal().goal).toBeNull();
   });
 
-  it('maps goal errors through RPC envelopes', async () => {
+  it('rejects a duplicate goal through the goal runtime facade', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'createGoal', { sid: id, aid: 'main' }),
-      { objective: 'first' },
-    );
-    const duplicate = await call<null>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'createGoal', { sid: id, aid: 'main' }),
-      { objective: 'second' },
-    );
-    expect(duplicate.body.code).toBe(40913);
+    const goal = goalFacade(id);
+    await goal.createGoal({ objective: 'first' });
+    await expect(goal.createGoal({ objective: 'second' })).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_ALREADY_EXISTS,
+    });
   });
 
-  it('rejects reflected goal helper access for subagents', async () => {
+  it('rejects goal access for subagents', async () => {
     const id = await createSession(home as string);
     await createSubagent(id, 'sub-1');
 
-    const { body } = await call<null>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'clearInternal', { sid: id, aid: 'sub-1' }),
-      'user',
-    );
-
-    expect(body.code).toBe(40920);
-    expect(body.msg).toBe('Goals are only supported by the main agent');
+    await expect(goalFacade(id, 'sub-1').createGoal({ objective: 'sub' })).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_UNSUPPORTED_AGENT,
+    });
   });
 
   it('lists and installs plugins through RPC', async () => {

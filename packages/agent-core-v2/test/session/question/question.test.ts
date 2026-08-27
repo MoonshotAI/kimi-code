@@ -10,14 +10,15 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { type QuestionRequest, ISessionQuestionService } from '#/session/question/question';
 import { SessionQuestionService } from '#/session/question/questionService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+
+import { stubInteractionManagerFor, type InteractionManagerStub } from '../../features/interaction/stubs';
 
 const noopEventBus: IEventBus = {
   _serviceBrand: undefined,
@@ -42,17 +43,20 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   let disposables: DisposableStore;
   let host: ScopedTestHost;
   let session: Scope;
+  let interactions: InteractionManagerStub;
 
   beforeEach(() => {
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
-    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, ScopeActivation.OnDemand, 'interaction');
     registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, ScopeActivation.OnDemand, 'question');
 
     disposables = new DisposableStore();
+    interactions = stubInteractionManagerFor(['main', 'sub-1']);
+    disposables.add(interactions.disposables);
     host = createScopedTestHost([stubPair(IEventBus, noopEventBus)]);
     session = host.child(LifecycleScope.Session, 'session-a', [
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+      stubPair(IAgentLifecycleService, interactions.manager),
     ]);
   });
 
@@ -73,7 +77,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('enqueue returns immediately and the answer streams over onDidResolve', () => {
-    const interaction = session.accessor.get(ISessionInteractionService);
+    const interaction = interactions.runtimeOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
 
     const resolved: { id: string; response: unknown }[] = [];
@@ -112,17 +116,18 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('records the owning agent on the interaction origin', async () => {
-    const interaction = session.accessor.get(ISessionInteractionService);
     const questions = session.accessor.get(ISessionQuestionService);
 
     const sub = questions.request(makeRequest('q-sub'), { agentId: 'sub-1' });
-    expect(interaction.listPending().find((i) => i.id === 'q-sub')?.origin).toMatchObject({
+    expect(
+      interactions.runtimeOf('sub-1').listPending().find((i) => i.id === 'q-sub')?.origin,
+    ).toMatchObject({
       agentId: 'sub-1',
     });
 
     const main = questions.request(makeRequest('q-main'));
     expect(
-      interaction.listPending().find((i) => i.id === 'q-main')?.origin.agentId,
+      interactions.runtimeOf('main').listPending().find((i) => i.id === 'q-main')?.origin.agentId,
     ).toBeUndefined();
 
     questions.dismiss('q-sub');
@@ -143,7 +148,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('aborting a parked request dismisses it and resolves the caller with null', async () => {
-    const interaction = session.accessor.get(ISessionInteractionService);
+    const interaction = interactions.runtimeOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
 
     const resolved: { id: string; response: unknown }[] = [];
@@ -174,8 +179,11 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('Session scope isolates brokers: a question parked in A is invisible to B', () => {
+    const interactionsB = stubInteractionManagerFor(['main']);
+    disposables.add(interactionsB.disposables);
     const sessionB = host.child(LifecycleScope.Session, 'session-b', [
       stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+      stubPair(IAgentLifecycleService, interactionsB.manager),
     ]);
     const questionsA = session.accessor.get(ISessionQuestionService);
     const questionsB = sessionB.accessor.get(ISessionQuestionService);
@@ -189,7 +197,7 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
   });
 
   it('mints distinct interaction ids when the provider reuses a toolCallId', async () => {
-    const interaction = session.accessor.get(ISessionInteractionService);
+    const interaction = interactions.runtimeOf('main');
     const questions = session.accessor.get(ISessionQuestionService);
     const req = (): QuestionRequest => ({
       toolCallId: 'AskUserQuestion:0',

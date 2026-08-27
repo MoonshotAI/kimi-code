@@ -1,9 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionContext,
-} from '#/agent/contextInjector/contextInjector';
+import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { ContextInjectionContext } from '#/features/reminder/types';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -20,7 +18,7 @@ export const permissionModeLastModeKey = defineState<PermissionMode | undefined>
 export class PermissionModeInjection extends Service {
   constructor(
     private readonly permissionMode: Pick<IAgentPermissionModeService, 'mode'>,
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    injector: ReminderRuntime,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();

@@ -12,21 +12,7 @@ import type { MessageDoc, SearchDoc, TitleDoc } from './docs.ts';
 export interface NormalizedQuery {
   readonly query: string;
   readonly mode: 'terms' | 'literal';
-  /**
-   * Literal mode only: `normalizeLiteral(query)`, computed once and reused by
-   * candidate confirmation and the snippet anchor. The n-gram index's query
-   * tokenizer applies the same normalization to the query terms, so index and
-   * comparison agree by construction.
-   */
   readonly literalQuery?: string;
-  /**
-   * Terms mode only: the query's deduplicated terms under minidb's default
-   * `tokenize` (the same tokenizer the 'body' text index applies to both
-   * sides). Computed once here so the live route's in-memory AND match agrees
-   * with the index route by construction. Empty when the query tokenizes to
-   * nothing (e.g. punctuation only) — both routes then match zero docs,
-   * mirroring `TextIndex.search`.
-   */
   readonly termsQuery?: readonly string[];
   readonly op: 'AND' | 'OR';
   readonly container?: { readonly sessionId?: string; readonly agentId?: string };
@@ -37,7 +23,6 @@ export interface NormalizedQuery {
   readonly pageSize: number;
 }
 
-/** Per-query work budget knobs (service fields, forwarded to the core). */
 export interface SearchBudgets {
   readonly literalCandidateCap: number;
   readonly maxTextHits: number;
@@ -46,13 +31,6 @@ export interface SearchBudgets {
   readonly queryTextBudgetChars: number;
 }
 
-/**
- * Sort boundary of the last returned hit — the keyset cursor:
- *   - literal mode / `time_desc` / `time_asc`: `[time, key]`;
- *   - `score` (terms mode): `[score, time, key]`.
- * The key is the doc's stable identity: the minidb key on the index route, a
- * synthetic per-frame key on the live route.
- */
 export type SortBoundary = readonly (number | string)[];
 
 export type DecodedPage =
@@ -60,26 +38,19 @@ export type DecodedPage =
   | { readonly kind: 'keyset'; readonly boundary: SortBoundary }
   | { readonly kind: 'legacy'; readonly skip: number };
 
-/** Boundary tuple width for the query's effective sort order. */
 export function boundaryWidth(q: NormalizedQuery): 2 | 3 {
   return q.mode !== 'literal' && q.sort === 'score' ? 3 : 2;
 }
 
-/** One matched document with its stable key and match context. */
 export interface MatchedRow {
   readonly key: string;
   readonly value: MessageDoc | TitleDoc;
   readonly score: number;
-  /** Literal mode: offset of the confirmed match, reused as snippet anchor. */
   readonly anchor?: number;
 }
 
-/** Per-query work budget for the match/confirm phase (both routes). */
 export interface MatchBudget {
-  /** Date.now() timestamp after which matching stops with 'deadline'. */
   readonly deadlineAt: number;
-  /** Remaining document text (UTF-16 code units) literal confirmation may
-   *  process before stopping with 'deadline'. */
   textCharsLeft: number;
 }
 
@@ -87,13 +58,6 @@ function cmpKey(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/**
- * The query's total order (negative = `a` ranks before `b`):
- *   - literal mode (sort is a terms-mode concept) and `time_desc`:
- *     (time desc, key asc);
- *   - `time_asc`: (time asc, key asc);
- *   - `score`: (score desc, time desc, key asc).
- */
 export function compareRows(q: NormalizedQuery, a: MatchedRow, b: MatchedRow): number {
   if (q.mode !== 'literal' && q.sort === 'score') {
     return b.score - a.score || b.value.time - a.value.time || cmpKey(a.key, b.key);
@@ -104,7 +68,6 @@ export function compareRows(q: NormalizedQuery, a: MatchedRow, b: MatchedRow): n
   return b.value.time - a.value.time || cmpKey(a.key, b.key);
 }
 
-/** The boundary tuple of a row — the keyset cursor payload. */
 export function boundaryOf(q: NormalizedQuery, row: MatchedRow): SortBoundary {
   return boundaryWidth(q) === 3 ? [row.score, row.value.time, row.key] : [row.value.time, row.key];
 }
@@ -124,12 +87,6 @@ function rowAfterBoundary(q: NormalizedQuery, row: MatchedRow, boundary: SortBou
   return cmp > 0;
 }
 
-/**
- * Bounded collector for the K best rows in the query's sort order — same
- * worst-at-root heap shape as minidb's TopK: O(log K) per row and K rows in
- * memory instead of an O(E log E) sort over every eligible row. Deep pages
- * stay proportional to pageSize.
- */
 export class RowTopK {
   private readonly a: MatchedRow[] = [];
 
@@ -170,7 +127,6 @@ export class RowTopK {
     }
   }
 
-  /** The kept rows in final rank order. */
   sorted(): MatchedRow[] {
     return this.a.sort((x, y) => compareRows(this.q, x, y));
   }
@@ -178,16 +134,6 @@ export class RowTopK {
 
 const DEADLINE_CHECK_STRIDE = 64;
 
-/**
- * Container/role/time filtering, keyset-boundary filtering and literal
- * confirmation — one implementation shared by the index route (confirming
- * n-gram candidates) and the live route (scanning every in-memory
- * document). The query work budgets apply at this match stage: the
- * wall-clock deadline is re-checked every DEADLINE_CHECK_STRIDE candidates
- * and literal confirmation additionally charges each processed document's
- * text against `budget.textCharsLeft`. A budget stop is reported as
- * `incomplete: 'deadline'`, never a silent truncation.
- */
 export function matchDocs(
   q: NormalizedQuery,
   docs: Iterable<{ key: string; value: SearchDoc | undefined; score: number }>,
@@ -223,12 +169,6 @@ export function matchDocs(
   return { rows };
 }
 
-/**
- * Sort, paginate and project the matched docs into a page (both routes).
- * Keyset pages collect the best `pageSize + 1` rows past the boundary in a
- * bounded heap; legacy v1 offset tokens get one last offset slice and are
- * answered with a v2 keyset token.
- */
 export function paginateRows(
   q: NormalizedQuery,
   page: DecodedPage,
@@ -251,14 +191,6 @@ export function paginateRows(
   return { pageRows, hasMore };
 }
 
-/**
- * The page token encodes a fingerprint of the query conditions — changing
- * conditions mid-pagination invalidates the token (same rule as Lark's
- * search API). The serving route (`source`) is part of the fingerprint: a
- * route flip mid-pagination (e.g. the container session closed and the live
- * route fell away) invalidates the token too, so the client restarts the
- * search instead of silently switching result sets.
- */
 export function tokenFingerprint(q: NormalizedQuery, source: GlobalSearchSource): string {
   const basis = JSON.stringify([
     q.query,

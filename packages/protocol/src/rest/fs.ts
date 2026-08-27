@@ -251,6 +251,12 @@ export const fsSuggestRequestSchema = z.object({
 });
 export type FsSuggestRequest = z.infer<typeof fsSuggestRequestSchema>;
 
+export const fsRootSuggestRequestSchema = fsSuggestRequestSchema.extend({
+  roots: z.array(z.string().min(1)).min(1).max(32),
+  runtime_id: z.string().min(1).optional(),
+});
+export type FsRootSuggestRequest = z.infer<typeof fsRootSuggestRequestSchema>;
+
 export const fsSuggestResponseSchema = z.object({
   items: z.array(fsSuggestItemSchema),
   truncated: z.boolean(),

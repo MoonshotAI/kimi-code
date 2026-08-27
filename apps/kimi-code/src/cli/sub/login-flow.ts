@@ -6,7 +6,7 @@
  */
 
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
-import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
+import { OAuthAccessDeniedError, type KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import { openUrl } from '#/utils/open-url';
@@ -71,6 +71,9 @@ export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promi
   } catch (error) {
     if (controller.signal.aborted) {
       process.stderr.write('Login cancelled.\n');
+    } else if (error instanceof OAuthAccessDeniedError) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Login cancelled: ${message}\n`);
     } else {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`Login failed: ${message}\n`);

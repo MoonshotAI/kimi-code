@@ -26,6 +26,8 @@ export interface IWorkspaceFsWatchSubscription extends IDisposable {
 
   readonly watchedPaths: readonly string[];
 
+  readonly ready: Promise<void>;
+
   readonly onDidChangeFiles: Event<FsChangeEvent>;
 }
 

@@ -4,8 +4,10 @@ import {
   IAgentTaskService,
   IEventBus,
   ISessionMetadata,
-  ISessionInteractionService,
   MAIN_AGENT_ID,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
   type AgentMeta,
   type IDisposable,
   type IAgentScopeHandle,
@@ -20,24 +22,11 @@ import {
   type ProjectorInteraction,
 } from './coreEventMap';
 
-/** Minimal warn sink (matches `JournalLogger`). */
 export interface TranscriptBindingLogger {
   warn(obj: unknown, msg: string): void;
 }
 
-/** The live binding plus its deferred seeding hook. */
 export interface TranscriptBinding extends IDisposable {
-  /**
-   * Announce interactions that were already pending at bind time.
-   * Deliberately NOT run during bind: the store (and the projector's tool
-   * map) is empty until the initial history backfill lands, so an early
-   * announce misplaces the frame into a synthetic step and loses the
-   * resolve-time `approvalId` back-link. The service calls it after the
-   * initial backfill for the main agent, and after each agent's on-demand
-   * backfill for that agent's interactions — pass `agentId` to seed only the
-   * pendings routed to that agent (a subagent's pending must not be placed
-   * before its own history is replayed).
-   */
   seedPendingInteractions(agentId?: string): void;
 }
 
@@ -48,7 +37,6 @@ export function bindSessionTranscript(
   onOps?: (event: TranscriptChangeEvent) => void,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
-  const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
   const agentDisposables = new Map<string, IDisposable[]>();
   const subscribedAgents = new Set<string>();
@@ -77,7 +65,7 @@ export function bindSessionTranscript(
   const projectorFor = (agentId: string): AgentTranscriptProjector => {
     let projector = projectors.get(agentId);
     if (projector === undefined) {
-      projector = new AgentTranscriptProjector(agentId, {
+      projector = new AgentTranscriptProjector(agentId, store.sessionId, {
         stepFrames: (turnId, stepId) =>
           store.getAgent(agentId)?.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
         toolFrame: (toolCallId) => {
@@ -96,17 +84,18 @@ export function bindSessionTranscript(
           return undefined;
         },
         stepOrdinal: (turnId) => {
-          const agentHandle = agents.findAgentHandle(agentId);
+          const agentHandle = agents.handleOf(agentId);
           if (agentHandle === undefined) return undefined;
           const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
           const turn = view?.state().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        items: () => store.getAgent(agentId)?.getItems(),
       });
-      for (const agent of agents.list()) {
-        if (agent.id !== agentId) continue;
-        const tasks = agent.accessor.get(IAgentTaskService)?.list() ?? [];
+      const agentHandle = agents.handleOf(agentId);
+      if (agentHandle !== undefined) {
+        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
         for (const info of tasks) {
           if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
             applyOps(
@@ -160,6 +149,7 @@ export function bindSessionTranscript(
       kind: interaction.kind,
       payload: interaction.payload,
       origin: interaction.origin,
+      createdAt: interaction.createdAt,
     };
     applyOps(agentId, projectorFor(agentId).mapInteractionRequested(request));
   };
@@ -177,15 +167,18 @@ export function bindSessionTranscript(
       });
   };
 
-  for (const handle of agents.list()) subscribeAgent(handle);
+  for (const agent of agents.list()) {
+    const handle = agents.handleOf(agent.agentId);
+    if (handle !== undefined) subscribeAgent(handle);
+  }
   disposables.push(
     agents.onDidCreate((context) => {
-      const handle = agents.get(context);
+      const handle = agents.handleOf(context.agentId);
       if (handle !== undefined) subscribeAgent(handle);
       seededAgents.add(context.agentId);
       refreshDescriptors();
     }),
-    agents.onDidDispose((context) => {
+    agents.onDidClose((context) => {
       const agentId = context.agentId;
       for (const d of agentDisposables.get(agentId) ?? []) d.dispose();
       agentDisposables.delete(agentId);
@@ -195,7 +188,7 @@ export function bindSessionTranscript(
     }),
   );
 
-  for (const pending of interactions.listPending()) {
+  for (const pending of listSessionPendingInteractions(agents)) {
     if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
     if (knownInteractions.has(pending.id)) continue;
     knownInteractions.add(pending.id);
@@ -218,7 +211,7 @@ export function bindSessionTranscript(
         applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
       }
     }
-    for (const pending of interactions.listPending()) {
+    for (const pending of listSessionPendingInteractions(agents)) {
       if (knownInteractions.has(pending.id)) continue;
       if (agentId !== undefined && interactionAgentId(pending) !== agentId) continue;
       knownInteractions.add(pending.id);
@@ -226,8 +219,8 @@ export function bindSessionTranscript(
     }
   };
   disposables.push(
-    interactions.onDidChangePending(() => {
-      for (const pending of interactions.listPending()) {
+    onSessionInteractionDidChangePending(agents, () => {
+      for (const pending of listSessionPendingInteractions(agents)) {
         if (knownInteractions.has(pending.id)) continue;
         const agentId = interactionAgentId(pending);
         knownInteractions.add(pending.id);
@@ -239,7 +232,7 @@ export function bindSessionTranscript(
         announceInteraction(pending);
       }
     }),
-    interactions.onDidResolve(({ id, response }) => {
+    onSessionInteractionDidResolve(agents, ({ id, response }) => {
       knownInteractions.delete(id);
       const agentId = interactionAgents.get(id);
       if (agentId === undefined) return;

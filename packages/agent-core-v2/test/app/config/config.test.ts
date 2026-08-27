@@ -35,13 +35,13 @@ import {
 } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
-import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/app/cron/configSection';
-import '#/app/skillCatalog/configSection';
-import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
+import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
+import '#/features/skill/catalog/configSection';
+import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
-} from '#/app/skillCatalog/configSection';
+} from '#/features/skill/catalog/configSection';
 import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import '#/agent/media/configSection';
@@ -91,6 +91,13 @@ import {
 } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
+  DEFAULT_SWARM_TIMEOUT_MS,
+  resolveSwarmTimeoutMs,
+  SWARM_SECTION,
+  SWARM_TIMEOUT_ENV,
+  type SwarmConfig,
+} from '#/features/swarm/configSection';
+import {
   SERVICES_SECTION,
   WEB_FETCH_API_KEY_ENV,
   WEB_FETCH_BASE_URL_ENV,
@@ -133,6 +140,7 @@ describe('Agent config', () => {
 
   beforeEach(() => {
     ctx = createTestAgent();
+    void ctx.restoreRuntimes();
     profile = ctx.get(IAgentProfileService);
   });
 
@@ -284,6 +292,7 @@ describe('Agent config', () => {
   });
 
   it('keeps turn-start config for later steps and applies updates to the next turn', async () => {
+    await ctx.restoreRuntimes();
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',
@@ -310,11 +319,14 @@ describe('Agent config', () => {
       input: [{ type: 'text', text: 'Look up before config changes' }],
     });
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
-      [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "time": "<time>" }
+      [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up before config changes" } ], "time": "<time>" }
+      [emit] prompt.accepted                 { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up before config changes" } ] }
+      [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up before config changes" } ], "createdAt": "<time>" }
       [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
       [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
+      [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
       [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
       [emit] turn.step.started               { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
@@ -359,6 +371,8 @@ describe('Agent config', () => {
     await toolCallEvents;
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "original" } }, "time": "<time>" }
+      [wire] interaction.request         { "agentId": "main", "id": "<user_tool-2>", "kind": "user_tool", "toolCallId": "call_lookup", "request": { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "original" } }, "time": "<time>" }
+      [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-2>", "response": { "content": "original-result", "output": "original-result" }, "time": "<time>" }
       [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "original-result" }
       [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "original-result" } }, "time": "<time>" }
@@ -401,11 +415,14 @@ describe('Agent config', () => {
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
       [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 102 }
       [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
-      [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "time": "<time>" }
+      [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "time": "<time>" }
+      [emit] prompt.accepted                { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ] }
+      [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "createdAt": "<time>" }
       [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
+      [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
       [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" }, "time": "<time>" }
       [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>" }
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 1, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
@@ -1559,11 +1576,13 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(0);
     expect(resolveSubagentTimeoutMs(config)).toBe(0);
+    expect(resolveSwarmTimeoutMs(config)).toBe(0);
     expect(config.inspect('task').memoryValue).toMatchObject({ bashTaskTimeoutS: 0 });
     expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toMatchObject({
       maxStepsPerTurn: 0,
     });
     expect(config.inspect('subagent').memoryValue).toMatchObject({ timeoutMs: 0 });
+    expect(config.inspect('swarm').memoryValue).toMatchObject({ timeoutMs: 0 });
 
     disposables.dispose();
   });
@@ -1573,7 +1592,8 @@ describe('applyPrintModeConfigDefaults', () => {
       {},
       '[task]\nbash_task_timeout_s = 30\n\n' +
         '[loop_control]\nmax_steps_per_turn = 7\n\n' +
-        '[subagent]\ntimeout_ms = 5000\n',
+        '[subagent]\ntimeout_ms = 5000\n\n' +
+        '[swarm]\ntimeout_ms = 6000\n',
     );
 
     await applyPrintModeConfigDefaults(config);
@@ -1581,9 +1601,11 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(30);
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(7);
     expect(resolveSubagentTimeoutMs(config)).toBe(5000);
+    expect(resolveSwarmTimeoutMs(config)).toBe(6000);
     expect(config.inspect('task').memoryValue).toBeUndefined();
     expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toBeUndefined();
     expect(config.inspect('subagent').memoryValue).toBeUndefined();
+    expect(config.inspect('swarm').memoryValue).toBeUndefined();
 
     disposables.dispose();
   });
@@ -1626,6 +1648,102 @@ describe('applyPrintModeConfigDefaults', () => {
     await applyPrintModeConfigDefaults(config);
 
     expect(resolveSubagentTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('does not override the swarm timeout env override', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '3000' };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+});
+
+describe('swarm config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('defaults to two hours and honours the env override', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env);
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+
+    env[SWARM_TIMEOUT_ENV] = 'abc';
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+
+    env[SWARM_TIMEOUT_ENV] = '3000';
+    expect(resolveSwarmTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('reads timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[swarm]\ntimeout_ms = 5000\n');
+    expect(resolveSwarmTimeoutMs(config)).toBe(5000);
+
+    env[SWARM_TIMEOUT_ENV] = '7000';
+    expect(resolveSwarmTimeoutMs(config)).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('does not fall back to [subagent] timeout_ms', async () => {
+    const { config, disposables } = await createConfig({}, '[subagent]\ntimeout_ms = 5000\n');
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(DEFAULT_SWARM_TIMEOUT_MS);
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env, '[swarm]\ntimeout_ms = 5000\n');
+
+    await config.set(SWARM_SECTION, { timeoutMs: 7000 });
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(7000);
+    expect(config.inspect<SwarmConfig>(SWARM_SECTION).userValue).toEqual({
+      timeoutMs: 5000,
+    });
+
+    disposables.dispose();
+  });
+
+  it('clears the raw section when stripping removes the last persisted field', async () => {
+    const env: Record<string, string> = { [SWARM_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env);
+
+    await config.set(SWARM_SECTION, { timeoutMs: 7000 });
+
+    expect(resolveSwarmTimeoutMs(config)).toBe(7000);
+    expect(config.inspect<SwarmConfig>(SWARM_SECTION).userValue).toBeUndefined();
+
+    delete env[SWARM_TIMEOUT_ENV];
+    expect(config.get<SwarmConfig>(SWARM_SECTION)).toEqual({
+      timeoutMs: DEFAULT_SWARM_TIMEOUT_MS,
+    });
 
     disposables.dispose();
   });
@@ -1811,7 +1929,7 @@ describe('subagent config section', () => {
     });
     expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
       model: 'provider/fast',
-      thinking: undefined,
+      thinking: 'low',
     });
     expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
@@ -1887,6 +2005,25 @@ describe('subagent config section', () => {
     const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
     expect(after?.defaultEffort).toBe('low');
     expect(after?.maxOutputSize).toBe(8192);
+
+    disposables.dispose();
+  });
+
+  it('binds [secondary_model].default_effort as the subagent thinking', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\ndefault_effort = "max"\n',
+    );
+
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+      model: 'provider/fast',
+      thinking: 'max',
+    });
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
 
     disposables.dispose();
   });

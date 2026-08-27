@@ -11,6 +11,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -75,18 +76,28 @@ describe('RestGateway', () => {
       ]),
       dispose: () => {},
     };
+    const agentContext = stubAgentContext('main', 1);
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
       onDidCreate: () => ({ dispose: () => {} }),
       onDidCreateScope: () => ({ dispose: () => {} }),
-      onDidDispose: () => ({ dispose: () => {} }),
-      create: () => Promise.resolve(agentHandle),
-      fork: () => Promise.resolve(agentHandle),
-      get: (context: AgentContext) => (context.agentId === 'main' ? agentHandle : undefined),
-      findAgentHandle: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
-      list: () => [agentHandle],
+      onWillClose: () => ({ dispose: () => {} }),
+      onDidClose: () => ({ dispose: () => {} }),
+      create: () => Promise.resolve(agentContext),
+      fork: () => Promise.resolve(agentContext),
+      get: (agentId: string) => (agentId === 'main' ? agentContext : undefined),
+      list: () => [agentContext],
+      resolve: () => {
+        throw new Error('not supported in this test');
+      },
+      inspect: () => {
+        throw new Error('not supported in this test');
+      },
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
+      handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
+      adopt: () => agentContext,
+      attachRuntimes: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',

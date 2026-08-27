@@ -32,11 +32,6 @@ export const inFlightTurnSchema = z.object({
 });
 export type InFlightTurn = z.infer<typeof inFlightTurnSchema>;
 
-/**
- * A live subagent task as of the snapshot watermark. Extends the base task
- * wire shape with the swarm identity metadata that otherwise only rides the
- * (non-replayed) `subagent.spawned` WS event.
- */
 export const snapshotSubagentSchema = taskSchema.extend({
   subagent_phase: z.enum(['queued', 'working', 'suspended', 'completed', 'failed']).optional(),
   subagent_type: z.string().optional(),

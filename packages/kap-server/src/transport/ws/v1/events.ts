@@ -97,30 +97,15 @@ export interface ConfigWarningItem {
   readonly message: string;
 }
 
-/**
- * Global config warnings (deprecated keys / env vars in use, invalid
- * sections). Pushed live to every connection whenever the config service's
- * warning set changes; an empty `warnings` array means the last warning
- * cleared. Late joiners are not replayed — pull current warnings via the
- * config diagnostics RPC surface instead.
- */
 export interface ConfigWarningEvent {
   readonly type: 'event.config.warning';
   readonly warnings: readonly ConfigWarningItem[];
 }
 
-/**
- * Plugin set mutation (install / enable / disable / remove from any client).
- * Bare fan-out signal — clients re-read the plugins REST surface.
- */
 export interface PluginChangedEvent {
   readonly type: 'event.plugin.changed';
 }
 
-/**
- * Capability install progress transition. Global fan-out; clients update the
- * row live and re-read the capability once it settles (`running: false`).
- */
 export interface CapabilityChangedEvent {
   readonly type: 'event.capability.changed';
   readonly capability_id: string;
@@ -133,14 +118,8 @@ export interface CapabilityChangedEvent {
   };
 }
 
-/**
- * DI unit state transition of the engine's scope tree, produced by
- * agent-core-v2's `IDebugCascadeService` (the L5 debug surface feed). Global:
- * carries no owning session and fans out to every connection.
- */
 export interface DiUnitChangedEvent {
   readonly type: 'event.di.unit_changed';
-  /** Scope path of the container owning the unit (`app` / `app/workspace:<id>` / …). */
   readonly scope: string;
   readonly token: string;
   readonly state: 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
@@ -200,12 +179,6 @@ export type TaskInfo =
   | AgentTaskInfo
   | QuestionTaskInfo;
 
-/**
- * Legacy background-task lifecycle events (`background.task.started` /
- * `background.task.terminated`). The v2 engine emits `task.started` /
- * `task.terminated`; the broadcaster re-spells them onto these legacy names so
- * older clients see a consistent stream.
- */
 export interface BackgroundTaskStartedEvent {
   readonly type: 'background.task.started';
   readonly info: TaskInfo;
@@ -259,10 +232,6 @@ export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
 
 const volatileEventTypeSet: ReadonlySet<string> = new Set(VOLATILE_EVENT_TYPES);
 
-/**
- * Volatile-vs-durable classification for the global / model event paths (the
- * agent path uses the local `isVolatileSignal` in the broadcaster instead).
- */
 export function isVolatileEventType(type: string): type is VolatileEventType {
   return volatileEventTypeSet.has(type);
 }

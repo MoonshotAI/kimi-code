@@ -61,7 +61,7 @@ Some commands are only available in the idle state. Executing these commands whi
 
 ## Autonomous Goal
 
-`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Goals](../guides/goals.md).
+`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Interaction and input: Goal mode](../guides/interaction.md#goal-mode).
 
 ```sh
 /goal Update the checkout docs, run docs build, and stop if still blocked after 20 turns
@@ -154,7 +154,7 @@ For convenience, external Skill commands also support a shorthand form that omit
 Built-in Skills shipped with Kimi Code CLI appear directly as `/<name>` in the slash command panel. For example, `/mcp-config` helps configure MCP servers and handle MCP OAuth login, and `/custom-theme [extra text]` invokes the custom-theme workflow to create or edit a TUI theme.
 
 ::: info
-All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
+External Skill commands entered while the agent is busy are queued behind the running turn instead of being rejected — press `Ctrl-S` to steer a queued command into the running turn immediately. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
 :::
 
 For installing and authoring Skills, see [Agent Skills](../customization/skills.md).
