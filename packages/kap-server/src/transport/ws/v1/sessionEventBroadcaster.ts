@@ -26,12 +26,18 @@ import {
 import type {
   ConfigWarningItem,
   DiUnitChangedEvent,
+  ModelCatalogRefreshChange,
+  ModelCatalogRefreshFailure,
   SessionCreatedEvent,
   SessionMetaUpdatedEvent,
   Event,
 } from './events';
 import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
+import {
+  configChangedEventSchema,
+  modelCatalogChangedEventSchema,
+} from '../../../protocol/events-zod';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
 import {
   detachGrades,
@@ -715,6 +721,35 @@ export class SessionEventBroadcaster {
       );
       return;
     }
+    if (event.type === 'event.config.changed') {
+      const payload = configChangedPayload(corePayload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.config.changed',
+        changedFields: payload.changedFields,
+        config: payload.config,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.changed', error),
+      );
+      return;
+    }
+    if (event.type === 'event.model_catalog.changed') {
+      const payload = modelCatalogChangedPayload(corePayload);
+      if (payload === undefined) return;
+      void this.dispatchGlobal({
+        type: 'event.model_catalog.changed',
+        changed: payload.changed,
+        unchanged: payload.unchanged,
+        failed: payload.failed,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(GLOBAL_SESSION_ID, 'event.model_catalog.changed', error),
+      );
+      return;
+    }
     if (event.type === 'event.di.unit_changed') {
       const payload = diUnitChangedPayload(corePayload);
       if (payload === undefined) return;
@@ -1085,6 +1120,7 @@ function isGlobalEvent(type: string): boolean {
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
     type.startsWith('event.config.') ||
+    type.startsWith('event.model_catalog.') ||
     type.startsWith('event.plugin.') ||
     type.startsWith('event.capability.') ||
     type.startsWith('event.di.')
@@ -1404,4 +1440,29 @@ function configWarningPayload(payload: unknown): { warnings: ConfigWarningItem[]
     items.push(typeof domain === 'string' ? { domain, message } : { message });
   }
   return { warnings: items };
+}
+
+const configChangedPayloadSchema = configChangedEventSchema.omit({ type: true });
+const modelCatalogChangedPayloadSchema = modelCatalogChangedEventSchema.omit({ type: true });
+
+function configChangedPayload(
+  payload: unknown,
+): { changedFields: string[]; config: unknown } | undefined {
+  const parsed = configChangedPayloadSchema.safeParse(payload);
+  if (!parsed.success) return undefined;
+  return { changedFields: parsed.data.changedFields, config: parsed.data.config };
+}
+
+function modelCatalogChangedPayload(
+  payload: unknown,
+):
+  | {
+      changed: ModelCatalogRefreshChange[];
+      unchanged: string[];
+      failed: ModelCatalogRefreshFailure[];
+    }
+  | undefined {
+  const parsed = modelCatalogChangedPayloadSchema.safeParse(payload);
+  if (!parsed.success) return undefined;
+  return parsed.data;
 }

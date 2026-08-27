@@ -187,7 +187,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/auth` | 鉴权就绪状态快照 |
+| `GET /api/v1/auth` | 鉴权状态快照 |
 | `POST /api/v1/oauth/login` | 发起 OAuth device-code 登录流程 |
 | `GET /api/v1/oauth/login` | 轮询登录流程状态 |
 | `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
@@ -198,9 +198,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/auth`
 
-鉴权就绪状态快照：服务是否具备可用的模型配置，以及托管供应商的登录状态。当至少配置了一个供应商、设置了默认模型、且托管供应商（如存在）未被吊销时，`ready` 为 `true`。
+鉴权状态快照：默认模型能否解析到可用的供应商配置，以及托管供应商的登录状态。当全局 `default_model` 别名存在于模型表中且能解析到已配置的供应商时，`models_ready` 为 `true`——包括自带 `base_url` 的平铺（providerless）模型，以及通过 `KIMI_MODEL_*` 环境变量注入的模型。它不做凭据校验，因此此后的对话请求仍可能以 `40111` / `40112` 失败。
 
-成功时 `data` 携带 `ready`（布尔值）、`providers_count`（已配置供应商数量）、`default_model`（全局默认模型别名，或 `null`）与 `managed_provider`（`null`，或 `{ name, status }`，其中 `status` 为 `authenticated` / `expired` / `revoked` / `unauthenticated` 之一）。
+成功时 `data` 携带 `models_ready`（布尔值）、`providers_count`（已配置供应商数量）与 `managed_provider`（`null`，或 `{ name, status }`，其中 `status` 为 `authenticated` / `expired` / `revoked` / `unauthenticated` 之一）。全局默认模型别名本身改从 `GET /api/v1/config` 的 `default_model` 读取，本端点不再携带。
 
 #### `POST /api/v1/oauth/login`
 
@@ -308,7 +308,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/config`
 
-合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写。更新成功后，服务会广播全局 `event.config.changed` 事件，携带变更的字段名与完整的更新后配置；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
+合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
+
+每一次配置变更——经本端点成功更新、在进程外编辑 `config.toml`，或服务端内部写入（如 OAuth 登录刷新）——都会广播全局 `event.config.changed` 事件。短时间窗内的多次变更会合并为一个事件，其 `changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（与 `GET /api/v1/config` 响应同形状）。
 
 请求体是部分配置对象——上述响应域中除 `raw` 外的任意子集，均为可选：
 
@@ -2337,7 +2339,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
-- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`。
+- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
 - **会话事件**：只发给订阅了该会话的连接，受 `agent_filter` 过滤。主要事件族：
 
 | 事件族 | 主要事件 |

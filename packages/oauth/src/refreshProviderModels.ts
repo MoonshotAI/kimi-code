@@ -216,7 +216,8 @@ interface ProviderModelSnapshot {
 // a registry can change capabilities (e.g. enabling reasoning) without changing
 // any model ID. Spreading the whole alias keeps this in sync with the schema
 // automatically; only `capabilities` needs normalizing because its order is not
-// meaningful.
+// meaningful. `defaultModel` joins the snapshot so a lost selection flips the
+// provider to changed and the re-selected default is written back.
 function providerModelSnapshot(
   config: ManagedKimiConfigShape,
   providerId: string,
@@ -235,7 +236,7 @@ function providerModelSnapshot(
     });
   }
   snapshots.sort((a, b) => a.alias.localeCompare(b.alias));
-  return JSON.stringify(snapshots);
+  return JSON.stringify({ defaultModel: config.defaultModel ?? null, models: snapshots });
 }
 
 function providerModelsEqual(

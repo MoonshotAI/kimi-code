@@ -1,9 +1,4 @@
-import {
-  ConfigChanged,
-  IConfigService,
-  IEventService,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
@@ -76,9 +71,6 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         }
         const response = toConfigResponse(config.getAll());
         const changedFields = Object.keys(req.body as Record<string, unknown>);
-        core.accessor.get(IEventService).publish(
-          new ConfigChanged({ payload: { changedFields, config: response } }),
-        );
         requestLog(req)?.info({ changedFields }, 'config updated');
         reply.send(okEnvelope(response, req.id));
       } catch (error) {
@@ -91,7 +83,7 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
   app.post(setRoute.path, setRoute.options, setRoute.handler as Parameters<ConfigRouteHost['post']>[2]);
 }
 
-function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
+export function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
     wire[camelToSnake(domain)] = domain === 'providers' ? toProviderResponses(value) : value;
