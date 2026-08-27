@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-web: Fix known issues.
+Fix known issues.
