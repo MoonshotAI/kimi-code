@@ -850,15 +850,12 @@ describe('AgentTaskService — notification delivery', () => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
       const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
-        kind: 'task',
-        taskId: 'agent-run00000',
-        status: 'lost',
-        notificationId: 'task:agent-run00000:lost',
+      expect(message.origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
       });
-      expect(message.content[0]!.text).toContain(
-        'Background agent lost',
-      );
+      expect(message.content[0]!.text).toContain('<system-reminder>');
+      expect(message.content[0]!.text).toContain('agent-run00000');
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
