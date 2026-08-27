@@ -23,7 +23,7 @@ export async function repairWireJournal(
   key: string,
   records: readonly unknown[],
   truncation: AppendLogTruncation,
-): Promise<void> {
+): Promise<'repaired' | 'failed'> {
   const { appendLog, storage, log, telemetry } = services;
   let backupCreated = false;
   let outcome: 'repaired' | 'failed' = 'repaired';
@@ -60,6 +60,7 @@ export async function repairWireJournal(
     dropped_count: droppedCount,
     backup_created: backupCreated,
   });
+  return outcome;
 }
 
 function countJournalLines(data: Uint8Array): number {
