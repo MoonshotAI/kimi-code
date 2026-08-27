@@ -886,7 +886,7 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('cascades removeProvider into the secondary_model pool', async () => {
+  it('leaves the secondary_model pool untouched on removeProvider', async () => {
     const { harness } = await makeHarness();
     try {
       await harness.setConfig({
@@ -904,24 +904,30 @@ key = "${titleOAuthRef.key}"
         },
       });
 
-      // Pool entries naming a removed model alias are filtered out; the
-      // surviving default keeps the section valid.
-      const filtered = await harness.removeProvider('b');
-      expect(filtered.secondaryModel).toEqual({
+      // Pool entries naming a removed model alias are kept as written; an
+      // unresolvable entry fails pool validation on the next session create.
+      const kept = await harness.removeProvider('b');
+      expect(kept.secondaryModel).toEqual({
         defaultModel: 'a/m1',
-        models: { 'a/m1': 'fast' },
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
       });
 
-      // When the pool's default dangles the whole section is dropped — a
-      // leftover models table without its default would fail pool validation
-      // on every session create.
+      // Even a dangling default leaves the whole section in place on disk.
+      // (`setConfig` merges per domain, so the pool table is still the one
+      // written above; the default now points at the provider being removed.)
       await harness.setConfig({
-        secondaryModel: { defaultModel: 'a/m1', models: { 'a/m1': 'fast' } },
+        secondaryModel: { defaultModel: 'a/m1' },
       });
       const cleared = await harness.removeProvider('a');
-      expect(cleared.secondaryModel).toBeUndefined();
+      expect(cleared.secondaryModel).toEqual({
+        defaultModel: 'a/m1',
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+      });
       const reread = await harness.getConfig({ reload: true });
-      expect(reread.secondaryModel).toBeUndefined();
+      expect(reread.secondaryModel).toEqual({
+        defaultModel: 'a/m1',
+        models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+      });
     } finally {
       await harness.close();
     }
@@ -1360,7 +1366,7 @@ describe('removeProviderFromConfig', () => {
     expect(next.defaultProvider).toBe('a');
   });
 
-  it('filters secondary_model pool entries whose model alias was removed', () => {
+  it('leaves secondary_model pool entries alone when their model alias was removed', () => {
     const config = {
       providers: { a: { type: 'openai' }, b: { type: 'openai' } },
       models: {
@@ -1377,11 +1383,11 @@ describe('removeProviderFromConfig', () => {
 
     expect(next.secondaryModel).toEqual({
       defaultModel: 'a/m1',
-      models: { 'a/m1': 'fast' },
+      models: { 'a/m1': 'fast', 'b/m1': 'smart' },
     });
   });
 
-  it('drops the secondary_model section when its default model dangles', () => {
+  it('keeps the secondary_model section even when its default model dangles', () => {
     const config = {
       providers: { a: { type: 'openai' }, b: { type: 'openai' } },
       models: {
@@ -1394,15 +1400,20 @@ describe('removeProviderFromConfig', () => {
       },
     } as unknown as KimiConfig;
 
-    expect(removeProviderFromConfig(config, 'b').secondaryModel).toBeUndefined();
+    expect(removeProviderFromConfig(config, 'b').secondaryModel).toEqual({
+      defaultModel: 'b/m1',
+      models: { 'a/m1': 'fast', 'b/m1': 'smart' },
+    });
 
-    // The legacy recipe's `model` key acts as the default fallback and
-    // cascades the same way.
+    // The legacy recipe's `model` key is left alone the same way.
     const legacy = {
       ...config,
       secondaryModel: { model: 'b/m1', default_effort: 'low' },
     } as unknown as KimiConfig;
-    expect(removeProviderFromConfig(legacy, 'b').secondaryModel).toBeUndefined();
+    expect(removeProviderFromConfig(legacy, 'b').secondaryModel).toEqual({
+      model: 'b/m1',
+      default_effort: 'low',
+    });
   });
 
   it('leaves the secondary_model section untouched when nothing dangles', () => {

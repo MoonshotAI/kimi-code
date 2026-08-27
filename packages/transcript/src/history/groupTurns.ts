@@ -199,7 +199,11 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          startTurn(mapOrigin(message));
+          const opening =
+            (message.origin as { name?: unknown }).name === 'subagent'
+              ? foldTurnOpeningInput(message)
+              : undefined;
+          startTurn(mapOrigin(message), opening?.text || undefined, opening?.attachmentIds);
         }
         continue;
       }

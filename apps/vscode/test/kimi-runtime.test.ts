@@ -396,6 +396,91 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(boundary.handlerInstallations).toEqual({ approval: 1, question: 1 });
   });
 
+  it("does not double-wrap the SDK session when two opens race for it", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: sdk.harness,
+      broadcast: (event, data, webviewId) => {
+        broadcasts.push({ event, data, webviewId });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const boundary = sdk.addSession("saved-1", "/workspace");
+
+    const [first, second] = await Promise.all([
+      runtime.openSession(openOptions({ sessionId: "saved-1" })),
+      runtime.openSession(openOptions({ sessionId: "saved-1" })),
+    ]);
+
+    expect(second).toBe(first);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    boundary.emit({
+      type: "assistant.delta",
+      sessionId: "saved-1",
+      agentId: "main",
+      turnId: 1,
+      delta: "Hello",
+    });
+
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(1);
+  });
+
+  it("coalesces two concurrent new-session opens for one view onto one session", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    const [first, second] = await Promise.all([
+      runtime.openSession(openOptions()),
+      runtime.openSession(openOptions()),
+    ]);
+
+    expect(second).toBe(first);
+    expect(sdk.createInputs).toHaveLength(1);
+    expect(first.subscribers).toEqual(["view-1"]);
+  });
+
+  it("does not double-wrap the SDK session when two attaches race for it", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];
+    const runtime = new KimiRuntime({
+      version: "0.6.0",
+      harness: sdk.harness,
+      broadcast: (event, data, webviewId) => {
+        broadcasts.push({ event, data, webviewId });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const boundary = sdk.addSession("saved-1", "/workspace");
+
+    const [first, second] = await Promise.all([
+      runtime.attachResumedSession("view-1", boundary.session),
+      runtime.attachResumedSession("view-1", boundary.session),
+    ]);
+
+    expect(second).toBe(first);
+    expect(boundary.subscriptionCount()).toBe(1);
+
+    boundary.emit({
+      type: "assistant.delta",
+      sessionId: "saved-1",
+      agentId: "main",
+      turnId: 1,
+      delta: "Hello",
+    });
+
+    const parts = broadcasts.filter(
+      ({ data }) => (data as { type?: string }).type === "ContentPart",
+    );
+    expect(parts).toHaveLength(1);
+  });
+
   it("preserves the resumed session's model instead of reapplying the configured default", async () => {
     const { runtime, sdk } = createRuntime();
     const session = sdk.addSession("saved-1", "/workspace", { model: "old-model" });

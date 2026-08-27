@@ -115,8 +115,11 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
+  const hasUsableContent = converted.some((part) =>
+    part.type === 'text' ? part.text.trim().length > 0 : true,
+  );
   const structuredExtras: Record<string, unknown> = {};
-  if (result.structuredContent !== undefined) {
+  if (result.structuredContent !== undefined && !hasUsableContent) {
     structuredExtras['structuredContent'] = result.structuredContent;
   }
   if (result._meta !== undefined) {
@@ -130,7 +133,7 @@ export async function mcpResultToExecutableOutput(
     if (serialized !== undefined) {
       wrapped.push({
         type: 'text',
-        text: `\n<mcp-structured-result>\n${serialized}\n</mcp-structured-result>`,
+        text: `\n<mcp-result-extras>\n${serialized}\n</mcp-result-extras>`,
       });
     }
   }
@@ -163,7 +166,7 @@ export async function mcpResultToExecutableOutput(
 
 function serializeStructuredExtras(extras: Record<string, unknown>): string | undefined {
   try {
-    return JSON.stringify(extras).replaceAll('</mcp-structured-result>', '');
+    return JSON.stringify(extras).replaceAll('</mcp-result-extras>', '');
   } catch {
     return undefined;
   }

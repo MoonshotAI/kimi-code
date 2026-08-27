@@ -423,7 +423,7 @@ describe('refreshProviderModels write behavior', () => {
     }
   });
 
-  it('clears the subagent model pool when a refresh drops its default alias', async () => {
+  it('leaves the subagent model pool untouched when a refresh drops its default alias', async () => {
     const baseUrl = 'https://api.managed.example.test/coding/v1';
     vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
     const fetchMock = vi.fn(
@@ -455,13 +455,16 @@ describe('refreshProviderModels write behavior', () => {
       expect(result.changed).toEqual([
         { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
       ]);
-      expect(config.get('secondaryModel')).toBeUndefined();
+      expect(config.get('secondaryModel')).toEqual({
+        defaultModel: 'my-kimi/kimi-k2',
+        models: { 'my-kimi/kimi-k2': 'fast and cheap' },
+      });
     } finally {
       host.dispose();
     }
   });
 
-  it('filters pool entries a refresh dropped while keeping a surviving default', async () => {
+  it('leaves the whole pool untouched even when a refresh drops a non-default entry', async () => {
     const baseUrl = 'https://api.managed.example.test/coding/v1';
     vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
     const fetchMock = vi.fn(
@@ -497,7 +500,7 @@ describe('refreshProviderModels write behavior', () => {
       ]);
       expect(config.get('secondaryModel')).toEqual({
         defaultModel: 's1',
-        models: { s1: 'static fallback' },
+        models: { s1: 'static fallback', 'my-kimi/kimi-k2': 'managed' },
       });
     } finally {
       host.dispose();

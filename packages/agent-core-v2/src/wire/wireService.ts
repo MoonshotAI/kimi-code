@@ -39,6 +39,10 @@ export class WireService extends Service implements IWireService {
 
   private readonly wireScope: string;
   private persistQueue: Promise<void> | undefined;
+  private pendingRepair:
+    | { readonly records: WireRecord[]; readonly truncation: AppendLogTruncation }
+    | undefined;
+  private persistError: Error | undefined;
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -63,7 +67,11 @@ export class WireService extends Service implements IWireService {
   }
 
   appendRecord(record: WireRecord, dehydrate?: RecordDehydrator): void {
-    if (dehydrate === undefined && this.persistQueue === undefined) {
+    if (
+      this.pendingRepair === undefined &&
+      dehydrate === undefined &&
+      this.persistQueue === undefined
+    ) {
       try {
         this.appendRecordLow(record);
       } catch (error) {
@@ -77,6 +85,9 @@ export class WireService extends Service implements IWireService {
       ) as Promise<readonly unknown[]>;
     const queued = (this.persistQueue ?? Promise.resolve())
       .then(async () => {
+        if (this.pendingRepair !== undefined) {
+          await this.repairPendingJournal();
+        }
         const output = dehydrate === undefined ? record : await dehydrate(record, transform);
         this.appendRecordLow(output);
       })
@@ -165,7 +176,7 @@ export class WireService extends Service implements IWireService {
         records.push(record);
       }
     }
-    await repairWireJournal(
+    const outcome = await repairWireJournal(
       {
         appendLog: this.log,
         storage: this.storage,
@@ -177,10 +188,35 @@ export class WireService extends Service implements IWireService {
       records,
       truncation,
     );
+    this.pendingRepair = outcome === 'failed' ? { records, truncation } : undefined;
+  }
+
+  private async repairPendingJournal(): Promise<void> {
+    const pending = this.pendingRepair;
+    if (pending === undefined) return;
+    await this.repairJournal(pending.truncation, pending.records);
+    if (this.pendingRepair !== undefined) {
+      const error = new WireError(
+        WireErrors.codes.RECORDS_WRITE_FAILED,
+        'Wire journal repair did not complete; record was not appended',
+        {
+          details: {
+            scope: this.wireScope,
+            key: AGENT_WIRE_RECORD_KEY,
+            lineNumber: pending.truncation.lineNumber,
+          },
+        },
+      );
+      this.persistError = error;
+      throw error;
+    }
   }
 
   async flush(): Promise<void> {
     await this.persistQueue;
+    const persistError = this.persistError;
+    this.persistError = undefined;
+    if (persistError !== undefined) throw persistError;
     await this.log.flush();
   }
 

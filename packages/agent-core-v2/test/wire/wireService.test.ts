@@ -14,6 +14,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { wireJournalBackupKey } from '#/wire/repair';
+import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -590,6 +591,147 @@ describe('WireService corruption repair', () => {
         },
       },
     ]);
+  });
+
+  it('retries a failed repair before the next append and heals the journal first', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === AGENT_WIRE_RECORD_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+    await collect(svc.readJournal());
+    storage.write = originalWrite;
+
+    svc.appendRecord({ type: 'wire.test.new', time: 7 });
+    await svc.flush();
+
+    expect(await rawBytes()).toBe(`${prefix}${JSON.stringify({ type: 'wire.test.new', time: 7 })}\n`);
+    expect(await rawBytes(BACKUP_KEY)).toBe(raw);
+    expect(await collect(svc.readJournal())).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.new', time: 7 },
+    ]);
+    expect(capture.events).toEqual([
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'corrupted',
+          outcome: 'failed',
+          dropped_count: 1,
+          backup_created: true,
+        },
+      },
+      {
+        name: 'wire_repair',
+        payload: {
+          kind: 'corrupted',
+          outcome: 'repaired',
+          dropped_count: 1,
+          backup_created: false,
+        },
+      },
+    ]);
+  });
+
+  it('refuses to append behind the corrupted tail while a failed repair keeps failing', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === AGENT_WIRE_RECORD_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+    await collect(svc.readJournal());
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      svc.appendRecord({ type: 'wire.test.doomed', time: 8 });
+      await expect(svc.flush()).rejects.toThrow('Wire journal repair did not complete');
+
+      expect(await rawBytes()).toBe(raw);
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toBeInstanceOf(WireError);
+      expect((unexpected[0] as WireError).code).toBe(WireErrors.codes.RECORDS_WRITE_FAILED);
+      expect(capture.events).toEqual([
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: true,
+          },
+        },
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: false,
+          },
+        },
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('surfaces the discarded record to flush callers when the repair never reaches the rewrite', async () => {
+    const capture: RepairCapture = { warnings: [], events: [] };
+    const svc = wireWithCapture(KEY, capture);
+    const prefix = `${currentMetadata()}\n`;
+    const raw = `${prefix}GARBAGE\n`;
+    await seedCorrupt(raw);
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (scope, key, data, options) => {
+      if (key === BACKUP_KEY) throw new Error('disk full');
+      return originalWrite(scope, key, data, options);
+    };
+    await collect(svc.readJournal());
+
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      svc.appendRecord({ type: 'wire.test.doomed', time: 9 });
+      await expect(svc.flush()).rejects.toThrow('Wire journal repair did not complete');
+
+      expect(await rawBytes()).toBe(raw);
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toBeInstanceOf(WireError);
+      expect((unexpected[0] as WireError).code).toBe(WireErrors.codes.RECORDS_WRITE_FAILED);
+      expect(capture.events).toEqual([
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: false,
+          },
+        },
+        {
+          name: 'wire_repair',
+          payload: {
+            kind: 'corrupted',
+            outcome: 'failed',
+            dropped_count: 1,
+            backup_created: false,
+          },
+        },
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 });
 
