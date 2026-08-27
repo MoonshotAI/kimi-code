@@ -234,7 +234,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         const resolved = await resolvePromptFromSession(session, req.body.agent_id);
         reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
-        await resolved.auth.ensureReady();
+        await resolved.auth.ensureReady(req.body.model ?? (resolved.profile.getModel() || undefined));
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         preparedMedia = await resolvePromptMediaFiles(

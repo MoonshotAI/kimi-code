@@ -947,7 +947,9 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  await core.accessor.get(IAuthSummaryService).ensureReady();
+  const agent = await ensureMainAgent(session);
+  const sessionModel = agent.accessor.get(IAgentProfileService).getModel();
+  await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
 }
