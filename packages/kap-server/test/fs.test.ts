@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
@@ -619,5 +619,211 @@ describe('server-v2 /api/v1 fs routes', () => {
   it('workspace fs:suggest rejects a missing query field with VALIDATION_FAILED', async () => {
     const body = await postWorkspaceSuggest<null>({ workspace: work });
     expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  async function postRootSuggest<T>(body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}/api/v1/fs:suggest`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  async function listWorkspaces(): Promise<{ id: string; root: string }[]> {
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const body = (await res.json()) as Envelope<{ items: { id: string; root: string }[] }>;
+    expect(body.code).toBe(0);
+    return body.data.items;
+  }
+
+  it('fs:suggest serves an unregistered root without touching the workspace catalog', async () => {
+    await writeFile(join(work!, 'kappa.ts'), '');
+    const body = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      roots: [work],
+      query: 'kappa',
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.path)).toContain('kappa.ts');
+
+    expect(await listWorkspaces()).toEqual([]);
+    expect(server!.core.accessor.get(IWorkspaceInstanceManager).list()).toEqual([]);
+
+    const again = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      roots: [work],
+      query: 'kappa',
+    });
+    expect(again.code).toBe(0);
+    expect(await listWorkspaces()).toEqual([]);
+  });
+
+  it('fs:suggest matches the workspace route for the same single root', async () => {
+    await mkdir(join(work!, 'apps'));
+    await mkdir(join(work!, 'apps', 'desktop'));
+    await writeFile(join(work!, 'apps', 'desktop', 'package.json'), '{}');
+    await writeFile(join(work!, 'README.md'), '');
+    const viaWorkspace = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      workspace: work,
+      query: 'apps/de',
+    });
+    const viaRoots = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+      roots: [work],
+      query: 'apps/de',
+    });
+    expect(viaWorkspace.code).toBe(0);
+    expect(viaRoots.code).toBe(0);
+    expect(viaRoots.data).toEqual(viaWorkspace.data);
+  });
+
+  it('fs:suggest merges candidates across roots with relative paths for the primary root only', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      await writeFile(join(work!, 'shared-name.ts'), '');
+      await mkdir(join(extra, 'lib'));
+      await writeFile(join(extra, 'lib', 'util.ts'), '');
+      const body = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        roots: [work, extra],
+        query: 'util',
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.items.map((i) => i.path)).toContain(join(extra, 'lib', 'util.ts').split(sep).join('/'));
+      const shared = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [work, extra],
+        query: 'shared',
+      });
+      expect(shared.data.items.map((i) => i.path)).toContain('shared-name.ts');
+    } finally {
+      await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('fs:suggest lists top-level entries of every root for an empty query', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      await writeFile(join(work!, 'top-work.ts'), '');
+      await writeFile(join(extra, 'top-extra.ts'), '');
+      const body = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        roots: [work, extra],
+        query: '',
+      });
+      expect(body.code).toBe(0);
+      const paths = body.data.items.map((i) => i.path);
+      expect(paths).toContain('top-work.ts');
+      expect(paths).toContain(join(extra, 'top-extra.ts').split(sep).join('/'));
+    } finally {
+      await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('fs:suggest deduplicates overlapping roots', async () => {
+    await mkdir(join(work!, 'sub'));
+    await writeFile(join(work!, 'sub', 'dup.ts'), '');
+    await writeFile(join(work!, 'top.ts'), '');
+    const nested = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      roots: [work, join(work!, 'sub')],
+      query: 'dup',
+    });
+    expect(nested.code).toBe(0);
+    expect(nested.data.items.filter((i) => i.path === join('sub', 'dup.ts').split(sep).join('/'))).toHaveLength(1);
+
+    const reversed = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      roots: [join(work!, 'sub'), work],
+      query: 'dup',
+    });
+    expect(reversed.code).toBe(0);
+    expect(reversed.data.items.filter((i) => i.path === 'dup.ts')).toHaveLength(1);
+    const top = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      roots: [join(work!, 'sub'), work],
+      query: 'top',
+    });
+    expect(top.data.items.map((i) => i.path)).toContain(join(work!, 'top.ts').split(sep).join('/'));
+  });
+
+  it('fs:suggest applies the limit to the merged ranking across roots', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      await writeFile(join(work!, 'a1.ts'), '');
+      await writeFile(join(extra, 'a2.ts'), '');
+      await writeFile(join(extra, 'a3.ts'), '');
+      const body = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        roots: [work, extra],
+        query: 'a',
+        limit: 2,
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.items).toHaveLength(2);
+      expect(body.data.truncated).toBe(true);
+    } finally {
+      await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('fs:suggest honors follow_gitignore on each root', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      await writeFile(join(extra, '.gitignore'), 'ignored-extra.ts\n');
+      await writeFile(join(extra, 'ignored-extra.ts'), '');
+      const followed = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [extra],
+        query: 'ignored',
+      });
+      expect(followed.code).toBe(0);
+      expect(followed.data.items).toEqual([]);
+      const ignored = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [extra],
+        query: 'ignored',
+        follow_gitignore: false,
+      });
+      expect(ignored.code).toBe(0);
+      expect(ignored.data.items.map((i) => i.path)).toContain('ignored-extra.ts');
+    } finally {
+      await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('fs:suggest maps a missing root to FS_PATH_NOT_FOUND', async () => {
+    const body = await postRootSuggest<null>({
+      roots: [join(work!, 'no-such-dir')],
+      query: 'x',
+    });
+    expect(body.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+  });
+
+  it('fs:suggest maps a non-directory root to FS_PATH_NOT_FOUND', async () => {
+    await writeFile(join(work!, 'a-file.ts'), '');
+    const body = await postRootSuggest<null>({ roots: [join(work!, 'a-file.ts')], query: 'x' });
+    expect(body.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+  });
+
+  it('fs:suggest rejects a relative root with VALIDATION_FAILED', async () => {
+    const body = await postRootSuggest<null>({ roots: ['relative/path'], query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('fs:suggest rejects a missing roots field with VALIDATION_FAILED', async () => {
+    const body = await postRootSuggest<null>({ query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('fs:suggest rejects more than 32 roots with VALIDATION_FAILED', async () => {
+    const roots = Array.from({ length: 33 }, (_, i) => join(work!, `root-${i}`));
+    const body = await postRootSuggest<null>({ roots, query: 'x' });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('fs:suggest rejects a missing query field with VALIDATION_FAILED', async () => {
+    const body = await postRootSuggest<null>({ roots: [work] });
+    expect(body.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('fs:suggest maps an unknown runtime to RUNTIME_NOT_FOUND', async () => {
+    const body = await postRootSuggest<null>({
+      roots: [work],
+      query: 'x',
+      runtime_id: 'no-such-runtime',
+    });
+    expect(body.code).toBe(ErrorCode.RUNTIME_NOT_FOUND);
   });
 });

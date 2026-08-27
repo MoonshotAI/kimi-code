@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { Emitter } from '#/_base/event';
+import { AsyncEmitter, Emitter } from '#/_base/event';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { AgentPluginService } from '#/agent/plugin/agentPluginService';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -12,12 +12,12 @@ import { IPluginService } from '#/app/plugin/plugin';
 import type {
   EnabledPluginSessionStart,
   PluginMutationSummary,
-  ReloadSummary,
+  PluginReloadEvent,
 } from '#/app/plugin/types';
-import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
-import { summarizeSkill } from '#/app/skillCatalog/types';
-import type { SkillDefinition } from '#/app/skillCatalog/types';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { summarizeSkill } from '#/features/skill/catalog/types';
+import type { SkillDefinition } from '#/features/skill/catalog/types';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 
 import { agentService, appService, createTestAgent, skillServices, type TestAgentContext } from '../../harness';
 import { stubPluginService } from '../../app/plugin/stubs';
@@ -47,6 +47,7 @@ function messageText(message: { readonly content: readonly { readonly type: stri
 }
 
 async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
+  await ctx.restoreRuntimes();
   await ctx.get(IAgentLoopService).hooks.onWillBeginStep.run({
     turnId: 0,
     step: 1,
@@ -294,6 +295,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
       agentService(IAgentPluginService, new SyncDescriptor(AgentPluginService)),
     );
     ctx.get(IAgentPluginService);
+    await ctx.restoreRuntimes();
 
     ctx.mockNextResponse({ type: 'text', text: 'first answer' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });
@@ -363,7 +365,7 @@ describe('AgentPluginService plugin-change reminder', () => {
   });
 
   it('does not append the plugin_change reminder on an explicit reload', async () => {
-    const reloadEmitter = new Emitter<ReloadSummary>();
+    const reloadEmitter = new AsyncEmitter<PluginReloadEvent>();
     ctx = createTestAgent(
       { autoConfigure: true },
       appService(IPluginService, stubPluginService({ sessionStarts: [], reloadEmitter })),
@@ -372,7 +374,10 @@ describe('AgentPluginService plugin-change reminder', () => {
     );
     ctx.get(IAgentPluginService);
 
-    reloadEmitter.fire({ added: [], removed: [], errors: [] });
+    await reloadEmitter.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
 
     expect(findPluginChangeMessages(ctx)).toHaveLength(0);
     reloadEmitter.dispose();

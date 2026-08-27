@@ -157,7 +157,7 @@ kimi acp
 
 在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令会一直挂在终端，直到收到 `SIGINT` / `SIGTERM`（如 `Ctrl-C`）时干净退出。
 
-服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。用 API 驱动会话的完整流程见[本地服务与 API](../guides/server.md)，协议细节见[服务 API](./server-api.md)。
+服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。用 API 驱动会话的完整流程见[服务 API：用 API 驱动一个会话](./server-api.md#用-api-驱动一个会话)，协议细节见[服务 API](./server-api.md)。
 
 ```sh
 kimi web                 # 前台运行服务并打开浏览器
@@ -175,6 +175,7 @@ kimi web --port 58628    # 指定绑定端口
 | `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
 | `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
+| `--web-title <title>` | 自定义 web UI 的浏览器标签页标题；默认为工作区目录名 |
 | `--no-open` | 就绪后不自动打开浏览器 |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。

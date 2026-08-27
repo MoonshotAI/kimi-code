@@ -6,6 +6,29 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.39.0 (2026-08-27)
+
+### Features
+
+- Add Remote Control as an experimental feature for accessing a local web session remotely. Enable it with `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1`, then run `kimi rc`, `kimi web --remote-control`, or `/remote-control` to start it.
+- Add experimental tower mode for multi-agent orchestration; set `KIMI_CODE_EXPERIMENTAL_TOWER=1`, then run `/tower on` and `/tower <objective>` to start.
+- Add an optional `fork` parameter to subagent and swarm tools that starts the subagent with a snapshot of the calling agent's conversation history; set `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK=1` or `subagent_fork = true` under `[experimental]` in config.toml to enable it.
+- web: Allow moving a running foreground Bash command or subagent to the background via the "Move to background" button on the running card.
+- web: Add a flat/by-workspace tab to the mobile session list.
+- Add the Tencent CloudBase plugin to the curated marketplace.
+- Add a dedicated `[swarm] timeout_ms` config option (or the `KIMI_CODE_SWARM_TIMEOUT_MS` env var) for AgentSwarm subagent timeouts, which no longer follow `[subagent] timeout_ms`.
+
+### Polish
+
+- web: Revamp the right sidebar as a multi-tab panel.
+- web: Improve composer interaction, including the presentation of file, folder, and media attachments.
+- web: Improve mobile UI styling.
+
+### Bug Fixes
+
+- Fix file tools and shell working directories failing to resolve Git Bash paths such as /c/Users or /tmp on Windows.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.38.0 (2026-08-20)
 
 ### Features

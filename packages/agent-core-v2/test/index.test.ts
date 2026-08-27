@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import * as AgentCore from '#/index';
 import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
-  IAgentGoalService,
+  AgentGoal,
   type ContextMessage,
   type WireRecord,
 } from '#/index';
@@ -28,13 +29,11 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { ToolsUpdateStore } from '#/session/todo/todoOps';
-import { TodoAgentModelDefinition } from '#/session/todo/todoAgentModel';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -101,6 +100,18 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'cron.cursor',
   'token_counting.turn_recorded',
 ]);
+
+describe('package runtime exports', () => {
+  it('exports the opaque runtime contract surface without internal descriptors or hosts', () => {
+    expect(AgentCore).toHaveProperty('AgentRuntimeContributionPoint');
+    expect(AgentCore).toHaveProperty('AgentRuntimeOverrideContributionPoint');
+    expect(AgentCore).toHaveProperty('defineAgentRuntimeContract');
+    expect(AgentCore).toHaveProperty('defineAgentRuntimeProvider');
+    expect(AgentCore).not.toHaveProperty('AgentRuntimeSet');
+    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDescriptor');
+    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDefinitionId');
+  });
+});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
@@ -178,11 +189,12 @@ describe('v1 wire vocabulary', () => {
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
     const fresh = registerTestEventDispatcher(ix2);
+    const runtimes = attachTodoRuntime(ix2, fresh);
+    store.add({ dispose: () => { void runtimes.close(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    const freshAgent = ix2.get(IAgentScopeContext).agentContext;
-    expect(freshAgent.space.use(TodoAgentModelDefinition, (model) => model.items())).toEqual([
+    expect(runtimes.inspect()[0]?.state).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });
@@ -191,6 +203,7 @@ describe('v1 wire vocabulary', () => {
 describe('conversation-time checkpoint registration', () => {
   const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
+    'turn',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [
@@ -387,7 +400,7 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'g1',
       objective: 'do work',
       completionCriterion: 'tests pass',
@@ -415,7 +428,7 @@ describe('AgentRecords persistence metadata', () => {
       'goal.create',
       'forked',
     ]);
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toBeNull();
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
@@ -441,7 +454,7 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+    expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
       goalId: 'fork-goal',
       objective: 'fork work',
     });

@@ -16,22 +16,15 @@ import type {
   StepHeader,
 } from './operation';
 
-/** Mutable-free aggregate state behind one AgentTranscript. */
 export interface AgentState {
   readonly items: readonly TranscriptItem[];
   readonly tasks: ReadonlyMap<TaskId, TranscriptTask>;
-  /** Global interaction entities (approvals / questions), keyed by id. */
   readonly interactions: ReadonlyMap<InteractionId, TranscriptInteraction>;
-  /** Global attachment entities (media metadata), keyed by id. */
   readonly attachments: ReadonlyMap<AttachmentId, TranscriptAttachment>;
-  /** Global todo documents (latest state), keyed by id. */
   readonly todos: ReadonlyMap<TodoId, TranscriptTodo>;
-  /** Global prompt queue entities, keyed by id. */
   readonly prompts: ReadonlyMap<PromptId, TranscriptPrompt>;
   readonly meta: TranscriptMeta;
-  /** Interaction ids currently in 'pending' state (derived index). */
   readonly pendingInteractions: ReadonlySet<InteractionId>;
-  /** Set by windowed resets: older turns exist beyond the loaded window. */
   readonly hasMoreOlder: boolean;
 }
 
@@ -49,9 +42,7 @@ export const EMPTY_AGENT_STATE: AgentState = {
 
 export interface ApplyResult {
   readonly state: AgentState;
-  /** True when the op changed observable state. */
   readonly changed: boolean;
-  /** Present when an append failed to land (offset beyond local length). */
   readonly gap?: { readonly expected: number; readonly got: number };
 }
 
@@ -350,14 +341,6 @@ function applyTaskAppend(state: AgentState, op: AppendOp): ApplyResult {
   return { state: { ...state, tasks }, changed: true };
 }
 
-/**
- * Offset placement, mirroring the web client's alignDelta semantics:
- * `offset > local length` is a gap (caller should re-snapshot); a chunk that
- * is already fully present is a duplicate (no change); a partially present
- * chunk is trimmed to its novel suffix — but only when the overlap region
- * agrees. A chunk behind local state whose overlap does NOT match is a gap
- * too (diverged stream), never a silent rewrite that drops local content.
- */
 export function appendAtOffset(
   local: string,
   offset: number,

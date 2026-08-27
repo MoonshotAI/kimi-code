@@ -13,7 +13,7 @@ import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {

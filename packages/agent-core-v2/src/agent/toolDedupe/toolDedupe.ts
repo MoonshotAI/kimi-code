@@ -1,23 +1,16 @@
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { ExecutableToolErrorResult, ExecutableToolSuccessResult } from '#/tool/toolContract';
 
 export type ToolDedupeOutput = string | ContentPart[];
 
-export interface ToolDedupeSuccessResult {
-  readonly output: ToolDedupeOutput;
-  readonly isError?: false | undefined;
-  readonly stopTurn?: boolean | undefined;
+export interface ToolDedupeSuccessResult extends ExecutableToolSuccessResult {
   readonly message?: string | undefined;
-  readonly truncated?: boolean | undefined;
 }
 
-export interface ToolDedupeErrorResult {
-  readonly output: ToolDedupeOutput;
-  readonly isError: true;
-  readonly stopTurn?: boolean | undefined;
+export interface ToolDedupeErrorResult extends ExecutableToolErrorResult {
   readonly message?: string | undefined;
-  readonly truncated?: boolean | undefined;
 }
 
 export type ToolDedupeResult = ToolDedupeSuccessResult | ToolDedupeErrorResult;

@@ -129,8 +129,10 @@ export class SessionExportService implements ISessionExportService {
     );
     const agents = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
       await this.warnIfFails('export agent wire flush failed', () =>
-        agent.accessor.get(IWireService).flush(),
+        agentHandle.accessor.get(IWireService).flush(),
       );
     }
 

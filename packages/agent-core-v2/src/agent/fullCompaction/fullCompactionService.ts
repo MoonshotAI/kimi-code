@@ -2,7 +2,6 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { renderPrompt } from "#/_base/utils/render-prompt";
 import { estimateTokensForMessage } from "#/kosong/contract/tokens";
@@ -26,8 +25,9 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { ISessionTodoService } from '#/session/todo/sessionTodo';
-import { renderTodoList } from '#/session/todo/todoItem';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { AgentTodo, type TodoRuntime } from '#/features/todo/todoAgentRuntime';
+import { renderTodoList } from '#/features/todo/todoItem';
 import {
   APIContextOverflowError,
   APIEmptyResponseError,
@@ -135,6 +135,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   readonly onDidFinishCompaction: Event<FullCompactionTask> = this._onDidFinishCompaction.event;
 
   private readonly strategy: CompactionStrategy;
+  private readonly todo: TodoRuntime;
   private _compacting: ActiveCompaction | null = null;
 
   constructor(
@@ -144,16 +145,16 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @ISessionTodoService private readonly todo: ISessionTodoService,
+    @IAgentLifecycleService manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
-    @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
+    this.todo = manager.resolve(agent.agentContext, AgentTodo);
     this.states.contributeState(fullCompactionKey);
     this.states.contributeState(fullCompactionCompactionCountInTurnKey);
     this.states.contributeState(fullCompactionObservedMaxContextTokensByModelKey);
@@ -575,11 +576,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     try {
       const result = await this.compactionRound(active, data);
       if (this._compacting !== active) throw compactionCancelledReason(active);
-      try {
-        await this.profile.refreshSystemPrompt();
-      } catch (error) {
-        this.log.error('failed to refresh system prompt after compaction', { error });
-      }
       this.lastCompactedTokenCount = result.tokensAfter;
       if (!this.markCompleted(active)) {
         throw compactionCancelledReason(active);
@@ -794,7 +790,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private async postProcessSummary(summary: string): Promise<string> {
-    const todos = await this.todo.getTodos(agentContextOfScope(this.agent));
+    const todos = this.todo.get();
     if (todos.length === 0) {
       return summary;
     }

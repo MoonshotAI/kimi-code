@@ -4,7 +4,7 @@ import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
@@ -12,24 +12,19 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 import type { IFlagService } from '#/app/flag/flag';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
-import { AgentContextInjectorService } from '#/agent/contextInjector/contextInjectorService';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
+import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
+import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { IAgentStateService } from '#/agent/state/agentState';
+import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import {
-  IAgentSystemReminderService,
-  wrapSystemReminder,
-} from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentSwarmService } from '#/features/swarm/agent/swarmService';
 import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-reminder.md?raw';
@@ -236,20 +231,22 @@ function realSubagents(
     },
     dispose: () => {},
   } as unknown as IAgentScopeHandle;
-  const lifecycle = {
+  const agentLifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
-    onDidDispose: Event.None,
+    onDidCreateScope: Event.None,
+    onWillClose: Event.None,
+    onDidClose: Event.None,
     create: async (): Promise<never> => {
       throw new Error('AgentSwarmTool tests do not reach spawn');
     },
     fork: async (): Promise<never> => {
       throw new Error('AgentSwarmTool tests do not reach spawn');
     },
-    get: (context: AgentContext) =>
-      context.agentId === callerHandle.id ? callerHandle : undefined,
-    findAgentHandle: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
-    list: () => [callerHandle],
+    get: (agentId: string) =>
+      agentId === callerHandle.id ? stubAgentContext(callerHandle.id, 1) : undefined,
+    handleOf: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
+    list: () => [stubAgentContext(callerHandle.id, 1)],
     remove: async () => {},
     broadcastPermissionMode: () => {},
   } as unknown as IAgentLifecycleService;
@@ -268,7 +265,7 @@ function realSubagents(
   } as unknown as IModelCatalog;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
   return new SessionSubagentService(
-    lifecycle,
+    agentLifecycle,
     catalog,
     config,
     flags,
@@ -299,11 +296,51 @@ describe('AgentSwarmService', () => {
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    const loop = stubLoopWithHooks();
+    ix.stub(IAgentLoopService, loop);
     ix.set(IAgentStateService, new AgentStateService());
-    ix.set(IAgentContextInjectorService, new SyncDescriptor(AgentContextInjectorService));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.stub(IAgentLifecycleService, {});
+    let provider: ContextInjectionProvider | undefined;
+    const reminder = createReminderStub({
+      register: (_variant, value) => {
+        provider = value as ContextInjectionProvider;
+        return toDisposable(() => { provider = undefined; });
+      },
+    });
+    ix.stub(IAgentLifecycleService, lifecycleWithReminder(reminder));
+    loop.hooks.onWillBeginStep.register('test-reminder', async ({ firstStepOfTurn }, next) => {
+      const context = ix.get(IAgentContextMemoryService);
+      const history = context.get();
+      const positions = history.flatMap((message, index) =>
+        message.origin?.kind === 'injection' && message.origin.variant === 'swarm_mode' ? [index] : [],
+      );
+      const lastInjectedAt = positions.at(-1) ?? null;
+      const lastInjection = lastInjectedAt === null ? undefined : history[lastInjectedAt];
+      const value = await provider?.({
+        injectedPositions: positions,
+        lastInjectedAt,
+        lastInjection,
+        lastDisclosure: lastInjection?.origin?.kind === 'injection'
+          ? lastInjection.origin.disclosure
+          : undefined,
+        isNewTurn: firstStepOfTurn,
+      });
+      if (value !== undefined) {
+        const result: ContextInjectionResult =
+          typeof value === 'object' && !Array.isArray(value) && 'content' in value
+            ? value
+            : { content: value };
+        if (typeof result.content === 'string') {
+          context.append({
+            role: 'user',
+            content: [{ type: 'text', text: wrapSystemReminder(result.content) }],
+            toolCalls: [],
+            origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure },
+          });
+        }
+      }
+      await next();
+    });
     ix.stub(ISessionSwarmService, {
       getSwarmItem: async () => undefined,
       run: async () => [],
@@ -319,7 +356,6 @@ describe('AgentSwarmService', () => {
       eventBus: ix.get(IEventBus),
     });
     registerTestEventDispatcher(ix);
-    ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
   afterEach(() => disposables.dispose());
@@ -591,6 +627,8 @@ describe('swarm context reconciliation', () => {
   it('renders the corrective exit again when undo removes the latest exit render', async () => {
     const ctx = createTestAgent();
     try {
+      await ctx.restorePersisted();
+      await ctx.restoreRuntimes();
       const swarm = ctx.get(IAgentSwarmService);
       swarm.enter('manual');
       ctx.mockNextResponse({ type: 'text', text: 'first answer' });
@@ -729,7 +767,7 @@ describe('AgentSwarmTool', () => {
         swarmItem: 'src/a.ts',
         runInBackground: false,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
         plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
       },
       {
@@ -748,7 +786,7 @@ describe('AgentSwarmTool', () => {
         swarmItem: 'src/b.ts',
         runInBackground: false,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
         plan: { profileName: 'explore', model: 'provider/fast', thinking: undefined, fork: false },
       },
     ] }));
@@ -951,7 +989,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         resumeAgentId: 'agent-old-1',
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
       {
         kind: 'resume',
@@ -971,7 +1009,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         resumeAgentId: 'agent-old-2',
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
       {
         kind: 'spawn',
@@ -989,7 +1027,7 @@ describe('AgentSwarmTool', () => {
         swarmItem: 'src/new.ts',
         runInBackground: false,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
         plan: { profileName: 'explore', model: 'mock-model', thinking: 'off', fork: false },
       },
     ] }));
@@ -1056,7 +1094,7 @@ describe('AgentSwarmTool', () => {
         runInBackground: false,
         resumeAgentId: 'agent-old-1',
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: DEFAULT_SWARM_TIMEOUT_MS,
       },
     ] }));
     expect(result.output).toBe(
@@ -1110,9 +1148,37 @@ describe('AgentSwarmTool', () => {
     expect(result.isError).toBeUndefined();
   });
 
-  it('passes the configured subagent timeout to swarm tasks', async () => {
+  it('passes the configured swarm timeout to swarm tasks', async () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ timeoutMs: 5_000 }), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig({ timeoutMs: 5_000 }), stubFlag(true), stubCallerProfile()), stubCallerProfile());
+
+    await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      }),
+    );
+
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: [
+          expect.objectContaining({ timeout: 5_000 }),
+          expect.objectContaining({ timeout: 5_000 }),
+        ],
+      }),
+    );
+  });
+
+  it('ignores [subagent] timeout_ms and reads only the [swarm] section', async () => {
+    const host = mockSwarmHost();
+    const sectionAwareConfig = {
+      _serviceBrand: undefined,
+      get: (section: string) =>
+        section === SWARM_SECTION ? { timeoutMs: 5_000 } : { timeoutMs: 1_000 },
+    } as unknown as IConfigService;
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), sectionAwareConfig, stubFlag(true), realSubagents(stubSwarmCatalog(), sectionAwareConfig, stubFlag(true), stubCallerProfile()), stubCallerProfile());
 
     await executeTool(
       tool,

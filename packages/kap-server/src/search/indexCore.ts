@@ -127,64 +127,33 @@ function advanceStepTracker(state: StepTrackerState, effect: StepEffect): StepTr
   return { byUuid: { ...state.byUuid, [effect.uuid]: ordinal }, begins };
 }
 
-/** Minimal logger surface the core needs (the worker forwards these over RPC). */
 export interface SearchCoreLog {
   info(message: string, meta?: Record<string, unknown>): void;
   warn(message: string, meta?: Record<string, unknown>): void;
 }
 
 export interface SearchCoreOptions {
-  /** Absolute path of the search-index database directory. */
   readonly indexDir: string;
   readonly log: SearchCoreLog;
-  /**
-   * Unique-per-host-boot salt mixed into the token-pinning generation: a
-   * worker/process restart resets the local generation counter, and the
-   * salt makes tokens issued before the restart fail validation instead of
-   * colliding with the fresh counter (see `tokenGeneration`).
-   */
   readonly bootSalt: string;
-  /**
-   * Fired synchronously when an open acquires the write lock — BEFORE the
-   * heavy recovery work runs. The worker entry forwards it to the host so a
-   * mid-open crash leaves a reapable lock.
-   */
   readonly onLockToken?: (token: string) => void;
 }
 
-/**
- * One session to index, with its persistence directory PRE-RESOLVED by the
- * caller (the main process owns `sessionDirOf`/`workspacePersistenceScope`;
- * the worker closure deliberately does not import agent-core-v2).
- */
 export interface SyncSessionInput {
   readonly id: string;
   readonly workspaceId: string;
   readonly title?: string;
   readonly updatedAt: number;
-  /** Absolute session directory (the parent of wire.jsonl / agents/). */
   readonly dir: string;
 }
 
-/** The core's view of the served index, embedded in every search response. */
 export interface CoreIndexView {
   readonly state: 'building' | 'ready' | 'readonly';
   readonly indexedSessions: number;
   readonly documents: number;
   readonly readOnly: boolean;
-  /**
-   * Read-only-branch staleness: the on-disk fingerprint changed (a refresh
-   * is pending) or a refresh is in flight. Writer-side staleness is the
-   * caller's coordinator state and is OR'ed in by the service.
-   */
   readonly freshnessStale: boolean;
-  /** Last background refresh failure, when serving a stale view. */
   readonly degraded?: string;
-  /**
-   * Token of the db.lock line this core published (writer only) — the main
-   * process uses it to reap the lock file after a worker crash without ever
-   * deleting another owner's lock.
-   */
   readonly lockToken?: string;
 }
 
@@ -194,7 +163,6 @@ export type CoreSearchResult =
       readonly rows: MatchedRow[];
       readonly hasMore: boolean;
       readonly incomplete?: GlobalSearchIncomplete;
-      /** Token-pinning generation (`bootSalt:counter`) — see tokenGeneration. */
       readonly generation: string;
       readonly index: CoreIndexView;
     }
@@ -202,34 +170,20 @@ export type CoreSearchResult =
 
 export interface CoreSearchParams {
   readonly q: NormalizedQuery;
-  /** Raw opaque token from the request; decoded (and generation-checked) here. */
   readonly pageToken?: string;
   readonly budgets: SearchBudgets;
 }
 
 export interface CoreSyncOutcome {
-  /** True when the pass did not run (no db yet, or a read-only instance). */
   readonly noop: boolean;
   readonly sessions: number;
   readonly documents: number;
   readonly lockToken?: string;
-  /** Post-pass lifecycle snapshot (stage 5) — keeps the host's cached
-   *  aggregate state exact on the sync-first path, where no search/status
-   *  response ever carries it. */
   readonly lifecycle: CoreLifecycleReport;
 }
 
 type CoreSyncPassOutcome = Omit<CoreSyncOutcome, 'lockToken' | 'lifecycle'>;
 
-/**
- * The aggregate lifecycle of the served index (stage 5): the diagnostic state
- * machine behind the service's status surface —
- * `stopped → opening → ready → building/degraded → closing`. Distinct from
- * the per-page `CoreIndexView.state` (which answers "can this page serve hits
- * now"): the lifecycle also covers the no-db phases and carries the failure
- * detail, so logs/diagnostics can tell building, stale-serving, degraded,
- * corrupt-rebuild and worker-unavailable apart.
- */
 export type CoreLifecycleState =
   | 'stopped'
   | 'opening'
@@ -251,40 +205,19 @@ export interface CoreStatus {
   readonly readOnly: boolean;
   readonly lockToken?: string;
   readonly degraded?: string;
-  /** Post-open/post-refresh lifecycle snapshot (stage 5). */
   readonly lifecycle: CoreLifecycleReport;
 }
 
 export class SearchIndexCore {
-  /** WAL watermark (bytes applied) for read-only catch-up. */
   private walOffset = 0;
   private fingerprint = '';
   private disposed = false;
-  /**
-   * Close-gate + drain for lifecycle-managed background ops (sync passes and
-   * read-only refreshes): close() closes the gate (new ops skip) and drains
-   * the in-flight ones BEFORE closing the db, so no background task ever
-   * touches a closed handle.
-   */
   private readonly ops = new OpTracker();
-  /**
-   * Identity of the published index base: bumped on every open/reopen
-   * (initial open, read-only swap, reindex) and on a sync pass that REPLACED
-   * already-indexed documents (shrink rescan, title overwrite). Page tokens
-   * pin it; additive/deletion-only passes deliberately keep it stable so
-   * keyset pagination over a live index is not constantly restarted (see
-   * contract.ts for the weak-consistency semantics).
-   */
   private generation = 0;
-  /** Set by a sync pass when it replaced indexed documents → generation bump. */
   private syncReplaced = false;
-  /** Last background refresh failure — surfaced as degraded. */
   private lastRefreshError: { at: number; message: string } | null = null;
-  /** Last open failure — a search with no published generation fails fast. */
   private openError: string | null = null;
-  /** One-time per-process migration flag for pre-v2 file-meta keys. */
   private fileMetaMigrated = false;
-  /** Token of the published db.lock line (writer only) — see CoreIndexView. */
   private lockToken: string | undefined;
 
   db: MiniDb<SearchDoc> | null = null;
@@ -294,7 +227,6 @@ export class SearchIndexCore {
 
   constructor(private readonly options: SearchCoreOptions) {}
 
-  /** The published db.lock token (writer only) — see CoreIndexView.lockToken. */
   get lockTokenView(): string | undefined {
     return this.lockToken;
   }
@@ -330,26 +262,10 @@ export class SearchIndexCore {
     await this.publishDb(db, null);
   }
 
-  /**
-   * The generation page tokens pin: `<bootSalt>:<local counter>`. The local
-   * counter alone restarts from 0 when the worker (or, pre-workerization,
-   * the process) respawns — a token issued before the restart (say g=1)
-   * would otherwise validate against the fresh host's g=1 and silently
-   * paginate a different base. The boot salt makes every pre-restart token
-   * fail with `invalid_page_token` so the client restarts the search.
-   */
   private tokenGeneration(): string {
     return `${this.options.bootSalt}:${this.generation}`;
   }
 
-  /**
-   * Swap a freshly opened db in as the new published generation: writer-side
-   * text-index definitions and the (handle-independent) fingerprint are
-   * computed BEFORE the swap, so a failure closes `next` and leaves `prev`
-   * (or the no-db state) untouched; the swap itself is one synchronous
-   * segment with no failure point between publishing `next` and closing
-   * `prev`.
-   */
   private async publishDb(next: MiniDb<SearchDoc>, prev: MiniDb<SearchDoc> | null): Promise<void> {
     let fingerprint: string;
     try {
@@ -387,12 +303,6 @@ export class SearchIndexCore {
     });
   }
 
-  /**
-   * The db.lock token this core published, so the main process can reap the
-   * lock after a worker crash. Read from the lock file (the LockFile
-   * instance's token is instance-private by design); anything unreadable or
-   * foreign-owned yields undefined and the reaper stays conservative.
-   */
   private async readLockToken(): Promise<string | undefined> {
     try {
       const raw = await readFile(join(this.indexDir, 'db.lock'), 'utf8');
@@ -404,18 +314,6 @@ export class SearchIndexCore {
     }
   }
 
-  /**
-   * Open the index db, rebuilding from scratch on unrecoverable corruption
-   * (the index is derived data — never repaired, only rebuilt).
-   *
-   * Rebuild is WRITER-ONLY: a process that fails to grab the write lock must
-   * never delete the directory out from under the live indexer. Lock state is
-   * not observable once `open` throws, so corruption is disambiguated with a
-   * probe open WITHOUT `onLockFail`: it throws `LockError` before recovery
-   * when another process holds the lock, and re-throws the corruption
-   * (releasing the lock) when the lock is free — in which case this process
-   * is the would-be writer and may rebuild.
-   */
   private async openSearchDb(): Promise<MiniDb<SearchDoc>> {
     const opts = {
       dir: this.indexDir,
@@ -451,24 +349,10 @@ export class SearchIndexCore {
     }
   }
 
-  /**
-   * Synchronously mark the core closed: in-flight sync/refresh passes skip
-   * their remaining work at the next `disposed` check, and no new background
-   * work starts. The async close() then drains and releases the handle. The
-   * split exists so a host's synchronous dispose() can gate mid-pass writes
-   * BEFORE awaiting anything (the pre-worker service did this with its
-   * synchronous `disposed = true`).
-   */
   beginClose(): void {
     this.disposed = true;
   }
 
-  /**
-   * Close the core: close the op gate (new syncs / refreshes skip at
-   * enter()), wait for every in-flight op and the in-flight open to settle,
-   * then release and close the handle — no background task can touch a
-   * closed db.
-   */
   async close(): Promise<void> {
     this.disposed = true;
     await this.ops.close();
@@ -478,11 +362,6 @@ export class SearchIndexCore {
     if (db) await db.close().catch(() => {});
   }
 
-  /**
-   * Run one lifecycle-managed background op under the close drain gate:
-   * skipped once close has started, and close waits for every op that
-   * already entered before it closes the db.
-   */
   private async tracked(op: () => Promise<void>): Promise<void> {
     if (!this.ops.enter()) return;
     try {
@@ -505,14 +384,6 @@ export class SearchIndexCore {
     return parts.join('|');
   }
 
-  /**
-   * Bring a read-only instance up to date with the indexer's committed
-   * writes. Unchanged fingerprint → zero IO; WAL pure-append → incremental
-   * `catchUpFromWal`; anything else → open the replacement db and swap (which
-   * may also promote this process to indexer when the old writer's lock is
-   * gone). Single-flight; a failure is recorded in `lastRefreshError` and
-   * the stale generation keeps serving (surfaced as `indexState.degraded`).
-   */
   refresh(): Promise<void> {
     this.refreshPromise ??= this.tracked(() => this.doRefreshReadonly())
       .then(
@@ -614,12 +485,6 @@ export class SearchIndexCore {
     return { noop: false, sessions: indexed, documents: stats.documents };
   }
 
-  /**
-   * One-time per-process migration of pre-v2 hash-only file-meta keys to the
-   * session-scoped format (`fileMetaKey`). A single full prefix scan of the
-   * meta namespace; per-session work afterwards only scans that session's
-   * keys. Idempotent — a crash mid-migration just rescans on the next pass.
-   */
   private async migrateFileMetaKeys(db: MiniDb<SearchDoc>): Promise<void> {
     if (this.fileMetaMigrated) return;
     const ops: BatchInputOp<SearchDoc>[] = [];
@@ -826,11 +691,6 @@ export class SearchIndexCore {
     await db.batch(ops);
   }
 
-  /**
-   * Turn/step counting and doc extraction for one complete wire line.
-   * Returns the counter states advanced by the line (they are immutable and
-   * replaced per line, so the caller threads them through the chunk loop).
-   */
   private collectWireLine(
     ops: BatchInputOp<SearchDoc>[],
     summary: SyncSessionInput,
@@ -879,13 +739,6 @@ export class SearchIndexCore {
     return { turnState, stepState };
   }
 
-  /**
-   * Serve one page from the currently published generation. Never waits for
-   * an open, sync, reopen or reindex: with no published base it answers with
-   * `building` semantics (or fails fast when the last open failed), and the
-   * page-token generation check runs against the base pinned at request
-   * time.
-   */
   async search(params: CoreSearchParams): Promise<CoreSearchResult> {
     const { q, budgets } = params;
     const db = this.db;
@@ -1023,11 +876,6 @@ export class SearchIndexCore {
     };
   }
 
-  /**
-   * Full rebuild: close the handle, wipe the directory and reopen. The
-   * caller (the service) blocks new sync passes beforehand and runs the
-   * authoritative sync afterwards.
-   */
   async reindex(): Promise<void> {
     await this.ensureOpen();
     if (this.db?.readOnly === true) {
@@ -1049,15 +897,6 @@ export class SearchIndexCore {
     await this.ensureOpen();
   }
 
-  /**
-   * Synchronous lifecycle snapshot (stage 5) — never kicks an open, never
-   * awaits: the diagnostic view of `stopped → opening → ready →
-   * building/degraded → closing`. 'degraded' means NO base is serving (the
-   * last open failed); a published base that keeps serving after a failed
-   * background refresh stays 'ready' — the failure rides the `degraded`
-   * message field of the page/status surfaces, same as the per-page
-   * `indexState` discipline.
-   */
   lifecycleState(): CoreLifecycleReport {
     if (this.disposed) return { state: this.db === null ? 'stopped' : 'closing' };
     const db = this.db;
@@ -1090,7 +929,6 @@ export class SearchIndexCore {
     };
   }
 
-  /** The view served while no queryable base is available. */
   private buildingView(db?: MiniDb<SearchDoc>): CoreIndexView {
     const handle = db ?? this.db;
     const stats = handle?.get(STATS_KEY);

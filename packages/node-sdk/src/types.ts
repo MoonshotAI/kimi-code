@@ -289,6 +289,7 @@ export interface AuthenticateMcpServerOptions {
   ) => void | boolean | PromiseLike<void | boolean>;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  readonly cwd?: string;
 }
 
 export interface TestMcpServerOptions {

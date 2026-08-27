@@ -17,6 +17,7 @@ import {
 } from '#/agent/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -34,13 +35,18 @@ import { keepsUndoCheckpoints } from '#/state/state';
 
 import { IAgentConversationUndoService, type UndoAvailability } from './undo';
 
-export class ContextUndone extends AgentEvent2<{ readonly agentId: string; readonly turns: number }> {
+export class ContextUndone extends AgentEvent2<{
+  readonly agentId: string;
+  readonly turns: number;
+  readonly fromTurnId?: number;
+}> {
   static override readonly type = 'context.undone';
   static override readonly observable = true;
 }
 export interface ContextUndone {
   readonly agentId: string;
   readonly turns: number;
+  readonly fromTurnId?: number;
 }
 
 export class AgentConversationUndoService
@@ -106,6 +112,7 @@ export class AgentConversationUndoService
         throw this.busyError('compaction');
       }
       this.assertUndoAvailable(turns);
+      const fromTurnId = this.removedFromTurnId(turns);
       this.context.undo(turns);
       await this.flushAfterCommit('context cut');
       await this.reconcileParticipants();
@@ -113,12 +120,21 @@ export class AgentConversationUndoService
       await this.reconcileLastPromptSafely();
       this.telemetry.track2('conversation_undo', { count: turns });
       await this.dispatcher.dispatch(
-        new ContextUndone({ agentId: this.agentCtx.agentId, turns }),
+        new ContextUndone({ agentId: this.agentCtx.agentId, turns, fromTurnId }),
       );
       return turns;
     } finally {
       quiescence?.dispose();
     }
+  }
+
+  private removedFromTurnId(turns: number): number | undefined {
+    if (!this.agentState.has(turnKey)) return undefined;
+    const anchorTurnIds = this.agentState.get(turnKey).anchorTurnIds;
+    if (anchorTurnIds.length < turns) return undefined;
+    const totalAnchors = computeUndoCut(this.context.get(), Number.MAX_SAFE_INTEGER).removedCount;
+    if (totalAnchors !== anchorTurnIds.length) return undefined;
+    return anchorTurnIds[anchorTurnIds.length - turns];
   }
 
   private checkpointDepth(): { depth: number; model: string } {

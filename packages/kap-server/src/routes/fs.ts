@@ -6,6 +6,7 @@ import {
   IRuntimeResolver,
   ISessionContext,
   ISessionWorkspaceContext,
+  IStandaloneRuntimeFactory,
   ITelemetryService,
   IWorkspaceFsService,
   IWorkspaceInstanceManager,
@@ -16,6 +17,8 @@ import {
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -102,6 +105,11 @@ const workspaceFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   runtime_id: z.string().min(1).optional(),
 });
 
+const rootFsSuggestBodySchema = fsSuggestRequestSchema.extend({
+  roots: z.array(z.string().min(1)).min(1).max(32),
+  runtime_id: z.string().min(1).optional(),
+});
+
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 const FS_ACTIONS = [
@@ -126,6 +134,7 @@ interface RuntimeFsScope {
   readonly fs: IWorkspaceFsService;
   readonly hostFs: IHostFileSystem;
   readonly lease: RuntimeLease;
+  readonly roots: { readonly workDir: string; readonly additionalDirs: readonly string[] };
 }
 
 function createRuntimeFs(
@@ -140,70 +149,102 @@ function createRuntimeFs(
     required,
   );
   try {
-    const mapped = lease.runtime.workspace.mapRoots(roots);
-    const workspace = {
-      _serviceBrand: undefined,
-      workspaceId,
-      cwd: mapped.workDir,
-      source: 'local',
-      meta: {
-        id: workspaceId,
-        root: mapped.workDir,
-        name: workspaceId,
-        createdAt: 0,
-        lastOpenedAt: 0,
-      },
-      persistenceScope: `sessions/${workspaceId}`,
-    } satisfies IWorkspaceContext;
-    const dirs = {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      additionalDirs: mapped.additionalDirs ?? [],
-      onDidChange: () => ({ dispose: () => {} }),
-      addDir: async () => { throw new Error('runtime fs directories are immutable'); },
-      mergeAdditionalDirs: async () => { throw new Error('runtime fs directories are immutable'); },
-      sessionInfo: () => ({ workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] }),
-    } as unknown as IWorkspaceDirs;
-    const resolver: IRuntimeResolver = {
-      _serviceBrand: undefined,
-      inspect: () => lease.runtime,
-      acquire: (_binding, capabilities = []) => {
-        const missing = capabilities.filter((capability) => !lease.runtime.capabilities.has(capability));
-        if (missing.length > 0) throw new Error(`runtime ${runtimeId} missing capabilities: ${missing.join(', ')}`);
-        return {
-          runtime: lease.runtime,
-          track: (resource) => lease.track(resource),
-          dispose: () => {},
-        };
-      },
-    };
-    const instances = {
-      findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
-    } as unknown as IWorkspaceInstanceManager;
-    const git = new WorkspaceGitService(
-      workspace,
-      {
-        current: new GitService(resolver, instances, lease.runtime.fs!),
-        onDidChange: () => ({ dispose: () => {} }),
-      },
-    );
-    return {
-      fs: new WorkspaceFsService(
-        workspace,
-        dirs,
-        lease.runtime.fs!,
-        resolver,
-        core.accessor.get(ITelemetryService),
-        git,
-        runtimeId,
-      ),
-      hostFs: lease.runtime.fs!,
-      lease,
-    };
+    return buildRuntimeFsScope(core, workspaceId, roots, runtimeId, lease);
   } catch (error) {
     lease.dispose();
     throw error;
   }
+}
+
+function createLocalRuntimeFs(
+  core: Scope,
+  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
+): RuntimeFsScope {
+  const workspaceId = encodeWorkDirKey(roots.workDir);
+  const runtime = core.accessor.get(IStandaloneRuntimeFactory).createLocalRuntime(workspaceId);
+  const lease: RuntimeLease = {
+    runtime,
+    track: (resource) => resource,
+    dispose: () => {
+      void runtime.dispose();
+    },
+  };
+  try {
+    return buildRuntimeFsScope(core, workspaceId, roots, 'local', lease);
+  } catch (error) {
+    lease.dispose();
+    throw error;
+  }
+}
+
+function buildRuntimeFsScope(
+  core: Scope,
+  workspaceId: string,
+  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
+  runtimeId: string,
+  lease: RuntimeLease,
+): RuntimeFsScope {
+  const mapped = lease.runtime.workspace.mapRoots(roots);
+  const workspace = {
+    _serviceBrand: undefined,
+    workspaceId,
+    cwd: mapped.workDir,
+    source: 'local',
+    meta: {
+      id: workspaceId,
+      root: mapped.workDir,
+      name: workspaceId,
+      createdAt: 0,
+      lastOpenedAt: 0,
+    },
+    persistenceScope: `sessions/${workspaceId}`,
+  } satisfies IWorkspaceContext;
+  const dirs = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    additionalDirs: mapped.additionalDirs ?? [],
+    onDidChange: () => ({ dispose: () => {} }),
+    addDir: async () => { throw new Error('runtime fs directories are immutable'); },
+    mergeAdditionalDirs: async () => { throw new Error('runtime fs directories are immutable'); },
+    sessionInfo: () => ({ workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] }),
+  } as unknown as IWorkspaceDirs;
+  const resolver: IRuntimeResolver = {
+    _serviceBrand: undefined,
+    inspect: () => lease.runtime,
+    acquire: (_binding, capabilities = []) => {
+      const missing = capabilities.filter((capability) => !lease.runtime.capabilities.has(capability));
+      if (missing.length > 0) throw new Error(`runtime ${runtimeId} missing capabilities: ${missing.join(', ')}`);
+      return {
+        runtime: lease.runtime,
+        track: (resource) => lease.track(resource),
+        dispose: () => {},
+      };
+    },
+  };
+  const instances = {
+    findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
+  } as unknown as IWorkspaceInstanceManager;
+  const git = new WorkspaceGitService(
+    workspace,
+    {
+      current: new GitService(resolver, instances, lease.runtime.fs!),
+      onDidChange: () => ({ dispose: () => {} }),
+    },
+  );
+  return {
+    fs: new WorkspaceFsService(
+      workspace,
+      dirs,
+      lease.runtime.fs!,
+      resolver,
+      core.accessor.get(ITelemetryService),
+      git,
+      runtimeId,
+    ),
+    hostFs: lease.runtime.fs!,
+    lease,
+    roots: { workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] },
+  };
 }
 
 function acquireSessionFs(
@@ -456,6 +497,77 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     workspaceSuggestRoute.path,
     workspaceSuggestRoute.options,
     workspaceSuggestRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
+  const rootSuggestRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/fs::suggest',
+      body: rootFsSuggestBodySchema,
+      success: { data: fsSuggestResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+      },
+      description:
+        'Suggest file and directory completion candidates across one or more absolute root directories without a session or workspace. The first root is the primary root: its candidates are returned as relative paths, candidates under additional roots as absolute paths. Overlapping roots are deduplicated. No workspace registration or other side effects.',
+      tags: ['fs'],
+      operationId: 'fsSuggest',
+    },
+    async (req, reply) => {
+      const { roots, runtime_id, ...suggestRequest } = req.body;
+      for (const root of roots) {
+        if (!isAbsolute(root)) {
+          reply.send(
+            errEnvelope(ErrorCode.VALIDATION_FAILED, `root must be an absolute path: ${root}`, req.id),
+          );
+          return;
+        }
+      }
+      const runtimeId = runtime_id ?? 'local';
+      const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
+      let runtimeFs: RuntimeFsScope | undefined;
+      try {
+        runtimeFs = runtimeId === 'local'
+          ? createLocalRuntimeFs(core, fsRoots)
+          : createRuntimeFs(core, encodeWorkDirKey(roots[0]!), fsRoots, runtimeId, ['fs']);
+        for (const root of [runtimeFs.roots.workDir, ...runtimeFs.roots.additionalDirs]) {
+          let stat;
+          try {
+            stat = await runtimeFs.hostFs.stat(root);
+          } catch {
+            throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `root not found: ${root}`, {
+              details: { path: root },
+            });
+          }
+          if (!stat.isDirectory) {
+            throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `root is not a directory: ${root}`, {
+              details: { path: root },
+            });
+          }
+        }
+        const data = await runtimeFs.fs.suggest(suggestRequest);
+        reply.send(okEnvelope(data, req.id));
+      } catch (err) {
+        if (err instanceof RuntimeError) {
+          const code = err.code === 'runtime.not_found'
+            ? ErrorCode.RUNTIME_NOT_FOUND
+            : ErrorCode.RUNTIME_UNAVAILABLE;
+          reply.send(errEnvelope(code, err.message, req.id));
+          return;
+        }
+        sendMappedError(reply, req, err);
+      } finally {
+        runtimeFs?.lease.dispose();
+      }
+    },
+  );
+  app.post(
+    rootSuggestRoute.path,
+    rootSuggestRoute.options,
+    rootSuggestRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
   const downloadRoute = defineRoute(

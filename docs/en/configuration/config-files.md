@@ -210,13 +210,17 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 | `default_model` | `string` | — | The default model for subagents |
 | `models` | `table<string, string>` | — | Subagent model pool. Each key is the alias of a configured [`[models]`](#models) entry; each value is the selection hint shown to the main agent |
 | `force` | `boolean` | `false` | Pin every subagent to `default_model`, taking the choice away from the main agent |
+| `default_effort` | `string` | — | The thinking effort every spawned subagent binds with; outranks the bound model entry's own `default_effort` |
 
 Constraints between the fields:
 
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `force`: requires `default_model` and cannot be combined with a `models` table — the table exists to offer a choice, and force removes it.
+- `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
 - `primary` is a reserved alias (see below) and cannot be a pool key.
+
+Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias — fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
 
@@ -240,7 +244,7 @@ Rules for the `model` parameter:
 
 - It accepts any pool alias, or `"primary"` — the model the caller itself is running, always valid even when not in the pool.
 - When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model.
-- Binding a pool alias carries no explicit thinking effort: the subagent resolves it as "global `[thinking]` config → the bound model's default effort" instead of inheriting the caller's level.
+- Binding a pool alias does not inherit the caller's thinking effort. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
 - `"primary"` inherits both the model and the effort level from the caller.
 - A value that is neither a pool alias nor `"primary"` fails the spawn with an error listing the available choices.
 
@@ -286,7 +290,7 @@ Two prerequisites:
 - The underlying model must declare `support_efforts` (under `managed:kimi-code` only the k3 family currently declares effort levels).
 - The variant is a standalone entry and does not inherit fields from the entry it points at — copy `capabilities`, `support_efforts`, and the other metadata over in full, otherwise `default_effort` has no effect (it must be a member of `support_efforts`).
 
-Also note that `default_effort` stays a model-level default: once a global `[thinking].effort` is set, it wins for the main agent and subagents alike, and the variant's default only applies when no global effort is set. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
+Note the asymmetry between the main agent and pool-bound subagents: for the main agent, a configured global `[thinking].effort` overrides the variant's `default_effort`; for subagents the variant's `default_effort` wins over the global value, and only `[secondary_model].default_effort` outranks it. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
 
 ::: warning Note
 Configuration errors fail loudly instead of falling back silently. Session creation, resume, and fork all fail at startup when:
@@ -355,17 +359,27 @@ Retries only apply to transient failures — connection errors, timeouts, HTTP 4
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, and `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`; both take higher priority than `config.toml`.
 
-In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent's turn as long as background tasks are still pending: each completion is fed back to the main agent as a synthetic user message, steering it into a new turn (`print_background_mode = "steer"` by default), and the run exits once a turn ends with nothing pending. The loop is bounded by `print_wait_ceiling_s` and `print_max_turns`, both effectively unbounded by default. Background work is never killed by a wall-clock cap in print mode either: background `Bash` tasks default to no timeout (`bash_task_timeout_s = 0`), and subagents run without a timeout (`[subagent] timeout_ms = 0`), so only the model itself stops a task. Set `print_background_mode` to `"drain"` to wait for tasks without feeding results back, or `"exit"` to end the run as soon as the main agent finishes.
+In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent's turn as long as background tasks are still pending: each completion is fed back to the main agent as a synthetic user message, steering it into a new turn (`print_background_mode = "steer"` by default), and the run exits once a turn ends with nothing pending. The loop is bounded by `print_wait_ceiling_s` and `print_max_turns`, both effectively unbounded by default. Background work is never killed by a wall-clock cap in print mode either: background `Bash` tasks default to no timeout (`bash_task_timeout_s = 0`), and subagents run without a timeout (`[subagent] timeout_ms` and `[swarm] timeout_ms` both default to `0` unless explicitly set), so only the model itself stops a task. Set `print_background_mode` to `"drain"` to wait for tasks without feeding results back, or `"exit"` to end the run as soon as the main agent finishes.
 
 ## `subagent`
 
-`subagent` controls how spawned subagents (`Agent` / `AgentSwarm`) run.
+`subagent` controls how subagents spawned by the `Agent` tool run.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single subagent (`Agent` / `AgentSwarm`) is allowed to run before it is settled as `timed_out`. `0` means no timeout — the subagent runs until it finishes or the model stops it. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
+| `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single `Agent` subagent is allowed to run before it is settled as `timed_out`. `0` means no timeout — the subagent runs until it finishes or the model stops it. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
 
 `timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
+
+## `swarm`
+
+`swarm` controls how subagents launched by the `AgentSwarm` tool run, independently of `[subagent]`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single `AgentSwarm` subagent is allowed to run. On timeout that subagent is aborted and marked as failed in the aggregated report (`Subagent timed out.`); the other subagents are unaffected. `0` means no timeout — the subagent runs until it finishes or the model stops it. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
+
+`timeout_ms` can be overridden by the `KIMI_CODE_SWARM_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
 
 ## `mcp`
 

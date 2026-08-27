@@ -325,6 +325,16 @@ export interface ToolCallRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallTurnRepeatEvent {
+  turn_id?: number;
+  step_no: number;
+  tool_call_id: string;
+  tool_name: string;
+  turn_repeat_count: number;
+  args_hash: string;
+  trace_id?: string;
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -448,6 +458,13 @@ export interface SessionStartedEvent {
 
 export interface SessionLoadFailedEvent {
   reason: string;
+}
+
+export interface WireRepairEvent {
+  kind: 'corrupted' | 'truncated';
+  outcome: 'repaired' | 'failed';
+  dropped_count: number;
+  backup_created: boolean;
 }
 
 export interface FirstLaunchEvent {}
@@ -830,6 +847,20 @@ export const telemetryEventDefinitions = {
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },
   }),
+  tool_call_turn_repeat: defineAgentTelemetryEvent<ToolCallTurnRepeatEvent>({
+    owner: 'kimi-code',
+    comment: 'A tool call reappears within the same turn.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      step_no: 'Step index within the turn',
+      tool_call_id: 'Provider-assigned tool call id',
+      tool_name: 'Registered tool name',
+      turn_repeat_count: 'Number of prior-step tool-call reappearances counted in the turn',
+      args_hash: 'Hash of the tool call arguments',
+      trace_id:
+        'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
+    },
+  }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
     comment: 'An AGENTS.md discovery reminder is appended to a tool result.',
@@ -983,6 +1014,16 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A session resume fails.',
     properties: { reason: 'Error code, error name, or unknown' },
+  }),
+  wire_repair: defineTelemetryEvent<WireRepairEvent>({
+    owner: 'kimi-code',
+    comment: 'A corrupted wire journal is truncated to its valid prefix and healed on disk.',
+    properties: {
+      kind: 'Corruption kind: unparseable middle line or torn final line',
+      outcome: 'Whether the on-disk repair succeeded',
+      dropped_count: 'Journal lines dropped from the corrupted tail',
+      backup_created: 'Whether a first-time .bak backup of the corrupted file was created',
+    },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

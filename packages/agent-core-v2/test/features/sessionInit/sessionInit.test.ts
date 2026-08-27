@@ -12,7 +12,6 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -60,10 +59,9 @@ describe('SessionInitService', () => {
         onWillStartAgentTask: { run: vi.fn(async () => {}) },
       },
       notifyAgentTaskStopped: vi.fn(),
-      get: vi.fn((context: AgentContext) => handles[context.agentId]),
-      findAgentHandle: vi.fn((agentId: string) => handles[agentId]),
-      list: vi.fn(() => Object.values(handles)),
-      create: vi.fn(async () => handles['agent-0']),
+      handleOf: vi.fn((agentId: string) => handles[agentId]),
+      resolve: vi.fn(() => ({ notify: appendReminder })),
+      create: vi.fn(async () => stubAgentContext('agent-0', 1)),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
         turn: {},
@@ -86,9 +84,11 @@ describe('SessionInitService', () => {
         get: (id: unknown) => {
           if (id === IAgentLifecycleService) return lifecycle;
           if (id === ISessionSubagentService) return lifecycle;
+          if (id === IAgentScopeContext) {
+            return { agentContext: stubAgentContext('main', 1) };
+          }
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
-          if (id === IAgentSystemReminderService) return { appendSystemReminder: appendReminder };
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IEventDispatcher) {
             return {
@@ -170,11 +170,11 @@ describe('SessionInitService', () => {
     expect((runArgs[1] as { prompt: string }).prompt).toContain('Task requirements:');
 
     expect(appendReminder).toHaveBeenCalledTimes(1);
-    const [content, origin] = appendReminder.mock.calls[0] as [
+    const [content, notification] = appendReminder.mock.calls[0] as [
       string,
-      { kind: string; variant: string },
+      { variant: string },
     ];
-    expect(origin).toEqual({ kind: 'injection', variant: 'init' });
+    expect(notification).toEqual({ variant: 'init' });
     expect(content).toContain('The user just ran `/init` slash command.');
     expect(content).toContain('Latest AGENTS.md file content:');
     expect(content).toContain(AGENTS_MD);
@@ -219,9 +219,9 @@ describe('SessionInitService', () => {
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
     const lifecycle = ix.get(IAgentLifecycleService) as unknown as {
-      list: ReturnType<typeof vi.fn>;
+      handleOf: ReturnType<typeof vi.fn>;
     };
-    lifecycle.list.mockReturnValue([]);
+    lifecycle.handleOf.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);

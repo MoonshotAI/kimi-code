@@ -24,12 +24,12 @@ import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 
 import {
@@ -41,7 +41,11 @@ import {
   type RunAgentOptions,
 } from './subagent';
 import { runAgentTurn } from './runAgentTurn';
-import { resolveSubagentBinding, wrapSubagentModelError } from './configSection';
+import {
+  resolveSubagentBinding,
+  resolveSubagentThinking,
+  wrapSubagentModelError,
+} from './configSection';
 import {
   DEFAULT_PROFILE_NAME,
   FORK_CONTEXT_NOTICE,
@@ -76,7 +80,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   }
 
   run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
-    const handle = this.agentLifecycle.get(agent);
+    const handle = this.agentLifecycle.handleOf(agent.agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, {
         details: { agentId: agent.agentId },
@@ -100,7 +104,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const requestedProfileName =
       requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
     const extras =
-      input.callerAgentId === 'main'
+      input.callerAgentId === MAIN_AGENT_ID
         ? rootDelegationExtras(this.catalog, own, this.catalog.list())
         : undefined;
     let allowlist = subagentAllowlistFor(this.catalog, own, extras);
@@ -133,15 +137,16 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           input.model,
         );
+    let model: Model;
     try {
-      this.modelCatalog.get(binding.model);
+      model = this.modelCatalog.get(binding.model);
     } catch (error) {
       throw wrapSubagentModelError(error, binding.model, own.modelAlias);
     }
     return {
       profileName: profile?.name ?? requestedProfileName,
       model: binding.model,
-      thinking: binding.thinking,
+      thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
     };
   }
@@ -155,17 +160,23 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     try {
       let created: IAgentScopeHandle;
       try {
-        created = plan.fork
-          ? await this.agentLifecycle.fork(agentContextOf(caller), { labels: opts.labels })
-          : await this.agentLifecycle.create({
-              binding: {
-                profile: plan.profileName,
-                model: plan.model,
-                thinking: plan.thinking,
-              },
-              labels: opts.labels,
-              runtimeId: lease!.runtime.identity.runtimeId,
-            });
+        if (plan.fork) {
+          const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
+            labels: opts.labels,
+          });
+          created = this.agentLifecycle.handleOf(forked.agentId)!;
+        } else {
+          const createdContext = await this.agentLifecycle.create({
+            binding: {
+              profile: plan.profileName,
+              model: plan.model,
+              thinking: plan.thinking,
+            },
+            labels: opts.labels,
+            runtimeId: lease!.runtime.identity.runtimeId,
+          });
+          created = this.agentLifecycle.handleOf(createdContext.agentId)!;
+        }
       } catch (error) {
         throw wrapSubagentModelError(
           error,
@@ -220,7 +231,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   }
 
   private requireCaller(agentId: string): IAgentScopeHandle {
-    const handle = this.agentLifecycle.findAgentHandle(agentId);
+    const handle = this.agentLifecycle.handleOf(agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Caller agent "${agentId}" does not exist`, {
         details: { agentId },

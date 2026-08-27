@@ -9,18 +9,25 @@ import type { ContentPart } from '#/kosong/contract/message';
 import { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { defineState } from '#/state/state';
-import type { WireRecord } from '#/wire/record';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
   recordingWireLog,
   registerTestAgentWire,
   registerTestEventDispatcher,
   testWireScope,
+  noopLogger,
 } from './stubs';
 
 const SCOPE = 'wire';
@@ -143,5 +150,48 @@ describe('durable observable events', () => {
         time: expect.any(Number),
       },
     ]);
+  });
+});
+
+describe('restore from a corrupted journal', () => {
+  it('folds the valid prefix and heals the journal on disk', async () => {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.set(IEventBus, new SyncDescriptor(EventBusService));
+    const bus = ix.get(IEventBus);
+    const storage = new InMemoryStorageService();
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const log = ix.get(IAppendLogStore);
+    const scope = testWireScope(SCOPE, KEY);
+    registerTestAgentWire(ix, scope, {
+      log,
+      eventBus: bus,
+      storage,
+      logger: noopLogger,
+      telemetry: noopTelemetryService,
+    });
+    const dispatcher = registerTestEventDispatcher(ix);
+    const agentState = ix.get(IAgentStateService);
+    agentState.contributeState(noteKey);
+
+    const metadata = JSON.stringify({
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    });
+    const note = (text: string): string =>
+      JSON.stringify({ type: 'store-event.note.added', text, time: 2 });
+    const healed = `${metadata}\n${note('kept')}\n`;
+    await storage.write(
+      scope,
+      AGENT_WIRE_RECORD_KEY,
+      new TextEncoder().encode(`${healed}GARBAGE\n${note('dropped')}\n`),
+    );
+
+    await dispatcher.restore();
+
+    expect(agentState.get(noteKey).notes).toEqual(['kept']);
+    const repaired = await storage.read(scope, AGENT_WIRE_RECORD_KEY);
+    expect(new TextDecoder().decode(repaired)).toBe(healed);
   });
 });

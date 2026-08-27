@@ -10,7 +10,7 @@ import {
 } from '#/_base/errors/unexpectedError';
 import {
   WIRE_PROTOCOL_VERSION,
-  IAgentGoalService,
+  AgentGoal,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
@@ -124,6 +124,40 @@ describe('Agent resume', () => {
         }),
       );
 
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('resumes a journal that stops mid-turn without any turn-closing record', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      contextAppendRecord(0, [{ role: 'user', text: 'dangling turn', origin: { kind: 'user' } }]),
+      turnPromptRecord(0, { kind: 'user' }),
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-0', turnId: '0', step: 1 },
+      },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.llmCalls).toHaveLength(0);
+      expect(turnCurrentId(ctx)).toBe(0);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+
+      expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 1 });
+      expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+        turnId: 1,
+        reason: 'completed',
+      });
+      expect(findRpcEvent(ctx.allEvents, 'error')).toBeUndefined();
       await ctx.expectResumeMatches();
     } finally {
       await ctx.dispose();
@@ -742,7 +776,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      const goal = ctx.get(IAgentGoalService).getGoal().goal;
+      const goal = ctx.resolve(AgentGoal).getGoal().goal;
       expect(goal).toMatchObject({
         status: 'paused',
         wallClockMs: 7_000,
@@ -799,7 +833,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+      expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
         status: 'paused',
         wallClockMs: 5_000,
       });

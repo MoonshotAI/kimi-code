@@ -22,7 +22,6 @@ export class ToolCallIdResponseNormalizer {
   private readonly assignedByIndex = new Map<number | string, string>();
   private readonly occurrencesByRawId = new Map<string, string[]>();
   private readonly claimed: string[] = [];
-  /** Every rewrite applied to this response, oldest first (for provenance logging). */
   readonly remapped: { raw: string; assigned: string }[] = [];
 
   constructor(private readonly seen: Set<string>) {}

@@ -13,8 +13,9 @@ import {
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
+import { AgentLLMRequesterService, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -28,7 +29,10 @@ import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   APIConnectionError,
+  APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
+  APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/kosong/contract/errors';
@@ -54,6 +58,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 
 import {
   recordingWireLog,
@@ -160,9 +165,11 @@ function createService(
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
     readonly contextMessages?: Message[];
+    readonly env?: Record<string, string>;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
+  ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
@@ -350,6 +357,121 @@ describe('AgentLLMRequesterService strict resend', () => {
       statusCode: 401,
     });
     expect(projection.calls).toEqual(['normal']);
+  });
+});
+
+describe('AgentLLMRequesterService infinite retry', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('retries every request error while KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
+      new APIStatusError(404, 'model not found'),
+      new APIConnectionError('socket hang up'),
+      new APIProviderQuotaExhaustedError('quota exhausted'),
+    ]);
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    const promise = service.request();
+    await vi.runAllTimersAsync();
+    const finish = await promise;
+
+    expect(calls.value).toBe(5);
+    expect(finish.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+  });
+
+  it('honors the provider retry-after delay while retrying indefinitely', async () => {
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIProviderRateLimitError('slow down', null, 1));
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    const startedAt = Date.now();
+    await service.request();
+
+    expect(calls.value).toBe(2);
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('stops retrying when the caller aborts during the backoff wait', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('stop')), 100);
+
+    const promise = service.request({}, undefined, controller.signal);
+    const assertion = expect(promise).rejects.toThrow('stop');
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(calls.value).toBe(1);
+  });
+
+  it('keeps deterministic projection recovery ahead of infinite retry', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIRequestTooLargeError(413, 'Request Entity Too Large'));
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    await service.request();
+
+    expect(calls.value).toBe(2);
+  });
+
+  it('lets context overflow reach deterministic recovery instead of retrying', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(
+      calls,
+      new APIContextOverflowError(400, 'context length exceeded'),
+    );
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    await expect(service.request()).rejects.toBeInstanceOf(APIContextOverflowError);
+    expect(calls.value).toBe(1);
+  });
+
+  it('retries operation requests indefinitely', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
+      new APIStatusError(404, 'model not found'),
+    ]);
+    const { service } = createService(requester, undefined, {
+      env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
+    });
+
+    const promise = service.request({
+      source: { type: 'operation', requestKind: 'full_compaction' },
+    });
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(calls.value).toBe(3);
+  });
+
+  it('does not retry when the switch is unset', async () => {
+    vi.useFakeTimers();
+    const calls = { value: 0 };
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
+    const { service } = createService(requester, undefined);
+
+    await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
+    expect(calls.value).toBe(1);
   });
 });
 

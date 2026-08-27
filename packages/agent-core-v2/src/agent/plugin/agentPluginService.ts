@@ -4,23 +4,20 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionContext,
-} from '#/agent/contextInjector/contextInjector';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { ContextInjectionContext } from '#/features/reminder/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
-import {
-  IAgentSystemReminderService,
-  systemReminderContent,
-} from '#/agent/systemReminder/systemReminder';
+import { systemReminderContent } from '#/features/reminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, PluginMutation } from '#/app/plugin/types';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
-import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
+import type { SkillCatalog, SkillDefinition } from '#/features/skill/catalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentPluginService } from './agentPlugin';
@@ -70,8 +67,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentContextInjectorService private readonly injector: IAgentContextInjectorService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
@@ -85,8 +81,10 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.states.contributeState(pluginSessionStartRefreshPendingKey);
     this._register(
-      injector.register(SESSION_START_INJECTION_VARIANT, (injection) =>
-        this.reconcileSessionStartReminder(injection),
+      activateReminderWhenReady(this.agentLifecycle, this.scopeContext, (reminder) =>
+        reminder.register(SESSION_START_INJECTION_VARIANT, (injection) =>
+          this.reconcileSessionStartReminder(injection),
+        ),
       ),
     );
     this._register(
@@ -102,12 +100,15 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     this._register(
       this.plugins.onDidMutate(({ mutation }) => {
         this.pendingMutationCatalogChanges++;
-        this.reminders.appendSystemReminder(renderPluginChangeReminder(mutation), {
-          kind: 'injection',
+        this.reminder().notify(renderPluginChangeReminder(mutation), {
           variant: PLUGIN_CHANGE_INJECTION_VARIANT,
         });
       }),
     );
+  }
+
+  private reminder(): ReminderRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
   }
 
   private get refreshPending(): boolean {
@@ -122,7 +123,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.refreshPending = true;
     await this.skillCatalog.ready;
-    await this.injector.reconcileWhenIdle(SESSION_START_INJECTION_VARIANT);
+    await this.reminder().reconcileWhenIdle(SESSION_START_INJECTION_VARIANT);
   }
 
   private async renderSessionStartReminder(): Promise<string | undefined> {
