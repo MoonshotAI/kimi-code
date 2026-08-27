@@ -661,6 +661,22 @@ describe('OAuthService', () => {
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
   });
 
+  it('keeps the login authenticated when its own provisioning fires a provider change', async () => {
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    providerSet.mockImplementation((name: string, config: ProviderConfig) => {
+      providers = { ...providers, [name]: config };
+      providerChangedEmitter.fire({ added: [], removed: [], changed: [name] });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+  });
+
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {
     let capturedSignal: AbortSignal | undefined;
     toolkit.login.mockImplementation((_provider, options) => {
