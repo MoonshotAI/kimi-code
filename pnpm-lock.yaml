@@ -307,6 +307,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: 5.2.8
         version: 5.2.8
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../../packages/oauth
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../../packages/node-sdk

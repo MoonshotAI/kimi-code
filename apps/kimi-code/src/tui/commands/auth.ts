@@ -3,6 +3,7 @@ import {
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
+  OAuthAccessDeniedError,
   OpenPlatformApiError,
   type KimiRegion,
   type ManagedKimiCodeModelInfo,
@@ -92,19 +93,24 @@ async function handleKimiCodeOAuthLogin(
     }
   } catch (error) {
     const cancelled = controller.signal.aborted;
+    const denied = error instanceof OAuthAccessDeniedError;
     spinner?.stop({
       ok: false,
-      label: cancelled ? 'Login cancelled.' : 'Login failed.',
+      label: cancelled || denied ? 'Login cancelled.' : 'Login failed.',
     });
     spinner = undefined;
     if (cancelled) return;
+    const message = formatErrorMessage(error);
+    if (denied) {
+      host.showError(`Login cancelled: ${message}`);
+      return;
+    }
     log.warn('login failed', {
       providerName: DEFAULT_OAUTH_PROVIDER_NAME,
       alreadyLoggedIn,
       sessionId: host.session?.id,
       error,
     });
-    const message = formatErrorMessage(error);
     host.showError(`Login failed: ${message}`);
   } finally {
     if (host.cancelInFlight === cancelLogin) {
