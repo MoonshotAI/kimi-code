@@ -562,7 +562,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     for (const info of lostTasks) {
       this.recordTaskTerminated(info);
     }
-    await this.appendPreviousSessionTasksReminder();
+    this.appendPreviousSessionTasksReminder();
     await this.restoreAgentTaskNotifications();
     return lostTasks;
   }
@@ -1144,11 +1144,18 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
   }
 
-  private async appendPreviousSessionTasksReminder(): Promise<void> {
+  private appendPreviousSessionTasksReminder(): void {
     const tasks: AgentTaskInfo[] = [];
     for (const info of this.ghosts.values()) {
       if (info.resumeReminded === true) continue;
       if (!isPreviousSessionTermination(info)) continue;
+      if (
+        this.hasPreviousSessionReminder(info.taskId) ||
+        (info.status === 'lost' && this.hasDeliveredTaskOrigin(info))
+      ) {
+        this.persistPreviousSessionReminderMarker(info);
+        continue;
+      }
       tasks.push(info);
     }
     if (tasks.length === 0) return;
@@ -1164,10 +1171,67 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         { variant: TASK_RESUME_TERMINATION_VARIANT },
       );
     for (const info of tasks) {
-      const marked: AgentTaskInfo = { ...info, resumeReminded: true };
-      this.ghosts.set(info.taskId, marked);
-      await this.persistence.writeTask(marked);
+      this.firePreviousSessionLostTaskNotificationHook(info);
+      this.persistPreviousSessionReminderMarker(info);
     }
+  }
+
+  private hasPreviousSessionReminder(taskId: string): boolean {
+    const taskLinePrefix = `- ${taskId} "`;
+    return this.context.get().some((message) => {
+      if (
+        message.origin?.kind !== 'injection' ||
+        message.origin.variant !== TASK_RESUME_TERMINATION_VARIANT
+      ) {
+        return false;
+      }
+      return message.content.some(
+        (part) =>
+          part.type === 'text' &&
+          part.text.split('\n').some((line) => line.startsWith(taskLinePrefix)),
+      );
+    });
+  }
+
+  private hasDeliveredTaskOrigin(info: AgentTaskInfo): boolean {
+    const origin: TaskNotificationOrigin = {
+      taskId: info.taskId,
+      status: info.status,
+      notificationId: taskNotificationId(info.taskId, info.status),
+    };
+    const key = notificationKey(origin);
+    return (
+      this.states.get(taskNotificationDeliveryKey).includes(key) ||
+      this.deliveredNotificationKeys.has(key) ||
+      this.hasDeliveredNotification(key)
+    );
+  }
+
+  private persistPreviousSessionReminderMarker(info: AgentTaskInfo): void {
+    const marked: AgentTaskInfo = { ...info, resumeReminded: true };
+    this.ghosts.set(info.taskId, marked);
+    void this.persistence.writeTask(marked).catch((error: unknown) => {
+      this.log.error('previous-session task reminder marker write failed', {
+        taskId: info.taskId,
+        error,
+      });
+    });
+  }
+
+  private firePreviousSessionLostTaskNotificationHook(info: AgentTaskInfo): void {
+    if (info.status !== 'lost') return;
+    if (info.detached === false) return;
+    if (info.terminalNotificationSuppressed === true) return;
+    const origin: TaskNotificationOrigin = {
+      taskId: info.taskId,
+      status: info.status,
+      notificationId: taskNotificationId(info.taskId, info.status),
+    };
+    const key = notificationKey(origin);
+    if (this.scheduledNotificationKeys.has(key)) return;
+    if (this.deliveredNotificationKeys.has(key)) return;
+    if (this.hasDeliveredNotification(key)) return;
+    this.fireNotificationHook(buildAgentTaskNotification(info));
   }
 
   private async restoreAgentTaskNotification(info: AgentTaskInfo): Promise<void> {
@@ -1217,18 +1281,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.deliveredNotificationKeys.has(key)) return undefined;
       if (this.hasDeliveredNotification(key)) return undefined;
       this.scheduledNotificationKeys.add(key);
-      const notification: AgentTaskNotification = {
-        id: origin.notificationId,
-        category: 'task',
-        type: `task.${info.status}`,
-        source_kind: 'background_task',
-        source_id: info.taskId,
-        agent_id: info.kind === 'agent' ? info.agentId : undefined,
-        title: `Background ${info.kind} ${info.status}`,
-        severity: info.status === 'completed' ? 'info' : 'warning',
-        body: buildAgentTaskNotificationBody(info),
-        children: agentTaskNotificationChildren(output),
-      };
+      const notification = buildAgentTaskNotification(
+        info,
+        agentTaskNotificationChildren(output),
+      );
       const content = [
         {
           type: 'text',
@@ -1450,6 +1506,24 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
   ].join('\n');
 
   return `${baseLine}${recovery}`;
+}
+
+function buildAgentTaskNotification(
+  info: AgentTaskInfo,
+  children?: readonly string[],
+): AgentTaskNotification {
+  return {
+    id: taskNotificationId(info.taskId, info.status),
+    category: 'task',
+    type: `task.${info.status}`,
+    source_kind: 'background_task',
+    source_id: info.taskId,
+    agent_id: info.kind === 'agent' ? info.agentId : undefined,
+    title: `Background ${info.kind} ${info.status}`,
+    severity: info.status === 'completed' ? 'info' : 'warning',
+    body: buildAgentTaskNotificationBody(info),
+    children,
+  };
 }
 
 function generateTaskId(kind: string): string {
