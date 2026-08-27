@@ -86,7 +86,12 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
 export function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
-    wire[camelToSnake(domain)] = domain === 'providers' ? toProviderResponses(value) : value;
+    wire[camelToSnake(domain)] =
+      domain === 'providers'
+        ? toProviderResponses(value)
+        : domain === 'models'
+          ? toModelResponses(value)
+          : value;
   }
   const defaultPermissionMode = resolved['defaultPermissionMode'];
   if (typeof defaultPermissionMode === 'string') {
@@ -124,6 +129,31 @@ function toProviderResponses(value: unknown): Record<string, ProviderResponse> {
 function hasProviderCredential(provider: ProviderLike): boolean {
   if (nonEmpty(provider.apiKey) !== undefined) return true;
   if (provider.oauth !== undefined) return true;
+  return false;
+}
+
+interface ModelLike {
+  readonly apiKey?: unknown;
+  readonly oauth?: unknown;
+}
+
+function toModelResponses(value: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return result;
+  for (const [id, raw] of Object.entries(value)) {
+    if (!isPlainObject(raw)) {
+      result[id] = raw;
+      continue;
+    }
+    const { apiKey: _apiKey, oauth: _oauth, ...rest } = raw as ModelLike & Record<string, unknown>;
+    result[id] = { ...rest, has_api_key: hasModelCredential(raw as ModelLike) };
+  }
+  return result;
+}
+
+function hasModelCredential(model: ModelLike): boolean {
+  if (nonEmpty(model.apiKey) !== undefined) return true;
+  if (model.oauth !== undefined) return true;
   return false;
 }
 

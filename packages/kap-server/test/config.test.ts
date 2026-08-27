@@ -399,6 +399,28 @@ describe('configChangedPublisher', () => {
     expect(published[0]?.payload.config).toEqual({ default_model: 'k2', providers: {} });
   });
 
+  it('redacts inline model credentials from the published config projection', () => {
+    vi.useFakeTimers();
+    const { published, fire, setBacking } = setup();
+    setBacking({
+      providers: {},
+      models: {
+        'p/m': { provider: 'p', model: 'm', maxContextSize: 4096, apiKey: 'sk-secret' },
+        'p/flat': { baseUrl: 'https://x.test', model: 'm', oauth: { storage: 'file', key: 'oauth/x' } },
+      },
+    });
+
+    fire('models');
+    vi.advanceTimersByTime(50);
+
+    expect(published).toHaveLength(1);
+    const config = published[0]?.payload.config as Record<string, unknown>;
+    const models = config['models'] as Record<string, Record<string, unknown>>;
+    expect(models['p/m']).toEqual({ provider: 'p', model: 'm', maxContextSize: 4096, has_api_key: true });
+    expect(models['p/flat']).toEqual({ baseUrl: 'https://x.test', model: 'm', has_api_key: true });
+    expect(JSON.stringify(models)).not.toContain('sk-secret');
+  });
+
   it('always delivers a trailing event for late-arriving changes', () => {
     vi.useFakeTimers();
     const { published, fire } = setup();
