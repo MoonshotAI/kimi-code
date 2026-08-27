@@ -9,7 +9,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
@@ -205,7 +205,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
   for (const mode of ['manual', 'auto', 'yolo'] as const) {
     describe(`${mode} mode`, () => {
       let ctx: TestAgentContext;
-      let toolExecutor: ToolExecutorRuntime;
+      let toolExecutor: AgentToolsRuntime;
       const records: TelemetryRecord[] = [];
 
       beforeEach(() => {
@@ -220,7 +220,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
           telemetryServices(captureTelemetry(records)),
         );
         applyPermissionMode(ctx, mode);
-        toolExecutor = ctx.resolve(AgentToolExecutor);
+        toolExecutor = ctx.resolve(AgentTools);
       });
 
       afterEach(async () => {

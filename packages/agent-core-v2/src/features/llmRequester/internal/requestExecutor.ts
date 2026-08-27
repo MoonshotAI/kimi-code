@@ -8,8 +8,10 @@ import {
 } from '#/agent/contextProjector/contextProjector';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import {
+  AgentTools,
+  type AgentToolsRuntime,
+} from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
@@ -136,12 +138,8 @@ export class LlmRequestExecutor {
     return this.runtime.get(ISessionTokenCountingService);
   }
 
-  private get tools(): IAgentToolRegistryService {
-    return this.runtime.get(IAgentToolRegistryService);
-  }
-
-  private get toolSelect(): IAgentToolSelectService {
-    return this.runtime.get(IAgentToolSelectService);
+  private get tools(): AgentToolsRuntime {
+    return this.manager.resolve(this.runtime.agent, AgentTools);
   }
 
   private get mediaResolver(): IAgentMediaResolverService {
@@ -325,7 +323,7 @@ export class LlmRequestExecutor {
     onRequestTrace: (traceId: string | undefined) => void,
   ): Promise<AgentLLMRequestFinish> {
     this.logic().toolCallIdNormalizer.seedFrom(this.context.get());
-    const shaped = this.toolSelect.shapeHistory(request.messages);
+    const shaped = this.tools.shapeHistory(request.messages);
     const recoveredStrip = this.mediaStripSnapshotForTurn(request.source);
     let policy: ProjectionPolicy | undefined =
       recoveredStrip !== undefined
@@ -740,7 +738,7 @@ export class LlmRequestExecutor {
       topP: overrides?.topP,
       maxTokens: input.maxTokens,
       betaApi: modelConfig?.betaApi,
-      toolSelect: this.toolSelect.enabled(),
+      toolSelect: this.tools.selectionEnabled(),
       systemPromptHash,
       systemPrompt:
         input.systemPrompt === this.profile.data().systemPrompt
@@ -778,8 +776,8 @@ export class LlmRequestExecutor {
   }
 
   private defaultTools(): readonly Tool[] {
-    return this.toolSelect
-      .shapeTools(this.tools.list())
+    return this.tools
+      .toolsForModel()
       .map((tool) => ({
         name: tool.name,
         description: tool.description,

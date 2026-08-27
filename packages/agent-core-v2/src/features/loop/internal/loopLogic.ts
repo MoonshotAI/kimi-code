@@ -14,8 +14,8 @@ import {
 import { type AgentLLMRequestFinish } from '#/features/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import {
-  AgentToolExecutor,
-  type ToolExecutorRuntime,
+  AgentTools,
+  type AgentToolsRuntime,
 } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/app/event/agentEvents';
@@ -120,8 +120,8 @@ export class AgentLoopLogic extends Disposable implements LoopControl {
     return this.manager.resolve(this.scopeContext.agentContext, AgentLlmRequester);
   }
 
-  private get toolExecutor(): ToolExecutorRuntime {
-    return this.manager.resolve(this.scopeContext.agentContext, AgentToolExecutor);
+  private get toolExecutor(): AgentToolsRuntime {
+    return this.manager.resolve(this.scopeContext.agentContext, AgentTools);
   }
 
   constructor(

@@ -19,12 +19,13 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,
@@ -691,11 +692,17 @@ async function executeTool(
 
 function stubToolPolicy(
   isToolActive: (name: string) => boolean = () => true,
-): IAgentToolPolicyService {
+): AgentToolFactoryContext {
   return {
-    _serviceBrand: undefined,
-    isToolActive,
-  } as unknown as IAgentToolPolicyService;
+    get: () => undefined as never,
+    enabled: () => true,
+    load: () => ({ toLoad: [], alreadyAvailable: [], unknown: [] }),
+    isActive: isToolActive,
+    isActiveForProfile: () => true,
+    contributions: () => [],
+    resolve: () => undefined,
+    listReferences: () => [],
+  };
 }
 
 function stubConfig(values: Record<string, unknown> = {}): IConfigService {
@@ -710,7 +717,7 @@ function bashTool(
   env: IHostEnvironment = createTestEnv(),
   ctx: ISessionContext = createTestCtx(),
   background: IAgentTaskService = createFakeTaskService().service,
-  toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
+  toolPolicy: AgentToolFactoryContext = stubToolPolicy(),
   config: IConfigService = stubConfig(),
 ): BashTool {
   const processService: IHostProcessService = {
@@ -735,7 +742,7 @@ function bashTool(
       dispose: () => {},
     }),
   };
-  return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy as never, config);
 }
 
 describe('BashTool', () => {

@@ -19,7 +19,7 @@ import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { ContextAppendMessage, ContextUndo } from '#/features/contextMemory/contextEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -130,10 +130,6 @@ function makeRuntimeAgent(
       },
     })),
   );
-  ix.set(IAgentToolPolicyService, {
-    _serviceBrand: undefined,
-    isToolActive: () => false,
-  } as unknown as IAgentToolPolicyService);
   ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
   const handle: IAgentScopeHandle = {
     id: agentId,
@@ -212,10 +208,6 @@ describe('TodoAgentRuntime', () => {
         },
       })),
     );
-    ix.set(IAgentToolPolicyService, {
-      _serviceBrand: undefined,
-      isToolActive: () => false,
-    } as unknown as IAgentToolPolicyService);
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
     const handle: IAgentScopeHandle = {
       id: 'main',

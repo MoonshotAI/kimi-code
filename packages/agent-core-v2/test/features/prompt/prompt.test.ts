@@ -17,7 +17,7 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -116,7 +116,6 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
       reg.defineInstance(IWireService, options.journal === undefined ? stubWire() : stubWireJournal(options.journal as WireRecord[]));
       reg.defineInstance(IAgentBlobService, noopBlob);
       reg.define(IEventDispatcher, EventDispatcherService);
-      reg.definePartialInstance(IAgentToolPolicyService, { setSessionDisabledTools: async () => {} });
       reg.define(IEventBus, EventBusService);
       reg.defineInstance(IAgentLifecycleService, lifecycle);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });

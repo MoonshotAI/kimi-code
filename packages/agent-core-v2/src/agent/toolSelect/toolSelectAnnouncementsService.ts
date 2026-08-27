@@ -6,14 +6,13 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { LOADABLE_TOOLS_VARIANT } from './dynamicTools';
-import { IAgentToolSelectService } from './toolSelect';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentToolSelectAnnouncementsService } from './toolSelectAnnouncements';
 
 export class AgentToolSelectAnnouncementsService extends Service implements IAgentToolSelectAnnouncementsService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentToolSelectService toolSelect: IAgentToolSelectService,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
@@ -21,7 +20,9 @@ export class AgentToolSelectAnnouncementsService extends Service implements IAge
     this._register(
       activateReminderWhenReady(agentLifecycle, scopeContext, (reminder) =>
         reminder.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
-          isNewTurn ? toolSelect.loadableToolsAnnouncement() : undefined,
+          isNewTurn
+            ? agentLifecycle.resolve(scopeContext.agentContext, AgentTools).loadableToolsAnnouncement()
+            : undefined,
         ),
       ),
     );

@@ -31,10 +31,9 @@ import {
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { type UsageRecordedContext } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
@@ -753,10 +752,13 @@ async function settleGoalAfterContinuationFailure(context: GoalOperationContext,
 }
 
 function isWaitForAvailable(context: GoalOperationContext): boolean {
+  const tools = context.runtime
+    .get(IAgentLifecycleService)
+    .resolve(context.runtime.agent, AgentTools);
   return (
     context.runtime.get(IFlagService).enabled(WAIT_FOR_FLAG_ID) &&
-    context.runtime.get(IAgentToolRegistryService).resolve('WaitFor') !== undefined &&
-    context.runtime.get(IAgentToolPolicyService).isToolActive('WaitFor')
+    tools.resolve('WaitFor') !== undefined &&
+    tools.isActive('WaitFor')
   );
 }
 
@@ -1271,7 +1273,7 @@ const goalEffects = fromCallback(({
     }));
     const tools = input.runtime
       .get(IAgentLifecycleService)
-      .resolve(input.runtime.agent, AgentToolExecutor);
+      .resolve(input.runtime.agent, AgentTools);
     disposables.push(tools.participateExecution('goal-approval', handlers.approval));
     disposables.push(tools.participateExecution('goal-veto', handlers.veto));
     disposables.push(tools.registerDidExecuteHook(

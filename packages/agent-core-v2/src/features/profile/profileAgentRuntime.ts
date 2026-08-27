@@ -2,7 +2,6 @@ import { assign, fromCallback, setup, type Snapshot } from 'xstate';
 
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import {
   defineAgentRuntimeContract,
@@ -122,7 +121,7 @@ const profileToolPatternWatcher = fromCallback(
       publishToolPatternWarnings(
         {
           config,
-          toolRegistry: input.get(IAgentToolRegistryService),
+          toolReferences: [],
           builtinProfiles: input.get(IBuiltinAgentProfileLoader),
         },
         input.getLogicState<ProfileActorContext>().emittedToolPatternWarnings,
@@ -629,7 +628,7 @@ export class ProfileRuntime {
     publishToolPatternWarnings(
       {
         config: this.context.get(IConfigService),
-        toolRegistry: this.context.get(IAgentToolRegistryService),
+        toolReferences: [],
         builtinProfiles: this.context.get(IBuiltinAgentProfileLoader),
       },
       this.logicState().emittedToolPatternWarnings,

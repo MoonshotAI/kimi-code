@@ -22,8 +22,7 @@ import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { Event } from '#/_base/event';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
@@ -36,6 +35,20 @@ import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
 const ZERO_USAGE = emptyUsage();
+
+class TestToolCatalog {
+  private readonly tools = new Map<string, ExecutableTool>();
+  register(tool: ExecutableTool): { dispose: () => void } {
+    this.tools.set(tool.name, tool);
+    return { dispose: () => this.tools.delete(tool.name) };
+  }
+  resolve(name: string): ExecutableTool | undefined {
+    return this.tools.get(name);
+  }
+  list(): readonly { readonly name: string; readonly source: 'builtin' }[] {
+    return [...this.tools.values()].map((tool) => ({ name: tool.name, source: 'builtin' as const }));
+  }
+}
 
 let disposables: DisposableStore;
 let telemetryEvents: TelemetryRecord[];
@@ -57,7 +70,7 @@ interface Harness {
   readonly ix: TestInstantiationService;
   readonly loop: LoopControlToken;
   readonly executor: ToolExecutorPipeline;
-  readonly registry: IAgentToolRegistryService;
+  readonly registry: TestToolCatalog;
   readonly fireBefore: (
     ctx: ResolvedToolExecutionHookContext,
   ) => Promise<BeforeExecuteDecision | undefined>;
@@ -96,7 +109,6 @@ function createHarness(
       } as unknown as IBootstrapService);
       reg.defineInstance(LoopControlToken, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
-      reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       registerToolResultTruncationServices(reg);
       registerLogServices(reg);
     },
@@ -115,7 +127,8 @@ function createHarness(
     send: () => {},
     onDidChange: Event.None,
   };
-  const executor = new ToolExecutorPipeline(context);
+  const registry = new TestToolCatalog();
+  const executor = new ToolExecutorPipeline(context, registry as never);
   const dedupe = new ToolDedupePolicy(context, executor);
   loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
     dedupe.beginStep(ctx.turnId, ctx.step);
@@ -132,7 +145,6 @@ function createHarness(
     executor.beforeExecuteBus.register('toolDedupe', dedupe.checkExecution, 'postPolicy');
     executor.didExecuteHooks.register('toolDedupe', dedupe.finalizeExecution);
   }
-  const registry = ix.get(IAgentToolRegistryService);
   return {
     ix,
     loop,

@@ -4,12 +4,15 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  IAgentToolRegistryService,
+  IFeatureManager,
+  AgentTools,
+  agentContextOf,
   getLiveSessionById,
   ISessionToolPolicy,
   IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
+import { AgentToolProviderContribution } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolContribution';
 import {
   listMcpServersResponseSchema,
   listToolsResponseSchema,
@@ -157,11 +160,25 @@ describe('server-v2 /api/v1 tools + mcp', () => {
     it('projects registered tools with source mapping and mcp server id', async () => {
       const id = await createSession();
       const agent = await ensureMainAgent(id);
-      const registry = agent.accessor.get(IAgentToolRegistryService);
+      const agentTools = getLiveSessionById(server!.core.accessor, id)!.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentTools);
+      expect(agentTools).toBeDefined();
       const schema = { type: 'object', properties: { msg: { type: 'string' } } };
-      registry.register(makeTool('Echo', schema), { source: 'builtin' });
-      registry.register(makeTool('MySkill'), { source: 'user' });
-      registry.register(makeTool('mcp__myserver__search'), { source: 'mcp' });
+      server!.core.accessor.get(IFeatureManager).provideUnit({
+        name: 'test-projected-tools',
+        apply: (fiber) =>
+          fiber.provide(AgentToolProviderContribution, {
+            agentId: agentContextOf(agent).agentId,
+            id: 'test-projected-tools',
+            snapshot: () => [
+              { tool: makeTool('Echo', schema), source: 'builtin' as const },
+              { tool: makeTool('MySkill'), source: 'user' as const },
+              { tool: makeTool('mcp__myserver__search'), source: 'mcp' as const },
+            ],
+            onDidChange: () => ({ dispose(): void {} }),
+          }),
+      });
 
       const { body } = await getJson<{ tools: ToolWire[] }>('/api/v1/tools');
       expect(body.code).toBe(0);

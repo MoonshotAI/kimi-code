@@ -177,11 +177,10 @@ import {
   IAgentPluginCommandService,
   AgentProfile,
   AgentSkill,
+  AgentTools,
   IAgentSwarmService,
   IAgentTaskService,
   ISessionTokenCountingService,
-  IAgentToolPolicyService,
-  IAgentToolRegistryService,
   IAgentTowerService,
   IBootstrapService,
   IConfigService,
@@ -1092,11 +1091,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .get(IAgentLifecycleService)
       .resolve(agentContextOf(agent), AgentProfile)
       .data();
-    const toolPolicy = agent.accessor.get(IAgentToolPolicyService);
-    const tools = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => ({
+    const agentTools = agent.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(agent), AgentTools);
+    const tools = agentTools.availableTools().map((tool) => ({
       name: tool.name,
       description: tool.description,
-      active: toolPolicy.isToolActive(tool.name, tool.source),
+      active: agentTools.isActive(tool.name, tool.source),
       source: tool.source,
     }));
     return {

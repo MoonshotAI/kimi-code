@@ -7,6 +7,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { TurnEnded } from '#/features/loop/turnOps';
 
+import { ToolCatalog } from '#/features/toolExecutor/internal/catalog';
 import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
 import {
   PERMISSION_GATE_PARTICIPANT,
@@ -15,13 +16,50 @@ import {
 import { ToolExecutionPermissionPolicyChain } from '#/features/toolExecutor/internal/permissionPolicy';
 import { ToolExecutionPermissionGatePolicy } from '#/features/toolExecutor/internal/permissionGate';
 import { ToolDedupePolicy } from '#/features/toolExecutor/internal/toolDedupe';
+import { AgentToolsPolicy } from '#/features/toolExecutor/internal/toolPolicy';
+import { SELECT_TOOLS_TOOL_NAME } from '#/features/toolExecutor/toolSelection';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { AgentToolsSelection } from '#/features/toolExecutor/internal/selection';
+import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
+import { McpToolProvider } from '#/features/toolExecutor/internal/mcpToolProvider';
 
 export class ToolExecutorDomain {
+  readonly catalog: ToolCatalog;
+  readonly policy: AgentToolsPolicy;
   readonly pipeline: ToolExecutorPipeline;
+  readonly selection: AgentToolsSelection;
+  readonly mcp: McpToolProvider;
   readonly dedupe: ToolDedupePolicy;
 
   constructor(readonly runtime: AgentRuntimeContext<unknown>) {
-    this.pipeline = new ToolExecutorPipeline(runtime);
+    this.policy = new AgentToolsPolicy(runtime);
+    this.catalog = new ToolCatalog(runtime, {
+      get: (id) => runtime.get(id),
+      enabled: () => this.selection.enabled(),
+      load: (names) => this.selection.load(names),
+      isActive: (name, source) => this.policy.isActive(name, source),
+      isActiveForProfile: (profile, name, source) =>
+        this.policy.isActiveForProfile(profile, name, source),
+      contributions: () => runtime.get(IAgentToolContributionSource).view.items,
+      resolve: (name) => this.catalog.resolve(name),
+      listReferences: () => this.catalog.listReferences(),
+    }, (record) => {
+      const required = record.options.requiredRuntimeCapabilities;
+      const runtimeAllowed = required === undefined || runtime.get(IAgentRuntimeService).isAvailable(required);
+      return runtimeAllowed && this.policy.isActive(
+        record.options.name,
+        record.options.source ?? 'builtin',
+      );
+    });
+    this.pipeline = new ToolExecutorPipeline(runtime, this.catalog);
+    this.selection = new AgentToolsSelection(runtime, this.catalog, this.policy, this.pipeline);
+    this.mcp = new McpToolProvider(runtime, this.catalog, this.pipeline);
+    this.pipeline.registerToolCallGuard(({ name, source }) => {
+      const active = name === SELECT_TOOLS_TOOL_NAME
+        ? this.policy.isActiveForDisclosure(name, source)
+        : this.policy.isActive(name, source);
+      return active ? undefined : `Tool "${name}" is disabled by the active tool policy`;
+    });
     const policyChain = new ToolExecutionPermissionPolicyChain(
       runtime.get(IInstantiationService),
     );
@@ -38,6 +76,7 @@ export class ToolExecutorDomain {
 export const toolExecutorEffects = fromCallback(
   ({ input }: { input: ToolExecutorDomain }) => {
     const loop = input.runtime.get(LoopControlToken);
+    input.catalog.activateContributions();
     const disposables: IDisposable[] = [
       input.runtime.get(IEventBus).subscribe(TurnEnded, () => {
         input.dedupe.clearTurnRecords();
@@ -55,6 +94,9 @@ export const toolExecutorEffects = fromCallback(
       for (let index = disposables.length - 1; index >= 0; index -= 1) {
         disposables[index]!.dispose();
       }
+      input.mcp.dispose();
+      input.selection.dispose();
+      input.catalog.dispose();
     };
   },
 );

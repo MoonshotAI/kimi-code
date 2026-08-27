@@ -16,7 +16,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
@@ -100,7 +100,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     );
   }
 
-  private registerPlanGuard(executor: ToolExecutorRuntime): IDisposable {
+  private registerPlanGuard(executor: AgentToolsRuntime): IDisposable {
     return executor.participateExecution('plan', (event) => this.guardToolExecution(event));
   }
 

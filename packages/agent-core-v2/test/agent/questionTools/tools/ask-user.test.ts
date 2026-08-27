@@ -13,7 +13,6 @@ import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQues
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import {
   ISessionQuestionService,
   type QuestionRequest,
@@ -24,6 +23,7 @@ import type {
   QuestionTaskInfo,
 } from '#/agent/tools/ask-user-question/question-background-task';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
+import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 
 const signal = new AbortController().signal;
 const TASK_TOOLS = new Set(['TaskList', 'TaskOutput', 'TaskStop']);
@@ -95,14 +95,25 @@ function makeTool(
       reg.definePartialInstance(ITelemetryService, { track2: telemetryTrack });
       reg.definePartialInstance(IAgentTaskService, { registerTask, getTask });
       reg.definePartialInstance(IAgentScopeContext, { agentId: 'main' });
-      reg.definePartialInstance(IAgentToolPolicyService, {
-        isToolActive: (name: string) => activeTaskTools.has(name),
-      });
-      reg.define(IAskUserQuestionTool, AskUserQuestionTool);
     },
     strict: true,
   });
-  const tool = ix.get(IAskUserQuestionTool);
+  const tool = new AskUserQuestionTool(
+    ix.get(ISessionQuestionService),
+    ix.get(ITelemetryService),
+    ix.get(IAgentTaskService),
+    ix.get(IAgentScopeContext),
+    {
+      get: (id) => ix.get(id),
+      enabled: () => true,
+      load: () => ({ toLoad: [], alreadyAvailable: [], unknown: [] }),
+      isActive: (name) => activeTaskTools.has(name),
+      isActiveForProfile: () => true,
+      contributions: () => [],
+      resolve: () => undefined,
+      listReferences: () => [],
+    } satisfies AgentToolFactoryContext,
+  );
   return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
 }
 

@@ -31,8 +31,6 @@ import { Event } from '#/_base/event';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
@@ -47,10 +45,24 @@ type ToolExecutorEvent =
 
 type ProtocolEvent = ToolCallStarted | ToolProgress | ToolResultEvent;
 
+class TestToolCatalog {
+  private readonly tools = new Map<string, { readonly tool: ExecutableTool; readonly source: 'builtin' | 'mcp' | 'user' }>();
+  register(tool: ExecutableTool, options: { readonly source?: 'builtin' | 'mcp' | 'user' } = {}): { dispose: () => void } {
+    this.tools.set(tool.name, { tool, source: options.source ?? 'builtin' });
+    return { dispose: () => this.tools.delete(tool.name) };
+  }
+  resolve(name: string): ExecutableTool | undefined {
+    return this.tools.get(name)?.tool;
+  }
+  list(): readonly { readonly name: string; readonly source: 'builtin' | 'mcp' | 'user' }[] {
+    return [...this.tools.values()].map(({ tool, source }) => ({ name: tool.name, source }));
+  }
+}
+
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let pipeline: ToolExecutorPipeline;
-let registry: IAgentToolRegistryService;
+let registry: TestToolCatalog;
 let events: ToolExecutorEvent[];
 let protocolEvents: ProtocolEvent[];
 let telemetryEvents: TelemetryRecord[];
@@ -66,7 +78,6 @@ beforeEach(() => {
     additionalServices: (reg) => {
       registerStateServices(reg);
       registerTestAgentWireServices(reg, 'wire/tool-executor');
-      reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
       reg.defineInstance(IAgentToolResultTruncationService, {
@@ -98,8 +109,8 @@ beforeEach(() => {
     send: () => {},
     onDidChange: Event.None,
   };
-  pipeline = new ToolExecutorPipeline(context);
-  registry = ix.get(IAgentToolRegistryService);
+  registry = new TestToolCatalog();
+  pipeline = new ToolExecutorPipeline(context, registry as never);
 });
 
 let hookSeq = 0;

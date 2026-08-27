@@ -1,6 +1,5 @@
-import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Disposable } from '#/_base/di/lifecycle';
+import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
@@ -10,67 +9,57 @@ import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { CompactionCompleted } from '#/features/fullCompaction/fullCompactionEvents';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-
+import type { ToolCatalog } from '#/features/toolExecutor/internal/catalog';
+import type { AgentToolsPolicy } from '#/features/toolExecutor/internal/toolPolicy';
+import type { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
 import {
   collectLoadedDynamicToolNames,
   foldAnnouncedToolNames,
   renderLoadableToolsAnnouncement,
   stripDynamicToolContext,
-} from './dynamicTools';
-import { TOOL_SELECT_FLAG_ID } from './flag';
+} from '#/agent/toolSelect/dynamicTools';
+import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import {
-  IAgentToolSelectService,
   SELECT_TOOLS_TOOL_NAME,
   type LoadToolsResult,
   type ShapedToolEntry,
-} from './toolSelect';
+} from '#/features/toolExecutor/toolSelection';
 
 export const toolSelectPendingLoadedKey = defineState<Set<string>>(
   'toolSelect.pendingLoaded',
   () => new Set(),
 );
 
-export class AgentToolSelectService extends Service implements IAgentToolSelectService {
-  declare readonly _serviceBrand: undefined;
-
+export class AgentToolsSelection extends Disposable {
   private readonly context: ContextMemoryRuntime;
+  private readonly manager: IAgentLifecycleService;
+  private readonly flags: IFlagService;
+  private readonly states: IAgentStateService;
 
   constructor(
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IFlagService private readonly flags: IFlagService,
-    @IEventBus eventBus: IEventBus,
-    @IAgentStateService private readonly states: IAgentStateService,
+    private readonly runtime: AgentRuntimeContext<unknown>,
+    private readonly toolRegistry: ToolCatalog,
+    private readonly toolPolicy: AgentToolsPolicy,
+    pipeline: ToolExecutorPipeline,
   ) {
     super();
-    this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
+    this.manager = runtime.get(IAgentLifecycleService);
+    this.flags = runtime.get(IFlagService);
+    this.states = runtime.get(IAgentStateService);
+    this.context = this.manager.resolve(runtime.agent, AgentContextMemory);
     this.states.contributeState(toolSelectPendingLoadedKey);
+    this._register(pipeline.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)));
+    this._register(pipeline.registerMissingToolDescriber((name) => this.describeMissingTool(name)));
     this._register(
-      activateToolExecutorWhenReady(this.manager, this.scopeContext, (executor) =>
-        executor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
-      ),
-    );
-    this._register(
-      activateToolExecutorWhenReady(this.manager, this.scopeContext, (executor) =>
-        executor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
-      ),
-    );
-    this._register(
-      eventBus.subscribe(CompactionCompleted, () => {
+      runtime.get(IEventBus).subscribe(CompactionCompleted, () => {
         this.pendingLoaded.clear();
       }),
     );
     this._register(
-      eventBus.subscribe(ContextSpliced, (splice) => {
+      runtime.get(IEventBus).subscribe(ContextSpliced, (splice) => {
         if (splice.deleteCount === 0 || splice.messages.length > 0) return;
         this.dropPendingLoadedNotLanded();
       }),
@@ -82,7 +71,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private profile(): ProfileRuntime {
-    return this.manager.resolve(this.scopeContext.agentContext, AgentProfile);
+    return this.manager.resolve(this.runtime.agent, AgentProfile);
   }
 
   private dropPendingLoadedNotLanded(): void {
@@ -211,7 +200,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       .filter(
         (info) =>
           this.isDynamicallyLoadable(info) &&
-          this.toolPolicy.isToolActive(info.name, info.source),
+          this.toolPolicy.isActive(info.name, info.source),
       )
       .map((info) => info.name)
       .toSorted((a, b) => a.localeCompare(b));
@@ -241,10 +230,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (info !== undefined) {
       return (
         this.isDynamicallyLoadable(info) &&
-        this.toolPolicy.isToolActive(name, info.source)
+        this.toolPolicy.isActive(name, info.source)
       );
     }
-    if (isMcpToolName(name)) return this.toolPolicy.isToolActive(name, 'mcp');
+    if (isMcpToolName(name)) return this.toolPolicy.isActive(name, 'mcp');
     return false;
   }
 
@@ -304,10 +293,10 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i]!;
       const active =
-        this.toolPolicy.isToolActive(entry.name, entry.source) ||
+        this.toolPolicy.isActive(entry.name, entry.source) ||
         (disclosure &&
           entry.name === SELECT_TOOLS_TOOL_NAME &&
-          this.toolPolicy.isToolActiveForDisclosure(entry.name, entry.source));
+          this.toolPolicy.isActiveForDisclosure(entry.name, entry.source));
       const keep = active && (disclosure || entry.name !== SELECT_TOOLS_TOOL_NAME);
       if (keep) {
         if (filtered !== undefined) filtered.push(entry);
@@ -333,10 +322,3 @@ function inactiveLoadedToolOutput(name: string): string {
   );
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentToolSelectService,
-  AgentToolSelectService,
-  ScopeActivation.OnScopeCreated,
-  'toolSelect',
-);

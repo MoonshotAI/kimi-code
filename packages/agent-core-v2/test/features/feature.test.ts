@@ -134,7 +134,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     const toolView = collectionViewOf(agentOne, AgentToolContribution);
     expect(toolView.items).toHaveLength(1);
     expect(toolView.items[0]!.options.name).toBe('TestTool');
-    expect(agentOne.accessor.get(ITestTool).name).toBe('TestTool');
 
     await manager.unprovideUnit('test-feature');
     await host.app.instantiation.cascade.whenIdle();
@@ -146,7 +145,6 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     expect(profileView.items).toHaveLength(0);
     expect(toolView.items).toHaveLength(0);
     expect(() => agentOne.accessor.get(IGreeter)).toThrow();
-    expect(() => agentOne.accessor.get(ITestTool)).toThrow();
 
     host.dispose();
   });

@@ -46,8 +46,7 @@ import type {
 } from '#/features/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -312,7 +311,6 @@ describe('AgentSwarmService', () => {
     const loop = stubLoopWithHooks();
     ix.stub(LoopControlToken, loop);
     ix.set(IAgentStateService, new AgentStateService());
-    ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     let provider: ContextInjectionProvider | undefined;
     const reminder = createReminderStub({
       register: (_variant, value) => {

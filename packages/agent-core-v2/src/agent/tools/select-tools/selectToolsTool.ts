@@ -1,7 +1,10 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
-import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
-import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import {
+  registerAgentToolService,
+  type AgentToolFactoryContext,
+} from '#/agent/toolRegistry/toolContribution';
+import { SELECT_TOOLS_TOOL_NAME } from '#/features/toolExecutor/toolSelection';
 
 import {
   ISelectToolsTool,
@@ -22,22 +25,20 @@ export class SelectToolsTool implements ISelectToolsTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SelectToolsInputSchema);
 
-  constructor(
-    @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-  ) {}
+  constructor(private readonly tools: AgentToolFactoryContext) {}
 
   resolveExecution(args: SelectToolsInput): ToolExecution {
     return {
       description: `Loading ${args.names.join(', ')}`,
       approvalRule: this.name,
       execute: async () => {
-        if (!this.toolSelect.enabled()) {
+        if (!this.tools.enabled()) {
           return {
             output: 'select_tools is not available for the current model.',
             isError: true,
           };
         }
-        const { toLoad, alreadyAvailable, unknown } = this.toolSelect.load(args.names);
+        const { toLoad, alreadyAvailable, unknown } = this.tools.load(args.names);
 
         const lines: string[] = [];
         if (toLoad.length > 0) lines.push(`Loaded: ${toLoad.join(', ')}`);
@@ -54,4 +55,8 @@ export class SelectToolsTool implements ISelectToolsTool {
   }
 }
 
-registerAgentToolService(ISelectToolsTool, SelectToolsTool, { name: SELECT_TOOLS_TOOL_NAME, domain: 'toolSelect' });
+registerAgentToolService(ISelectToolsTool, SelectToolsTool, {
+  name: SELECT_TOOLS_TOOL_NAME,
+  domain: 'toolSelect',
+  create: (context) => new SelectToolsTool(context),
+});

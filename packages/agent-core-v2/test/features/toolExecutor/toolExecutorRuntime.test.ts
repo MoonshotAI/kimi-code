@@ -6,13 +6,9 @@ import type {
   ExecutableToolContext,
   ToolExecution,
 } from '#/tool/toolContract';
-import {
-  AgentToolExecutor,
-  type ToolExecutorRuntime,
-} from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { ToolExecutionFinishedEvent } from '#/features/toolExecutor/toolExecutor';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
@@ -38,9 +34,9 @@ function echoCall(id: string, text: string): ToolCall {
   return { type: 'function', id, name: 'Echo', arguments: JSON.stringify({ text }) };
 }
 
-describe('ToolExecutorRuntime (AgentToolExecutor)', () => {
+describe('AgentToolsRuntime (AgentTools)', () => {
   let ctx: TestAgentContext;
-  let executor: ToolExecutorRuntime;
+  let executor: AgentToolsRuntime;
 
   afterEach(async () => {
     await ctx?.dispose();
@@ -49,8 +45,8 @@ describe('ToolExecutorRuntime (AgentToolExecutor)', () => {
   async function setup(): Promise<void> {
     ctx = createTestAgent();
     await ctx.rpc.setPermission({ mode: 'yolo' });
-    executor = ctx.resolve(AgentToolExecutor);
-    ctx.get(IAgentToolRegistryService).register(new EchoTool());
+    executor = ctx.resolve(AgentTools);
+    ctx.provideTool(new EchoTool());
   }
 
   it('resolves through the lifecycle and executes a registered tool end-to-end', async () => {
@@ -127,7 +123,7 @@ describe('ToolExecutorRuntime (AgentToolExecutor)', () => {
     const snapshot = ctx
       .get(IAgentLifecycleService)
       .inspect(ctx.agentContext);
-    const contribution = snapshot.contributions.find((entry) => entry.id === 'toolExecutor');
+    const contribution = snapshot.contributions.find((entry) => entry.id === 'tools');
     expect(contribution?.state).toEqual({
       veto: [
         'externalHooks',

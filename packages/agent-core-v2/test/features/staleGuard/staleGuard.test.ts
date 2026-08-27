@@ -11,7 +11,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -48,7 +48,7 @@ interface CapturedHooks {
   readonly did: ((ctx: ToolDidExecuteContext, next: () => Promise<void>) => Promise<void>)[];
 }
 
-function stubToolExecutor(captured: CapturedHooks): ToolExecutorRuntime {
+function stubToolExecutor(captured: CapturedHooks): AgentToolsRuntime {
   return {
     participateExecution: (_name: string, listener: (event: BeforeToolExecuteEvent) => unknown) => {
       captured.before.push(listener);
@@ -61,7 +61,7 @@ function stubToolExecutor(captured: CapturedHooks): ToolExecutorRuntime {
       captured.did.push(handler);
       return toDisposable(() => {});
     },
-  } as unknown as ToolExecutorRuntime;
+  } as unknown as AgentToolsRuntime;
 }
 
 let activeFs: IHostFileSystem;

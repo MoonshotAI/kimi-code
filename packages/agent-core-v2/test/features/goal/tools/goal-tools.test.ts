@@ -16,9 +16,8 @@ import { UpdateGoalTool } from '#/features/goal/tools/update-goal/updateGoalTool
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
-import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/features/loop/turnEvents';
 
@@ -39,7 +38,7 @@ describe('goal tools', () => {
   let goals: GoalRuntime;
   let loopService: LoopControlToken;
   let eventBus: IEventBus;
-  let toolExecutor: ToolExecutorRuntime;
+  let toolExecutor: AgentToolsRuntime;
   let setGoalBudgetTool: SetGoalBudgetTool;
   let updateGoalTool: UpdateGoalTool;
 
@@ -53,7 +52,7 @@ describe('goal tools', () => {
     goals = ctx.resolve(AgentGoal);
     void ctx.restoreRuntimes();
     eventBus = ctx.get(IEventBus);
-    toolExecutor = ctx.resolve(AgentToolExecutor);
+    toolExecutor = ctx.resolve(AgentTools);
     const manager = { resolve: () => goals } as unknown as IAgentLifecycleService;
     const scope = ctx.get(IAgentScopeContext);
     setGoalBudgetTool = new SetGoalBudgetTool(manager, scope);
@@ -67,7 +66,7 @@ describe('goal tools', () => {
   it('CreateGoal does not apply a delayed execution to a replacement goal', async () => {
     await goals.createGoal({ objective: 'old task' });
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 6, origin: USER_PROMPT_ORIGIN }));
-    const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
+    const tool = ctx.resolve(AgentTools).resolve('CreateGoal');
     if (tool === undefined) throw new Error('CreateGoal should be registered');
     const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
     if (execution.isError === true) throw new Error('execution should not be an error');
@@ -88,7 +87,7 @@ describe('goal tools', () => {
 
   it('CreateGoal does not apply a no-goal execution to an externally created goal', async () => {
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 7, origin: USER_PROMPT_ORIGIN }));
-    const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
+    const tool = ctx.resolve(AgentTools).resolve('CreateGoal');
     if (tool === undefined) throw new Error('CreateGoal should be registered');
     const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
     if (execution.isError === true) throw new Error('execution should not be an error');

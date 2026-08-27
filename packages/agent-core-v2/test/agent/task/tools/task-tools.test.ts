@@ -14,7 +14,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { TaskListInputSchema } from '#/agent/tools/task/task-list/task-list';
 import { TaskListTool } from '#/agent/tools/task/task-list/taskListTool';
 import { TaskOutputInputSchema } from '#/agent/tools/task/task-output/task-output';
@@ -1143,7 +1143,7 @@ describe('WaitForTool (harness)', () => {
     );
     try {
       const tasks = ctx.get(IAgentTaskService);
-      const tool = ctx.get(IAgentToolRegistryService).resolve('WaitFor');
+      const tool = ctx.resolve(AgentTools).resolve('WaitFor');
       expect(tool).toBeDefined();
 
       const slow = controllableProcess();
@@ -1180,7 +1180,7 @@ describe('WaitForTool (harness)', () => {
     const ctx = createTestAgent();
     try {
       const tasks = ctx.get(IAgentTaskService);
-      const tool = ctx.get(IAgentToolRegistryService).resolve('WaitFor');
+      const tool = ctx.resolve(AgentTools).resolve('WaitFor');
       expect(tool).toBeDefined();
 
       const slow = controllableProcess();
@@ -1222,7 +1222,7 @@ describe('WaitForTool (harness)', () => {
     const ctx = createTestAgent();
     try {
       const tasks = ctx.get(IAgentTaskService);
-      const tool = ctx.get(IWaitForTool);
+      const tool = ctx.resolve(AgentTools).resolve('WaitFor');
       const taskId = tasks.registerTask(
         new SubagentTask(
           {
@@ -1235,7 +1235,7 @@ describe('WaitForTool (harness)', () => {
         ),
       );
 
-      const result = await executeTool(tool, context('wait_hang', { timeout: 1, task_id: taskId }));
+      const result = await executeTool(tool!, context('wait_hang', { timeout: 1, task_id: taskId }));
       const output = outputString(result);
 
       expect(result.isError ?? false).toBe(false);

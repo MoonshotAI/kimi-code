@@ -28,7 +28,7 @@ import {
 } from '#/features/skill/tools/skill';
 import { SkillTool } from '#/features/skill/tools/skillTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { Turn } from '#/features/loop/internal/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from './catalog/stubs';
@@ -152,9 +152,6 @@ describe('SkillRuntime', () => {
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
-        reg.definePartialInstance(IAgentToolRegistryService, {
-          register: () => ({ dispose: () => {} }),
-        });
         reg.definePartialInstance(ISessionMetadata, {
           read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
           update: async () => {},
@@ -234,9 +231,6 @@ describe('SkillTool', () => {
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
-        reg.definePartialInstance(IAgentToolRegistryService, {
-          register: () => ({ dispose: () => {} }),
-        });
         reg.definePartialInstance(ISessionMetadata, {
           read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
           update: async () => {},

@@ -24,9 +24,8 @@ import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type ProfileModelContext } from '#/features/profile/profile';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
-import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentTodo, type TodoRuntime } from '#/features/todo/todoAgentRuntime';
 import { renderTodoList } from '#/features/todo/todoItem';
@@ -300,8 +299,9 @@ export class FullCompactionDomain {
 
   private defaultTools(): readonly Tool[] {
     return this.runtime
-      .get(IAgentToolSelectService)
-      .shapeTools(this.runtime.get(IAgentToolRegistryService).list())
+      .get(IAgentLifecycleService)
+      .resolve(this.runtime.agent, AgentTools)
+      .toolsForModel()
       .map((tool) => ({
         name: tool.name,
         description: tool.description,

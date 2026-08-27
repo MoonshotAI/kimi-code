@@ -1,9 +1,10 @@
 import {
+  AgentTools,
   ErrorCodes,
-  IAgentMcpService,
+  IAgentLifecycleService,
   ISessionIndex,
-  IAgentToolRegistryService,
-  IAgentToolPolicyService,
+  ISessionMcpHandle,
+  agentContextOf,
   getLiveSessionById,
   Error2,
   type Scope,
@@ -27,7 +28,7 @@ import { parseActionSuffix } from './action-suffix';
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
 
-type McpEntry = ReturnType<IAgentMcpService['list']>[number];
+type McpEntry = ReturnType<ISessionMcpHandle['connectionManager']['list']>[number];
 
 interface ToolsRouteHost {
   get(
@@ -64,11 +65,12 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
         reply.send(okEnvelope({ tools: [] }, req.id));
         return;
       }
-      const registry = agent.accessor.get(IAgentToolRegistryService);
-      const policy = agent.accessor.get(IAgentToolPolicyService);
-      const tools = registry
-        .list()
-        .map((info) => toProtocolTool(info, policy.isToolActive(info.name, info.source)));
+      const agentTools = agent.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agentContextOf(agent), AgentTools);
+      const tools = agentTools
+        .availableTools()
+        .map((info) => toProtocolTool(info, agentTools.isActive(info.name, info.source)));
       reply.send(okEnvelope({ tools }, req.id));
     },
   );
@@ -91,7 +93,10 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       const servers =
         agent === undefined
           ? []
-          : agent.accessor.get(IAgentMcpService).list().map(toProtocolMcpServer);
+          : agent.accessor
+              .get(ISessionMcpHandle)
+              .connectionManager.list()
+              .map(toProtocolMcpServer);
       reply.send(okEnvelope({ servers }, req.id));
     },
   );
@@ -136,7 +141,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
         reply.send(mcpServerNotFound(parsed.id, req.id));
         return;
       }
-      const mcp = agent.accessor.get(IAgentMcpService);
+      const mcp = agent.accessor.get(ISessionMcpHandle).connectionManager;
       if (!mcp.list().some((entry) => entry.name === parsed.id)) {
         reply.send(mcpServerNotFound(parsed.id, req.id));
         return;

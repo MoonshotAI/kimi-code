@@ -63,8 +63,8 @@
 //     loop.lastRequestTraceId                 src/features/loop/internal/loopLogic.ts
 //     loop.nextReservedTurnId                 src/features/loop/internal/loopLogic.ts
 //     mcp.discovery                           src/agent/mcp/mcpDiscoveryOps.ts
-//     mcp.discoveryWritesReady                src/agent/mcp/mcpService.ts
-//     mcp.mcpToolsByServer                    src/agent/mcp/mcpService.ts
+//     mcp.discoveryWritesReady                src/features/toolExecutor/internal/mcpToolProvider.ts
+//     mcp.mcpToolsByServer                    src/features/toolExecutor/internal/mcpToolProvider.ts
 //     media.registeredKey                     src/agent/media/mediaToolsRegistrar.ts
 //     media.resolved                          src/agent/media/mediaResolverService.ts
 //     plan                                    src/features/plan/planOps.ts
@@ -83,7 +83,7 @@
 //     task.ghosts                             src/agent/task/taskService.ts
 //     task.notificationDelivery               src/agent/task/taskService.ts
 //     task.scheduledNotificationKeys          src/agent/task/taskService.ts
-//     toolSelect.pendingLoaded                src/agent/toolSelect/toolSelectService.ts
+//     toolSelect.pendingLoaded                src/features/toolExecutor/internal/selection.ts
 //     tower                                   src/features/tower/towerOps.ts
 //     tower.owner                             src/features/tower/towerOps.ts
 //     userTool                                src/agent/userTool/userToolOps.ts
@@ -973,9 +973,6 @@ export interface AgentStateSnapshot {
   'mcp.discovery': /* McpDiscoveryState — packages/agent-core-v2/src/agent/mcp/mcpDiscoveryOps.ts */ {
     readonly seen: readonly string[];
   };
-  // src/agent/mcp/mcpService.ts
-  'mcp.discoveryWritesReady': boolean;
-  'mcp.mcpToolsByServer': Map<string, string[]>;
   // src/agent/media/mediaResolverService.ts
   'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/kosong/contract/message.ts */ /* TextPart — packages/agent-core-v2/src/kosong/contract/message.ts */ {
     type: 'text';
@@ -1125,8 +1122,6 @@ export interface AgentStateSnapshot {
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
   'task.notificationDelivery': readonly string[];
   'task.scheduledNotificationKeys': Set<string>;
-  // src/agent/toolSelect/toolSelectService.ts
-  'toolSelect.pendingLoaded': Set<string>;
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
@@ -1156,6 +1151,11 @@ export interface AgentStateSnapshot {
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
   'swarm': 'task' | 'manual' | 'tool' | null;
+  // src/features/toolExecutor/internal/mcpToolProvider.ts
+  'mcp.discoveryWritesReady': boolean;
+  'mcp.mcpToolsByServer': Map<string, string[]>;
+  // src/features/toolExecutor/internal/selection.ts
+  'toolSelect.pendingLoaded': Set<string>;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;

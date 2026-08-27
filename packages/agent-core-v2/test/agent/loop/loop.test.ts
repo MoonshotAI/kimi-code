@@ -21,7 +21,7 @@ import {
 import { TurnEnded } from '#/features/loop/turnOps';
 import { RetryStepRequest } from '#/features/prompt/internal/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
 import { userCancellationReason } from '#/_base/utils/abort';
 
@@ -340,7 +340,7 @@ describe('Agent loop', () => {
     };
 
     profile.update({ activeToolNames: ['Lookup'] });
-    ctx.get(IAgentToolRegistryService).register(lookupTool);
+    ctx.provideTool(lookupTool);
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
@@ -445,7 +445,7 @@ describe('Agent loop', () => {
     };
 
     profile.update({ activeToolNames: ['Lookup'] });
-    ctx.get(IAgentToolRegistryService).register(lookupTool);
+    ctx.provideTool(lookupTool);
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, sigCall);
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
@@ -528,7 +528,7 @@ describe('Agent loop', () => {
       }),
     };
     profile.update({ activeToolNames: ['Lookup'] });
-    ctx.get(IAgentToolRegistryService).register(lookupTool);
+    ctx.provideTool(lookupTool);
 
     loop.hooks.onDidFinishStep.register('test-stop-turn', async (hookCtx, next) => {
       hookCtx.stopTurn = true;
@@ -1633,7 +1633,7 @@ function registerAbortableWorkTool(ctx: TestAgentContext): ReturnType<typeof def
     }),
   };
   ctx.resolve(AgentProfile).update({ activeToolNames: ['Work'] });
-  ctx.get(IAgentToolRegistryService).register(tool);
+  ctx.provideTool(tool);
   return slowToolStarted;
 }
 

@@ -32,10 +32,9 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import type { PermissionMode, PermissionPolicyResult } from '#/features/toolExecutor/permissionTypes';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
@@ -252,14 +251,16 @@ async function recordStepUsage(
 }
 
 async function runTerminalUpdateGoalResult(
-  toolExecutor: ToolExecutorRuntime,
-  registry: IAgentToolRegistryService,
+  toolExecutor: AgentToolsRuntime,
+  registry: AgentToolsRuntime,
   turn: Turn,
   status: 'complete' | 'blocked',
   output: string,
   mark?: () => Promise<void>,
+  context?: TestAgentContext,
 ): Promise<void> {
-  registry.register({
+  void registry;
+  context?.provideTool({
     name: 'UpdateGoal',
     description: 'Scripted UpdateGoal for tests.',
     parameters: { type: 'object', additionalProperties: true },
@@ -281,7 +282,7 @@ async function runTerminalUpdateGoalResult(
 }
 
 async function executeToolCall(
-  toolExecutor: ToolExecutorRuntime,
+  toolExecutor: AgentToolsRuntime,
   turn: Turn,
   toolCall: ToolCall,
 ): Promise<ToolExecutionResult[]> {
@@ -527,7 +528,7 @@ describe('AgentGoalService', () => {
 
     it('forbids model-driven goal pauses', async () => {
       await goals.createGoal({ objective: 'work' });
-      const tool = ctx.get(IAgentToolRegistryService).resolve('UpdateGoal');
+      const tool = ctx.resolve(AgentTools).resolve('UpdateGoal');
       if (tool === undefined) throw new Error('UpdateGoal should be registered');
 
       for (const status of ['active', 'complete', 'blocked']) {
@@ -808,7 +809,7 @@ describe('AgentGoalService goal-start review', () => {
     agentCtx: TestAgentContext,
     hookCtx: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
-    const runtime = agentCtx.resolve(AgentToolExecutor);
+    const runtime = agentCtx.resolve(AgentTools);
     const domain = (runtime as unknown as { domain: ToolExecutorDomain }).domain;
     return domain.pipeline.beforeExecuteBus.fireBeforeExecute(hookCtx);
   }
@@ -859,7 +860,7 @@ describe('AgentGoalService core workflow hooks', () => {
   let context: ContextMemoryRuntime;
   let goals: GoalRuntime;
   let loopService: StubLoop;
-  let toolExecutor: ToolExecutorRuntime;
+  let toolExecutor: AgentToolsRuntime;
   let usageService: TestAgentContext['usage'];
   let eventBus: IEventBus;
   let clock: ManualGoalDeadlineScheduler;
@@ -874,7 +875,7 @@ describe('AgentGoalService core workflow hooks', () => {
     applyPermissionMode(ctx, 'auto');
     context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal);
-    toolExecutor = ctx.resolve(AgentToolExecutor);
+    toolExecutor = ctx.resolve(AgentTools);
     usageService = ctx.usage;
     eventBus = ctx.get(IEventBus);
   });
@@ -1090,7 +1091,7 @@ describe('AgentGoalService core workflow hooks', () => {
     eventBus.publish(new TurnStarted({ agentId: 'main', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN }));
     const replacement = await goals.createGoal({ objective: 'new task', replace: true });
 
-    await runTerminalUpdateGoalResult(toolExecutor, ctx!.get(IAgentToolRegistryService), oldTurn, 'complete', 'old outcome');
+    await runTerminalUpdateGoalResult(toolExecutor, ctx!.resolve(AgentTools), oldTurn, 'complete', 'old outcome', undefined, ctx!);
     await loopService.hooks.onDidFinishStep.run({
       turnId: oldTurn.id,
       step: 1,
@@ -1425,7 +1426,7 @@ describe('AgentGoalService core workflow hooks', () => {
       signal: turn.signal,
     });
     await goals.markBlocked({}, 'model');
-    await runTerminalUpdateGoalResult(toolExecutor, ctx!.get(IAgentToolRegistryService), turn, 'blocked', 'outcome prompt');
+    await runTerminalUpdateGoalResult(toolExecutor, ctx!.resolve(AgentTools), turn, 'blocked', 'outcome prompt', undefined, ctx!);
 
     const afterStep: AfterStepContext = {
       turnId: turn.id,
@@ -1570,7 +1571,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
     await runTerminalUpdateGoalResult(
       toolExecutor,
-      ctx!.get(IAgentToolRegistryService),
+      ctx!.resolve(AgentTools),
       turn,
       'complete',
       'outcome prompt',
@@ -1976,7 +1977,7 @@ describe('AgentGoalService hard wall-clock deadline', () => {
     );
     applyPermissionMode(ctx, 'yolo');
     try {
-      ctx.get(IAgentToolRegistryService).register(tool);
+      ctx.provideTool(tool);
       ctx.configure({ tools: ['SlowWork'] });
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
       await ctx

@@ -17,11 +17,9 @@
  */
 
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
@@ -165,28 +163,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
         run: (svc, id) => call(svc, 'stop', id),
       },
       { label: 'stopAll', danger: true, run: (svc) => call(svc, 'stopAll') },
-    ],
-  },
-  {
-    id: String(IAgentToolRegistryService),
-    label: 'AgentToolRegistryService',
-    scope: 'agent',
-    fetch: async (svc) => {
-      const tools = (await call(svc, 'list')) as readonly { name?: string }[];
-      return { count: tools.length, names: tools.map((t) => t.name) };
-    },
-  },
-  {
-    id: String(IAgentMcpService),
-    label: 'AgentMcpService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'list'),
-    actions: [
-      {
-        label: 'Reconnect server',
-        input: 'Server name',
-        run: (svc, name) => call(svc, 'reconnect', name),
-      },
     ],
   },
   {

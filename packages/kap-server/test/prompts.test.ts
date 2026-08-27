@@ -11,7 +11,7 @@ import {
   IAgentLifecycleService,
   ISessionPermissionModeService,
   AgentProfile,
-  IAgentToolPolicyService,
+  AgentTools,
   IBootstrapService,
   IFileService,
   ISessionContext,
@@ -1226,25 +1226,27 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const toolPolicy = session.accessor.get(IAgentLifecycleService).handleOf('main')?.accessor
-      .get(IAgentToolPolicyService);
-    expect(toolPolicy?.isToolActive('Bash')).toBe(false);
-    expect(toolPolicy?.isToolActive('Read')).toBe(true);
+    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    const toolPolicy = main === undefined ? undefined : session.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(main), AgentTools);
+    expect(toolPolicy?.isActive('Bash')).toBe(false);
+    expect(toolPolicy?.isActive('Read')).toBe(true);
 
     const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'again' }],
       disabled_tools: ['Write'],
     });
     expect(replaced.body.code).toBe(0);
-    expect(toolPolicy?.isToolActive('Bash')).toBe(true);
-    expect(toolPolicy?.isToolActive('Write')).toBe(false);
+    expect(toolPolicy?.isActive('Bash')).toBe(true);
+    expect(toolPolicy?.isActive('Write')).toBe(false);
 
     const cleared = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'once more' }],
       disabled_tools: [],
     });
     expect(cleared.body.code).toBe(0);
-    expect(toolPolicy?.isToolActive('Write')).toBe(true);
+    expect(toolPolicy?.isActive('Write')).toBe(true);
   });
 
   it('shares disabled_tools with agents created after the request', async () => {
@@ -1267,12 +1269,12 @@ describe('server-v2 /api/v1 prompts', () => {
       },
     });
     const child = session.accessor.get(IAgentLifecycleService).list().at(-1);
+    const childHandle = session.accessor.get(IAgentLifecycleService).handleOf(child!.agentId)!;
     const childToolPolicy = session.accessor
       .get(IAgentLifecycleService)
-      .handleOf(child!.agentId)!
-      .accessor.get(IAgentToolPolicyService);
-    expect(childToolPolicy.isToolActive('Bash')).toBe(false);
-    expect(childToolPolicy.isToolActive('Read')).toBe(true);
+      .resolve(agentContextOf(childHandle), AgentTools);
+    expect(childToolPolicy.isActive('Bash')).toBe(false);
+    expect(childToolPolicy.isActive('Read')).toBe(true);
   });
 
   it('rejects disabled_tools before the agent profile is bound', async () => {
@@ -1307,9 +1309,11 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const toolPolicy = session.accessor.get(IAgentLifecycleService).handleOf('main')?.accessor
-      .get(IAgentToolPolicyService);
-    expect(toolPolicy?.isToolActive('Bash')).toBe(false);
-    expect(toolPolicy?.isToolActive('Read')).toBe(true);
+    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    const toolPolicy = main === undefined ? undefined : session.accessor
+      .get(IAgentLifecycleService)
+      .resolve(agentContextOf(main), AgentTools);
+    expect(toolPolicy?.isActive('Bash')).toBe(false);
+    expect(toolPolicy?.isActive('Read')).toBe(true);
   });
 });

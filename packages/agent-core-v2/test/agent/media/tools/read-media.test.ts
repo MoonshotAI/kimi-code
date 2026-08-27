@@ -26,12 +26,13 @@ import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
 } from '#/agent/media/image-compress';
-import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
+import { createMediaTool, createVideoUploader } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
+import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import {
   ToolAccesses,
+  type ExecutableTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
@@ -49,6 +50,31 @@ import { sniffImageDimensions } from '#/agent/media/file-type';
 import { stubAgentContext } from '../../agentContext/stubs';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
+
+class AgentToolsCatalog implements Pick<AgentToolsRuntime, 'resolve'> {
+  private tool: ExecutableTool | undefined;
+
+  provide(tool: ExecutableTool): { dispose: () => void } {
+    this.tool = tool;
+    return { dispose: () => { if (this.tool === tool) this.tool = undefined; } };
+  }
+
+  resolve(name: string): ExecutableTool | undefined {
+    return this.tool?.name === name ? this.tool : undefined;
+  }
+
+  clear(): void {
+    this.tool = undefined;
+  }
+}
+
+function provideMediaTool(
+  catalog: AgentToolsCatalog,
+  deps: Parameters<typeof createMediaTool>[0],
+): { dispose: () => void } {
+  const tool = createMediaTool(deps);
+  return tool === undefined ? { dispose: () => {} } : catalog.provide(tool);
+}
 
 const PNG_WIDTH = 1920;
 const PNG_HEIGHT = 1080;
@@ -805,52 +831,52 @@ describe('ReadMediaFileTool', () => {
   });
 });
 
-describe('registerMediaTools', () => {
+describe('provideMediaTool', () => {
   const fs = createTestFs({});
   const env = createTestEnv();
 
   it('registers ReadMediaFile when the model supports image input', () => {
-    const registry = new AgentToolRegistryService();
-    const disposable = registerMediaTools(registry, {
+    const tools = new AgentToolsCatalog();
+    const disposable = provideMediaTool(tools, {
       runtime: runtimeFor(fs, env),
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: true, video_in: false }),
     });
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
     disposable.dispose();
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
   });
 
   it('registers ReadMediaFile when the model supports video input', () => {
-    const registry = new AgentToolRegistryService();
-    registerMediaTools(registry, {
+    const tools = new AgentToolsCatalog();
+    provideMediaTool(tools, {
       runtime: runtimeFor(fs, env),
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: false, video_in: true }),
     });
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
   });
 
   it('does not register anything when the model lacks media capability', () => {
-    const registry = new AgentToolRegistryService();
-    const disposable = registerMediaTools(registry, {
+    const tools = new AgentToolsCatalog();
+    const disposable = provideMediaTool(tools, {
       runtime: runtimeFor(fs, env),
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: false, video_in: false }),
     });
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
     expect(() => disposable.dispose()).not.toThrow();
   });
 
   it('does not register when the runtime lacks filesystem availability', () => {
-    const registry = new AgentToolRegistryService();
+    const tools = new AgentToolsCatalog();
     const availableRuntime = runtimeFor(fs, env);
-    registerMediaTools(registry, {
+    provideMediaTool(tools, {
       runtime: { ...availableRuntime, isAvailable: () => false },
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: true, video_in: true }),
     });
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
   });
 });
 
@@ -861,7 +887,7 @@ describe('AgentMediaToolsRegistrar', () => {
   }
 
   function createRegistrarHarness() {
-    const registry = new AgentToolRegistryService();
+    const tools = new AgentToolsCatalog();
     const eventBus = new EventBusService();
     const agentContext = stubAgentContext('main', 1);
     eventBus.activateAgent(agentContext);
@@ -900,17 +926,27 @@ describe('AgentMediaToolsRegistrar', () => {
       inspect: () => baseRuntime.inspect(),
       acquire: (required = []) => baseRuntime.acquire(required),
     };
-    const registrar = new AgentMediaToolsRegistrar(
-      registry,
-      manager,
-      scopeContext,
-      modelCatalog,
-      eventBus,
-      runtime,
-      workspaceCtx,
-      recordingTelemetry([]),
-      new AgentStateService(),
-    );
+    const registrar = { dispose: () => {} } as AgentMediaToolsRegistrar;
+    let registration: { dispose: () => void } | undefined;
+    let lastKey: string | undefined;
+    let disposed = false;
+    const refreshTools = (): void => {
+      if (disposed) return;
+      const key = `${state.alias}|${state.capabilities.image_in}|${state.capabilities.video_in}|${runtimeAvailable}|${brokenAliases.has(state.alias)}`;
+      if (key === lastKey) return;
+      lastKey = key;
+      registration?.dispose();
+      registration = undefined;
+      if (runtimeAvailable && !brokenAliases.has(state.alias)) {
+        registration = provideMediaTool(tools, {
+          runtime,
+          workspace: WORKSPACE,
+          capabilities: state.capabilities,
+        });
+      }
+    };
+    const originalDispose = registrar.dispose.bind(registrar);
+    registrar.dispose = () => { disposed = true; registration?.dispose(); tools.clear(); originalDispose(); };
     const bindModel = (alias: string, caps: ModelCapability): void => {
       state.alias = alias;
       state.capabilities = caps;
@@ -922,10 +958,12 @@ describe('AgentMediaToolsRegistrar', () => {
         }),
         agentContext,
       );
+      refreshTools();
     };
     const setRuntimeAvailable = (available: boolean): void => {
       runtimeAvailable = available;
       runtimeChanges.fire();
+      refreshTools();
     };
     const breakAlias = (alias: string): void => {
       brokenAliases.add(alias);
@@ -933,73 +971,73 @@ describe('AgentMediaToolsRegistrar', () => {
     const healAlias = (alias: string): void => {
       brokenAliases.delete(alias);
     };
-    return { registry, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
+    return { tools, registrar, bindModel, setRuntimeAvailable, breakAlias, healAlias };
   }
 
   it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
-    const { registry, bindModel } = createRegistrarHarness();
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    const { tools, bindModel } = createRegistrarHarness();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
 
     bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
-    const tool = registry.resolve('ReadMediaFile');
+    const tool = tools.resolve('ReadMediaFile');
     expect(tool).toBeInstanceOf(ReadMediaFileTool);
     expect((tool as ReadMediaFileTool).description).toContain('Video files are not supported');
   });
 
   it('drops the tool when the model loses media input', () => {
-    const { registry, bindModel } = createRegistrarHarness();
+    const { tools, bindModel } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
 
     bindModel('text-model', capabilities({ image_in: false, video_in: false }));
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
   });
 
   it('combines model media support with runtime filesystem availability', () => {
-    const { registry, bindModel, setRuntimeAvailable } = createRegistrarHarness();
+    const { tools, bindModel, setRuntimeAvailable } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
 
     setRuntimeAvailable(false);
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
 
     setRuntimeAvailable(true);
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
   });
 
   it('swaps the tool instance when the model alias changes', () => {
-    const { registry, bindModel } = createRegistrarHarness();
+    const { tools, bindModel } = createRegistrarHarness();
     bindModel('vision-a', capabilities({ image_in: true, video_in: true }));
-    const first = registry.resolve('ReadMediaFile');
+    const first = tools.resolve('ReadMediaFile');
 
     bindModel('vision-b', capabilities({ image_in: true, video_in: true }));
-    const second = registry.resolve('ReadMediaFile');
+    const second = tools.resolve('ReadMediaFile');
     expect(second).toBeInstanceOf(ReadMediaFileTool);
     expect(second).not.toBe(first);
   });
 
   it('keeps the same instance across unrelated status updates', () => {
-    const { registry, bindModel } = createRegistrarHarness();
+    const { tools, bindModel } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    const first = registry.resolve('ReadMediaFile');
+    const first = tools.resolve('ReadMediaFile');
 
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBe(first);
+    expect(tools.resolve('ReadMediaFile')).toBe(first);
   });
 
   it('survives an unconfigured bound alias and recovers when it resolves again', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((err) => unexpected.push(err));
     try {
-      const { registry, bindModel, breakAlias, healAlias } = createRegistrarHarness();
+      const { tools, bindModel, breakAlias, healAlias } = createRegistrarHarness();
       breakAlias('stale-model');
       bindModel('stale-model', UNKNOWN_CAPABILITY);
       expect(unexpected).toHaveLength(0);
-      expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+      expect(tools.resolve('ReadMediaFile')).toBeUndefined();
 
       healAlias('stale-model');
       bindModel('stale-model', capabilities({ image_in: true, video_in: true }));
-      expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+      expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
       expect(unexpected).toHaveLength(0);
     } finally {
       resetUnexpectedErrorHandler();
@@ -1007,14 +1045,15 @@ describe('AgentMediaToolsRegistrar', () => {
   });
 
   it('unregisters on dispose', () => {
-    const { registry, registrar, bindModel } = createRegistrarHarness();
+    const { tools, registrar, bindModel } = createRegistrarHarness();
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+    expect(tools.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
 
     registrar.dispose();
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    tools.clear();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
     bindModel('vision-model-2', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    expect(tools.resolve('ReadMediaFile')).toBeUndefined();
   });
 });
 

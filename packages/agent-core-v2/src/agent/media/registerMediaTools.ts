@@ -3,10 +3,8 @@ import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
 
@@ -19,25 +17,22 @@ export interface RegisterMediaToolsDeps {
   readonly inlineVideoSupported?: boolean;
 }
 
-export function registerMediaTools(
-  toolRegistry: IAgentToolRegistryService,
+export function createMediaTool(
   deps: RegisterMediaToolsDeps,
-): IDisposable {
+): ReadMediaFileTool | undefined {
   if (
     !deps.runtime.isAvailable(['fs']) ||
     (!deps.capabilities.image_in && !deps.capabilities.video_in)
   ) {
-    return toDisposable(() => {});
+    return undefined;
   }
-  return toolRegistry.register(
-    new ReadMediaFileTool(
-      deps.runtime,
-      deps.workspace,
-      deps.capabilities,
-      deps.videoUploader,
-      deps.telemetry,
-      deps.inlineVideoSupported,
-    ),
+  return new ReadMediaFileTool(
+    deps.runtime,
+    deps.workspace,
+    deps.capabilities,
+    deps.videoUploader,
+    deps.telemetry,
+    deps.inlineVideoSupported,
   );
 }
 

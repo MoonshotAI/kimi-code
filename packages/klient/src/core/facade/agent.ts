@@ -10,7 +10,7 @@
 
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { ContextMemoryRuntime } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
-import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
+import type { McpConnectionView } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
@@ -42,7 +42,7 @@ export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>
 export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
-export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
+export type McpServerEntry = ReturnType<McpConnectionView['list']>[number];
 
 export interface AgentFacade {
   prompt(input: {

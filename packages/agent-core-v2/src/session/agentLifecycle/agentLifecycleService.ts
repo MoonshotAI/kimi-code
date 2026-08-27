@@ -37,7 +37,6 @@ import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentR
 import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
 import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import '#/agent/runtimeBinding/runtimeBindingService';
-import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { IWireService } from '#/wire/wire';
@@ -269,7 +268,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await handle.accessor.get(IEventDispatcher).restore();
       await managed!.runtimeSet.restore();
       await this.bindBootstrap(handle, opts);
-      await handle.accessor.get(IAgentToolActivationService).activate();
       return agent;
     } catch (error) {
       if (managed !== undefined) {

@@ -6,7 +6,7 @@ import {
   type FiberProvideOptions,
   type ServiceClassRecipe,
 } from '#/_base/di/fiber';
-import { ScopeActivation, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import {
@@ -87,9 +87,6 @@ export abstract class Feature extends Service {
     ctor: AgentToolCtor<T>,
     options: AgentToolContributionOptions,
   ): void {
-    this.contributeService(LifecycleScope.Agent, id, ctor, {
-      activation: ScopeActivation.OnDemand,
-    });
     this.provide(AgentToolContribution, { id, ctor, options });
   }
 

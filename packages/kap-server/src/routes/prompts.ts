@@ -7,7 +7,7 @@ import {
   ISessionPermissionModeService,
   AgentProfile,
   type ProfileRuntime,
-  IAgentToolPolicyService,
+  AgentTools,
   agentContextOf,
   AgentSkill,
   IAuthSummaryService,
@@ -116,7 +116,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor
       .get(IAgentLifecycleService)
       .resolve(agentContextOf(agent), AgentProfile),
-    toolPolicy: agent.accessor.get(IAgentToolPolicyService),
+    tools: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentTools),
     permissionMode: {
       setMode: (mode: PromptPermissionMode) => {
         agent
@@ -284,7 +284,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
         if (req.body.disabled_tools !== undefined) {
           try {
-            await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
+            await resolved.tools.setSessionDisabledTools(req.body.disabled_tools);
           } catch (error) {
             if (error instanceof ProfileError) {
               throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);

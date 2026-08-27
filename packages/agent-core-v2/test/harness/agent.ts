@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
@@ -47,7 +48,6 @@ import { toContractMode, toWireMode } from '#/features/permissionMode/internal/m
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type AgentConfigData } from '#/features/profile/profile';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
@@ -62,7 +62,8 @@ import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
-import type { ToolInfo } from '#/tool/toolContract';
+import type { ExecutableTool, ToolDisclosure, ToolInfo, ToolSource } from '#/tool/toolContract';
+import { AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
 
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
@@ -161,16 +162,13 @@ import {
   IAppStateService,
   ITelemetryService,
   IHostTerminalService,
-  IAgentToolRegistryService,
-  IAgentToolActivationService,
   IAgentUserToolService,
   ISessionUsageService,
   ISessionWorkspaceContext,
   IWorkspaceStateService,
   LifecycleScope,
-  AgentMcpService,
   AgentPermissionRules,
-  AgentToolExecutor,
+  AgentTools,
   SyncDescriptor,
   AgentUserToolService,
   SessionWorkspaceContextService,
@@ -748,13 +746,15 @@ export function taskServices(): TestAgentServiceOverride {
 }
 
 export function mcpServices(options: {
-  readonly manager?: McpConnectionManager;
+  readonly manager: McpConnectionManager;
+  readonly ready?: Promise<void>;
+  readonly isBaselineServer?: (name: string) => boolean;
 }): TestAgentServiceOverride {
   return sessionService(ISessionMcpHandle, {
     _serviceBrand: undefined,
-    ready: Promise.resolve(),
-    connectionManager: options.manager!,
-    isBaselineServer: () => true,
+    ready: options.ready ?? Promise.resolve(),
+    connectionManager: options.manager,
+    isBaselineServer: options.isBaselineServer ?? (() => true),
   } satisfies ISessionMcpHandle);
 }
 
@@ -1419,6 +1419,25 @@ export class AgentTestContext {
     return this.session.accessor.get(IAgentLifecycleService).inspect(this.agentContext);
   }
 
+  provideTool(
+    tool: ExecutableTool,
+    options: { readonly source?: ToolSource; readonly disclosure?: ToolDisclosure } = {},
+  ): IDisposable {
+    const contribution = {
+      agentId: this.agentContext.agentId,
+      id: `test-tool:${tool.name}:${randomUUID()}`,
+      snapshot: () => [{ tool, source: options.source ?? 'builtin', disclosure: options.disclosure }],
+      onDidChange: Event.None,
+    };
+    const handle = this.session.accessor.get(IFeatureManager).provideUnit({
+      name: contribution.id,
+      apply: (fiber) => fiber.provide(AgentToolProviderContribution, contribution),
+    });
+    return toDisposable(() => {
+      void handle.dispose();
+    });
+  }
+
   get modelResolver(): IModelCatalog {
     return this.session.accessor.get(IModelCatalog);
   }
@@ -1556,8 +1575,7 @@ export class AgentTestContext {
     const permissionRules = this.resolve(AgentPermissionRules);
     const cron = this.resolve(AgentCron);
     const plan = this.get(IAgentPlanService);
-    void this.get(IAgentToolActivationService).activate();
-    this.resolve(AgentToolExecutor);
+    this.resolve(AgentTools);
     this.get(IAgentExternalHooksService);
     this.get(IAgentStepRetryService);
     this.get(IAgentLoopContinuationService);
@@ -1642,14 +1660,11 @@ export class AgentTestContext {
     return projector.project(messages ?? context.get());
   }
 
-  toolsData(): Array<
-    ReturnType<IAgentToolRegistryService['list']>[number] & { readonly active: boolean }
-  > {
-    const toolPolicy = this.get(IAgentToolPolicyService);
-    const toolRegistry = this.get(IAgentToolRegistryService);
-    return toolRegistry.list().map((tool) => ({
+  toolsData(): Array<ToolInfo & { readonly active: boolean }> {
+    const tools = this.resolve(AgentTools);
+    return tools.availableTools().map((tool) => ({
       ...tool,
-      active: toolPolicy.isToolActive(tool.name, tool.source),
+      active: tools.isActive(tool.name, tool.source),
     }));
   }
 

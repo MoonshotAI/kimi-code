@@ -1,4 +1,3 @@
-import { type CollectionView } from '#/_base/di/collection';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
   isAbortError,
@@ -17,7 +16,6 @@ import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
 } from '#/agent/toolPolicy/evaluate';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentLoop } from '#/features/loop/loop';
 import {
@@ -27,10 +25,12 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import {
-  AgentToolContribution,
   registerAgentToolService,
+  type AgentToolFactoryContext,
 } from '#/agent/toolRegistry/toolContribution';
-import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
+import type { ToolSource } from '#/tool/toolContract';
+
+type ToolReference = { readonly name: string; readonly source: ToolSource };
 import { type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import {
@@ -103,19 +103,17 @@ export class SubagentTool implements ISubagentTool {
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    private readonly tools: AgentToolFactoryContext,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
-      this.toolPolicy.isToolActive('TaskList') &&
-      this.toolPolicy.isToolActive('TaskOutput') &&
-      this.toolPolicy.isToolActive('TaskStop');
+      this.tools.isActive('TaskList') &&
+      this.tools.isActive('TaskOutput') &&
+      this.tools.isActive('TaskStop');
     void this.catalog.ready.then(() => {
       this.catalogReady = true;
     });
@@ -144,7 +142,7 @@ export class SubagentTool implements ISubagentTool {
       profiles,
       this.knownToolReferences(),
       (profile, name, source) =>
-        this.toolPolicy.isToolActiveForProfile(profile, name, source),
+        this.tools.isActiveForProfile(profile, name, source),
     );
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
@@ -196,13 +194,13 @@ export class SubagentTool implements ISubagentTool {
 
   private knownToolReferences(): ToolReference[] {
     const refs = new Map<string, ToolReference>();
-    for (const contribution of this.contributions.items) {
+    for (const contribution of this.tools.contributions()) {
       refs.set(contribution.options.name, {
         name: contribution.options.name,
         source: contribution.options.source ?? 'builtin',
       });
     }
-    for (const ref of this.toolRegistry.listReferences()) {
+    for (const ref of this.tools.listReferences()) {
       if (!refs.has(ref.name)) refs.set(ref.name, ref);
     }
     return [...refs.values()];
@@ -520,6 +518,18 @@ registerAgentToolService(ISubagentTool, SubagentTool, {
   name: 'Agent',
   domain: 'subagent',
   requiredRuntimeCapabilities: ['process'],
+  create: (context) => new SubagentTool(
+    context.get(IAgentLifecycleService),
+    context.get(ISessionSubagentService),
+    context.get(ISessionAgentProfileCatalog),
+    context.get(IAgentScopeContext),
+    context.get(IAgentTaskService),
+    context,
+    context.get(ISessionMetadata),
+    context.get(ILogService),
+    context.get(IConfigService),
+    context.get(IFlagService),
+  ),
 });
 
 function buildProfileDescriptions(

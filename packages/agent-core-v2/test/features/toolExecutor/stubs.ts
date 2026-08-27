@@ -18,15 +18,16 @@ import type {
   ToolDidExecuteContext,
   WillExecuteToolEvent,
 } from '#/features/toolExecutor/toolHooks';
-import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { BeforeToolExecuteBus } from '#/features/toolExecutor/internal/beforeToolExecute';
 import type { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
 import { TOOL_DEDUPE_PARTICIPANT } from '#/features/toolExecutor/toolExecutor';
 import type { ToolCall } from '#/kosong/contract/message';
+import type { ExecutableTool } from '#/tool/toolContract';
 import { OrderedHookSlot } from '#/hooks';
 
 export interface ToolExecutorEventStubs {
-  readonly executor: ToolExecutorRuntime;
+  readonly executor: AgentToolsRuntime;
   readonly beforeBus: BeforeToolExecuteBus;
   readonly didExecuteSlot: OrderedHookSlot<ToolDidExecuteContext>;
   fireBeforeExecute(
@@ -47,6 +48,7 @@ export function stubToolExecutorEvents(input: {
   const beforeBus = new BeforeToolExecuteBus();
   const willEmitter = new AsyncEmitter<WillExecuteToolEvent>();
   const didExecuteSlot = new OrderedHookSlot<ToolDidExecuteContext>();
+  const tools = new Map<string, ExecutableTool>();
   didExecuteSlot.register(TOOL_DEDUPE_PARTICIPANT, async (_ctx, next) => {
     await next();
   });
@@ -54,6 +56,8 @@ export function stubToolExecutorEvents(input: {
     execute: input.execute ?? (async function* () {}),
     onWillExecute: willEmitter.event,
     onDidExecute: Event.None,
+    register: (tool: ExecutableTool) => { tools.set(tool.name, tool); return toDisposable(() => tools.delete(tool.name)); },
+    resolve: (name: string) => tools.get(name),
     participateExecution: (
       name: string,
       listener: Parameters<BeforeToolExecuteBus['register']>[1],
@@ -74,7 +78,7 @@ export function stubToolExecutorEvents(input: {
       toDisposable(() => {}),
     registerMissingToolDescriber: (_describer: MissingToolDescriber): IDisposable =>
       toDisposable(() => {}),
-  } as unknown as ToolExecutorRuntime;
+  } as unknown as AgentToolsRuntime;
   return {
     executor,
     beforeBus,
@@ -84,12 +88,18 @@ export function stubToolExecutorEvents(input: {
   };
 }
 
-export function runtimeFromPipeline(pipeline: ToolExecutorPipeline): ToolExecutorRuntime {
+export function runtimeFromPipeline(
+  pipeline: ToolExecutorPipeline,
+  sharedTools: Map<string, ExecutableTool> = new Map(),
+): AgentToolsRuntime {
+  const tools = sharedTools;
   return {
     execute: (calls: ToolCall[], options: ToolExecutorExecuteOptions) =>
       pipeline.execute(calls, options),
     onWillExecute: pipeline.onWillExecute,
     onDidExecute: pipeline.onDidExecute,
+    register: (tool: ExecutableTool) => { tools.set(tool.name, tool); return toDisposable(() => tools.delete(tool.name)); },
+    resolve: (name: string) => tools.get(name),
     participateExecution: (name: string, listener: ToolExecutionVetoListener, order?: ToolExecutionParticipationOrder) =>
       pipeline.beforeExecuteBus.register(name, listener, order),
     registerDidExecuteHook: (name: string, hook: ToolDidExecuteHook, order?: ToolExecutionParticipationOrder) =>
@@ -99,17 +109,17 @@ export function runtimeFromPipeline(pipeline: ToolExecutorPipeline): ToolExecuto
       pipeline.registerUnavailableToolDescriber(describer),
     registerMissingToolDescriber: (describer: MissingToolDescriber) =>
       pipeline.registerMissingToolDescriber(describer),
-  } as unknown as ToolExecutorRuntime;
+  } as unknown as AgentToolsRuntime;
 }
 
 export function lifecycleWithToolExecutor(
-  executor: ToolExecutorRuntime,
+  executor: AgentToolsRuntime,
   inner?: IAgentLifecycleService,
   firedScopeContext?: AgentContext,
 ): IAgentLifecycleService {
   return {
     resolve: (agent: unknown, definition: unknown) => {
-      if (definition === AgentToolExecutor) return executor;
+      if (definition === AgentTools) return executor;
       return inner?.resolve(agent as never, definition as never);
     },
     handleOf: (agentId: string) => inner?.handleOf(agentId) ?? ({}),

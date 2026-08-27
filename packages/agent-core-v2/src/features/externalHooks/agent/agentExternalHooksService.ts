@@ -33,7 +33,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { toKimiErrorPayload } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -163,7 +163,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerToolHooks(executor: ToolExecutorRuntime): IDisposable {
+  private registerToolHooks(executor: AgentToolsRuntime): IDisposable {
     const registrations: IDisposable[] = [
       executor.participateExecution('externalHooks', async (event) => {
         const reason = await this.runPreToolUse(event);

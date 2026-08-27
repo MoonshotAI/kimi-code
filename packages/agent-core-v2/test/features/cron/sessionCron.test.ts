@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { AgentCron } from '#/features/cron/cronAgentRuntime';
 import { CronCursor } from '#/features/cron/cronOps';
 
@@ -93,10 +93,10 @@ describe('session cron wire persistence', () => {
 
   it('activates effects once after restore and cleans them up on close', async () => {
     const ctx = await bootCronContext();
-    const registry = ctx.get(IAgentToolRegistryService);
+    const tools = ctx.resolve(AgentTools);
     let disposed = false;
     try {
-      expect(registry.listReferences().filter((tool) => tool.name.startsWith('Cron'))).toEqual([
+      expect(tools.listReferences().filter((tool) => tool.name.startsWith('Cron'))).toEqual([
         { name: 'CronCreate', source: 'builtin' },
         { name: 'CronDelete', source: 'builtin' },
         { name: 'CronList', source: 'builtin' },

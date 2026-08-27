@@ -7,7 +7,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
@@ -94,15 +94,15 @@ export class BashTool implements IBashTool {
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    private readonly tools: AgentToolFactoryContext,
     @IConfigService private readonly config: IConfigService,
   ) {}
 
   private allowBackground(): boolean {
     return (
-      this.toolPolicy.isToolActive('TaskList') &&
-      this.toolPolicy.isToolActive('TaskOutput') &&
-      this.toolPolicy.isToolActive('TaskStop')
+      this.tools.isActive('TaskList') &&
+      this.tools.isActive('TaskOutput') &&
+      this.tools.isActive('TaskStop')
     );
   }
 
@@ -416,6 +416,14 @@ registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
   requiredRuntimeCapabilities: ['process'],
+  create: (context) => new BashTool(
+    context.get(IAgentRuntimeService),
+    context.get(ISessionContext),
+    context.get(ISessionWorkspaceContext),
+    context.get(IAgentTaskService),
+    context,
+    context.get(IConfigService),
+  ),
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {

@@ -1,5 +1,4 @@
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
-import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import {
   findInactiveToolPatterns,
@@ -12,7 +11,7 @@ import type { ResolvedAgentProfile } from '#/features/profile/profile';
 
 export interface ToolPatternWarningDeps {
   readonly config: IConfigService;
-  readonly toolRegistry: IAgentToolRegistryService;
+  readonly toolReferences: readonly { readonly name: string }[];
   readonly builtinProfiles: IBuiltinAgentProfileLoader;
 }
 
@@ -24,7 +23,7 @@ export function publishToolPatternWarnings(
 ): void {
   const known = new Set<string>();
   for (const contribution of getAgentToolContributions()) known.add(contribution.options.name);
-  for (const ref of deps.toolRegistry.listReferences()) known.add(ref.name);
+  for (const ref of deps.toolReferences) known.add(ref.name);
   for (const builtin of deps.builtinProfiles.list()) {
     for (const name of literalToolNames([
       ...(builtin.tools ?? []),

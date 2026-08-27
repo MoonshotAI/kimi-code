@@ -1,27 +1,23 @@
 import { createHash } from 'node:crypto';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
-import { type IDisposable } from "#/_base/di/lifecycle";
-import { Service } from "#/_base/di/service";
+import { Disposable } from '#/_base/di/lifecycle';
+import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
+import type { ToolCatalog } from '#/features/toolExecutor/internal/catalog';
+import type { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import type { McpServerEntry } from '#/mcpCore/connection-manager';
-import { IAgentMcpService } from './mcp';
 import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -29,12 +25,12 @@ import {
   mcpDiscoveryKey,
   McpToolsDiscovered,
   type McpToolCollision,
-} from './mcpDiscoveryOps';
+} from '#/agent/mcp/mcpDiscoveryOps';
 import { AgentErrorEvent } from '#/app/event/agentEvents';
-import { McpServerStatus, ToolListUpdated } from './mcpEvents';
+import { McpServerStatus, ToolListUpdated } from '#/agent/mcp/mcpEvents';
 
 interface McpToolRegistration {
-  readonly disposable: IDisposable;
+  readonly tool: import('#/tool/toolContract').ExecutableTool;
   readonly serverName: string;
 }
 
@@ -47,23 +43,29 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
   () => false,
 );
 
-export class AgentMcpService extends Service implements IAgentMcpService {
-  declare readonly _serviceBrand: undefined;
+export class McpToolProvider extends Disposable {
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];
+  private readonly mcpHandle: ISessionMcpHandle;
+  private readonly sessionContext: ISessionContext;
+  private readonly dispatcher: IEventDispatcher;
+  private readonly telemetry: ITelemetryService;
+  private readonly scopeContext: IAgentScopeContext;
+  private readonly states: IAgentStateService;
 
   constructor(
-    @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @LoopControlToken loop: LoopControlToken,
-    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentStateService private readonly states: IAgentStateService,
+    runtime: AgentRuntimeContext<unknown>,
+    private readonly catalog: ToolCatalog,
+    pipeline: ToolExecutorPipeline,
   ) {
     super();
+    this.mcpHandle = runtime.get(ISessionMcpHandle);
+    this.sessionContext = runtime.get(ISessionContext);
+    this.dispatcher = runtime.get(IEventDispatcher);
+    this.telemetry = runtime.get(ITelemetryService);
+    this.scopeContext = runtime.get(IAgentScopeContext);
+    this.states = runtime.get(IAgentStateService);
+    const loop = runtime.get(LoopControlToken);
     this.states.contributeState(mcpDiscoveryKey);
     this.states.contributeState(mcpMcpToolsByServerKey);
     this.states.contributeState(mcpDiscoveryWritesReadyKey);
@@ -73,11 +75,9 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       await next();
     });
     this._register(
-      activateToolExecutorWhenReady(this.agentLifecycle, this.scopeContext, (executor) =>
-        executor.onWillExecute((event) => {
-          event.waitUntil(this.waitForInitialLoad(event.signal));
-        }),
-      ),
+      pipeline.onWillExecute((event) => {
+        event.waitUntil(this.waitForInitialLoad(event.signal));
+      }),
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
@@ -150,7 +150,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     return current !== undefined && current !== staleClient ? current : undefined;
   }
 
-  onStatusChange(listener: Parameters<IAgentMcpService['onStatusChange']>[0]) {
+  onStatusChange(listener: (entry: McpServerEntry) => void) {
     const unsubscribe = this.mcpHandle.connectionManager.onStatusChange(listener);
     return {
       dispose: unsubscribe,
@@ -238,9 +238,9 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
     });
-    const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
-    this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
+    this.mcpTools.set(tool.name, { tool, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
+    this.syncCatalog();
     void this.dispatcher.dispatch(
       new ToolListUpdated({
         agentId: this.scopeContext.agentId,
@@ -285,35 +285,34 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         continue;
       }
       seenInThisCall.set(qualified, tool.name);
-      const disposable = this._register(
-        this.registry.register(
-          createMcpTool(qualified, tool, client, {
-            originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
-            telemetry: this.telemetry,
-            reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
-            isRemoved: () =>
-              this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
-          }),
-          { source: 'mcp' },
-        ),
-      );
-      this.mcpTools.set(qualified, { disposable, serverName });
+      const executable = createMcpTool(qualified, tool, client, {
+        originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
+        telemetry: this.telemetry,
+        reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
+        isRemoved: () => this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',
+      });
+      this.mcpTools.set(qualified, { tool: executable, serverName });
       qualifiedNames.push(qualified);
     }
     this.mcpToolsByServer.set(serverName, qualifiedNames);
+    this.syncCatalog();
     return { registered: qualifiedNames, collisions };
   }
 
   private unregisterMcpServer(serverName: string): boolean {
     const names = this.mcpToolsByServer.get(serverName);
     if (names === undefined) return false;
-    for (const name of names) {
-      const entry = this.mcpTools.get(name);
-      entry?.disposable.dispose();
-      this.mcpTools.delete(name);
-    }
+    for (const name of names) this.mcpTools.delete(name);
     this.mcpToolsByServer.delete(serverName);
+    this.syncCatalog();
     return true;
+  }
+
+  private syncCatalog(): void {
+    this.catalog.setSource(
+      this,
+      [...this.mcpTools.values()].map(({ tool }) => ({ tool, source: 'mcp' as const })),
+    );
   }
 
   private recordDiscovery(
@@ -382,10 +381,3 @@ export class AgentMcpService extends Service implements IAgentMcpService {
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentMcpService,
-  AgentMcpService,
-  ScopeActivation.OnScopeCreated,
-  'mcp',
-);

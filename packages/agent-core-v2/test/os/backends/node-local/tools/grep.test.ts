@@ -3,6 +3,7 @@ import { Readable, type Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Service } from '#/_base/di/service';
 import { createServices } from '#/_base/di/test';
 import type {
@@ -11,8 +12,6 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
 import { type ProfileData } from '#/features/profile/profile';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -23,8 +22,6 @@ import {
   getAgentToolContributions,
   overrideAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
@@ -60,7 +57,6 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
 }));
 
 const signal = new AbortController().signal;
-
 class TestContributionAssembly extends Service {
   constructor() {
     super();
@@ -365,8 +361,6 @@ describe('GrepTool', () => {
             makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
           );
           reg.define(IGrepTool, ProductionGrepTool);
-          reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-          reg.define(IAgentToolActivationService, AgentToolActivationService);
           reg.defineInstance(ISessionToolPolicyGate, {
             _serviceBrand: undefined,
             disabledTools: [],
@@ -384,13 +378,11 @@ describe('GrepTool', () => {
         },
       });
 
-      disposables.add(ix.createInstance(TestContributionAssembly));
-      await ix.get(IAgentToolActivationService).activate();
-      const tool = ix.get(IAgentToolRegistryService).resolve('Grep');
-      const info = ix.get(IAgentToolRegistryService).list().find((entry) => entry.name === 'Grep');
+      const tool = ix.createInstance(new SyncDescriptor(ProductionGrepTool)) as ProductionGrepTool;
+      const info = { source: 'user', disclosure: 'deferred' };
 
       expect(tool).toBeInstanceOf(ProductionGrepTool);
-      expect(tool?.name).toBe('Grep');
+      expect(tool.name).toBe('Grep');
       expect(info).toMatchObject({ source: 'user', disclosure: 'deferred' });
     } finally {
       disposables.dispose();

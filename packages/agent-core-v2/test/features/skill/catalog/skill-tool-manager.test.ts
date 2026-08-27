@@ -10,7 +10,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { type SkillCatalog, type SkillDefinition } from '#/features/skill/catalog/types';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
@@ -59,12 +59,12 @@ function isRecordWithMessage(
 describe('ToolManager SkillTool registration', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let tools: IAgentToolRegistryService;
+  let tools: AgentToolsRuntime;
 
   beforeEach(() => {
     ctx = createTestAgent();
     profile = ctx.resolve(AgentProfile);
-    tools = ctx.get(IAgentToolRegistryService);
+    tools = ctx.resolve(AgentTools);
   });
 
   afterEach(async () => {
@@ -88,7 +88,7 @@ describe('ToolManager SkillTool registration', () => {
 describe('ToolManager SkillTool registration with an empty model skill catalog', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let tools: IAgentToolRegistryService;
+  let tools: AgentToolsRuntime;
   let skills: InMemorySkillCatalog;
 
   beforeEach(() => {
@@ -96,7 +96,7 @@ describe('ToolManager SkillTool registration with an empty model skill catalog',
     skills.register(makeSkill('private', { disableModelInvocation: true }));
     ctx = createTestAgent(skillServices(skills));
     profile = ctx.resolve(AgentProfile);
-    tools = ctx.get(IAgentToolRegistryService);
+    tools = ctx.resolve(AgentTools);
   });
 
   afterEach(async () => {
@@ -120,7 +120,7 @@ describe('ToolManager SkillTool registration with an empty model skill catalog',
 describe('ToolManager SkillTool registration with inline skills', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let tools: IAgentToolRegistryService;
+  let tools: AgentToolsRuntime;
   let skills: InMemorySkillCatalog;
 
   beforeEach(() => {
@@ -129,7 +129,7 @@ describe('ToolManager SkillTool registration with inline skills', () => {
     skills.register(makeSkill('flow-only', { type: 'flow' }));
     ctx = createTestAgent(skillServices(skills));
     profile = ctx.resolve(AgentProfile);
-    tools = ctx.get(IAgentToolRegistryService);
+    tools = ctx.resolve(AgentTools);
   });
 
   afterEach(async () => {
@@ -157,7 +157,7 @@ describe('ToolManager SkillTool registration with inline skills', () => {
 describe('ToolManager SkillTool registration with a structural catalog', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let tools: IAgentToolRegistryService;
+  let tools: AgentToolsRuntime;
   let skills: SkillCatalog;
 
   beforeEach(() => {
@@ -174,7 +174,7 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
     };
     ctx = createTestAgent(skillServices(skills));
     profile = ctx.resolve(AgentProfile);
-    tools = ctx.get(IAgentToolRegistryService);
+    tools = ctx.resolve(AgentTools);
   });
 
   afterEach(async () => {
@@ -340,7 +340,7 @@ describe('ToolManager SkillTool workspace refresh', () => {
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
   let tmp: string;
-  let tools: IAgentToolRegistryService;
+  let tools: AgentToolsRuntime;
 
   beforeEach(async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-skill-tool-refresh-'));
@@ -367,7 +367,7 @@ describe('ToolManager SkillTool workspace refresh', () => {
       skillServices(skills),
     );
     profile = ctx.resolve(AgentProfile);
-    tools = ctx.get(IAgentToolRegistryService);
+    tools = ctx.resolve(AgentTools);
     profile.update({ activeToolNames: ['Skill'] });
   });
 

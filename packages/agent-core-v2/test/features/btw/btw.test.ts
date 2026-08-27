@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import {
   ISessionBtwService,
   SIDE_QUESTION_SYSTEM_REMINDER,
@@ -63,7 +63,7 @@ describe('SessionBtwService', () => {
       _serviceBrand: undefined,
       fork,
       resolve: (_agent: unknown, definition: unknown) => {
-        if (definition === AgentToolExecutor) return executorEvents.executor;
+        if (definition === AgentTools) return executorEvents.executor;
         return { notify: appendReminder };
       },
       handleOf: (id: string) => {

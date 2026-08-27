@@ -10,7 +10,7 @@ import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { AgentEvent2 } from '#/app/event/event2';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -73,7 +73,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   private readonly context: ContextMemoryRuntime;
 
   constructor(
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -210,7 +209,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   }
 
   private ensureBashTool() {
-    const bash = this.toolRegistry.resolve('Bash');
+    const bash = this.manager.resolve(this.scopeContext.agentContext, AgentTools).resolve('Bash');
     if (bash === undefined) {
       throw new Error2(ErrorCodes.INTERNAL, 'Bash tool is not registered.');
     }

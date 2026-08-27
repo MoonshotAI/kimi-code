@@ -4,7 +4,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
@@ -54,7 +54,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    private readonly tools: AgentToolFactoryContext,
   ) {}
 
   get description(): string {
@@ -98,9 +98,9 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
   private allowBackground(): boolean {
     return (
-      this.toolPolicy.isToolActive('TaskList') &&
-      this.toolPolicy.isToolActive('TaskOutput') &&
-      this.toolPolicy.isToolActive('TaskStop')
+      this.tools.isActive('TaskList') &&
+      this.tools.isActive('TaskOutput') &&
+      this.tools.isActive('TaskStop')
     );
   }
 
@@ -214,6 +214,13 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 registerAgentToolService(IAskUserQuestionTool, AskUserQuestionTool, {
   name: 'AskUserQuestion',
   domain: 'questionTools',
+  create: (context) => new AskUserQuestionTool(
+    context.get(ISessionQuestionService),
+    context.get(ITelemetryService),
+    context.get(IAgentTaskService),
+    context.get(IAgentScopeContext),
+    context,
+  ),
 });
 
 function questionDescription(questions: AskUserQuestionInput['questions']): string {

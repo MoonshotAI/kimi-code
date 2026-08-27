@@ -42,7 +42,7 @@ import {
   participantRank,
 } from '#/features/toolExecutor/internal/participants';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import type { ToolCatalog } from '#/features/toolExecutor/internal/catalog';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -153,11 +153,10 @@ export class ToolExecutorPipeline {
   private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
   private dupTypeTurnId: number | undefined;
 
-  constructor(private readonly runtime: AgentRuntimeContext<unknown>) {}
-
-  private get toolRegistry(): IAgentToolRegistryService {
-    return this.runtime.get(IAgentToolRegistryService);
-  }
+  constructor(
+    private readonly runtime: AgentRuntimeContext<unknown>,
+    private readonly toolRegistry: ToolCatalog,
+  ) {}
 
   private get telemetry(): ITelemetryService {
     return this.runtime.get(ITelemetryService);
@@ -754,7 +753,7 @@ function buildBeforeExecuteContext(
 }
 
 function preflightToolCall(
-  toolRegistry: IAgentToolRegistryService,
+  toolRegistry: ToolCatalog,
   toolCall: ToolCall,
   guard: ToolCallGuard | undefined,
   describeUnavailableTool: UnavailableToolDescriber | undefined,

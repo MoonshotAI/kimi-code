@@ -32,7 +32,6 @@ import { ISessionContext, makeSessionContext } from '#/session/sessionContext/se
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { type WaitForInput } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool } from '#/agent/tools/task/task-wait/taskWaitTool';
@@ -133,9 +132,6 @@ describe('AgentTaskService', () => {
       },
     });
     ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
-    ix.stub(IAgentToolRegistryService, {
-      register: () => toDisposable(() => {}),
-    });
     ix.stub(LoopControlToken, stubLoopWithHooks());
     ix.stub(IConfigRegistry, { registerSection: () => {} });
     ix.stub(IConfigService, {

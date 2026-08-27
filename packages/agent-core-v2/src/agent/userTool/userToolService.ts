@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
+import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
@@ -11,7 +11,7 @@ import type {
   ExecutableToolContext,
   ExecutableToolResult,
 } from '#/tool/toolContract';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -38,12 +38,12 @@ interface UserToolExecutionRequest {
 export class AgentUserToolService extends Service implements IAgentUserToolService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly registrations = new Map<string, IDisposable>();
+  private readonly registrations = new Map<string, { readonly tool: ExecutableTool; readonly disclosure?: UserToolRegistration['disclosure'] }>();
+  private readonly changeEmitter = new Emitter<void>();
   private readonly interaction: InteractionRuntime;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
@@ -51,6 +51,16 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     super();
     this.interaction = manager.resolve(scopeContext.agentContext, AgentInteraction);
     this.agentState.contributeState(userToolKey);
+    this.provide(AgentToolProviderContribution, {
+      agentId: scopeContext.agentId,
+      id: 'user-tools',
+      snapshot: () => [...this.registrations.values()].map(({ tool, disclosure }) => ({
+        tool,
+        source: 'user' as const,
+        disclosure,
+      })),
+      onDidChange: this.changeEmitter.event,
+    });
     this._register(
       this.dispatcher.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
         this.restoreRegisteredTools();
@@ -116,21 +126,15 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
         execute: (context) => this.executeUserTool(context, name, args),
       }),
     };
-    this.registrations.set(
-      name,
-      this._register(
-        this.registry.register(tool, { source: 'user', disclosure: input.disclosure }),
-      ),
-    );
+    this.registrations.set(name, { tool, disclosure: input.disclosure });
+    this.changeEmitter.fire();
     if (options?.activate === false) return;
     this.profile().addActiveTool(name);
   }
 
   private applyUnregister(name: string): void {
-    const registration = this.registrations.get(name);
-    if (registration === undefined) return;
-    registration.dispose();
-    this.registrations.delete(name);
+    if (!this.registrations.delete(name)) return;
+    this.changeEmitter.fire();
     this.profile().removeActiveTool(name);
   }
 

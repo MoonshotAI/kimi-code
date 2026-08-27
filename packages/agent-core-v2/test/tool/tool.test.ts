@@ -25,7 +25,6 @@ import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { LoopControlToken } from '#/features/loop/internal/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
@@ -104,7 +103,7 @@ import {
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
-import { AgentToolExecutor, toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, agentToolsRuntimeProvider, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
 import {
   AgentFullCompaction,
@@ -364,8 +363,8 @@ const adoptedRuntimeRecords: readonly AgentRuntimeDefinitionRecord[] = [
     active: true,
   },
   {
-    definition: AgentToolExecutor,
-    provider: toolExecutorAgentRuntimeProvider,
+    definition: AgentTools,
+    provider: agentToolsRuntimeProvider,
     generation: 1,
     active: true,
   },
@@ -454,7 +453,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
               setModeAndBroadcast: () => {},
             } as never;
           }
-          if (serviceId === IAgentToolRegistryService) {
+          if (serviceId === (AgentTools as never)) {
             return {
               _serviceBrand: undefined,
               register: () => ({ dispose: () => {} }),
@@ -581,7 +580,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         return managed.runtimeSet.resolve(definition);
       }
       const scoped = handles.get(agent.agentId);
-      if (definition === AgentToolExecutor) return stubToolExecutorEvents().executor;
+      if (definition === AgentTools) return stubToolExecutorEvents().executor;
       if (definition === AgentPrompt) {
         return { list: () => ({ active: undefined, pending: [] }) };
       }
@@ -660,13 +659,13 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
 }
 
 function agentTool(ctx: TestAgentContext): ExecutableTool<SubagentToolInput> {
-  const tool = ctx.get(IAgentToolRegistryService).resolve('Agent');
+  const tool = ctx.resolve(AgentTools).resolve('Agent');
   expect(tool).toBeDefined();
   return tool! as ExecutableTool<SubagentToolInput>;
 }
 
 function agentSwarmTool(ctx: TestAgentContext): ExecutableTool<AgentSwarmToolInput> {
-  const tool = ctx.get(IAgentToolRegistryService).resolve('AgentSwarm');
+  const tool = ctx.resolve(AgentTools).resolve('AgentSwarm');
   expect(tool).toBeDefined();
   return tool! as ExecutableTool<AgentSwarmToolInput>;
 }
@@ -3578,7 +3577,7 @@ describe('Agent tools', () => {
   let context: ContextMemoryRuntime;
   let ctx: TestAgentContext;
   let profile: ProfileRuntime;
-  let tools: IAgentToolRegistryService;
+  let tools: AgentToolsRuntime;
   let tempHomeDirs: string[] = [];
 
   afterEach(async () => {
@@ -3925,7 +3924,7 @@ describe('Agent tools', () => {
     beforeEach(() => {
       ctx = createTestAgent();
       profile = ctx.resolve(AgentProfile);
-      tools = ctx.get(IAgentToolRegistryService);
+      tools = ctx.resolve(AgentTools);
       profile.update({ activeToolNames: ['Bash'] });
     });
 

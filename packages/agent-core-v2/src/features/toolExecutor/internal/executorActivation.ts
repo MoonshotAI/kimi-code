@@ -1,12 +1,12 @@
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentToolExecutor, type ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 
 export function activateToolExecutorWhenReady(
   lifecycle: IAgentLifecycleService,
   scope: IAgentScopeContext,
-  activate: (runtime: ToolExecutorRuntime) => IDisposable,
+  activate: (runtime: AgentToolsRuntime) => IDisposable,
   options?: { readonly deferToScopeCreated?: boolean },
 ): IDisposable {
   let active: IDisposable | undefined;
@@ -14,7 +14,7 @@ export function activateToolExecutorWhenReady(
   const tryActivate = (): void => {
     if (active !== undefined || !scopeCreated) return;
     if (lifecycle.handleOf(scope.agentId) === undefined) return;
-    active = activate(lifecycle.resolve(scope.agentContext, AgentToolExecutor));
+    active = activate(lifecycle.resolve(scope.agentContext, AgentTools));
   };
   const created = lifecycle.onDidCreateScope(({ context }) => {
     if (context !== scope.agentContext) return;

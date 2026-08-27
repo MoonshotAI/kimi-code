@@ -4,10 +4,8 @@ import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentR
 import { AgentUndo } from '#/features/undo/undoAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
-import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
@@ -92,16 +90,15 @@ describe('progressive tool disclosure end-to-end', () => {
   beforeEach(async () => {
     vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
     ctx = createTestAgent();
-    ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
     ctx.get(IAgentToolSelectSchemasService);
-    ctx.resolve(AgentToolExecutor);
+    ctx.resolve(AgentTools);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
     await ctx.rpc.setPermission({ mode: 'yolo' });
     alpha = new StubMcpTool(MCP_ALPHA);
-    registration = ctx.get(IAgentToolRegistryService).register(alpha, { source: 'mcp' });
+    registration = ctx.provideTool(alpha, { source: 'mcp' });
   });
 
   afterEach(async () => {

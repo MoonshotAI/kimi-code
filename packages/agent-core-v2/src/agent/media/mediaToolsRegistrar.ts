@@ -1,4 +1,4 @@
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Emitter } from '#/_base/event';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -15,11 +15,12 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
+import type { ExecutableTool } from '#/tool/toolContract';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
-import { createVideoUploader, registerMediaTools } from './registerMediaTools';
+import { createMediaTool, createVideoUploader } from './registerMediaTools';
 
 export const mediaRegisteredKeyKey = defineState<string | undefined>(
   'media.registeredKey',
@@ -29,10 +30,10 @@ export const mediaRegisteredKeyKey = defineState<string | undefined>(
 export class AgentMediaToolsRegistrar extends Service implements IAgentMediaToolsRegistrar {
   declare readonly _serviceBrand: undefined;
 
-  private registration: IDisposable | undefined;
+  private tool: ExecutableTool | undefined;
+  private readonly changeEmitter = new Emitter<void>();
 
   constructor(
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
@@ -48,7 +49,14 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this.refresh();
     this._register(eventBus.subscribe(AgentStatusUpdated, () => this.refresh()));
     this._register(this.runtime.onDidChange(() => this.refresh()));
-    this._register(toDisposable(() => this.registration?.dispose()));
+    this.provide(AgentToolProviderContribution, {
+      agentId: scopeContext.agentId,
+      id: 'media-tools',
+      snapshot: () => this.tool === undefined
+        ? []
+        : [{ tool: this.tool, source: 'builtin' as const }],
+      onDidChange: this.changeEmitter.event,
+    });
   }
 
   private get profile(): ProfileRuntime {
@@ -75,8 +83,8 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       ].join('|');
       if (key === this.registeredKey) return;
       this.registeredKey = key;
-      this.registration?.dispose();
-      this.registration = undefined;
+      this.tool = undefined;
+      this.changeEmitter.fire();
       return;
     }
     const inspected = this.runtime.inspect();
@@ -96,7 +104,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     ].join('|');
     if (key === this.registeredKey) return;
     this.registeredKey = key;
-    this.registration?.dispose();
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
     const runtime = this.runtime;
@@ -112,7 +119,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         model = undefined;
       }
     }
-    this.registration = registerMediaTools(this.toolRegistry, {
+    this.tool = createMediaTool({
       runtime,
       workspace: {
         get workspaceDir() {
@@ -138,6 +145,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       telemetry: this.telemetry,
     });
+    this.changeEmitter.fire();
   }
 }
 

@@ -29,7 +29,7 @@ import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSel
 import {
   IModelOAuthTokens,
   AgentProfile,
-  IAgentToolRegistryService,
+  AgentTools,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   normalizeAgentProfile,
   type ExecutableTool,
@@ -2052,9 +2052,7 @@ describe('FullCompaction', () => {
       },
       tools: [LARGE_MCP_TOOL],
     });
-    const registration = ctx
-      .get(IAgentToolRegistryService)
-      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp' });
+    const registration = ctx.provideTool(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp' });
     try {
       void ctx.context.append({
         role: 'system',

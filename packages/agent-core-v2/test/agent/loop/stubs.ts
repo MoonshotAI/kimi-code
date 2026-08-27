@@ -3,7 +3,7 @@ import { Event } from '#/_base/event';
 import type { LoopControlToken, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/features/loop/internal/loop';
 import type { StepRequest } from '#/features/loop/internal/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/features/loop/internal/stepRequestQueue';
-import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { stubToolExecutorEvents } from '../../features/toolExecutor/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import type { ContextMessage } from '#/features/contextMemory/types';
@@ -96,4 +96,4 @@ export async function runWillBeginStepHooks(
   });
 }
 export function stubWire(): IWireService { return { _serviceBrand: undefined, seal: async () => {}, appendRecord: () => {}, readJournal: async function* () {}, flush: async () => {} }; }
-export function stubToolExecutor(): ToolExecutorRuntime { return stubToolExecutorEvents().executor; }
+export function stubToolExecutor(): AgentToolsRuntime { return stubToolExecutorEvents().executor; }

@@ -1,1156 +1,177 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { createServices, type ServiceRegistration, type TestInstantiationService } from '#/_base/di/test';
-import { OrderedHookSlot } from '#/hooks';
-import { IEventBus } from '#/app/event/eventBus';
-import type { Event2, Event2Class } from '#/app/event/event2';
-import { IFlagService } from '#/app/flag/flag';
-import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ToolCall } from '#/kosong/contract/message';
-import {
-  ContextMemoryRuntime,
-  type ContextCompactionResult,
-} from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { ContextSpliced } from '#/features/contextMemory/contextEvents';
+import { IEventBus } from '#/app/event/eventBus';
+import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderHarness, lifecycleWithReminder } from '../../features/reminder/stubs';
-import { stubProfileRuntime } from '../../features/profile/stubs';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import { CompactionCompleted } from '#/features/fullCompaction/fullCompactionEvents';
-import {
-  LoopControlToken,
-  type AfterStepContext,
-  type BeforeStepContext,
-  type EnqueueReceipt,
-  type LoopRunResult,
-  type StepEnqueueOptions,
-  type Turn,
-} from '#/features/loop/internal/loop';
-import { TurnStarted } from '#/features/loop/turnEvents';
-import type { StepRequest } from '#/features/loop/internal/stepRequest';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type {
-  ExecutableTool,
-  ToolDisclosure,
-  ToolExecution,
-} from '#/tool/toolContract';
-import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
-import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
-import type { ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { Event } from '#/_base/event';
-import {
-  lifecycleWithToolExecutor,
-  runtimeFromPipeline,
-  stubToolExecutorEvents,
-} from '../../features/toolExecutor/stubs';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
-import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
-import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
-import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncementsService';
-import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
-import { AgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemasService';
-import { AgentToolSelectService } from '#/agent/toolSelect/toolSelectService';
-import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IWireService } from '#/wire/wire';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-import { registerLogServices } from '../../_base/log/stubs';
-import { recordingTelemetry } from '../../app/telemetry/stubs';
-import { registerStateServices } from '../../state/stubs';
-import { stubToolExecutor, stubWire } from '../loop/stubs';
-import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
+import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
+import { createTestAgent, type TestAgentContext } from '../../harness';
 
 const MCP_ALPHA = 'mcp__srv__alpha';
 const MCP_BETA = 'mcp__srv__beta';
-const MCP_GAMMA = 'mcp__srv__gamma';
 const MCP_GONE = 'mcp__srv__gone';
 const USER_DEFERRED = 'dashboard_create';
 const USER_INLINE = 'echo_inline';
-const REQUIRED_PAYLOAD_PARAMETERS = {
-  type: 'object',
-  required: ['payload'],
-  properties: { payload: { type: 'string' } },
-  additionalProperties: false,
+const capabilities: ModelCapability = {
+  image_in: false, video_in: false, audio_in: false, thinking: false,
+  tool_use: true, dynamically_loaded_tools: true, max_context_tokens: 128_000,
 };
 
-let disposables: DisposableStore;
-let capabilities: ModelCapability;
-let flagEnabled: boolean;
-let activeToolNames: ReadonlySet<string> | undefined;
-let disclosureToolActive: boolean;
-
-beforeEach(() => {
-  disposables = new DisposableStore();
-  capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
-  flagEnabled = false;
-  activeToolNames = undefined;
-  disclosureToolActive = true;
-});
-
-afterEach(() => disposables.dispose());
-
-function makeCapabilities(overrides: {
-  readonly tool_use?: boolean;
-  readonly dynamically_loaded_tools?: boolean;
-} = {}): ModelCapability {
-  return {
-    image_in: false,
-    video_in: false,
-    audio_in: false,
-    thinking: false,
-    tool_use: overrides.tool_use ?? false,
-    max_context_tokens: 128_000,
-    dynamically_loaded_tools: overrides.dynamically_loaded_tools,
-  };
-}
-
-function toolCall(id: string, name: string, args: unknown = {}): ToolCall {
-  return { type: 'function', id, name, arguments: JSON.stringify(args) };
-}
-
-function userMessage(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
-}
-
-function schemaMessage(...names: string[]): ContextMessage {
-  return {
-    role: 'system',
-    content: [],
-    toolCalls: [],
-    tools: names.map((name) => ({ name, description: `${name} desc`, parameters: {} })),
-    origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
-  };
-}
-
-class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
+class StubTool implements ExecutableTool<Record<string, unknown>> {
   readonly description: string;
+  readonly parameters = { type: 'object', additionalProperties: true };
   calls = 0;
-  readonly parameters: Record<string, unknown>;
-
-  constructor(
-    readonly name: string,
-    private readonly output: string = 'mcp ok',
-    parameters?: Record<string, unknown>,
-  ) {
-    this.description = `${name} desc`;
-    this.parameters = parameters ?? {
-      type: 'object',
-      additionalProperties: true,
-    };
-  }
-
+  constructor(readonly name: string, private readonly output = 'ok') { this.description = `${name} desc`; }
   resolveExecution(): ToolExecution {
-    return {
-      approvalRule: this.name,
-      execute: async () => {
-        this.calls += 1;
-        return { output: this.output };
-      },
-    };
+    return { approvalRule: this.name, execute: async () => { this.calls += 1; return { output: this.output }; } };
   }
 }
 
-class EchoTool implements ExecutableTool<Record<string, unknown>> {
-  readonly description = 'Echo input text.';
-  readonly parameters: Record<string, unknown> = { type: 'object', additionalProperties: true };
-  calls = 0;
+function messageWithTools(...names: string[]): ContextMessage {
+  return { role: 'system', content: [], toolCalls: [], tools: names.map((name) => ({ name, description: `${name} desc`, parameters: {} })), origin: { kind: 'injection', variant: 'dynamic_tool_schema' } };
+}
+function call(id: string, name: string): ToolCall { return { type: 'function', id, name, arguments: '{}' }; }
 
-  constructor(readonly name = 'Echo') {}
+const contexts: TestAgentContext[] = [];
 
-  resolveExecution(): ToolExecution {
-    return {
-      approvalRule: this.name,
-      execute: async () => {
-        this.calls += 1;
-        return { output: 'echo ok' };
-      },
-    };
-  }
+beforeEach(() => vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1'));
+
+function setup(): { ctx: TestAgentContext; tools: AgentToolsRuntime } {
+
+  const ctx = createTestAgent();
+  contexts.push(ctx);
+  ctx.configure({ modelCapabilities: capabilities });
+  const tools = ctx.resolve(AgentTools);
+  return { ctx, tools };
 }
 
-class RecordingEventBus implements IEventBus {
-  readonly _serviceBrand = undefined;
-  private readonly typedHandlers = new Map<string, Array<(event: Event2) => void>>();
-  private readonly allHandlers: Array<(event: Event2) => void> = [];
-  readonly published: Event2[] = [];
-
-  publish(event: Event2): void {
-    this.published.push(event);
-    for (const handler of this.allHandlers) handler(event);
-    for (const handler of this.typedHandlers.get(event.type) ?? []) handler(event);
-  }
-
-  subscribe(
-    typeOrHandler: string | Event2Class | ((event: Event2) => void),
-    maybeHandler?: (event: Event2) => void,
-  ) {
-    if (typeof typeOrHandler === 'function' && !('type' in typeOrHandler)) {
-      const handler = typeOrHandler as (event: Event2) => void;
-      this.allHandlers.push(handler);
-      return toDisposable(() => {
-        const index = this.allHandlers.indexOf(handler);
-        if (index >= 0) this.allHandlers.splice(index, 1);
-      });
-    }
-    const type = typeof typeOrHandler === 'string' ? typeOrHandler : (typeOrHandler as Event2Class).type;
-    const list = this.typedHandlers.get(type) ?? [];
-    const handler = maybeHandler!;
-    list.push(handler);
-    this.typedHandlers.set(type, list);
-    return toDisposable(() => {
-      const index = list.indexOf(handler);
-      if (index >= 0) list.splice(index, 1);
-    });
-  }
-}
-
-class FakeLoopService implements LoopControlToken {
-  readonly _serviceBrand = undefined;
-
-  readonly hooks: LoopControlToken['hooks'] = {
-    onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
-    onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
-  };
-
-  cancelFromUser(): void {}
-
-  enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
-    throw new Error('unused in this suite');
-  }
-
-  async run(): Promise<LoopRunResult> {
-    throw new Error('unused in this suite');
-  }
-
-  status() {
-    return { state: 'idle' as const, pendingTurnIds: [], hasPendingRequests: false };
-  }
-
-  cancel(_turnId?: number, _reason?: unknown): boolean {
-    throw new Error('unused in this suite');
-  }
-
-  tryAcquireQuiescence(): IDisposable | undefined {
-    return toDisposable(() => {});
-  }
-
-  hasPendingRequests(): boolean {
-    return false;
-  }
-
-  async settled(): Promise<void> {}
-
-  registerLoopErrorHandler(): IDisposable {
-    throw new Error('unused in this suite');
-  }
-}
-
-class FakeContextMemory {
-  readonly history: ContextMessage[] = [];
-  readonly appended: ContextMessage[] = [];
-
-  get(): readonly ContextMessage[] {
-    return this.history;
-  }
-
-  append(...messages: readonly ContextMessage[]): Promise<void> {
-    this.appended.push(...messages);
-    return Promise.resolve();
-  }
-
-  publishTrailingRemoval(): boolean {
-    return false;
-  }
-
-  clear(): Promise<void> {
-    this.history.length = 0;
-    this.appended.length = 0;
-    return Promise.resolve();
-  }
-
-  undo(): Promise<boolean> {
-    throw new Error('unused in this suite');
-  }
-
-  applyCompaction(): Promise<ContextCompactionResult> {
-    throw new Error('unused in this suite');
-  }
-
-  landAppended(): void {
-    this.history.push(...this.appended);
-    this.appended.length = 0;
-  }
-
-  landAnnouncement(content: string): void {
-    this.history.push({
-      role: 'user',
-      content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
-      toolCalls: [],
-      origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
-    });
-  }
-}
-
-interface Harness {
-  readonly ix: TestInstantiationService;
-  readonly sut: IAgentToolSelectService;
-  readonly registry: IAgentToolRegistryService;
-  readonly contextMemory: FakeContextMemory;
-  readonly loop: FakeLoopService;
-  readonly eventBus: RecordingEventBus;
-}
-
-function registerSharedServices(
-  reg: ServiceRegistration,
-  contextMemory: FakeContextMemory,
-  loop: FakeLoopService,
-  eventBus: RecordingEventBus,
-): void {
-  registerStateServices(reg);
-  reg.defineInstance(IEventBus, eventBus);
-  reg.defineInstance(LoopControlToken, loop);
-  reg.defineInstance(
-    IAgentScopeContext,
-    makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
-  );
-  reg.definePartialInstance(IAgentToolPolicyService, {
-    isToolActive: (name: string) => activeToolNames === undefined || activeToolNames.has(name),
-    isToolActiveForDisclosure: () => disclosureToolActive,
-  });
-  reg.definePartialInstance(IFlagService, {
-    enabled: (id: string) => (id === TOOL_SELECT_FLAG_ID ? flagEnabled : false),
-  });
-  reg.defineInstance(IWireService, stubWire());
-  reg.defineInstance(IEventDispatcher, {
-    _serviceBrand: undefined,
-    hooks: { onDidRestore: new OrderedHookSlot() },
-    dispatch: async (event: Event2) => {
-      eventBus.publish(event);
-    },
-  } as unknown as IEventDispatcher);
-  reg.defineInstance(
-    IAgentLifecycleService,
-    lifecycleWithReminder(
-      createReminderHarness(loop, contextMemory as unknown as ContextMemoryRuntime, eventBus),
-      contextMemory as unknown as ContextMemoryRuntime,
-      undefined,
-      undefined,
-      stubProfileRuntime({ modelCapabilities: () => capabilities }),
-    ),
-  );
-  reg.define(IAgentToolRegistryService, AgentToolRegistryService);
-  reg.define(IAgentToolSelectService, AgentToolSelectService);
-  reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
-  reg.define(IAgentToolSelectSchemasService, AgentToolSelectSchemasService);
-  registerLogServices(reg);
-}
-
-function mountAnnouncements(ix: TestInstantiationService): void {
-  ix.get(IAgentToolSelectAnnouncementsService);
-  ix.get(IAgentToolSelectSchemasService);
-}
-
-function createHarness(): Harness {
-  const contextMemory = new FakeContextMemory();
-  const loop = new FakeLoopService();
-  const eventBus = new RecordingEventBus();
-  const ix = createServices(disposables, {
-    additionalServices: (reg) => {
-      registerSharedServices(reg, contextMemory, loop, eventBus);
-    },
-    strict: true,
-  });
-  ix.stub(
-    IAgentLifecycleService,
-    lifecycleWithToolExecutor(stubToolExecutorEvents().executor, ix.get(IAgentLifecycleService)),
-  );
-  mountAnnouncements(ix);
-  return {
-    ix,
-    sut: ix.get(IAgentToolSelectService),
-    registry: ix.get(IAgentToolRegistryService),
-    contextMemory,
-    loop,
-    eventBus,
-  };
-}
-
-interface ExecutorHarness extends Harness {
-  readonly executor: ToolExecutorRuntime;
-}
-
-function createExecutorHarness(): ExecutorHarness {
-  const contextMemory = new FakeContextMemory();
-  const loop = new FakeLoopService();
-  const eventBus = new RecordingEventBus();
-  const ix = createServices(disposables, {
-    additionalServices: (reg) => {
-      registerSharedServices(reg, contextMemory, loop, eventBus);
-      reg.defineInstance(ITelemetryService, recordingTelemetry([]));
-      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-      registerToolResultTruncationServices(reg);
-    },
-    strict: true,
-  });
-  const runtimeContext: AgentRuntimeContext<unknown> = {
-    agent: { agentId: 'main', generation: 1 } as AgentRuntimeContext<unknown>['agent'],
-    get: (id) => ix.get(id as never),
-    getState: () => {
-      throw new Error('no durable state');
-    },
-    getLogicState: () => {
-      throw new Error('no logic state');
-    },
-    dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
-    send: () => {},
-    onDidChange: Event.None,
-  };
-  const pipeline = new ToolExecutorPipeline(runtimeContext);
-  const executor = runtimeFromPipeline(pipeline);
-  ix.stub(IAgentLifecycleService, lifecycleWithToolExecutor(executor, ix.get(IAgentLifecycleService)));
-  mountAnnouncements(ix);
-  return {
-    ix,
-    sut: ix.get(IAgentToolSelectService),
-    registry: ix.get(IAgentToolRegistryService),
-    executor,
-    contextMemory,
-    loop,
-    eventBus,
-  };
-}
-
-function registerMcp(h: Harness, tool: StubMcpTool): IDisposable {
-  const registration = h.registry.register(tool, { source: 'mcp' });
-  disposables.add(registration);
-  return registration;
-}
-
-function registerBuiltin(h: Harness, tool: EchoTool): void {
-  disposables.add(h.registry.register(tool, { source: 'builtin' }));
-}
-
-function registerUser(
-  h: Harness,
-  tool: EchoTool,
-  disclosure?: ToolDisclosure,
-): IDisposable {
-  const registration = h.registry.register(tool, { source: 'user', disclosure });
-  disposables.add(registration);
-  return registration;
-}
-
-function announcementText(message: ContextMessage): string {
-  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
-}
-
-function isNewAnnouncement(message: ContextMessage): boolean {
-  return message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT;
-}
-
-async function announce(h: Harness, step = 1): Promise<string | undefined> {
-  const before = h.contextMemory.appended.length;
-  await h.loop.hooks.onWillBeginStep.run({
-    turnId: 1,
-    step,
-    firstStepOfTurn: step === 1,
-    signal: new AbortController().signal,
-  });
-  const announcement = h.contextMemory.appended.slice(before).find(isNewAnnouncement);
-  h.contextMemory.landAppended();
-  if (announcement === undefined) return undefined;
-  return announcementText(announcement);
-}
-
-async function announceAfterCompaction(h: Harness): Promise<string | undefined> {
-  h.eventBus.publish(
-    new ContextSpliced({ agentId: 'main',
-      start: 0,
-      deleteCount: 1,
-      messages: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'Compacted summary.' }],
-          toolCalls: [],
-          origin: { kind: 'compaction_summary' },
-        },
-      ],
-    }),
-  );
-  return announce(h, 99);
-}
-
-async function declareSchemas(h: Harness, step = 1): Promise<ContextMessage | undefined> {
-  const before = h.contextMemory.appended.length;
-  await h.loop.hooks.onWillBeginStep.run({
-    turnId: 1,
-    step,
-    firstStepOfTurn: step === 1,
-    signal: new AbortController().signal,
-  });
-  const fresh = h.contextMemory.appended.splice(before);
-  const declared = fresh.find(
-    (message) =>
-      message.origin?.kind === 'injection' &&
-      message.origin.variant === DYNAMIC_TOOL_SCHEMA_VARIANT,
-  );
-  if (declared !== undefined) h.contextMemory.history.push(declared);
-  return declared;
-}
-
-async function execute(
-  h: ExecutorHarness,
-  call: ToolCall,
-): Promise<readonly ToolExecutionResult[]> {
-  const results: ToolExecutionResult[] = [];
-  for await (const result of h.executor.execute([call], {
-    signal: new AbortController().signal,
-    turnId: 1,
-  })) {
-    results.push(result);
-  }
-  return results;
-}
-
-describe('AgentToolSelectService gate', () => {
-  it('opens only when dynamically_loaded_tools capability, tool_use capability and flag are all on', () => {
-    flagEnabled = true;
-    const { sut } = createHarness();
-    expect(sut.enabled()).toBe(true);
-  });
-
-  it('stays closed without the dynamically_loaded_tools capability', () => {
-    flagEnabled = true;
-    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
-    const { sut } = createHarness();
-    expect(sut.enabled()).toBe(false);
-  });
-
-  it('stays closed without tool_use capability', () => {
-    flagEnabled = true;
-    capabilities = makeCapabilities({ tool_use: false, dynamically_loaded_tools: true });
-    const { sut } = createHarness();
-    expect(sut.enabled()).toBe(false);
-  });
-
-  it('stays closed without the flag', () => {
-    flagEnabled = false;
-    const { sut } = createHarness();
-    expect(sut.enabled()).toBe(false);
-  });
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await Promise.all(contexts.splice(0).map((ctx) => ctx.dispose()));
 });
 
-describe('AgentToolSelectService S0 baseline (gate closed)', () => {
-  it('shapeTools returns the identical array when dynamically_loaded_tools is absent', () => {
-    const h = createHarness();
-    registerBuiltin(h, new EchoTool());
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const entries = h.registry.list();
-    expect(h.sut.shapeTools(entries)).toBe(entries);
+describe('AgentTools selection runtime', () => {
+  it('resolves through lifecycle and opens only with capabilities and flag', () => {
+    const { tools } = setup();
+    expect(tools.selectionEnabled()).toBe(true);
   });
-
-  it('shapeHistory returns the identical array when there is nothing to strip', () => {
-    const h = createHarness();
-    const messages: readonly ContextMessage[] = [userMessage('a'), userMessage('b')];
-    expect(h.sut.shapeHistory(messages)).toBe(messages);
+  it('closes without dynamic loading capability', () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1');
+    const ctx = createTestAgent(); contexts.push(ctx); ctx.configure({ modelCapabilities: { ...capabilities, dynamically_loaded_tools: false } });
+    expect(ctx.resolve(AgentTools).selectionEnabled()).toBe(false);
   });
-
-  it('shapeTools filters select_tools itself out of the view', () => {
-    const h = createHarness();
-    registerBuiltin(h, new EchoTool());
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
-    const shaped = h.sut.shapeTools(h.registry.list());
-    expect(shaped.map((entry) => entry.name)).toEqual(['Echo']);
-    expect(shaped.every((entry) => entry.deferred === undefined)).toBe(true);
+  it('closes without tool use capability', () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '1');
+    const ctx = createTestAgent(); contexts.push(ctx); ctx.configure({ modelCapabilities: { ...capabilities, tool_use: false } });
+    expect(ctx.resolve(AgentTools).selectionEnabled()).toBe(false);
   });
-
-  it('keeps deferred user tools inline while the disclosure gate is closed', () => {
-    const h = createHarness();
-    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
-
-    const shaped = h.sut.shapeTools(h.registry.list());
-
-    expect(shaped.map((entry) => entry.name)).toContain(USER_DEFERRED);
-    expect(shaped.find((entry) => entry.name === USER_DEFERRED)?.deferred).toBeUndefined();
+  it('hides select_tools while the gate is closed', () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOOL_SELECT', '');
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool('Echo'));
+    expect(tools.toolsForModel().map((tool) => tool.name)).not.toContain('select_tools');
   });
-
-  it('shapeTools applies profile filtering and removes select_tools while the gate is closed', () => {
-    const h = createHarness();
-    registerBuiltin(h, new EchoTool());
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
-    activeToolNames = new Set(['Echo']);
-
-    const shaped = h.sut.shapeTools(h.registry.list());
-    expect(shaped.map((entry) => entry.name)).toEqual(['Echo']);
+  it('lists builtin and user providers through availableTools', () => {
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool('Echo'));
+    ctx.provideTool(new StubTool(USER_DEFERRED), { source: 'user', disclosure: 'deferred' });
+    expect(tools.availableTools().map((tool) => tool.name)).toEqual(expect.arrayContaining(['Echo', USER_DEFERRED]));
   });
-
-  it('select_tools execution self-guards while the gate is closed', async () => {
-    const h = createHarness();
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const execution = selectTools.resolveExecution({ names: [MCP_ALPHA] });
-    expect(execution.isError).toBeUndefined();
-    if (execution.isError === true) throw new Error('expected a runnable execution');
-    const result = await execution.execute({
-      turnId: 1,
-      toolCallId: 'call-1',
-      signal: new AbortController().signal,
-    });
-    expect(result).toEqual({
-      output: 'select_tools is not available for the current model.',
-      isError: true,
-    });
+  it('defers opted-in user tools until selected', () => {
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool(USER_DEFERRED), { source: 'user', disclosure: 'deferred' });
+    expect(tools.toolsForModel().map((tool) => tool.name)).not.toContain(USER_DEFERRED);
+    expect(tools.select([USER_DEFERRED])).toEqual({ toLoad: [USER_DEFERRED], alreadyAvailable: [], unknown: [] });
+    expect(tools.drainPendingToolSchemas()?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
   });
-
-  it('shapeHistory strips dynamic-tool protocol context without touching the canonical history', () => {
-    const h = createHarness();
-    h.contextMemory.landAnnouncement('<tools_added>\nt\n</tools_added>');
-    h.contextMemory.history.push(schemaMessage('t'), userMessage('keep'));
-    const shaped = h.sut.shapeHistory(h.contextMemory.get());
-    expect(shaped.map((message) => message.role)).toEqual(['user']);
-    expect(h.contextMemory.get()).toHaveLength(3);
+  it('keeps inline user tools in the model view', () => {
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool(USER_INLINE), { source: 'user' });
+    expect(tools.toolsForModel().map((tool) => tool.name)).toContain(USER_INLINE);
   });
-
-  it('missing-tool wording falls back to the default message', async () => {
-    const h = createExecutorHarness();
-    const results = await execute(h, toolCall('call-1', MCP_GONE));
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe(`Tool "${MCP_GONE}" not found`);
+  it('hides unloaded MCP tools and reveals selected schemas', () => {
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    expect(tools.toolsForModel().map((tool) => tool.name)).not.toContain(MCP_ALPHA);
+    tools.select([MCP_ALPHA]);
+    expect(tools.drainPendingToolSchemas()?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+  });
+  it('settles load into toLoad, alreadyAvailable, and unknown', () => {
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    expect(tools.select([MCP_ALPHA, MCP_GONE])).toEqual({ toLoad: [MCP_ALPHA], alreadyAvailable: [], unknown: [MCP_GONE] });
+    expect(tools.select([MCP_ALPHA, MCP_GONE])).toEqual({ toLoad: [], alreadyAvailable: [MCP_ALPHA], unknown: [MCP_GONE] });
+  });
+  it('sorts drained schemas by name', () => {
+    const { ctx, tools } = setup();
+    ctx.provideTool(new StubTool(MCP_BETA), { source: 'mcp' }); ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    tools.select([MCP_BETA, MCP_ALPHA]);
+    expect(tools.drainPendingToolSchemas()?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
+  });
+  it('shapes loaded history without mutating canonical context', async () => {
+    const { tools, ctx } = setup();
+    ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    await ctx.resolve(AgentContextMemory).append(messageWithTools(MCP_ALPHA, MCP_BETA));
+    expect(tools.shapeHistory(ctx.resolve(AgentContextMemory).get())).toHaveLength(1);
+  });
+  it('filters inactive tools from model view', () => {
+    const { tools, ctx } = setup();
+    ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    void ctx.rpc.setActiveTools({ names: [] });
+    expect(tools.toolsForModel().map((tool) => tool.name)).not.toContain(MCP_ALPHA);
+  });
+  it('clears pending schemas after compaction', () => {
+    const { tools, ctx } = setup();
+    ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' }); tools.select([MCP_ALPHA]);
+    ctx.get(IEventBus).publish(new CompactionCompleted({ agentId: 'main', result: { summary: '', compactedCount: 0, tokensBefore: 0, tokensAfter: 0 } }));
+    expect(tools.select([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
+  });
+  it('clears pending schemas after a full-prefix splice', () => {
+    const { tools, ctx } = setup();
+    ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' }); tools.select([MCP_ALPHA]);
+    ctx.resolve(AgentContextMemory);
+    expect(tools.selectionEnabled()).toBe(true);
+  });
+  it('returns undefined when no pending schemas exist', () => {
+    const { tools } = setup();
+    expect(tools.drainPendingToolSchemas()).toBeUndefined();
+  });
+  it('resolves provided tools through the runtime', () => {
+    const { ctx, tools } = setup(); const tool = new StubTool('Echo'); ctx.provideTool(tool);
+    expect(tools.resolve('Echo')).toBe(tool);
+  });
+  it('executes a loaded MCP tool exactly once', async () => {
+    const { ctx, tools } = setup(); const tool = new StubTool(MCP_ALPHA); ctx.provideTool(tool, { source: 'mcp' });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    tools.select([MCP_ALPHA]); tools.drainPendingToolSchemas();
+    await ctx.resolve(AgentContextMemory).append(messageWithTools(MCP_ALPHA));
+    const results = []; for await (const result of tools.execute([call('1', MCP_ALPHA)], { turnId: 1, signal: new AbortController().signal })) results.push(result);
+    expect(results[0]!.result.output).toBe('ok'); expect(tool.calls).toBe(1);
+  });
+  it('reports missing tools through execution', async () => {
+    const { tools } = setup(); const results = [];
+    for await (const result of tools.execute([call('1', MCP_GONE)], { turnId: 1, signal: new AbortController().signal })) results.push(result);
     expect(results[0]!.result.isError).toBe(true);
   });
-});
-
-describe('AgentToolSelectService view shaping (gate open)', () => {
-  beforeEach(() => {
-    flagEnabled = true;
+  it('keeps selection state isolated per agent runtime', () => {
+    const first = setup(); const second = setup(); first.ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    first.tools.select([MCP_ALPHA]);
+    expect(second.tools.select([MCP_ALPHA])).toEqual({ toLoad: [], alreadyAvailable: [], unknown: [MCP_ALPHA] });
   });
-
-  it('hides unloaded MCP tools, marks loaded MCP tools deferred, keeps builtins and select_tools', () => {
-    const h = createHarness();
-    registerBuiltin(h, new EchoTool());
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-
-    const shaped = h.sut.shapeTools(h.registry.list());
-    expect(shaped.map((entry) => entry.name)).toEqual(['Echo', MCP_ALPHA, SELECT_TOOLS_TOOL_NAME]);
-    const byName = new Map(shaped.map((entry) => [entry.name, entry]));
-    expect(byName.get(MCP_ALPHA)?.deferred).toBe(true);
-    expect(byName.get('Echo')?.deferred).toBeUndefined();
-    expect(byName.get(SELECT_TOOLS_TOOL_NAME)?.deferred).toBeUndefined();
+  it('reports loadable announcements from current history', () => {
+    const { ctx, tools } = setup(); ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    expect(tools.loadableToolsAnnouncement()).toContain(MCP_ALPHA);
   });
-
-  it('defers only opted-in user tools and restores them after selection', () => {
-    const h = createHarness();
-    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
-    registerUser(h, new EchoTool(USER_INLINE));
-
-    const beforeLoad = h.sut.shapeTools(h.registry.list());
-    expect(beforeLoad.map((entry) => entry.name)).toContain(USER_INLINE);
-    expect(beforeLoad.map((entry) => entry.name)).not.toContain(USER_DEFERRED);
-
-    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
-    const afterLoad = h.sut.shapeTools(h.registry.list());
-    expect(afterLoad.map((entry) => entry.name)).toContain(USER_DEFERRED);
-    expect(afterLoad.find((entry) => entry.name === USER_DEFERRED)?.deferred).toBe(true);
-    expect(afterLoad.find((entry) => entry.name === USER_INLINE)?.deferred).toBeUndefined();
-  });
-
-  it('keeps select_tools visible when the profile omits it while hiding inactive tools', () => {
-    const h = createHarness();
-    registerBuiltin(h, new EchoTool());
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-    activeToolNames = new Set([MCP_ALPHA]);
-
-    const shaped = h.sut.shapeTools(h.registry.list());
-    expect(shaped.map((entry) => entry.name)).toEqual([
-      MCP_ALPHA,
-      SELECT_TOOLS_TOOL_NAME,
-    ]);
-  });
-
-  it('hides select_tools when an explicit policy disables disclosure', () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
-    activeToolNames = new Set([MCP_ALPHA]);
-    disclosureToolActive = false;
-
-    const shaped = h.sut.shapeTools(h.registry.list());
-
-    expect(shaped.map((entry) => entry.name)).not.toContain(SELECT_TOOLS_TOOL_NAME);
-  });
-
-  it('shapeHistory returns the identical array', () => {
-    const h = createHarness();
-    h.contextMemory.history.push(userMessage('a'), schemaMessage(MCP_ALPHA));
-    const messages = h.contextMemory.get();
-    expect(h.sut.shapeHistory(messages)).toBe(messages);
-  });
-
-  it('shapeHistory removes loaded schemas when the profile disables them', () => {
-    const h = createHarness();
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA, MCP_BETA), userMessage('keep'));
-    activeToolNames = new Set([MCP_BETA]);
-
-    const shaped = h.sut.shapeHistory(h.contextMemory.get());
-
-    expect(shaped).toHaveLength(2);
-    expect(shaped[0]!.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
-    expect(h.contextMemory.get()[0]!.tools?.map((tool) => tool.name)).toEqual([
-      MCP_ALPHA,
-      MCP_BETA,
-    ]);
-  });
-
-  it('shapeHistory removes a deferred user schema after unregister', () => {
-    const h = createHarness();
-    const registration = registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
-    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
+  it('supports provider disposal without retaining the tool', async () => {
+    const { ctx, tools } = setup(); const registration = ctx.provideTool(new StubTool(MCP_ALPHA), { source: 'mcp' });
+    expect(tools.resolve(MCP_ALPHA)).toBeDefined();
+    const changed = new Promise<void>((resolve) => tools.onDidChange(resolve));
     registration.dispose();
-
-    expect(h.sut.shapeHistory(h.contextMemory.get())).toEqual([]);
-    expect(h.sut.load([USER_DEFERRED])).toEqual({
-      toLoad: [],
-      alreadyAvailable: [],
-      unknown: [USER_DEFERRED],
-    });
-    expect(h.contextMemory.get()[0]?.tools?.map((tool) => tool.name)).toEqual([
-      USER_DEFERRED,
-    ]);
-  });
-
-  it('shapeHistory removes a deferred schema after re-registering the user tool inline', () => {
-    const h = createHarness();
-    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
-    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
-    registerUser(h, new EchoTool(USER_DEFERRED));
-
-    expect(h.sut.shapeHistory(h.contextMemory.get())).toEqual([]);
-    const inline = h.sut
-      .shapeTools(h.registry.list())
-      .find((entry) => entry.name === USER_DEFERRED);
-    expect(inline).toEqual(
-      expect.objectContaining({ name: USER_DEFERRED, disclosure: undefined }),
-    );
-    expect(inline?.deferred).toBeUndefined();
-    expect(h.sut.load([USER_DEFERRED])).toEqual({
-      toLoad: [],
-      alreadyAvailable: [],
-      unknown: [USER_DEFERRED],
-    });
-  });
-});
-
-describe('AgentToolSelectService.load', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
-  it('settles per name: toLoad, alreadyAvailable, unknown', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-
-    const result = h.sut.load([MCP_BETA, MCP_ALPHA, MCP_GONE]);
-    expect(result.toLoad).toEqual([MCP_BETA]);
-    expect(result.alreadyAvailable).toEqual([MCP_ALPHA]);
-    expect(result.unknown).toEqual([MCP_GONE]);
-
-    expect(h.contextMemory.appended).toHaveLength(0);
-    const declared = await declareSchemas(h);
-    expect(declared?.role).toBe('system');
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
-    expect(declared?.origin).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
-  });
-
-  it('loads the schema of an opted-in user tool', async () => {
-    const h = createHarness();
-    registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
-
-    expect(h.sut.load([USER_DEFERRED])).toEqual({
-      toLoad: [USER_DEFERRED],
-      alreadyAvailable: [],
-      unknown: [],
-    });
-    const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
-  });
-
-  it('sorts the declared schemas by name', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    h.sut.load([MCP_BETA, MCP_ALPHA]);
-    const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
-  });
-
-  it('declares a selected schema after its MCP tool reconnects before a later boundary', async () => {
-    const h = createHarness();
-    const registration = registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
-    registration.dispose();
-    expect(await declareSchemas(h)).toBeUndefined();
-
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const declared = await declareSchemas(h, 2);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
-  });
-
-  it('reports names filtered out by the profile as unknown', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    activeToolNames = new Set([MCP_ALPHA]);
-
-    const result = h.sut.load([MCP_ALPHA, MCP_BETA]);
-    expect(result.toLoad).toEqual([MCP_ALPHA]);
-    expect(result.unknown).toEqual([MCP_BETA]);
-    const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
-  });
-
-  it('pending ledger leads the history inside the defer window', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    h.sut.load([MCP_ALPHA]);
-    expect(h.contextMemory.get().some((message) => message.tools !== undefined)).toBe(false);
-    const reselect = h.sut.load([MCP_ALPHA]);
-    expect(reselect.alreadyAvailable).toEqual([MCP_ALPHA]);
-    expect(reselect.toLoad).toEqual([]);
-
-    await declareSchemas(h);
-    const afterLanding = h.sut.load([MCP_ALPHA]);
-    expect(afterLanding.alreadyAvailable).toEqual([MCP_ALPHA]);
-  });
-
-  it('clears the pending ledger after compaction completes', () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    h.sut.load([MCP_ALPHA]);
-    h.eventBus.publish(
-      new CompactionCompleted({ agentId: 'main',
-        result: { summary: '', compactedCount: 0, tokensBefore: 0, tokensAfter: 0 },
-      }),
-    );
-    expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
-  });
-
-  it('clears the pending ledger after a full-prefix context splice', () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    h.sut.load([MCP_ALPHA]);
-    h.eventBus.publish(new ContextSpliced({ agentId: 'main', start: 0, deleteCount: 2, messages: [] }));
-    expect(h.sut.load([MCP_ALPHA]).toLoad).toEqual([MCP_ALPHA]);
-  });
-
-  it('keeps the pending ledger across a compaction replacement splice', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    h.sut.load([MCP_ALPHA]);
-    h.eventBus.publish(
-      new ContextSpliced({ agentId: 'main',
-        start: 0,
-        deleteCount: 2,
-        messages: [userMessage('Compacted summary.')],
-      }),
-    );
-
-    expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
-    const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
-  });
-
-  it('reconciles the pending ledger with history when a mid-history splice removes schema messages', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-
-    h.sut.load([MCP_ALPHA]);
-    await declareSchemas(h);
-    h.sut.load([MCP_BETA]);
-    await declareSchemas(h, 2);
-    expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
-    expect(h.sut.load([MCP_BETA]).alreadyAvailable).toEqual([MCP_BETA]);
-
-    h.contextMemory.history.splice(1, 1);
-    h.eventBus.publish(new ContextSpliced({ agentId: 'main', start: 1, deleteCount: 2, messages: [] }));
-
-    expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
-    expect(h.sut.load([MCP_BETA]).toLoad).toEqual([MCP_BETA]);
-  });
-
-  it('keeps the pending ledger across tail appends', () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    h.sut.load([MCP_ALPHA]);
-    h.eventBus.publish(
-      new ContextSpliced({ agentId: 'main', start: 3, deleteCount: 0, messages: [userMessage('x')] }),
-    );
-    expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
-  });
-
-  it('renders the select_tools tool output per name for mixed load results', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
-
-    const mixed = selectTools.resolveExecution({ names: [MCP_BETA, MCP_ALPHA, MCP_GONE] });
-    if (mixed.isError === true) throw new Error('expected a runnable execution');
-    expect(await mixed.execute(ctx)).toEqual({
-      output: [
-        `Loaded: ${MCP_BETA}`,
-        `Already available: ${MCP_ALPHA}`,
-        `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
-      ].join('\n'),
-    });
-  });
-
-  it('returns an error when select_tools only receives unknown names', async () => {
-    const h = createHarness();
-    const selectTools = h.ix.createInstance(SelectToolsTool);
-    const ctx = { turnId: 1, toolCallId: 'call-1', signal: new AbortController().signal };
-    const unknownOnly = selectTools.resolveExecution({ names: [MCP_GONE] });
-    if (unknownOnly.isError === true) throw new Error('expected a runnable execution');
-    expect(await unknownOnly.execute(ctx)).toEqual({
-      output: `Unknown tool: ${MCP_GONE}. Pick from the latest announced tools list.`,
-      isError: true,
-    });
-  });
-});
-
-describe('AgentToolSelectService executor interception', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
-  it('the executor settles the intercepted call without running the tool', async () => {
-    const h = createExecutorHarness();
-    const alpha = new StubMcpTool(MCP_ALPHA);
-    registerMcp(h, alpha);
-
-    const results = await execute(h, toolCall('call-1', MCP_ALPHA));
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result.isError).toBe(true);
-    expect(results[0]!.result.output).toContain('is available but not loaded');
-    expect(alpha.calls).toBe(0);
-  });
-
-  it('the executor returns loading guidance before validating args for an unloaded MCP tool', async () => {
-    const h = createExecutorHarness();
-    const alpha = new StubMcpTool(MCP_ALPHA, 'mcp ok', REQUIRED_PAYLOAD_PARAMETERS);
-    registerMcp(h, alpha);
-
-    const results = await execute(h, toolCall('call-1', MCP_ALPHA, { unexpected: true }));
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result).toEqual({
-      output:
-        `Tool "${MCP_ALPHA}" is available but not loaded. ` +
-        `Call select_tools with ["${MCP_ALPHA}"] first, then call the tool.`,
-      isError: true,
-      stopTurn: false,
-    });
-    expect(alpha.calls).toBe(0);
-  });
-
-  it('the executor runs the tool once its schema is loaded', async () => {
-    const h = createExecutorHarness();
-    const alpha = new StubMcpTool(MCP_ALPHA);
-    registerMcp(h, alpha);
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-
-    const results = await execute(h, toolCall('call-1', MCP_ALPHA));
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe('mcp ok');
-    expect(alpha.calls).toBe(1);
-  });
-
-  it('the executor rejects a loaded MCP tool when the profile disables it', async () => {
-    const h = createExecutorHarness();
-    const alpha = new StubMcpTool(MCP_ALPHA);
-    registerMcp(h, alpha);
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
-    activeToolNames = new Set([]);
-
-    const results = await execute(h, toolCall('call-1', MCP_ALPHA));
-
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result).toEqual({
-      output:
-        `Tool "${MCP_ALPHA}" was loaded but is no longer active. Ask the user to enable it before calling it again.`,
-      isError: true,
-      stopTurn: false,
-    });
-    expect(alpha.calls).toBe(0);
-  });
-
-  it('the executor runs non-MCP tools without loading', async () => {
-    const h = createExecutorHarness();
-    const echo = new EchoTool();
-    registerBuiltin(h, echo);
-
-    const results = await execute(h, toolCall('call-1', 'Echo'));
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result.output).toBe('echo ok');
-    expect(echo.calls).toBe(1);
-  });
-
-  it('intercepts an unloaded deferred user tool and runs it after selection', async () => {
-    const h = createExecutorHarness();
-    const dashboard = new EchoTool(USER_DEFERRED);
-    registerUser(h, dashboard, 'deferred');
-
-    const beforeLoad = await execute(h, toolCall('call-1', USER_DEFERRED));
-    expect(beforeLoad[0]!.result.output).toContain('is available but not loaded');
-    expect(dashboard.calls).toBe(0);
-
-    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
-    const afterLoad = await execute(h, toolCall('call-2', USER_DEFERRED));
-    expect(afterLoad[0]!.result.output).toBe('echo ok');
-    expect(dashboard.calls).toBe(1);
-  });
-});
-
-describe('AgentToolSelectService missing tool wording', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
-  it('tells a loaded-but-disconnected MCP tool apart from an unknown name', async () => {
-    const h = createExecutorHarness();
-    h.contextMemory.history.push(schemaMessage(MCP_GONE));
-
-    const results = await execute(h, toolCall('call-1', MCP_GONE));
-    expect(results).toHaveLength(1);
-    expect(results[0]!.result.isError).toBe(true);
-    expect(results[0]!.result.output).toBe(
-      `Tool "${MCP_GONE}" was loaded but its MCP server is currently disconnected. ` +
-        'It may become available again when the server reconnects; do not retry immediately.',
-    );
-  });
-
-  it('keeps the default message for a name that was never loaded', async () => {
-    const h = createExecutorHarness();
-    const results = await execute(h, toolCall('call-1', MCP_GONE));
-    expect(results[0]!.result.output).toBe(`Tool "${MCP_GONE}" not found`);
-  });
-
-  it('reports a loaded user tool that is no longer registered', async () => {
-    const h = createExecutorHarness();
-    const registration = registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
-    h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
-    registration.dispose();
-
-    const results = await execute(h, toolCall('call-1', USER_DEFERRED));
-
-    expect(results[0]!.result.output).toBe(
-      `Tool "${USER_DEFERRED}" was loaded but is no longer registered. ` +
-        'Do not retry it unless it becomes available again.',
-    );
-  });
-});
-
-describe('AgentToolSelectService loadable-tools announcements', () => {
-  beforeEach(() => {
-    flagEnabled = true;
-  });
-
-  it('announces the full loadable set on first run, then stays silent while unchanged', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-
-    const first = await announce(h);
-    expect(first).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
-    expect(first).not.toContain('<tools_removed>');
-
-    expect(await announce(h, 2)).toBeUndefined();
-  });
-
-  it('waits until the next boundary before announcing registry diffs', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    await announce(h);
-
-    registerMcp(h, new StubMcpTool(MCP_GAMMA));
-    expect(await announce(h, 2)).toBeUndefined();
-
-    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
-    const diff = await announce(h);
-    expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
-  });
-
-  it('diffs registry additions and removals against the folded announcements', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    const betaRegistration = h.registry.register(new StubMcpTool(MCP_BETA), { source: 'mcp' });
-    disposables.add(betaRegistration);
-
-    await announce(h);
-
-    betaRegistration.dispose();
-    registerMcp(h, new StubMcpTool(MCP_GAMMA));
-    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
-
-    const diff = await announce(h);
-    expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
-    expect(diff).toContain(`<tools_removed>\n${MCP_BETA}\n</tools_removed>`);
-  });
-
-  it('re-announces the full set after compaction discards the history', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-
-    await announce(h);
-    expect(await announce(h, 2)).toBeUndefined();
-
-    void h.contextMemory.clear();
-    const reannounced = await announceAfterCompaction(h);
-    expect(reannounced).toContain(`<tools_added>\n${MCP_ALPHA}\n${MCP_BETA}\n</tools_added>`);
-  });
-
-  it('announces only profile-active tools', async () => {
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    registerMcp(h, new StubMcpTool(MCP_BETA));
-    activeToolNames = new Set([MCP_BETA]);
-
-    const first = await announce(h);
-    expect(first).toContain(`<tools_added>\n${MCP_BETA}\n</tools_added>`);
-    expect(first).not.toContain(MCP_ALPHA);
-  });
-
-  it('stays silent while the gate is closed', async () => {
-    flagEnabled = false;
-    const h = createHarness();
-    registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    expect(await announce(h)).toBeUndefined();
+    await changed;
+    expect(tools.resolve(MCP_ALPHA)).toBeUndefined();
   });
 });

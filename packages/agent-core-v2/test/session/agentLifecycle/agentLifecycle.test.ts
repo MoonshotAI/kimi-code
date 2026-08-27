@@ -16,7 +16,6 @@ import { ProfileBind } from '#/features/profile/profileOps';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import {
   AgentPermissionMode,
@@ -57,7 +56,6 @@ import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { createMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
-import '#/agent/mcp/mcpService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
@@ -87,8 +85,8 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
-import { AgentToolExecutor, ToolExecutorRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { toolExecutorAgentRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime, agentToolsRuntimeProvider } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
 import { permissionRulesAgentRuntimeProvider } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import type { ToolExecutorDomain } from '#/features/toolExecutor/internal/domain';
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
@@ -106,8 +104,6 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -201,8 +197,8 @@ function stubBlobPassThrough(ix: TestInstantiationService): void {
   } satisfies IAgentBlobService);
 }
 
-const stubToolExecutorRuntimeProvider = defineAgentRuntimeProvider(AgentToolExecutor, {
-  id: 'toolExecutor',
+const stubAgentToolsRuntimeProvider = defineAgentRuntimeProvider(AgentTools, {
+  id: 'tools',
   eager: true,
   createApi: () => stubToolExecutor(),
 });
@@ -308,12 +304,6 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       refreshSessionStart: async () => {},
     });
-    ix.stub(IAgentToolRegistryService, {
-      _serviceBrand: undefined,
-      register: () => ({ dispose: () => {} }),
-      resolve: () => undefined,
-      list: () => [],
-    } as unknown as IAgentToolRegistryService);
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
     } as IAgentMediaToolsRegistrar);
@@ -451,7 +441,7 @@ describe('AgentLifecycleService', () => {
       AgentRuntimeContributionPoint,
       'test-stub-tool-executor',
       new Ledger('test-stub-tool-executor'),
-      stubToolExecutorRuntimeProvider,
+      stubAgentToolsRuntimeProvider,
     );
     ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
@@ -796,12 +786,16 @@ describe('AgentLifecycleService', () => {
       onDidChange: () => ({ dispose: () => {} }),
     } as unknown as IAgentRuntimeService);
     ix.stub(IGitService, {} as unknown as IGitService);
+    ix.stub(IAgentToolContributionSource, {
+      view: { items: [], onDidChange: () => ({ dispose: () => {} }) },
+      providers: { items: [], onDidChange: () => ({ dispose: () => {} }) },
+    } as never);
     withdrawStubToolExecutor();
     ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
       'test-tool-executor',
       new Ledger('test-tool-executor'),
-      toolExecutorAgentRuntimeProvider,
+      agentToolsRuntimeProvider,
     );
     ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
@@ -811,7 +805,7 @@ describe('AgentLifecycleService', () => {
     );
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
-    const runtime: ToolExecutorRuntime = svc.resolve(main, AgentToolExecutor);
+    const runtime: AgentToolsRuntime = svc.resolve(main, AgentTools);
     const domain = (runtime as unknown as { domain: ToolExecutorDomain }).domain;
     const makeCtx = (id: string): ResolvedToolExecutionHookContext => {
       const toolCall = {
@@ -1016,10 +1010,6 @@ describe('AgentLifecycleService', () => {
         section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
-    ix.stub(IAgentToolRegistryService, {
-      _serviceBrand: undefined,
-      register: () => ({ dispose: () => {} }),
-    } as unknown as IAgentToolRegistryService);
     ix.stub(ICronCreateTool, { _serviceBrand: undefined });
     ix.stub(ICronListTool, { _serviceBrand: undefined });
     ix.stub(ICronDeleteTool, { _serviceBrand: undefined });
@@ -1113,34 +1103,12 @@ describe('AgentLifecycleService', () => {
     expect(svc.resolve(worker, AgentPermissionMode).mode()).toBe('default');
   });
 
-  it('wires MCP OAuth credentials through the session atomic document store', async () => {
+  it('exposes the session MCP handle without moving OAuth ownership into the agent', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
-
-    const mcp = svc.handleOf('main')!.accessor.get(IAgentMcpService);
-    const oauth = mcp.oauthService;
-    if (oauth === undefined) throw new Error('Expected session MCP manager to provide OAuth');
-    const provider = oauth.getProvider('linear', 'https://linear.example.com/mcp');
-    await provider.ready;
-
-    await provider.saveTokens({
-      access_token: 'session-token',
-      token_type: 'Bearer',
-    } satisfies OAuthTokens);
-
-    const tokenEntries = [...atomicDocs.entries()].filter(
-      ([key]) => key.startsWith('credentials/mcp/') && key.endsWith('-tokens.json'),
-    );
-    expect(tokenEntries).toEqual([
-      [
-        expect.stringMatching(/^credentials\/mcp\/linear-[a-f0-9]{24}-tokens\.json$/),
-        {
-          access_token: 'session-token',
-          token_type: 'Bearer',
-          obtained_at: expect.any(Number),
-        },
-      ],
-    ]);
+    const handle = svc.handleOf('main')!.accessor.get(ISessionMcpHandle);
+    expect(handle.connectionManager).toBeDefined();
+    expect(handle.ready).toBeInstanceOf(Promise);
   });
 
   it('returns an agent without waiting for the MCP handle readiness', async () => {

@@ -21,6 +21,7 @@ import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/s
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
+import { ISessionMcpHandle } from '@moonshot-ai/agent-core-v2/session/mcp/sessionMcpHandle';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
 import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
@@ -181,6 +182,17 @@ function agentProfileServiceView(agent: IAgentScopeHandle): Record<string, unkno
       profile().setThinking(level);
     },
     getEffectiveThinkingLevel: () => profile().effectiveThinkingLevel(),
+  };
+}
+
+/**
+ * `agentMcpService` stays on the wire after the engine removed the per-agent
+ * MCP service: the view projects the session's shared MCP connection manager
+ * (Session scope) so the `list` payload stays byte-identical.
+ */
+function agentMcpServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  return {
+    list: () => agent.accessor.get(ISessionMcpHandle).connectionManager.list(),
   };
 }
 
@@ -353,6 +365,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
           return runtime.begin(input).then(() => !already);
         },
       };
+    }
+    if (service === 'agentMcpService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentMcpServiceView(resolved.like as IAgentScopeHandle);
     }
     const token = serviceTokens[service];
     if (token === undefined) {

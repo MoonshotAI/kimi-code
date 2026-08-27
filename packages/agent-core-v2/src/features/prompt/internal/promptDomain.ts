@@ -13,7 +13,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IFileService } from '#/app/file/fileService';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IEventService } from '#/app/event/event';
@@ -198,7 +198,10 @@ export class PromptDomain {
     try {
       if (input.disabledTools !== undefined) {
         try {
-          await this.runtime.get(IAgentToolPolicyService).setSessionDisabledTools(input.disabledTools);
+          await this.runtime
+            .get(IAgentLifecycleService)
+            .resolve(this.runtime.agent, AgentTools)
+            .setSessionDisabledTools(input.disabledTools);
         } catch (error) {
           throw new Error2(
             ErrorCodes.REQUEST_INVALID,

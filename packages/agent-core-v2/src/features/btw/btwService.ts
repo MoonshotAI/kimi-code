@@ -1,7 +1,7 @@
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { AgentToolExecutor } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -30,7 +30,7 @@ export class SessionBtwService implements ISessionBtwService {
         TOOL_CALL_DISABLED_MESSAGE,
       ) ?? TOOL_CALL_DISABLED_MESSAGE;
     this.agentLifecycle
-      .resolve(childContext, AgentToolExecutor)
+      .resolve(childContext, AgentTools)
       .participateExecution('btw', (event) => {
         event.veto(denyToolExecution(reason));
       });

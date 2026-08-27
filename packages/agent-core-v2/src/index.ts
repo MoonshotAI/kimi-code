@@ -407,8 +407,6 @@ import '#/agent/toolSelect/flag';
 export * from '#/agent/tools/select-tools/select-tools';
 import '#/agent/tools/select-tools/selectToolsTool';
 export * from '#/agent/toolSelect/dynamicTools';
-export * from '#/agent/toolSelect/toolSelect';
-export * from '#/agent/toolSelect/toolSelectService';
 export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
 export * from '#/agent/toolSelect/toolSelectSchemas';
@@ -416,8 +414,6 @@ export * from '#/agent/toolSelect/toolSelectSchemasService';
 import '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/evaluate';
-export * from '#/agent/toolPolicy/toolPolicy';
-export * from '#/agent/toolPolicy/toolPolicyService';
 
 import '#/agent/task/configSection';
 export {
@@ -686,8 +682,6 @@ export * from '#/features/loop/internal/loopContinuationService';
 export * from '#/agent/interruptionReminder/interruptionReminder';
 export * from '#/agent/interruptionReminder/interruptionReminderService';
 export * from '#/agent/interruptionReminder/interruptionReminderOps';
-export * from '#/agent/mcp/mcp';
-export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
 export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
@@ -791,18 +785,13 @@ export * from '#/tool/toolContract';
 export * from '#/features/toolExecutor/toolHooks';
 export * from '#/features/toolExecutor/toolExecutor';
 export {
-  AgentToolExecutor,
-  ToolExecutorRuntime,
+  AgentTools,
+  AgentToolsRuntime,
 } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import '#/features/toolExecutor/toolExecutorFeature';
 export * from '#/agent/toolResultTruncation/toolResultTruncation';
 import '#/agent/toolResultTruncation/toolResultTruncationService';
-import '#/agent/toolActivation/toolActivationService';
 import '#/agent/toolRegistry/toolContribution';
-import '#/agent/toolRegistry/toolRegistry';
-import '#/agent/toolRegistry/toolRegistryService';
-export { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
-export { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 export { registerAgentToolService, AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 export type { AgentToolContributionOptions } from '#/agent/toolRegistry/toolContribution';
 export * from '#/agent/userTool/userTool';

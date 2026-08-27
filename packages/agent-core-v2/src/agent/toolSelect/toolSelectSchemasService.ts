@@ -6,14 +6,13 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { DYNAMIC_TOOL_SCHEMA_VARIANT } from './dynamicTools';
-import { IAgentToolSelectService } from './toolSelect';
+import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentToolSelectSchemasService } from './toolSelectSchemas';
 
 export class AgentToolSelectSchemasService extends Service implements IAgentToolSelectSchemasService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentToolSelectService toolSelect: IAgentToolSelectService,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
@@ -21,7 +20,7 @@ export class AgentToolSelectSchemasService extends Service implements IAgentTool
     this._register(
       activateReminderWhenReady(agentLifecycle, scopeContext, (reminder) =>
         reminder.register(DYNAMIC_TOOL_SCHEMA_VARIANT, () => {
-          const tools = toolSelect.drainPendingToolSchemas();
+          const tools = agentLifecycle.resolve(scopeContext.agentContext, AgentTools).drainPendingToolSchemas();
           if (tools === undefined) return undefined;
           return { message: { role: 'system', content: [], tools } };
         }),

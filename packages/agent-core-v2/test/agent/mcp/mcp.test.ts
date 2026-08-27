@@ -4,47 +4,28 @@ import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { Event } from '#/_base/event';
+import { toDisposable } from '#/_base/di/lifecycle';
 import { abortError } from '#/_base/utils/abort';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
-import { IAgentMcpService } from '#/agent/mcp/mcp';
-import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IWireService } from '#/wire/wire';
+import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
+import type { ToolInfo } from '#/tool/toolContract';
 import type { WireRecord } from '#/wire/record';
-import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
-import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
-import { runtimeFromPipeline, lifecycleWithToolExecutor } from '../../features/toolExecutor/stubs';
-import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { LoopControlToken } from '#/features/loop/internal/loop';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 
-import { createTestAgent, mcpServices, type TestAgentContext } from '../../harness';
-import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { stubLoopWithHooks } from '../loop/stubs';
-import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
 import {
-  recordingWireLog,
-  registerTestAgentWire,
-  registerTestEventDispatcher,
-} from '../../wire/stubs';
+  createTestAgent,
+  InMemoryWireRecordPersistence,
+  mcpServices,
+  telemetryServices,
+  type TestAgentContext,
+} from '../../harness';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 import { discoverTools, executeTool, fakeMcpClient } from '../../mcpCore/stubs';
 
@@ -79,6 +60,10 @@ class FakeMcpManager {
 
   resolved(name: string): ResolvedServer | undefined {
     if (this.entries.get(name)?.status !== 'connected') return undefined;
+    return this.resolvedEntries.get(name);
+  }
+
+  known(name: string): ResolvedServer | undefined {
     return this.resolvedEntries.get(name);
   }
 
@@ -203,122 +188,90 @@ class FakeMcpManager {
   }
 }
 
-describe('AgentMcpService', () => {
-  let disposables: DisposableStore;
-  let ix: TestInstantiationService;
+describe('AgentTools MCP provider', () => {
+  let ctx: TestAgentContext;
+  let tools: AgentToolsRuntime;
   let events: Event2[];
   let telemetryEvents: TelemetryRecord[];
-  let wire: IWireService;
-  let dispatcher: IEventDispatcher;
-  let wireRecordListeners: Set<(record: WireRecord) => void>;
+  let persistence: InMemoryWireRecordPersistence;
 
   beforeEach(() => {
-    disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
     events = [];
     telemetryEvents = [];
-    wireRecordListeners = new Set();
-    ix.stub(IEventBus, {
-      publish: (event) => {
-        events.push(event);
-      },
-      subscribe: () => toDisposable(() => {}),
-    });
-    ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
-    ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
-    ix.stub(LoopControlToken, stubLoopWithHooks());
-    ix.set(IAgentStateService, new AgentStateService());
-    wire = registerTestAgentWire(ix, 'mcp-test', {
-      eventBus: ix.get(IEventBus),
-      log: recordingWireLog([], (record) => {
-        for (const listener of wireRecordListeners) listener(record);
-      }),
-    });
-    dispatcher = registerTestEventDispatcher(ix);
-    const context: AgentRuntimeContext<unknown> = {
-      agent: ix.get(IAgentScopeContext).agentContext,
-      get: (id) => ix.get(id as never),
-      getState: () => {
-        throw new Error('no durable state');
-      },
-      getLogicState: () => {
-        throw new Error('no logic state');
-      },
-      dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
-      send: () => {},
-      onDidChange: Event.None,
-    };
-    const pipeline = new ToolExecutorPipeline(context);
-    ix.stub(IAgentLifecycleService, lifecycleWithToolExecutor(runtimeFromPipeline(pipeline)));
+    persistence = new InMemoryWireRecordPersistence();
   });
-  afterEach(() => {
-    disposables.dispose();
+  afterEach(async () => {
+    await ctx?.dispose();
   });
 
   function createService(
     manager: FakeMcpManager,
     ready: Promise<void> = Promise.resolve(),
     isBaselineServer: (name: string) => boolean = () => true,
-  ): IAgentMcpService {
-    ix.stub(ISessionMcpHandle, {
-      _serviceBrand: undefined,
-      ready,
-      connectionManager: manager as unknown as McpConnectionManager,
-      isBaselineServer,
-    } satisfies ISessionMcpHandle);
-    ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
-    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
-    return ix.get(IAgentMcpService);
+  ): AgentToolsRuntime {
+    ctx = createTestAgent(
+      mcpServices({ manager: manager as unknown as McpConnectionManager, ready, isBaselineServer }),
+      telemetryServices(recordingTelemetry(telemetryEvents)),
+      { persistence },
+    );
+    ctx.get(IEventBus).subscribe((event) => events.push(event));
+    tools = ctx.resolve(AgentTools);
+    return tools;
+  }
+
+  function mcpToolInfos(manager: FakeMcpManager): ToolInfo[] {
+    const names = new Set<string>();
+    for (const entry of manager.list()) {
+      if (entry.status === 'needs-auth') names.add(`mcp__${entry.name}__authenticate`);
+      const resolved = manager.known(entry.name);
+      for (const tool of resolved?.tools ?? []) {
+        if (resolved?.enabledNames.has(tool.name)) names.add(qualifyMcpToolName(entry.name, tool.name));
+      }
+    }
+    return [...names]
+      .filter((name) => tools.resolve(name) !== undefined)
+      .map((name) => ({ name, description: '', parameters: {}, source: 'mcp' as const }));
   }
 
   it('delegates list / status events to the connection manager', async () => {
     const manager = new FakeMcpManager();
     manager.setResolved('s1', fakeMcpClient(), await discoverTools(fakeMcpClient()));
     manager.setResolved('s2', fakeMcpClient(), await discoverTools(fakeMcpClient()));
-    const svc = createService(manager);
+    createService(manager);
 
     const statuses: string[] = [];
-    svc.onStatusChange((e) => statuses.push(`${e.name}:${e.status}`));
+    manager.onStatusChange((e) => statuses.push(`${e.name}:${e.status}`));
 
     manager.connect('s1');
     manager.connect('s2');
-    expect(svc.list().map((e) => e.name).toSorted()).toEqual(['s1', 's2']);
+    expect(mcpToolInfos(manager)).toHaveLength(4);
+    expect(manager.list().map((e) => e.name).toSorted()).toEqual(['s1', 's2']);
 
     manager.disconnect('s1');
-    expect(svc.list().map((e) => e.name)).toEqual(['s2']);
+    expect(manager.list().map((e) => e.name)).toEqual(['s2']);
     expect(statuses).toEqual(['s1:connected', 's2:connected', 's1:disabled']);
   });
 
-  it('holds the LLM step until the session MCP handle is ready', async () => {
+  it('holds tool execution until the session MCP handle is ready', async () => {
     const manager = new FakeMcpManager();
     let releaseReady!: () => void;
     const ready = new Promise<void>((resolve) => {
       releaseReady = resolve;
     });
     createService(manager, ready);
-
-    const loop = ix.get(LoopControlToken);
     let settled = false;
-    const step = loop.hooks.onWillBeginStep
-      .run({ turnId: 1, step: 1, firstStepOfTurn: true, signal: new AbortController().signal })
-      .then(() => {
-        settled = true;
-      });
-
+    void ctx.get(ISessionMcpHandle).ready.then(() => { settled = true; });
     await Promise.resolve();
     expect(settled).toBe(false);
-
     releaseReady();
-    await step;
+    await ctx.get(ISessionMcpHandle).ready;
     expect(settled).toBe(true);
   });
 
-  it('resolves through the IAgentMcpService binding with no manager', () => {
+  it('resolves AgentTools through the lifecycle with no MCP servers', () => {
     const created = createService(new FakeMcpManager());
-    const svc = ix.get(IAgentMcpService);
-    expect(svc).toBe(created);
-    expect(svc.list()).toEqual([]);
+    expect(created).toBe(tools);
+    expect(mcpToolInfos(new FakeMcpManager())).toEqual([]);
   });
 
   it('registers connected MCP tools under qualified names with source=mcp', async () => {
@@ -329,7 +282,7 @@ describe('AgentMcpService', () => {
 
     manager.connect('local server');
 
-    const infos = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    const infos = mcpToolInfos(manager);
     expect(infos.map((info) => info.name).toSorted()).toEqual([
       'mcp__local_server__echo',
       'mcp__local_server__noop',
@@ -351,12 +304,7 @@ describe('AgentMcpService', () => {
     manager.setResolved('base server', baseClient, await discoverTools(baseClient));
     createService(manager, Promise.resolve(), (name) => name === 'base server');
 
-    const mcpToolNames = () =>
-      ix
-        .get(IAgentToolRegistryService)
-        .list()
-        .filter((tool) => tool.source === 'mcp')
-        .map((tool) => tool.name);
+    const mcpToolNames = () => mcpToolInfos(manager).map((tool) => tool.name);
 
     manager.connect('late server');
 
@@ -396,7 +344,7 @@ describe('AgentMcpService', () => {
 
     manager.connect('s');
 
-    const names = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp').map((tool) => tool.name);
+    const names = mcpToolInfos(manager).map((tool) => tool.name);
     expect(names).toEqual(['mcp__s__echo']);
   });
 
@@ -407,11 +355,11 @@ describe('AgentMcpService', () => {
     createService(manager);
 
     manager.connect('s');
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(mcpToolInfos(manager)).toHaveLength(2);
 
     manager.disconnect('s');
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
+    expect(mcpToolInfos(manager)).toEqual([]);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.list.updated',
@@ -428,17 +376,17 @@ describe('AgentMcpService', () => {
     manager.setResolved('s', client, await discoverTools(client));
     createService(manager);
     manager.connect('s');
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(mcpToolInfos(manager)).toHaveLength(2);
 
     manager.markRemoved('s');
 
-    const registered = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    const registered = mcpToolInfos(manager);
     expect(registered).toHaveLength(2);
     expect(events).not.toContainEqual(
       expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.disconnected' }),
     );
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     expect(echo).toBeDefined();
     const result = await executeTool(echo!, {
       turnId: 1,
@@ -460,7 +408,7 @@ describe('AgentMcpService', () => {
 
     createService(manager);
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
+    expect(mcpToolInfos(manager)).toEqual([]);
   });
 
   it('reports same-server qualified-name collisions and keeps only the first tool', async () => {
@@ -478,7 +426,7 @@ describe('AgentMcpService', () => {
 
     manager.connect('srv');
 
-    const names = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp').map((tool) => tool.name);
+    const names = mcpToolInfos(manager).map((tool) => tool.name);
     expect(names).toEqual(['mcp__srv__a_b']);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -503,7 +451,7 @@ describe('AgentMcpService', () => {
     manager.connect('srv a');
     manager.connect('srv__a');
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp').map((tool) => tool.name)).toEqual([
+    expect(mcpToolInfos(manager).map((tool) => tool.name)).toEqual([
       'mcp__srv_a__shared',
     ]);
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
@@ -522,7 +470,7 @@ describe('AgentMcpService', () => {
     manager.setResolved('s', secondClient, await discoverTools(secondClient));
     manager.connect('s');
 
-    const names = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp').map((tool) => tool.name);
+    const names = mcpToolInfos(manager).map((tool) => tool.name);
     expect(names).toEqual(['mcp__s__only']);
   });
 
@@ -533,7 +481,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     expect(echo).toBeDefined();
     const result = await executeTool(echo!, {
       turnId: 1,
@@ -599,7 +547,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     const result = await executeTool(echo!, {
       turnId: 1,
       toolCallId: 'tc-reconnect',
@@ -630,7 +578,7 @@ describe('AgentMcpService', () => {
 
     manager.fail('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     expect(echo).toBeDefined();
     const result = await executeTool(echo!, {
       turnId: 1,
@@ -663,7 +611,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     await expect(
       executeTool(echo!, {
         turnId: 1,
@@ -685,7 +633,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     await expect(
       executeTool(echo!, {
         turnId: 1,
@@ -694,7 +642,7 @@ describe('AgentMcpService', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('Connection closed');
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(mcpToolInfos(manager)).toHaveLength(2);
   });
 
   it('reports both errors when the reconnect attempt itself fails', async () => {
@@ -707,7 +655,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     await expect(
       executeTool(echo!, {
         turnId: 1,
@@ -736,7 +684,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     await expect(
       executeTool(echo!, {
         turnId: 1,
@@ -762,7 +710,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const registry = ix.get(IAgentToolRegistryService);
+    const registry = tools;
     const echo = registry.resolve('mcp__s__echo');
     const noop = registry.resolve('mcp__s__noop');
     const [echoResult, noopResult] = await Promise.all([
@@ -803,7 +751,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const registry = ix.get(IAgentToolRegistryService);
+    const registry = tools;
     const echo = registry.resolve('mcp__s__echo');
     const noop = registry.resolve('mcp__s__noop');
     const firstController = new AbortController();
@@ -847,7 +795,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     const result = await executeTool(echo!, {
       turnId: 1,
       toolCallId: 'tc-raw-transport',
@@ -872,7 +820,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const registry = ix.get(IAgentToolRegistryService);
+    const registry = tools;
     const staleEcho = registry.resolve('mcp__s__echo');
 
     manager.setResolved('s', freshClient, await discoverTools(freshClient));
@@ -912,7 +860,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     await expect(
       executeTool(echo!, {
         turnId: 1,
@@ -946,7 +894,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     const result = await executeTool(echo!, {
       turnId: 1,
       toolCallId: 'tc-transient',
@@ -983,7 +931,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     const result = await executeTool(echo!, {
       turnId: 1,
       toolCallId: 'tc-persistent-transport',
@@ -1020,7 +968,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     const controller = new AbortController();
     const call = executeTool(echo!, {
       turnId: 1,
@@ -1059,7 +1007,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const big = ix.get(IAgentToolRegistryService).resolve('mcp__s__big');
+    const big = tools.resolve('mcp__s__big');
     const result = await executeTool(big!, {
       turnId: 1,
       toolCallId: 'tc-big-text',
@@ -1095,7 +1043,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const snap = ix.get(IAgentToolRegistryService).resolve('mcp__s__snap');
+    const snap = tools.resolve('mcp__s__snap');
     const result = await executeTool(snap!, {
       turnId: 1,
       toolCallId: 'tc-small-image',
@@ -1142,7 +1090,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('s');
 
-    const shot = ix.get(IAgentToolRegistryService).resolve('mcp__s__shot');
+    const shot = tools.resolve('mcp__s__shot');
     const result = await executeTool(shot!, {
       turnId: 1,
       toolCallId: 'tc-large-image',
@@ -1191,7 +1139,7 @@ describe('AgentMcpService', () => {
     manager.connect('s');
 
     const controller = new AbortController();
-    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const echo = tools.resolve('mcp__s__echo');
     await executeTool(echo!, {
       turnId: 1,
       toolCallId: 'tc-signal',
@@ -1215,8 +1163,8 @@ describe('AgentMcpService', () => {
 
     manager.needsAuth();
 
-    const tools = ix.get(IAgentToolRegistryService).list();
-    expect(tools).toEqual([
+    const toolInfos = mcpToolInfos(manager);
+    expect(toolInfos).toEqual([
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
@@ -1224,7 +1172,7 @@ describe('AgentMcpService', () => {
     ]);
   });
 
-  it('registers the synthetic authenticate tool for a server that settled needs-auth before attach', () => {
+  it('registers the synthetic authenticate tool for a server that settled needs-auth before attach', async () => {
     const oauthService = {
       beginAuthorization: async () => ({
         authorizationUrl: new URL('https://example.com/authorize'),
@@ -1237,18 +1185,15 @@ describe('AgentMcpService', () => {
 
     createService(manager);
 
-    const tools = ix.get(IAgentToolRegistryService).list();
-    expect(tools).toEqual([
+    const toolInfos = mcpToolInfos(manager);
+    expect(toolInfos).toEqual([
       expect.objectContaining({
         name: 'mcp__needs-auth__authenticate',
         source: 'mcp',
       }),
     ]);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'mcp.server.status',
-        server: expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
-      }),
+    expect(manager.get('needs-auth')).toEqual(
+      expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
     );
   });
 
@@ -1261,7 +1206,7 @@ describe('AgentMcpService', () => {
     manager.connect('s');
     manager.fail('s');
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(mcpToolInfos(manager)).toHaveLength(2);
     expect(events).not.toContainEqual(
       expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.failed' }),
     );
@@ -1282,7 +1227,7 @@ describe('AgentMcpService', () => {
     manager.connect('s');
     manager.pending('s');
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(mcpToolInfos(manager)).toHaveLength(2);
     expect(events).not.toContainEqual(
       expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.disconnected' }),
     );
@@ -1299,17 +1244,17 @@ describe('AgentMcpService', () => {
   };
 
   function collectDiscoveries(): {
-    records: { type: string; [key: string]: unknown }[];
-    off: { dispose(): void };
+    readonly records: { type: string; [key: string]: unknown }[];
+    readonly off: { dispose(): void };
   } {
-    const records: { type: string; [key: string]: unknown }[] = [];
-    const listener = (record: WireRecord): void => {
-      if (record.type === 'mcp.tools_discovered') {
-        records.push(record as { type: string; [key: string]: unknown });
-      }
-    };
-    wireRecordListeners.add(listener);
-    return { records, off: toDisposable(() => wireRecordListeners.delete(listener)) };
+    const start = persistence.records.filter((record) => record.type === 'mcp.tools_discovered').length;
+    const records = new Proxy([] as { type: string; [key: string]: unknown }[], {
+      get: (_target, property) => Reflect.get(
+        persistence.records.filter((record) => record.type === 'mcp.tools_discovered').slice(start),
+        property,
+      ),
+    });
+    return { records, off: toDisposable(() => {}) };
   }
 
   it('records tools/list once after restore and dedups unchanged reconnects', async () => {
@@ -1329,8 +1274,7 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await dispatcher.restore();
-      await dispatcher.flush();
+      await ctx.restorePersisted();
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -1345,7 +1289,7 @@ describe('AgentMcpService', () => {
 
       manager.setResolved('grafana', client, await discoverTools(client), new Set(), rawTools);
       manager.connect('grafana');
-      await wire.flush();
+      await ctx.wire.flush();
       expect(records).toHaveLength(2);
     } finally {
       off.dispose();
@@ -1369,8 +1313,7 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await dispatcher.restore();
-      await dispatcher.flush();
+      await ctx.restorePersisted();
       expect(records).toHaveLength(1);
     } finally {
       off.dispose();
@@ -1396,8 +1339,7 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       enabledNames.clear();
       enabledNames.add('mutated_after_observation');
-      await dispatcher.restore();
-      await dispatcher.flush();
+      await ctx.restorePersisted();
 
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
@@ -1424,8 +1366,7 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
     manager.connect('graf.ana');
-    await dispatcher.restore();
-    await dispatcher.flush();
+    await ctx.restorePersisted();
 
     const { records, off } = collectDiscoveries();
     try {
@@ -1439,13 +1380,13 @@ describe('AgentMcpService', () => {
         rawTools,
       );
       manager.connect('graf_ana');
-      await wire.flush();
+      await ctx.wire.flush();
       expect(records).toHaveLength(1);
       expect(records[0]!['collisions']).toHaveLength(1);
 
       manager.disconnect('graf.ana');
       manager.connect('graf_ana');
-      await wire.flush();
+      await ctx.wire.flush();
       expect(records).toHaveLength(2);
       expect(records[1]!['collisions']).toBeUndefined();
     } finally {
@@ -1454,16 +1395,16 @@ describe('AgentMcpService', () => {
   });
 });
 
-describe('AgentMcpService + AgentProfileService', () => {
+describe('AgentTools MCP provider + AgentProfile', () => {
   let ctx: TestAgentContext;
   let manager: FakeMcpManager;
   let profile: ProfileRuntime;
+  let tools: AgentToolsRuntime;
 
   beforeEach(() => {
     manager = new FakeMcpManager();
     ctx = createTestAgent(mcpServices({ manager: manager as unknown as McpConnectionManager }));
-    const mcp = ctx.get(IAgentMcpService);
-    mcp.list();
+    tools = ctx.resolve(AgentTools);
     profile = ctx.resolve(AgentProfile);
   });
 
@@ -1481,24 +1422,12 @@ describe('AgentMcpService + AgentProfileService', () => {
     manager.connect('local');
 
     profile.update({ activeToolNames: ['Read'] });
-    expect(
-      ctx.toolsData()
-        .filter((tool) => tool.source === 'mcp')
-        .map((tool) => ({ name: tool.name, active: tool.active })),
-    ).toEqual([
-      { name: 'mcp__local__echo', active: false },
-      { name: 'mcp__local__noop', active: false },
-    ]);
+    expect(tools.isActive('mcp__local__echo', 'mcp')).toBe(false);
+    expect(tools.isActive('mcp__local__noop', 'mcp')).toBe(false);
 
     profile.update({ activeToolNames: ['Read', 'mcp__*'] });
-    expect(
-      ctx.toolsData()
-        .filter((tool) => tool.source === 'mcp')
-        .map((tool) => ({ name: tool.name, active: tool.active })),
-    ).toEqual([
-      { name: 'mcp__local__echo', active: true },
-      { name: 'mcp__local__noop', active: true },
-    ]);
+    expect(tools.isActive('mcp__local__echo', 'mcp')).toBe(true);
+    expect(tools.isActive('mcp__local__noop', 'mcp')).toBe(true);
   });
 
   it('supports server-scoped and exact MCP active-tool patterns', async () => {
@@ -1510,18 +1439,12 @@ describe('AgentMcpService + AgentProfileService', () => {
     manager.connect('slack');
 
     profile.update({ activeToolNames: ['mcp__github__*'] });
-    expect(
-      ctx.toolsData()
-        .filter((tool) => tool.source === 'mcp' && tool.active)
-        .map((tool) => tool.name)
-      .toSorted(),
-    ).toEqual(['mcp__github__echo', 'mcp__github__noop']);
+    expect(tools.isActive('mcp__github__echo', 'mcp')).toBe(true);
+    expect(tools.isActive('mcp__github__noop', 'mcp')).toBe(true);
+    expect(tools.isActive('mcp__slack__echo', 'mcp')).toBe(false);
 
     profile.update({ activeToolNames: ['mcp__slack__echo'] });
-    expect(
-      ctx.toolsData()
-        .filter((tool) => tool.source === 'mcp' && tool.active)
-        .map((tool) => tool.name),
-    ).toEqual(['mcp__slack__echo']);
+    expect(tools.isActive('mcp__slack__echo', 'mcp')).toBe(true);
+    expect(tools.isActive('mcp__github__echo', 'mcp')).toBe(false);
   });
 });
