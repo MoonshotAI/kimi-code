@@ -488,6 +488,32 @@ describe('Agent tools', () => {
     expect(description).not.toContain('Model preference:');
   });
 
+  it('hides model preferences when force is set', () => {
+    const subagentHost = {
+      delegatableSubagents: vi.fn(() => ({
+        coder: {
+          name: 'coder',
+          description: 'General coding.',
+          systemPrompt: () => 'coder prompt',
+          tools: ['Read'],
+          modelPreference: 'primary' as const,
+        },
+      })),
+    } as unknown as SessionSubagentHost;
+    const ctx = testAgent({
+      subagentHost,
+      initialConfig: {
+        providers: {},
+        secondaryModel: { defaultModel: 'cheap-model', force: true },
+      },
+    });
+    ctx.configure({ tools: ['Agent'] });
+
+    const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
+
+    expect(description).not.toContain('Model preference:');
+  });
+
   it('self-heals the builtin tool table when the provider becomes resolvable after construction', () => {
     // The ProviderManager reads this live config; it starts with no model or
     // provider, so hasProvider is false at Agent construction and

@@ -784,6 +784,11 @@ export class ToolManager {
       background,
     } = this.agent;
     const videoUploader = this.createVideoUploader(provider);
+    const secondaryModel = resolveSecondaryModel(this.agent.kimiConfig);
+    // Mirrors the v2 exposesSubagentModelChoice rule: a configured model
+    // unlocks the choice, while `force` takes it away from the main agent.
+    const exposeModelChoice =
+      secondaryModelAlias(secondaryModel) !== undefined && secondaryModel?.force !== true;
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
@@ -853,10 +858,8 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
-              showModelPreferences:
-                secondaryModelAlias(resolveSecondaryModel(this.agent.kimiConfig)) !== undefined,
-              modelChoiceEnabled:
-                secondaryModelAlias(resolveSecondaryModel(this.agent.kimiConfig)) !== undefined,
+              showModelPreferences: exposeModelChoice,
+              modelChoiceEnabled: exposeModelChoice,
               subagentModelDescription: buildSubagentModelDescriptions(
                 this.agent.kimiConfig,
                 this.agent.config.modelAlias,
@@ -872,7 +875,7 @@ export class ToolManager {
               this.agent.kimiConfig,
               this.agent.config.modelAlias,
             ),
-            secondaryModelAlias(resolveSecondaryModel(this.agent.kimiConfig)) !== undefined,
+            exposeModelChoice,
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

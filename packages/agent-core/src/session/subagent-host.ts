@@ -6,7 +6,7 @@ import {
 
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
-import { ErrorCodes } from '../errors';
+import { ErrorCodes, KimiError } from '../errors';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
 import { InMemoryAgentRecordPersistence } from '../agent/records';
 import { isAbortError } from '../loop/errors';
@@ -26,6 +26,12 @@ import {
   type SubagentModelBinding,
   type SubagentModelChoice,
 } from './subagent-binding';
+import { resolveSecondaryModel } from './subagent-binding';
+import {
+  SECONDARY_DERIVED_MODEL_ALIAS,
+  secondaryModelAlias,
+  secondaryModelPatch,
+} from '../config/secondary-model';
 import {
   SubagentBatch,
   resolveSwarmMaxConcurrency,
@@ -462,15 +468,50 @@ export class SessionSubagentHost {
   /**
    * The model a newly spawned subagent binds to: the configured secondary
    * model by default (when `[secondary_model]` is set), otherwise the parent's
-   * model and effort, inherited as before. The bound alias is validated up
-   * front so a dangling `[secondary_model]` pointer fails the spawn with a
-   * wrapped, actionable error instead of a mid-turn provider failure.
+   * model and effort, inherited as before. With `force` set the choice is
+   * taken away — an explicit `model: primary` rejection mirrors the v2 error;
+   * a profile-level preference is overridden silently. The bound alias is
+   * validated up front so a dangling `[secondary_model]` pointer fails the
+   * spawn with a wrapped, actionable error instead of a mid-turn provider
+   * failure.
    */
   private resolveSpawnBinding(
     parent: Agent,
     profile: ResolvedAgentProfile,
     modelChoice?: SubagentModelChoice,
   ): SubagentModelBinding {
+    const secondary = resolveSecondaryModel(this.session.kimiConfig);
+    const secondaryAlias = secondaryModelAlias(secondary);
+    if (secondary?.force === true) {
+      if (secondaryAlias === undefined) {
+        throw new KimiError(
+          ErrorCodes.CONFIG_INVALID,
+          '[secondary_model].default_model is required when [secondary_model].force is set',
+        );
+      }
+      if (modelChoice === 'primary') {
+        throw new KimiError(
+          ErrorCodes.CONFIG_INVALID,
+          `[secondary_model].force is set, so every subagent binds "${secondaryAlias}" (omit the model parameter).`,
+        );
+      }
+      const binding: SubagentModelBinding = {
+        modelAlias:
+          secondaryModelPatch(secondary) === undefined
+            ? secondaryAlias
+            : SECONDARY_DERIVED_MODEL_ALIAS,
+        thinkingEffort: secondary.defaultEffort,
+      };
+      if (binding.modelAlias !== undefined) {
+        const providerManager = this.session.options.providerManager;
+        try {
+          providerManager?.resolveProviderConfig(binding.modelAlias);
+        } catch (error) {
+          throw wrapSubagentModelError(error, binding.modelAlias, parent.config.modelAlias);
+        }
+      }
+      return binding;
+    }
     const binding = resolveSubagentBinding(
       this.session.kimiConfig,
       { modelAlias: parent.config.modelAlias, thinkingEffort: parent.config.thinkingEffort },

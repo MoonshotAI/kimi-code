@@ -1261,6 +1261,38 @@ describe('SessionSubagentHost', () => {
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     });
 
+    it('binds the forced model and rejects an explicit model: primary choice', async () => {
+      await expect(
+        spawnChild({
+          config: {
+            providers: {},
+            secondaryModel: { defaultModel: 'cheap-model', force: true },
+          },
+          modelChoice: 'primary',
+        }),
+      ).rejects.toThrow(/\[secondary_model\]\.force is set/);
+    });
+
+    it('silently overrides a profile model_preference when force is set', async () => {
+      const { parent, child } = await spawnChild({
+        config: {
+          providers: {},
+          secondaryModel: { defaultModel: 'cheap-model', force: true },
+        },
+        profilePreference: 'primary',
+      });
+      expect(child.agent.config.modelAlias).toBe('cheap-model');
+      expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
+    });
+
+    it('fails the spawn when force is set without a default model', async () => {
+      await expect(
+        spawnChild({
+          config: { providers: {}, secondaryModel: { force: true } },
+        }),
+      ).rejects.toThrow(/default_model is required when \[secondary_model\]\.force is set/);
+    });
+
     it('fails the spawn with a wrapped error when the secondary model does not resolve', async () => {
       const parent = testAgent();
       parent.configure();

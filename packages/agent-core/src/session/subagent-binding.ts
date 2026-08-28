@@ -72,8 +72,10 @@ export function buildSubagentModelDescriptions(
   config: KimiConfig | undefined,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const secondaryModel = secondaryModelAlias(resolveSecondaryModel(config));
-  if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
+  const secondary = resolveSecondaryModel(config);
+  const secondaryModel = secondaryModelAlias(secondary);
+  if (secondaryModel === undefined || callerModelAlias === undefined || secondary?.force === true)
+    return undefined;
   return [
     'Available models (pass via model):',
     `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
