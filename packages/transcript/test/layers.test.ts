@@ -506,7 +506,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -527,7 +527,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'steered in' }], toolCalls: [], origin: { kind: 'user' } },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn']);
@@ -550,7 +550,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: [{ type: 'text', text: 'next question' }], toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     const turns = snapshot.items.filter((i) => i.kind === 'turn');
@@ -574,7 +574,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'plain follow-up' }], toolCalls: [], origin: { kind: 'user' } },
       ],
-      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), 1]]) },
+      { steeredContents: new Map([[JSON.stringify([{ type: 'text', text: 'steered in' }]), new Map([['user', 1]])]]) },
     );
 
     expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'turn']);
@@ -1115,7 +1115,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         },
         { role: 'assistant', content: [{ type: 'text', text: 'used the skill' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(skillContent), 1]]) },
+      { steeredContents: new Map([[JSON.stringify(skillContent), new Map([['skill_activation', 1]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
@@ -1138,7 +1138,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(cronContent), 1]]) },
+      { steeredContents: new Map([[JSON.stringify(cronContent), new Map([['cron_job', 1]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
@@ -1168,7 +1168,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(slashContent), 1]]) },
+      { steeredContents: new Map([[JSON.stringify(slashContent), new Map([['skill_activation', 1]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
@@ -1199,10 +1199,37 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
         { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
       ],
-      { steeredContents: new Map([[JSON.stringify(shared), 1]]) },
+      { steeredContents: new Map([[JSON.stringify(shared), new Map([['skill_activation', 1]])]]) },
     );
 
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker', 'turn']);
+  });
+
+  it('does not consume a user steer count for a compaction summary with identical content', () => {
+    const shared = [{ type: 'text', text: 'same text' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: shared,
+          toolCalls: [],
+          origin: { kind: 'compaction_summary' } as { kind: string },
+        },
+        { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(shared), new Map([['user', 1]])]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const steered = turn.steps
+      .flatMap((step) => step.frames)
+      .filter((frame) => frame.kind === 'text' && frame.role === 'user');
+    expect(steered).toHaveLength(1);
   });
 
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
