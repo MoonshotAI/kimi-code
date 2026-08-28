@@ -495,9 +495,8 @@ export class TranscriptService {
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
-          const kind =
-            ((record as { origin?: { kind?: unknown } }).origin?.kind as string | undefined) ??
-            'user';
+          const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
+          const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
           const byKind = steeredContents.get(key) ?? new Map<string, number>();
           byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
           steeredContents.set(key, byKind);
