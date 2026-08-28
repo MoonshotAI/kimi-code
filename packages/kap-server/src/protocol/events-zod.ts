@@ -711,7 +711,18 @@ export const turnStartedEventSchema = z.object({
   prompt: z.string().optional(),
   promptId: z.string().optional(),
   promptAttachments: z
-    .array(z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }))
+    .array(
+      z.union([
+        z.object({ kind: z.enum(['image', 'video', 'audio']), fileId: z.string() }),
+        z.object({
+          kind: z.literal('file'),
+          name: z.string(),
+          mediaType: z.string(),
+          size: z.number(),
+          path: z.string(),
+        }),
+      ]),
+    )
     .optional(),
 });
 

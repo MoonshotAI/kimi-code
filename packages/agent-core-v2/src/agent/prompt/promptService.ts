@@ -152,6 +152,9 @@ function mergeSteerMessages(records: readonly Record[]): ContextMessage {
   const skillActivations = records.flatMap((item) =>
     item.message.origin?.kind === 'user' ? (item.message.origin.skillActivations ?? []) : [],
   );
+  const attachments = records.flatMap((item) =>
+    item.message.origin?.kind === 'user' ? (item.message.origin.attachments ?? []) : [],
+  );
   return {
     role: 'user',
     content: [
@@ -159,7 +162,14 @@ function mergeSteerMessages(records: readonly Record[]): ContextMessage {
       ...records.flatMap((item) => stripBundledSkillBlocks(item.message)),
     ],
     toolCalls: [],
-    origin: skillActivations.length === 0 ? USER_PROMPT_ORIGIN : { kind: 'user', skillActivations },
+    origin:
+      skillActivations.length === 0 && attachments.length === 0
+        ? USER_PROMPT_ORIGIN
+        : {
+            kind: 'user',
+            skillActivations: skillActivations.length === 0 ? undefined : skillActivations,
+            attachments: attachments.length === 0 ? undefined : attachments,
+          },
   };
 }
 

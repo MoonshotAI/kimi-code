@@ -871,7 +871,7 @@ describe('Agent loop', () => {
   });
 
   it('carries kimi-file prompt attachments on turn.started, falling back to the URL file id', async () => {
-    const payloads: Array<readonly { kind: string; fileId: string }[] | undefined> = [];
+    const payloads: Array<TurnStarted['promptAttachments']> = [];
     const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
       payloads.push(event.promptAttachments);
     });
@@ -907,6 +907,97 @@ describe('Agent loop', () => {
         { kind: 'video', fileId: 'file_2' },
         { kind: 'image', fileId: 'file_3' },
       ],
+    ]);
+  });
+
+  it('carries origin file attachments on turn.started promptAttachments', async () => {
+    const payloads: Array<TurnStarted['promptAttachments']> = [];
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      payloads.push(event.promptAttachments);
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'seen' });
+
+    const turn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1' } },
+              { type: 'text', text: 'summarize' },
+            ],
+            toolCalls: [],
+            origin: {
+              kind: 'user',
+              attachments: [
+                {
+                  name: 'report.pdf',
+                  mediaType: 'application/pdf',
+                  size: 42,
+                  path: '/data/report.pdf',
+                },
+              ],
+            },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await turn.result;
+    subscription.dispose();
+
+    expect(payloads).toEqual([
+      [
+        { kind: 'image', fileId: 'file_1' },
+        {
+          kind: 'file',
+          name: 'report.pdf',
+          mediaType: 'application/pdf',
+          size: 42,
+          path: '/data/report.pdf',
+        },
+      ],
+    ]);
+  });
+
+  it('carries skill activation file attachments on turn.started promptAttachments', async () => {
+    const payloads: Array<TurnStarted['promptAttachments']> = [];
+    const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+      payloads.push(event.promptAttachments);
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'seen' });
+
+    const turn = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'User activated the skill "check".' }],
+            toolCalls: [],
+            origin: {
+              kind: 'skill_activation',
+              activationId: 'act_1',
+              skillName: 'check',
+              trigger: 'user-slash',
+              attachments: [
+                {
+                  name: 'note.txt',
+                  mediaType: 'text/plain',
+                  size: 21,
+                  path: '/data/note.txt',
+                },
+              ],
+            },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await turn.result;
+    subscription.dispose();
+
+    expect(payloads).toEqual([
+      [{ kind: 'file', name: 'note.txt', mediaType: 'text/plain', size: 21, path: '/data/note.txt' }],
     ]);
   });
 });

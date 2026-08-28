@@ -1,20 +1,23 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
   agentContextOf,
+  agentRuntimeBindingKey,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentStateService,
   IAgentToolPolicyService,
   IBootstrapService,
   IFileService,
   ISessionContext,
   ISessionMetadata,
+  MAX_IMAGE_DECODE_BYTES,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -1020,6 +1023,283 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(dirname(attachedPath).endsWith('/attachments')).toBe(true);
     expect((await realpath(attachedPath)).startsWith(await realpath(home as string))).toBe(true);
     expect(await readFile(attachedPath)).toEqual(scriptBytes);
+  });
+
+  it('attaches a server-local file by path without copying it', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-attach-path-'));
+    try {
+      const sourcePath = join(outside, 'notes.txt');
+      const bytes = Buffer.from('path attachment body');
+      await writeFile(sourcePath, bytes);
+
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [
+          { type: 'text', text: 'read this' },
+          { type: 'file', path: sourcePath },
+        ],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+      expect(content).toHaveLength(2);
+      expect(content[0]).toEqual({ type: 'text', text: 'read this' });
+      expect(content[1]).toEqual({
+        type: 'text',
+        text: `Attached file "notes.txt" (application/octet-stream, ${bytes.length} bytes): ${sourcePath} — open it with the Read tool`,
+      });
+
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const attachmentsDir = join(session!.accessor.get(ISessionContext).sessionDir, 'attachments');
+      await expect(readdir(attachmentsDir)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      await vi.waitFor(() => {
+        const memory = main.accessor.get(IAgentContextMemoryService).get();
+        const promptMessage = memory.find((entry) => entry.origin?.kind === 'user');
+        expect(promptMessage?.origin).toEqual({
+          kind: 'user',
+          attachments: [
+            {
+              name: 'notes.txt',
+              mediaType: 'application/octet-stream',
+              size: bytes.length,
+              path: sourcePath,
+            },
+          ],
+        });
+      });
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a relative attachment path', async () => {
+    const id = await createSession(home as string);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', path: 'relative/notes.txt' }],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a sensitive attachment path', async () => {
+    const id = await createSession(home as string);
+    const secretPath = join(home as string, '.env');
+    await writeFile(secretPath, 'TOKEN=secret');
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', path: secretPath }],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a missing attachment path with 40407', async () => {
+    const id = await createSession(home as string);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', path: join(home as string, 'nope.txt') }],
+    });
+    expect(body.code).toBe(40407);
+  });
+
+  it('rejects a symlink pointing at a sensitive file', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const secretPath = join(home as string, '.env');
+    await writeFile(secretPath, 'TOKEN=secret');
+    const linkPath = join(home as string, 'innocent.txt');
+    await symlink(secretPath, linkPath);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', path: linkPath }],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects path attachments on a non-local runtime before touching the filesystem', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    main.accessor.get(IAgentStateService).set(agentRuntimeBindingKey, {
+      workspaceId: session!.accessor.get(ISessionContext).workspaceId,
+      runtimeId: 'fake-remote',
+    });
+
+    const sourcePath = join(home as string, 'note.txt');
+    await writeFile(sourcePath, 'x');
+    const existing = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', path: sourcePath }],
+    });
+    expect(existing.body.code).toBe(40001);
+    expect(existing.body.msg).toContain('local runtime');
+
+    const missing = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', path: join(home as string, 'nope.txt') }],
+    });
+    expect(missing.body.code).toBe(40001);
+
+    const uploadBytes = Buffer.from('upload unaffected');
+    const uploaded = await uploadFile(uploadBytes, 'text/plain', 'up.txt');
+    const upload = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'file',
+          file_id: uploaded.id,
+          name: 'up.txt',
+          media_type: 'text/plain',
+          size: uploadBytes.length,
+        },
+      ],
+    });
+    expect(upload.body.code).toBe(0);
+  });
+
+  it('rejects an upload file part missing metadata', async () => {
+    const id = await createSession(home as string);
+    const uploaded = await uploadFile(Buffer.from('x'), 'text/plain', 'x.txt');
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', file_id: uploaded.id }],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a file part carrying both file_id and path', async () => {
+    const id = await createSession(home as string);
+    const sourcePath = join(home as string, 'both.txt');
+    await writeFile(sourcePath, 'x');
+    const uploaded = await uploadFile(Buffer.from('x'), 'text/plain', 'x.txt');
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'file',
+          file_id: uploaded.id,
+          path: sourcePath,
+          name: 'both.txt',
+          media_type: 'text/plain',
+          size: 1,
+        },
+      ],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('carries a server-local image by path as an internal kimi-file reference', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-attach-img-'));
+    try {
+      const smallPng = solidPng(10, 10);
+      const sourcePath = join(outside, 'small.png');
+      await writeFile(sourcePath, smallPng);
+
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const content = submitted.body.data.content as Array<Record<string, unknown>>;
+      expect(content).toHaveLength(1);
+      const image = content[0] as { type: string; source: { kind: string; file_id: string } };
+      expect(image.type).toBe('image');
+      expect(image.source.kind).toBe('session_media');
+      await expectSessionMedia(server!, id, `${image.source.file_id}.png`, smallPng);
+      expect(JSON.stringify(content)).not.toContain('kimi-file://');
+      expect(JSON.stringify(content)).not.toContain(sourcePath);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('compresses a server-local image by path and captions the original path', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-attach-big-'));
+    try {
+      const bigPng = solidPng(3600, 1800);
+      const sourcePath = join(outside, 'big.png');
+      await writeFile(sourcePath, bigPng);
+
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const content = submitted.body.data.content as Array<Record<string, unknown>>;
+      expect(content).toHaveLength(2);
+      const caption = content[0] as { type: string; text: string };
+      expect(caption.type).toBe('text');
+      expect(caption.text).toContain('Image compressed');
+      expect(caption.text).toContain(`saved at "${sourcePath}"`);
+      expect(await readFile(sourcePath)).toEqual(bigPng);
+
+      const image = content[1] as { type: string; source: { kind: string; file_id: string } };
+      expect(image.type).toBe('image');
+      expect(image.source.kind).toBe('session_media');
+      const mediaPath = join(sessionMediaDir(server!, id), `${image.source.file_id}.png`);
+      expect(pngDimensions(await readFileEventually(mediaPath))).toEqual({ width: 2000, height: 1000 });
+
+      const session = getLiveSessionById(server!.core.accessor, id);
+      const originalsDir = join(session!.accessor.get(ISessionContext).sessionDir, 'media-originals');
+      await expect(readdir(originalsDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('carries a server-local video by path as an internal kimi-file reference', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-attach-vid-'));
+    try {
+      const videoBytes = Buffer.from('tiny fake mp4 bytes');
+      const sourcePath = join(outside, 'clip.mp4');
+      await writeFile(sourcePath, videoBytes);
+
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'video', source: { kind: 'path', path: sourcePath } }],
+      });
+      expect(submitted.body.code).toBe(0);
+
+      const content = submitted.body.data.content as Array<Record<string, unknown>>;
+      expect(content).toHaveLength(1);
+      const video = content[0] as { type: string; source: { kind: string; file_id: string } };
+      expect(video.type).toBe('video');
+      expect(video.source.kind).toBe('session_media');
+      await expectSessionMedia(server!, id, `${video.source.file_id}.mp4`, videoBytes);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a mis-kinded server-local media path', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const sourcePath = join(home as string, 'notes.txt');
+    await writeFile(sourcePath, 'plain text');
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'video', source: { kind: 'path', path: sourcePath } }],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects an over-limit server-local image with 40001', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const sourcePath = join(home as string, 'huge.png');
+    const handle = await open(sourcePath, 'w');
+    await handle.truncate(MAX_IMAGE_DECODE_BYTES + 1);
+    await handle.close();
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'path', path: sourcePath } }],
+    });
+    expect(body.code).toBe(40001);
   });
 
   it('returns 40402 when aborting a prompt that already settled', async () => {
