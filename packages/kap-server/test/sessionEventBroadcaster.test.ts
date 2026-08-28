@@ -1576,6 +1576,24 @@ describe('SessionEventBroadcaster', () => {
       expect(globalView.deliveries).toEqual(['immediate']);
     });
 
+    it('preserves unlisted config domains through event validation', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const config = { default_model: 'k2', providers: {}, mcp: { servers: { fs: { command: 'npx' } } } };
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['mcp'], config },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        session_id: '__global__',
+        payload: { changedFields: ['mcp'], config },
+      });
+    });
+
     it('drops malformed event.config.changed payloads', async () => {
       const globalView = collectingTarget();
       bc.addGlobalTarget(globalView.target);
