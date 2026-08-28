@@ -1182,6 +1182,29 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     });
   });
 
+  it('consumes the steer count for marker-only activations so a later identical prompt opens its own turn', () => {
+    const shared = [{ type: 'text', text: 'same text' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: shared,
+          toolCalls: [],
+          origin: { kind: 'skill_activation', trigger: 'model-tool', skillName: 'x' } as {
+            kind: string;
+          },
+        },
+        { role: 'user', content: shared, toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(shared), 1]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker', 'turn']);
+  });
+
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

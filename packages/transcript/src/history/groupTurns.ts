@@ -220,6 +220,9 @@ export function groupMessagesIntoSnapshot(
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined && !isUserSlashPrompt(message)) {
         pushMarker(markerKey, { text: textOf(message), origin: message.origin });
+        const markerContentKey = JSON.stringify(message.content ?? []);
+        const markerSteerRemaining = steeredContents.get(markerContentKey) ?? 0;
+        if (markerSteerRemaining > 0) steeredContents.set(markerContentKey, markerSteerRemaining - 1);
         continue;
       }
       const contentKey = JSON.stringify(message.content ?? []);
