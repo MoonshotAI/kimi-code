@@ -39,7 +39,6 @@ import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/ru
 import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentFileHistoryService } from '@moonshot-ai/agent-core-v2/features/fileHistory/fileHistory';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
@@ -85,7 +84,6 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentProfileService: IAgentProfileService,
   agentUsageService: ISessionUsageService,
   agentPlanService: IAgentPlanService,
-  agentFileHistoryService: IAgentFileHistoryService,
   agentTaskService: IAgentTaskService,
   agentMcpService: IAgentMcpService,
   agentFullCompactionService: IAgentFullCompactionService,
