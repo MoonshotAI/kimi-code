@@ -47,7 +47,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   declare readonly _serviceBrand: undefined;
 
   private catalogCache: CatalogSnapshot | undefined;
-  private sessionIndexCache: SessionIndexSnapshot | undefined;
+  private sessionIndexCache: { snapshot: SessionIndexSnapshot; size: number | undefined } | undefined;
   private catalogPromise:
     | Promise<{ snapshot: CatalogSnapshot; generation: number }>
     | undefined;
@@ -78,15 +78,6 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
         }
       }),
     );
-    const watchSessionIndex = this.storage.watch?.(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-    if (watchSessionIndex !== undefined) {
-      this._register(
-        watchSessionIndex(() => {
-          this.invalidationGeneration += 1;
-          this.sessionIndexCache = undefined;
-        }),
-      );
-    }
   }
 
   async resolveAliasIds(id: string): Promise<readonly string[]> {
@@ -143,7 +134,13 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   }
 
   private async sessionIndex(): Promise<SessionIndexSnapshot> {
-    if (this.sessionIndexCache !== undefined) return this.sessionIndexCache;
+    const cache = this.sessionIndexCache;
+    if (
+      cache !== undefined &&
+      (await this.storage.size(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY)) === cache.size
+    ) {
+      return cache.snapshot;
+    }
     this.sessionIndexPromise ??= this.loadSessionIndex();
     const { snapshot, generation } = await this.sessionIndexPromise;
     if (generation !== this.invalidationGeneration) return this.sessionIndex();
@@ -160,7 +157,10 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
         ),
       };
       if (generation === this.invalidationGeneration) {
-        this.sessionIndexCache = snapshot;
+        this.sessionIndexCache = {
+          snapshot,
+          size: await this.storage.size(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY),
+        };
       }
       return { snapshot, generation };
     } finally {
