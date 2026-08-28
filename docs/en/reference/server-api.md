@@ -1216,6 +1216,7 @@ Background tasks are the session's asynchronous units — background shells, sub
 | `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
 | `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
+| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
 
 #### `GET /api/v1/sessions/{session_id}/tasks`
 
@@ -1250,7 +1251,7 @@ On success, `data` is the task object documented under `GET /api/v1/sessions/{se
 
 #### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
 
-Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` as the only action — a bare task id or an unknown action fails `40001`.
+Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1263,6 +1264,21 @@ On success, `data` is `{ cancelled: true }`.
 - `40401`: session not found
 - `40406`: no task with that id
 - `40904`: the task already finished; `data` carries `{ cancelled: false }` and `details.current_status` the terminal status
+
+#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
+
+Moves a running foreground task to the background without stopping it: the tool call waiting on the task returns immediately with a background-task result, the turn continues, and the task keeps running under the background task registry (its output is persisted, and its completion arrives as a task notification). Already-background or finished tasks are an idempotent no-op. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `task_id` | path | string | **Required.** Task id |
+
+On success, `data` is `{ detached, status }`: `detached` is `true` when the call moved a running foreground task to the background and `false` for the idempotent no-op; `status` is the task's status after the call.
+
+- `40001`: missing or unknown action suffix
+- `40401`: session not found
+- `40406`: no task with that id
 
 ### Skills, tools, and MCP
 

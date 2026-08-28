@@ -220,6 +220,8 @@ Constraints between the fields:
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
 - `primary` is a reserved alias (see below) and cannot be a pool key.
 
+Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias — fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
+
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
 
 A configured pool — an explicit `models` table or a lone `default_model` — enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries — the `kimi-code/*` aliases below are provisioned by `/login`:

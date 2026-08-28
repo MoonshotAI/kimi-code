@@ -14,7 +14,7 @@ import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness, type Event, type KimiHarness } from '#/index';
+import { createKimiHarness, createKimiHarnessV2, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -343,6 +343,70 @@ describe('Session.prompt events', () => {
       const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
       expect(state['lastPrompt']).toBeUndefined();
     } finally {
+      await harness.close();
+    }
+  });
+
+  it('carries the prompt on the public turn.started event for subagent system triggers (v2 engine)', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarnessV2({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+    const sseChunk = (delta: Record<string, unknown>, finishReason: string | null = null): string =>
+      `data: ${JSON.stringify({
+        id: 'chatcmpl-stub',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fake-model',
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+      })}`;
+    const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === 'https://model.example.test/v1/chat/completions') {
+        const body = [sseChunk({ role: 'assistant', content: 'init done' }), sseChunk({}, 'stop'), 'data: [DONE]']
+          .map((line) => line + '\n\n')
+          .join('');
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    try {
+      await harness.setConfig({
+        providers: {
+          local: { type: 'openai', baseUrl: 'https://model.example.test/v1', apiKey: 'sk-test' },
+        },
+        models: {
+          'fake-model': { provider: 'local', model: 'fake-model', maxContextSize: 262144 },
+        },
+        defaultModel: 'fake-model',
+      });
+      const session = await harness.createSession({ id: 'ses_init_rpc_v2', workDir });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => {
+        events.push(event);
+      });
+
+      await session.init();
+      unsubscribe();
+
+      const spawned = events.find((event) => event.type === 'subagent.spawned');
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'turn.started',
+          sessionId: session.id,
+          agentId: spawned?.type === 'subagent.spawned' ? spawned.subagentId : undefined,
+          origin: { kind: 'system_trigger', name: 'subagent' },
+          prompt: expect.stringContaining('Task requirements:'),
+        }),
+      );
+    } finally {
+      fetchStub.mockRestore();
       await harness.close();
     }
   });

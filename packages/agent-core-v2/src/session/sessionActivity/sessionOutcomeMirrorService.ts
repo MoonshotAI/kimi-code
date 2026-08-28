@@ -4,7 +4,10 @@ import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -18,16 +21,18 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
   declare readonly _serviceBrand: undefined;
 
   private lastPersisted: SessionTurnOutcome | undefined;
+  private lastPersistedTurnId: number | undefined;
   private adopted = false;
   private turnStartedHere = false;
   private mainSubscription: DisposableStore | undefined;
+  private readonly metadataReady: Promise<void>;
 
   constructor(
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) {
     super();
-    void this.metadata
+    this.metadataReady = this.metadata
       .read()
       .then((meta) => {
         if (!this.adopted) this.lastPersisted = meta.lastTurnReason;
@@ -52,24 +57,33 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private attachMain(): void {
     if (this.mainSubscription !== undefined) return;
-    const bus = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
-      | IEventBus
-      | undefined;
+    const handle = this.agents.handleOf(MAIN_AGENT_ID);
+    const bus = handle?.accessor.get(IEventBus) as IEventBus | undefined;
     if (bus === undefined) return;
     const subscription = new DisposableStore();
     this.mainSubscription = subscription;
+    const dispatcher = handle?.accessor.get(IEventDispatcher) as IEventDispatcher | undefined;
+    const agentStates = handle?.accessor.get(IAgentStateService) as IAgentStateService | undefined;
+    if (dispatcher !== undefined && agentStates !== undefined) {
+      subscription.add(
+        dispatcher.hooks.onDidRestore.register('session-outcome-mirror', async (_ctx, next) => {
+          await next();
+          await this.reconcileAfterRestore(agentStates);
+        }),
+      );
+    }
     subscription.add(
       bus.subscribe(TurnEnded, (event) => {
         if (event.reason === 'completed') {
-          this.write('completed');
+          this.write('completed', { turnId: event.turnId });
           return;
         }
         if (event.reason === 'failed' || event.reason === 'blocked') {
-          this.write('failed');
+          this.write('failed', { turnId: event.turnId });
           return;
         }
         if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
-          this.write('cancelled');
+          this.write('cancelled', { turnId: event.turnId });
         }
       }),
     );
@@ -80,30 +94,66 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
       }),
     );
     subscription.add(
+      bus.subscribe(ContextUndone, (event) => {
+        if (
+          event.fromTurnId !== undefined &&
+          this.lastPersistedTurnId !== undefined &&
+          this.lastPersistedTurnId < event.fromTurnId
+        ) {
+          return;
+        }
+        this.write(undefined);
+      }),
+    );
+    subscription.add(
       bus.subscribe(AgentActivityUpdated, (event) => {
         if (this.turnStartedHere) return;
         if (this.lastPersisted !== undefined) return;
         const reason = event.lastTurn?.reason;
         if (reason === 'completed' || reason === 'cancelled') {
-          this.write(reason, { touchUpdatedAt: false });
+          this.write(reason, { touchUpdatedAt: false, turnId: event.lastTurn?.turnId });
         } else if (reason === 'failed' || reason === 'blocked') {
-          this.write('failed', { touchUpdatedAt: false });
+          this.write('failed', { touchUpdatedAt: false, turnId: event.lastTurn?.turnId });
         }
       }),
     );
   }
 
+  private async reconcileAfterRestore(agentStates: IAgentStateService): Promise<void> {
+    await this.metadataReady;
+    if (this.lastPersisted === undefined) return;
+    if (this.turnStartedHere) return;
+    if (!agentStates.has(turnKey)) return;
+    const lastEnded = agentStates.get(turnKey).lastEnded;
+    if (lastEnded === undefined) {
+      this.write(undefined, { touchUpdatedAt: false });
+      return;
+    }
+    if (this.lastPersistedTurnId === undefined) this.lastPersistedTurnId = lastEnded.turnId;
+  }
+
   private write(
     outcome: SessionTurnOutcome | undefined,
-    opts?: { readonly touchUpdatedAt?: boolean },
+    opts?: { readonly touchUpdatedAt?: boolean; readonly turnId?: number },
   ): void {
-    if (outcome === this.lastPersisted) return;
+    if (outcome === this.lastPersisted) {
+      if (opts?.turnId !== undefined) this.lastPersistedTurnId = opts.turnId;
+      return;
+    }
     this.adopted = true;
     const previous = this.lastPersisted;
+    const previousTurnId = this.lastPersistedTurnId;
     this.lastPersisted = outcome;
-    void this.metadata.update({ lastTurnReason: outcome }, opts).catch(() => {
-      if (this.lastPersisted === outcome) this.lastPersisted = previous;
-    });
+    this.lastPersistedTurnId =
+      outcome === undefined ? undefined : (opts?.turnId ?? this.lastPersistedTurnId);
+    void this.metadata
+      .update({ lastTurnReason: outcome }, { touchUpdatedAt: opts?.touchUpdatedAt })
+      .catch(() => {
+        if (this.lastPersisted === outcome) {
+          this.lastPersisted = previous;
+          this.lastPersistedTurnId = previousTurnId;
+        }
+      });
   }
 }
 

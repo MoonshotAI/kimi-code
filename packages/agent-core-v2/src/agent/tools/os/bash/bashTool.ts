@@ -69,12 +69,16 @@ function renderBashDescription(shellName: string): string {
 function withoutBackgroundDescription(description: string): string {
   return description
     .replace(
-      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
+      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the background-task panel\./,
       '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
     )
     .replace(
       ` For possibly long-running foreground commands, set the \`timeout\` argument in seconds. Foreground commands default to ${String(DEFAULT_TIMEOUT_S)}s and allow up to ${String(MAX_TIMEOUT_S)}s. When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.`,
       ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s; a foreground command that hits its timeout is killed.`,
+    )
+    .replace(
+      ' The user can also move a running foreground command to the background at any time.',
+      '',
     )
     .replace(
       /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
@@ -145,8 +149,8 @@ export class BashTool implements IBashTool {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
-        this.execution(args, signal, onUpdate, onForegroundTaskStart),
+      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart),
     };
   }
 
@@ -171,6 +175,7 @@ export class BashTool implements IBashTool {
   private async execution(
     args: BashInput,
     signal: AbortSignal,
+    toolCallId: string,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
   ): Promise<ExecutableToolResult> {
@@ -226,7 +231,7 @@ export class BashTool implements IBashTool {
     let taskId: string;
     try {
       taskId = this.tasks.registerTask(
-        new ProcessTask(proc, command, description, onProcessOutput, () => lease.dispose()),
+        new ProcessTask(proc, command, description, onProcessOutput, () => lease.dispose(), toolCallId),
         {
           detached: startsInBackground,
           timeoutMs,
@@ -266,8 +271,8 @@ export class BashTool implements IBashTool {
                 brief: `Backgrounded ${taskId} after timeout`,
               }
             : {
-                title: 'Task moved to background',
-                brief: `Backgrounded ${taskId}`,
+                title: 'Task moved to background by the user',
+                brief: `Backgrounded ${taskId} by the user`,
               };
         return this.backgroundStartedResult(
           taskId,
@@ -275,7 +280,7 @@ export class BashTool implements IBashTool {
           description,
           labels,
           builder,
-          'foreground_detached',
+          release === 'timeout_detached' ? 'foreground_detached' : 'foreground_detached_by_user',
         );
       }
 
@@ -375,17 +380,19 @@ export class BashTool implements IBashTool {
     description: string,
     labels: { title: string; brief: string },
     builder = new ToolOutputAccumulator(),
-    scenario: 'background_started' | 'foreground_detached' = 'background_started',
+    scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
+    const detachedByUser = scenario === 'foreground_detached_by_user' ? 'detached_by_user: true\n' : '';
     const metadata =
       `task_id: ${taskId}\n` +
       `pid: ${String(proc.pid)}\n` +
       `description: ${description}\n` +
       `status: ${status}\n` +
+      detachedByUser +
       `automatic_notification: true\n` +
       this.nextStepLines(scenario) +
-      'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
+      'human_shell_hint: The task is visible in the background-task panel.';
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
@@ -403,14 +410,18 @@ export class BashTool implements IBashTool {
   }
 
   private nextStepLines(
-    scenario: 'background_started' | 'foreground_detached',
+    scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user',
   ): string {
-    if (scenario === 'foreground_detached') {
+    if (scenario === 'foreground_detached' || scenario === 'foreground_detached_by_user') {
       const avoid = this.allowBackground()
         ? 'do NOT wait, poll, or call TaskOutput on it'
         : 'do NOT wait or poll';
+      const moved =
+        scenario === 'foreground_detached_by_user'
+          ? 'The user moved this task to the background.'
+          : 'The task now runs in the background.';
       return (
-        'next_step: The task now runs in the background. You will be automatically notified ' +
+        `next_step: ${moved} You will be automatically notified ` +
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }

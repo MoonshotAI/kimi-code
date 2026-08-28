@@ -551,7 +551,7 @@ describe('AskUserQuestionTool', () => {
       expect(result.isError).toBe(false);
       expect(result.output).toContain('task_id: q_test_task_id');
       expect(result.output).toContain('automatic_notification: true');
-      expect(result.output).toContain('/tasks');
+      expect(result.output).toContain('human_shell_hint: The pending question is also visible in the client UI.');
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');

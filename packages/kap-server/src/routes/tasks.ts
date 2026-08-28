@@ -8,6 +8,7 @@ import {
 import { ErrorCode } from '../protocol/error-codes';
 import {
   cancelTaskResultSchema,
+  detachTaskResultSchema,
   getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
@@ -135,11 +136,11 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<TasksRouteHost['get']>[2]);
 
-  const cancelRoute = defineRoute(
+  const taskActionRoute = defineRoute(
     {
       method: 'POST',
       path: '/sessions/{session_id}/tasks/{tail}',
-      success: { data: cancelTaskResultSchema },
+      success: { data: z.union([cancelTaskResultSchema, detachTaskResultSchema]) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -149,9 +150,9 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
           detailsSchema: z.object({ current_status: z.string() }),
         },
       },
-      description: 'Cancel a task',
+      description: 'Run a task action',
       tags: ['tasks'],
-      operationId: 'cancelTask',
+      operationId: 'runTaskAction',
     },
     async (req, reply) => {
       const { session_id, tail } = req.params as {
@@ -160,7 +161,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
       };
       const parsed = parseActionSuffix({
         tail,
-        allowedActions: ['cancel'] as const,
+        allowedActions: ['cancel', 'detach'] as const,
         resourceLabel: 'task',
       });
       if (parsed.kind === 'invalid') {
@@ -190,18 +191,29 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         reply.send(taskNotFound(session_id, task_id, req.id));
         return;
       }
-      const wireStatus = toWireTask(session_id, found).status;
-      if (isTerminalStatus(wireStatus)) {
-        reply.send(taskAlreadyFinished(session_id, task_id, wireStatus, req.id));
+
+      if (parsed.action === 'cancel') {
+        const wireStatus = toWireTask(session_id, found).status;
+        if (isTerminalStatus(wireStatus)) {
+          reply.send(taskAlreadyFinished(session_id, task_id, wireStatus, req.id));
+          return;
+        }
+
+        await resolved.tasks?.stopByUser(task_id);
+        requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
+        reply.send(okEnvelope({ cancelled: true as const }, req.id));
         return;
       }
 
-      await resolved.tasks?.stopByUser(task_id);
-      requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
-      reply.send(okEnvelope({ cancelled: true as const }, req.id));
+      const detached = found.status === 'running' && found.detached === false;
+      const info = resolved.tasks?.detach(task_id) ?? found;
+      if (detached) {
+        requestLog(req)?.info({ session_id, task_id }, 'task detached');
+      }
+      reply.send(okEnvelope({ detached, status: mapStatus(info.status) }, req.id));
     },
   );
-  app.post(cancelRoute.path, cancelRoute.options, cancelRoute.handler as Parameters<TasksRouteHost['post']>[2]);
+  app.post(taskActionRoute.path, taskActionRoute.options, taskActionRoute.handler as Parameters<TasksRouteHost['post']>[2]);
 }
 
 type ResolvedTasks =
@@ -292,7 +304,10 @@ function toWireTask(
   if (info.kind === 'agent' && info.subagentType !== undefined) {
     base.subagent_type = info.subagentType;
   }
-  if (info.kind === 'agent' && info.parentToolCallId !== undefined) {
+  if (
+    (info.kind === 'agent' || info.kind === 'process') &&
+    info.parentToolCallId !== undefined
+  ) {
     base.parent_tool_call_id = info.parentToolCallId;
   }
   if (output !== undefined) {

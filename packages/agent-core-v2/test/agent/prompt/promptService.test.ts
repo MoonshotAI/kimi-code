@@ -466,6 +466,46 @@ describe('AgentPromptService', () => {
     ]);
   });
 
+  it('concatenates origin file attachments when steering queued prompts', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const one = await prompt.enqueue({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'one' }],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
+        },
+      },
+    });
+    const two = await prompt.enqueue({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'two' }],
+        toolCalls: [],
+        origin: {
+          kind: 'user',
+          attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],
+        },
+      },
+    });
+
+    await prompt.steer([one.id, two.id]);
+    loop.drainNextBatch(context);
+
+    const merged = context
+      .get()
+      .find((entry) => entry.origin?.kind === 'user' && entry.origin.attachments !== undefined);
+    expect(merged?.origin?.kind === 'user' && merged.origin.attachments).toEqual([
+      { name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' },
+      { name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' },
+    ]);
+    expect(merged?.origin?.kind === 'user' && merged.origin.skillActivations).toBeUndefined();
+  });
+
   it('restarts the queue after restoring a steer raced by the active turn settling', async () => {
     const { prompt, loop } = harness({ manualTurnResult: true });
     const active = await prompt.enqueue({ message: message('active') });

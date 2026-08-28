@@ -1216,6 +1216,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `GET /api/v1/sessions/{session_id}/tasks` | 列出后台任务 |
 | `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | 读取任务（可选输出预览） |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | 取消任务 |
+| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | 将前台任务转入后台 |
 
 #### `GET /api/v1/sessions/{session_id}/tasks`
 
@@ -1250,7 +1251,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
 
-取消运行中的任务。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，`cancel` 是唯一的动作——单独的任务 id 或未知动作返回 `40001`。
+取消运行中的任务。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，支持 `cancel` / `detach` 两个动作——单独的任务 id 或未知动作返回 `40001`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1263,6 +1264,21 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40401`：会话不存在
 - `40406`：没有该 id 的任务
 - `40904`：任务已结束；`data` 携带 `{ cancelled: false }`，`details.current_status` 为最终状态
+
+#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
+
+将运行中的前台任务转入后台而不终止它：等待该任务的工具调用会立即以后台任务结果返回，轮次继续推进，任务则在后台任务注册表下继续运行（输出持久化，完成时以任务通知投递）。已在后台或已结束的任务为幂等空操作。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，支持 `cancel` / `detach` 两个动作——单独的任务 id 或未知动作返回 `40001`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `task_id` | path | string | **必填。** 任务 id |
+
+成功时，`data` 为 `{ detached, status }`：本次调用确实将运行中的前台任务转入后台时 `detached` 为 `true`，幂等空操作时为 `false`；`status` 为调用后的任务状态。
+
+- `40001`：动作后缀缺失或未知
+- `40401`：会话不存在
+- `40406`：没有该 id 的任务
 
 ### 技能、工具与 MCP
 

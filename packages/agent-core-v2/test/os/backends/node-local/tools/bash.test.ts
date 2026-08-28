@@ -819,12 +819,12 @@ describe('BashTool', () => {
     expect(properties['timeout']?.default).toBe(60);
   });
 
-  it('renders the available commands section and the /tasks hint', () => {
+  it('renders the available commands section and the background-task panel hint', () => {
     const { runner } = createTestRunner(processWithOutput());
     const tool = bashTool(runner);
 
     expect(tool.description).toContain('Commands available');
-    expect(tool.description).toContain('/tasks');
+    expect(tool.description).toContain('background-task panel');
   });
 
   it('runs through runner.spawn, injects cwd, noninteractive env, and closes stdin', async () => {
@@ -1395,8 +1395,11 @@ describe('BashTool background mode', () => {
     expect(result.output).not.toContain('after detach\n');
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('automatic_notification: true');
+    expect(result.output).toContain('The user moved this task to the background.');
+    expect(result.output).toContain('detached_by_user: true');
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
-    expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId}`);
+    expect(result.output).toContain('human_shell_hint: The task is visible in the background-task panel.');
+    expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId} by the user`);
     expect(service.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
       await expect(service.readOutput(task.taskId)).resolves.toContain('after detach\n');
@@ -1422,6 +1425,28 @@ describe('BashTool background mode', () => {
     const task = service.list(false)[0]!;
 
     expect(started).toHaveBeenCalledWith(task.taskId);
+
+    finish();
+    await running;
+  });
+
+  it('records the parent tool call id on the registered task', async () => {
+    const { proc, finish } = pendingProcess();
+    const { runner } = createTestRunner(proc);
+    const { service } = createFakeTaskService();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+    const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(service.list(false)).toHaveLength(1);
+    });
+    const task = service.list(false)[0]!;
+
+    expect(task).toMatchObject({
+      kind: 'process',
+      detached: false,
+      parentToolCallId: 'call_bash',
+    });
 
     finish();
     await running;
@@ -1471,6 +1496,10 @@ describe('BashTool background mode', () => {
         isError: false,
         brief: expect.stringContaining('after timeout'),
       });
+      expect(result.output).toContain('The task now runs in the background.');
+      expect(result.output).not.toContain('The user moved this task');
+      expect(result.output).not.toContain('detached_by_user');
+      expect(result.output).toContain('human_shell_hint: The task is visible in the background-task panel.');
       const taskId = /^task_id: (\S+)/m.exec(result.output as string)?.[1];
       expect(taskId).toBeDefined();
       expect(service.getTask(taskId!)).toMatchObject({ status: 'running', detached: true });
@@ -1805,8 +1834,8 @@ describe('BashTool background mode', () => {
     expect(output).toContain('automatic_notification: true');
     expect(output).toContain('do NOT wait, poll, or call TaskOutput on it');
     expect(output).not.toContain('block=false');
-    expect(output).toContain('human_shell_hint:');
-    expect(output).toContain('/tasks');
+    expect(output).toContain('human_shell_hint: The task is visible in the background-task panel.');
+    expect(output).not.toContain('/tasks');
   });
 
   it('rejects background command without description (description-required guard)', async () => {

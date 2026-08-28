@@ -460,6 +460,13 @@ export interface SessionLoadFailedEvent {
   reason: string;
 }
 
+export interface WireRepairEvent {
+  kind: 'corrupted' | 'truncated';
+  outcome: 'repaired' | 'failed';
+  dropped_count: number;
+  backup_created: boolean;
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
@@ -1007,6 +1014,16 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A session resume fails.',
     properties: { reason: 'Error code, error name, or unknown' },
+  }),
+  wire_repair: defineTelemetryEvent<WireRepairEvent>({
+    owner: 'kimi-code',
+    comment: 'A corrupted wire journal is truncated to its valid prefix and healed on disk.',
+    properties: {
+      kind: 'Corruption kind: unparseable middle line or torn final line',
+      outcome: 'Whether the on-disk repair succeeded',
+      dropped_count: 'Journal lines dropped from the corrupted tail',
+      backup_created: 'Whether a first-time .bak backup of the corrupted file was created',
+    },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

@@ -586,6 +586,7 @@ export {
   compressImageForModel,
   gateImageFormatParts,
   IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_DECODE_BYTES,
   MAX_IMAGE_EDGE_PX,
   READ_IMAGE_BYTE_BUDGET,
   resolveMaxImageEdgePx,

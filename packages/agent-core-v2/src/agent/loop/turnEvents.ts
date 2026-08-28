@@ -16,12 +16,24 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
+export interface TurnPromptAttachmentFile {
+  readonly kind: 'file';
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+export type TurnPromptAttachment =
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string }
+  | TurnPromptAttachmentFile;
+
 export interface TurnStartedPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
-  readonly promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
 export class TurnStarted extends AgentEvent2<TurnStartedPayload> {
@@ -45,8 +57,9 @@ export function turnPromptText(
 
 export function turnPromptAttachments(
   input: readonly ContentPart[],
+  origin?: PromptOrigin,
 ): TurnStartedPayload['promptAttachments'] {
-  const attachments: { kind: 'image' | 'video' | 'audio'; fileId: string }[] = [];
+  const attachments: TurnPromptAttachment[] = [];
   const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
     const fileId = parseDaemonFileUrl(url)?.fileId;
     if (id === undefined) return fileId;
@@ -64,11 +77,17 @@ export function turnPromptAttachments(
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
     }
   }
+  if (origin?.kind === 'user' || origin?.kind === 'skill_activation') {
+    for (const attachment of origin.attachments ?? []) {
+      attachments.push({ kind: 'file', ...attachment });
+    }
+  }
   return attachments.length > 0 ? attachments : undefined;
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
   if (origin.kind === 'user') return true;
+  if (origin.kind === 'system_trigger' && origin.name === 'subagent') return true;
   return (
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
