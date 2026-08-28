@@ -6,6 +6,18 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.39.1 (2026-08-28)
+
+### Polish
+
+- web: Unify right-side panel headers.
+
+### Bug Fixes
+
+- web: Fix switching the permission mode in one session changing it for every session; the permission mode is now scoped per session.
+- web: Fix signed-in users without a usable model being wrongly asked to sign in (and getting stuck there on web); the send gate now offers picking or configuring a model instead.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 0.39.0 (2026-08-27)
 
 ### Features
