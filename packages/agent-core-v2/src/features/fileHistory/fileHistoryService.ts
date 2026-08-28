@@ -366,11 +366,27 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private pathKey(path: string): string {
-    if (!isAbsolute(path)) return path;
-    const relativePath = relative(this.workspaceCtx.workDir, path);
-    if (relativePath === '' || relativePath === '..' || relativePath.startsWith('../')) return path;
-    return relativePath;
+    let raw = path;
+    if (isAbsolute(path)) {
+      const relativePath = relative(this.workspaceCtx.workDir, path);
+      if (relativePath !== '' && relativePath !== '..' && !relativePath.startsWith('../')) {
+        raw = relativePath;
+      }
+    }
+    const key = this.comparisonKey(raw);
+    const existing = this.history().tracked.find(
+      (tracked) => this.comparisonKey(tracked) === key,
+    );
+    return existing ?? raw;
   }
+
+  private comparisonKey(pathKey: string): string {
+    return isWindowsPath(this.workspaceCtx.workDir) ? pathKey.toLowerCase() : pathKey;
+  }
+}
+
+function isWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 function editTargetPath(display: ToolInputDisplay | undefined): string | undefined {
