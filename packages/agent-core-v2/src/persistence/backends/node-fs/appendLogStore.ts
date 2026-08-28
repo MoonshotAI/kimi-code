@@ -123,6 +123,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       try {
         await this.storage.write(scope, key, encoded, { atomic: true });
         state.storageFailure = undefined;
+        return true;
       } catch (error) {
         state.storageFailure = { error };
         throw error;
@@ -222,7 +223,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     scope: string,
     key: string,
     state: LogState,
-    operation: Promise<void>,
+    operation: Promise<boolean>,
   ): Promise<void> {
     let owned!: Promise<void>;
     owned = this.finishOwnedFlush(scope, key, state, operation, () => owned);
@@ -234,12 +235,13 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     scope: string,
     key: string,
     state: LogState,
-    operation: Promise<void>,
+    operation: Promise<boolean>,
     owner: () => Promise<void>,
   ): Promise<void> {
     let failure: { readonly error: unknown } | undefined;
+    let wrote = false;
     try {
-      await operation;
+      wrote = await operation;
     } catch (error) {
       failure = { error };
     }
@@ -248,7 +250,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       try {
         if (failure === undefined) {
           while (state.flushPromise === owned && state.pending.length > 0) {
-            await this.drain(scope, key, state);
+            if (await this.drain(scope, key, state)) wrote = true;
           }
         }
       } finally {
@@ -258,13 +260,14 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       }
     }
     if (failure !== undefined) throw failure.error;
-    this.writeEmitter.fire({ scope, key });
+    if (wrote) this.writeEmitter.fire({ scope, key });
   }
 
-  private async drain(scope: string, key: string, state: LogState): Promise<void> {
+  private async drain(scope: string, key: string, state: LogState): Promise<boolean> {
     const cutoverEpoch = state.cutoverEpoch;
     await state.ready;
-    if (state.cutoverEpoch !== cutoverEpoch) return;
+    if (state.cutoverEpoch !== cutoverEpoch) return false;
+    let wrote = false;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       try {
@@ -273,9 +276,11 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         const failure = (state.storageFailure ??= { error });
         throw failure.error;
       }
-      if (state.cutoverEpoch !== cutoverEpoch) return;
+      wrote = true;
+      if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);
     }
+    return wrote;
   }
 }
 
