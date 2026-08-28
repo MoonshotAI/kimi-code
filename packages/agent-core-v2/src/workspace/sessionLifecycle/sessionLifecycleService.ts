@@ -83,6 +83,7 @@ import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
+import { SessionLeaseManager, SESSION_LEASE_FILE } from './sessionLease';
 import {
   assertForkTurnIndex,
   sliceMainRecordsAtTurn,
@@ -174,9 +175,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     @IFlagService private readonly flags: IFlagService,
+    private readonly leases: SessionLeaseManager,
     onDispose?: () => void,
   ) {
     super();
+    this._register(this.leases);
     if (onDispose !== undefined) this._register({ dispose: onDispose });
   }
 
@@ -217,6 +220,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
       void handle.dispose();
+      await this.leases.release(sessionId);
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
@@ -247,38 +251,49 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Session,
-      opts.sessionId,
-      {
-        seeds: [
-          ...sessionContextSeed(ctx),
-          [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
-          ...sessionAgentProfileCatalogSeed({
-            _serviceBrand: undefined,
-            workspaceKey: workspaceId,
-          }),
-          [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
-          [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
-          [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
-          [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
-          ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
-        ],
-        configureContainer: (container) => {
-          this._onWillCreateSession.fire({
-            sessionId: opts.sessionId,
-            readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
-            contributeSeed: (id, value) => {
-              container.provide(id, value);
-            },
-            onSessionDispose: (dispose) => {
-              container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
-            },
-          });
+    await this.leases.acquire(opts.sessionId, () => {
+      void this.evictForLeaseLoss(opts.sessionId).catch((error: unknown) => {
+        this.log.error('session eviction after lease loss failed', { error });
+      });
+    });
+    let handle: ISessionScopeHandle;
+    try {
+      handle = createScopedChildHandle(
+        this.instantiation,
+        LifecycleScope.Session,
+        opts.sessionId,
+        {
+          seeds: [
+            ...sessionContextSeed(ctx),
+            [ITelemetryService, this.telemetry.withContext({ sessionId: opts.sessionId })],
+            ...sessionAgentProfileCatalogSeed({
+              _serviceBrand: undefined,
+              workspaceKey: workspaceId,
+            }),
+            [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
+            [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
+            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+            [ISessionWorkspaceInfo, this.workspaceDirs.sessionInfo()],
+            ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
+          ],
+          configureContainer: (container) => {
+            this._onWillCreateSession.fire({
+              sessionId: opts.sessionId,
+              readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
+              contributeSeed: (id, value) => {
+                container.provide(id, value);
+              },
+              onSessionDispose: (dispose) => {
+                container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
+              },
+            });
+          },
         },
-      },
-    ) as ISessionScopeHandle;
+      ) as ISessionScopeHandle;
+    } catch (error) {
+      await this.leases.release(opts.sessionId);
+      throw error;
+    }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
@@ -290,6 +305,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.pluginAgentProfileLoader.ready,
       ]);
     } catch (error) {
+      await this.leases.release(opts.sessionId);
       void handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
@@ -373,6 +389,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } catch (error) {
       this.sessions.delete(sessionId);
       void handle.dispose();
+      await this.leases.release(sessionId);
       throw error;
     }
     return handle;
@@ -389,6 +406,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async close(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
+    await this.teardownLiveSession(sessionId, handle, true);
+  }
+
+  private async evictForLeaseLoss(sessionId: string): Promise<void> {
+    const handle = this.sessions.get(sessionId);
+    if (handle === undefined) return;
+    this.log.warn('session evicted after losing its lease', { sessionId });
+    await this.teardownLiveSession(sessionId, handle, false);
+  }
+
+  private async teardownLiveSession(
+    sessionId: string,
+    handle: ISessionScopeHandle,
+    releaseLease: boolean,
+  ): Promise<void> {
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
@@ -397,6 +429,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.indexMirror.drain();
     void handle.dispose();
     await drainLogCloses();
+    if (releaseLease) await this.leases.release(sessionId);
     this._onDidCloseSession.fire({ sessionId });
   }
 
@@ -418,6 +451,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.indexMirror.drain();
     void handle.dispose();
     await drainLogCloses();
+    await this.leases.release(sessionId);
     this._onDidArchiveSession.fire({ sessionId });
   }
 
@@ -601,6 +635,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         } catch {
         }
       }
+      if (targetId !== undefined) {
+        await this.leases.release(targetId);
+      }
       if (targetSessionDir !== undefined) {
         await this.hostFs.remove(targetSessionDir).catch(() => {});
       }
@@ -735,7 +772,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ): Promise<void> {
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || entry.name === AGENT_WIRE_RECORD_KEY) {
+      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || rel === SESSION_LEASE_FILE || entry.name === AGENT_WIRE_RECORD_KEY) {
         continue;
       }
       if (entry.isSymbolicLink === true) continue;
