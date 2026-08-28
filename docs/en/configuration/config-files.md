@@ -479,6 +479,8 @@ api_key = "sk-xxx"
 
 `permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order — the first matching rule takes effect.
 
+You can also set `dangerous_command_guard = false` under `[permission]` to turn off the built-in dangerous-command policy entirely (no dangerous-command ask or auto-mode deny); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting and restores the behavior before the policy was introduced. Use this switch only for environments that already gate commands outside the agent.
+
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `decision` | `string` | Yes | Action on match: `allow` (permit immediately), `deny` (reject immediately), `ask` (prompt each time) |

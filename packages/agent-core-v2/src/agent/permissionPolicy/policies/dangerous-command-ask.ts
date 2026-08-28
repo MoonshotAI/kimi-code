@@ -3,7 +3,9 @@ import {
   type BashParseResult,
   type BashSyntaxNode,
 } from '#/app/bashParser/bashParser';
+import { IConfigService } from '#/app/config/config';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { isDangerousCommandGuardEnabled } from '#/agent/permissionRules/configSection';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type {
   PermissionPolicy,
@@ -112,9 +114,11 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
   constructor(
     @IBashParserService private readonly bashParser: IBashParserService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
+    if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
     if (context.toolCall.name !== 'Bash') return undefined;
     const command = bashCommandText(context.args);
     const verdict =

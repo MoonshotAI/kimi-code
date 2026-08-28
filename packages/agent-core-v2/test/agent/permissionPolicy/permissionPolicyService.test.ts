@@ -26,6 +26,8 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IConfigService } from '#/app/config/config';
+import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
@@ -51,6 +53,7 @@ describe('AgentPermissionPolicyService chain', () => {
   let sessionApprovalRulePatterns: string[];
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
+  let dangerousCommandGuardEnabled: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -59,6 +62,7 @@ describe('AgentPermissionPolicyService chain', () => {
     sessionApprovalRulePatterns = [];
     workspace = workspaceStub('/workspace');
     hostArgs = { requestHeaders: {}, nonInteractive: false };
+    dangerousCommandGuardEnabled = true;
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
@@ -66,6 +70,13 @@ describe('AgentPermissionPolicyService chain', () => {
           get args() {
             return hostArgs;
           },
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: ((section: string) =>
+            section === PERMISSION_SECTION && !dangerousCommandGuardEnabled
+              ? { dangerousCommandGuard: false }
+              : undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
         });
         reg.defineInstance(
           IAgentScopeContext,
@@ -374,6 +385,19 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it('does not load the dangerous command policy when disabled by config', async () => {
+    dangerousCommandGuardEnabled = false;
+    mode = 'yolo';
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
   it('does not let session approval history exempt dangerous commands', async () => {
     sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
 
@@ -433,6 +457,10 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.definePartialInstance(IBootstrapService, {
           args: { requestHeaders: {}, nonInteractive: false },
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: (() => undefined) as IConfigService['get'],
+          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
         });
         reg.defineInstance(
           IAgentScopeContext,
