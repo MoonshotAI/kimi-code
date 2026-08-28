@@ -75,6 +75,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         void this.enqueue(() => this.checkpoint(event.turnId, 'end'));
       }),
     );
+    this.effect(() => () => this.queue, 'fileHistory:drain');
   }
 
   enabled(): boolean {
