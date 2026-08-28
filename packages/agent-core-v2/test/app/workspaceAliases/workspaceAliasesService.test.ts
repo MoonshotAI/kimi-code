@@ -20,7 +20,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
 import {
@@ -253,6 +253,63 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
       [legacyId, typedId].toSorted(),
     );
+  });
+
+  it('resolveAliasIds retries a shared load that spanned a write', async () => {
+    class GatedStorage extends FileStorageService {
+      catalogReads = 0;
+      gate: Promise<void> | undefined;
+      override async read(scope: string, key: string): Promise<Uint8Array | undefined> {
+        if (key === 'workspaces.json') {
+          this.catalogReads += 1;
+          if (this.gate !== undefined) await this.gate;
+        }
+        return super.read(scope, key);
+      }
+    }
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const legacyId = 'wd_proj_deadbeef0002';
+    await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
+    const storage = new GatedStorage(homeDir);
+    const aliases = build(undefined, storage);
+    const persistence = currentHost!.app.accessor.get(IWorkspacePersistence);
+    const ws = (id: string, root: string): Workspace => ({
+      id,
+      root,
+      name: 'proj',
+      createdAt: 0,
+      lastOpenedAt: 0,
+    });
+
+    await aliases.resolveAliasIds(typedId);
+    await persistence.save({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] });
+
+    let release: (() => void) | undefined;
+    storage.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const baseline = storage.catalogReads;
+    const p1 = aliases.resolveAliasIds(typedId);
+    await vi.waitFor(() => {
+      expect(storage.catalogReads).toBe(baseline + 1);
+    });
+    await persistence.save({
+      workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
+      deletedIds: [],
+    });
+    const p2 = aliases.resolveAliasIds(legacyId);
+    release!();
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.toSorted()).toEqual([legacyId, typedId].toSorted());
+    expect(r2.toSorted()).toEqual([legacyId, typedId].toSorted());
   });
 
   it('resolveAliasIds follows in-process session-index writes synchronously', async () => {

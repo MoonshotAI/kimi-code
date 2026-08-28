@@ -48,8 +48,12 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
 
   private catalogCache: CatalogSnapshot | undefined;
   private sessionIndexCache: SessionIndexSnapshot | undefined;
-  private catalogPromise: Promise<CatalogSnapshot> | undefined;
-  private sessionIndexPromise: Promise<SessionIndexSnapshot> | undefined;
+  private catalogPromise:
+    | Promise<{ snapshot: CatalogSnapshot; generation: number }>
+    | undefined;
+  private sessionIndexPromise:
+    | Promise<{ snapshot: SessionIndexSnapshot; generation: number }>
+    | undefined;
   private invalidationGeneration = 0;
   private catalogMergePrimed = false;
 
@@ -102,13 +106,15 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
     return merged;
   }
 
-  private catalog(): Promise<CatalogSnapshot> {
-    if (this.catalogCache !== undefined) return Promise.resolve(this.catalogCache);
+  private async catalog(): Promise<CatalogSnapshot> {
+    if (this.catalogCache !== undefined) return this.catalogCache;
     this.catalogPromise ??= this.loadCatalog();
-    return this.catalogPromise;
+    const { snapshot, generation } = await this.catalogPromise;
+    if (generation !== this.invalidationGeneration) return this.catalog();
+    return snapshot;
   }
 
-  private async loadCatalog(): Promise<CatalogSnapshot> {
+  private async loadCatalog(): Promise<{ snapshot: CatalogSnapshot; generation: number }> {
     try {
       if (!this.catalogMergePrimed) {
         await this.workspaces.list();
@@ -127,19 +133,21 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
       if (generation === this.invalidationGeneration) {
         this.catalogCache = snapshot;
       }
-      return snapshot;
+      return { snapshot, generation };
     } finally {
       this.catalogPromise = undefined;
     }
   }
 
-  private sessionIndex(): Promise<SessionIndexSnapshot> {
-    if (this.sessionIndexCache !== undefined) return Promise.resolve(this.sessionIndexCache);
+  private async sessionIndex(): Promise<SessionIndexSnapshot> {
+    if (this.sessionIndexCache !== undefined) return this.sessionIndexCache;
     this.sessionIndexPromise ??= this.loadSessionIndex();
-    return this.sessionIndexPromise;
+    const { snapshot, generation } = await this.sessionIndexPromise;
+    if (generation !== this.invalidationGeneration) return this.sessionIndex();
+    return snapshot;
   }
 
-  private async loadSessionIndex(): Promise<SessionIndexSnapshot> {
+  private async loadSessionIndex(): Promise<{ snapshot: SessionIndexSnapshot; generation: number }> {
     try {
       const generation = this.invalidationGeneration;
       const entries = await readSessionIndexEntries(this.storage);
@@ -151,7 +159,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
       if (generation === this.invalidationGeneration) {
         this.sessionIndexCache = snapshot;
       }
-      return snapshot;
+      return { snapshot, generation };
     } finally {
       this.sessionIndexPromise = undefined;
     }
