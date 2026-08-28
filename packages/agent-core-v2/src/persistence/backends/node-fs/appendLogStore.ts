@@ -129,7 +129,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         throw error;
       }
     });
-    await this.ownFlush(scope, key, state, rewrite);
+    await this.ownFlush(scope, key, state, rewrite, { value: false });
   }
 
   async flush(): Promise<void> {
@@ -197,7 +197,8 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   private flushState(scope: string, key: string, state: LogState): Promise<void> {
     if (state.flushPromise !== undefined) return state.flushPromise;
     if (state.storageFailure !== undefined) return Promise.reject(state.storageFailure.error);
-    return this.ownFlush(scope, key, state, this.drain(scope, key, state));
+    const wroteBox = { value: false };
+    return this.ownFlush(scope, key, state, this.drain(scope, key, state, wroteBox), wroteBox);
   }
 
   private release(scope: string, key: string, state: LogState): void {
@@ -224,9 +225,10 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     key: string,
     state: LogState,
     operation: Promise<boolean>,
+    wroteBox: { value: boolean },
   ): Promise<void> {
     let owned!: Promise<void>;
-    owned = this.finishOwnedFlush(scope, key, state, operation, () => owned);
+    owned = this.finishOwnedFlush(scope, key, state, operation, wroteBox, () => owned);
     state.flushPromise = owned;
     return owned;
   }
@@ -236,34 +238,36 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     key: string,
     state: LogState,
     operation: Promise<boolean>,
+    wroteBox: { value: boolean },
     owner: () => Promise<void>,
   ): Promise<void> {
     let failure: { readonly error: unknown } | undefined;
-    let wrote = false;
     try {
-      wrote = await operation;
-    } catch (error) {
-      failure = { error };
-    }
-    const owned = owner();
-    if (state.flushPromise === owned) {
-      try {
-        if (failure === undefined) {
-          while (state.flushPromise === owned && state.pending.length > 0) {
-            if (await this.drain(scope, key, state)) wrote = true;
-          }
-        }
-      } finally {
-        if (state.flushPromise === owned) {
-          state.flushPromise = undefined;
+      if (await operation) wroteBox.value = true;
+      const owned = owner();
+      if (state.flushPromise === owned) {
+        while (state.flushPromise === owned && state.pending.length > 0) {
+          await this.drain(scope, key, state, wroteBox);
         }
       }
+    } catch (error) {
+      failure ??= { error };
+    } finally {
+      const owned = owner();
+      if (state.flushPromise === owned) {
+        state.flushPromise = undefined;
+      }
     }
+    if (wroteBox.value) this.writeEmitter.fire({ scope, key });
     if (failure !== undefined) throw failure.error;
-    if (wrote) this.writeEmitter.fire({ scope, key });
   }
 
-  private async drain(scope: string, key: string, state: LogState): Promise<boolean> {
+  private async drain(
+    scope: string,
+    key: string,
+    state: LogState,
+    wroteBox?: { value: boolean },
+  ): Promise<boolean> {
     const cutoverEpoch = state.cutoverEpoch;
     await state.ready;
     if (state.cutoverEpoch !== cutoverEpoch) return false;
@@ -272,11 +276,12 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       const batch = state.pending.slice();
       try {
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
+        wrote = true;
+        if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
         const failure = (state.storageFailure ??= { error });
         throw failure.error;
       }
-      wrote = true;
       if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);
     }
