@@ -1145,6 +1145,8 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'warning',
   'goal.updated',
   'plan.revision',
+  'file_history.tracked',
+  'file_history.checkpoint',
   'context.spliced',
   'agent.status.updated',
   'hook.result',
