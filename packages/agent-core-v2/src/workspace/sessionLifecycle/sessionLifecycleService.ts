@@ -13,6 +13,8 @@ import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/even
 import { ILogService } from '#/_base/log/log';
 import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
+import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
+import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -495,6 +497,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       await this.assertSubagentModelPoolPreFlight();
       await drainSessionMetadataWrites();
+      if (sourceHandle !== undefined) {
+        const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+        for (const agent of sourceAgents.list()) {
+          const agentHandle = sourceAgents.handleOf(agent.agentId);
+          if (agentHandle === undefined) continue;
+          await agentHandle.accessor.get(IAgentFileHistoryService).settled();
+        }
+      }
       const sourceMeta =
         sourceHandle !== undefined
           ? await sourceHandle.accessor.get(ISessionMetadata).read()
@@ -712,6 +722,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const agentDir = join(targetSessionDir, 'agents', agentId);
       removals.push(this.hostFs.remove(join(agentDir, 'tasks')));
       removals.push(this.hostFs.remove(join(agentDir, 'cron')));
+      removals.push(this.hostFs.remove(join(agentDir, FILE_HISTORY_BLOB_PREFIX)));
     }
     await Promise.all(removals);
   }
