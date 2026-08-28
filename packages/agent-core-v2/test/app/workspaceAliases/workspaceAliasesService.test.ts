@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
@@ -70,8 +70,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceAliases {
-    const fileStorage = new FileStorageService(homeDir);
+  function build(
+    hostFs: IHostFileSystem = new HostFileSystem(),
+    fileStorage: FileStorageService = new FileStorageService(homeDir),
+  ): IWorkspaceAliases {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
@@ -167,5 +169,75 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       'wd_missing_000000000000',
     ]);
     expect(await aliases.resolveAliasIds(id)).toEqual([id]);
+  });
+
+  it('resolveAliasIds reuses the loaded catalog and session index across calls', async () => {
+    class CountingStorage extends FileStorageService {
+      reads = 0;
+      override async read(scope: string, key: string): Promise<Uint8Array | undefined> {
+        this.reads += 1;
+        return super.read(scope, key);
+      }
+    }
+    const root = join(homeDir, 'proj');
+    const id = encodeWorkDirKey(root);
+    await writeWorkspacesJson({
+      [id]: {
+        root,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    await seedSessionIndex([{ sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: root }]);
+    const storage = new CountingStorage(homeDir);
+    const aliases = build(undefined, storage);
+
+    await aliases.resolveAliasIds(id);
+    const readsAfterWarm = storage.reads;
+    await aliases.resolveAliasIds(id);
+    await aliases.resolveAliasIds('wd_missing_000000000000');
+    expect(storage.reads).toBe(readsAfterWarm);
+  });
+
+  it('resolveAliasIds picks up catalog and session index changes', async () => {
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const legacyId = 'wd_proj_deadbeef0002';
+    await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
+    const aliases = build();
+    expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
+
+    await writeWorkspacesJson({
+      [typedId]: entry(typedRoot),
+      [legacyId]: entry('c:\\users\\foo\\proj'),
+    });
+    await vi.waitFor(
+      async () => {
+        expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
+          [legacyId, typedId].toSorted(),
+        );
+      },
+      { timeout: 5000 },
+    );
+
+    const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
+    await seedSessionIndex([
+      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: 'c:\\Users\\Foo\\Proj' },
+    ]);
+    await vi.waitFor(
+      async () => {
+        expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
+          [indexOnlyId, legacyId, typedId].toSorted(),
+        );
+      },
+      { timeout: 5000 },
+    );
   });
 });

@@ -1,34 +1,130 @@
 import { LifecycleScope } from '#/app/scopes';
 
+import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IWorkspaceService } from '#/app/workspace/workspace';
+import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import {
-  collectAliasIds,
   readSessionIndexEntries,
+  SESSION_INDEX_KEY,
+  SESSION_INDEX_SCOPE,
 } from '#/app/workspace/workspaceAlias';
+import {
+  WORKSPACE_CATALOG_KEY,
+  WORKSPACE_CATALOG_SCOPE,
+} from '#/app/workspace/fileWorkspacePersistence';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { IWorkspaceAliases } from './workspaceAliases';
 
-export class WorkspaceAliasesService implements IWorkspaceAliases {
+interface CatalogSnapshot {
+  readonly byId: ReadonlyMap<string, Workspace>;
+  readonly idsByRootKey: ReadonlyMap<string, readonly string[]>;
+}
+
+interface SessionIndexSnapshot {
+  readonly idsByRootKey: ReadonlyMap<string, readonly string[]>;
+}
+
+function rootKeyIndex<T>(
+  items: readonly T[],
+  rootOf: (item: T) => string,
+  idOf: (item: T) => string,
+): Map<string, readonly string[]> {
+  const map = new Map<string, string[]>();
+  for (const item of items) {
+    const key = workspaceRootKey(rootOf(item));
+    const id = idOf(item);
+    const bucket = map.get(key);
+    if (bucket === undefined) {
+      map.set(key, [id]);
+    } else if (!bucket.includes(id)) {
+      bucket.push(id);
+    }
+  }
+  return map;
+}
+
+export class WorkspaceAliasesService extends Disposable implements IWorkspaceAliases {
   declare readonly _serviceBrand: undefined;
+
+  private catalogCache: CatalogSnapshot | undefined;
+  private sessionIndexCache: SessionIndexSnapshot | undefined;
+  private readonly cacheable: boolean;
+  private catalogMergePrimed = false;
 
   constructor(
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
-  ) {}
+  ) {
+    super();
+    const watchCatalog = this.storage.watch?.(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY);
+    const watchSessionIndex = this.storage.watch?.(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
+    this.cacheable = watchCatalog !== undefined && watchSessionIndex !== undefined;
+    if (watchCatalog !== undefined) {
+      this._register(
+        watchCatalog(() => {
+          this.catalogCache = undefined;
+        }),
+      );
+    }
+    if (watchSessionIndex !== undefined) {
+      this._register(
+        watchSessionIndex(() => {
+          this.sessionIndexCache = undefined;
+        }),
+      );
+    }
+  }
 
   async resolveAliasIds(id: string): Promise<readonly string[]> {
-    const entry = await this.workspaces.get(id);
+    const catalog = await this.catalog();
+    const entry = catalog.byId.get(id);
     if (entry === undefined) return [id];
-    const catalog = (await this.store.load()) ?? { workspaces: [], deletedIds: [] };
-    return collectAliasIds(
-      catalog.workspaces,
-      await readSessionIndexEntries(this.storage),
-      entry.root,
-    );
+    const rootKey = workspaceRootKey(entry.root);
+    const index = await this.sessionIndex();
+    const fromCatalog = catalog.idsByRootKey.get(rootKey);
+    const fromIndex = index.idsByRootKey.get(rootKey);
+    if (fromCatalog === undefined) return fromIndex ?? [id];
+    if (fromIndex === undefined) return fromCatalog;
+    const merged = [...fromCatalog];
+    for (const alias of fromIndex) {
+      if (!merged.includes(alias)) merged.push(alias);
+    }
+    return merged;
+  }
+
+  private async catalog(): Promise<CatalogSnapshot> {
+    if (this.catalogCache !== undefined) return this.catalogCache;
+    if (!this.catalogMergePrimed) {
+      await this.workspaces.list();
+      this.catalogMergePrimed = true;
+    }
+    const workspaces = (await this.store.load())?.workspaces ?? [];
+    const snapshot: CatalogSnapshot = {
+      byId: new Map(workspaces.map((ws) => [ws.id, ws] as const)),
+      idsByRootKey: rootKeyIndex(
+        workspaces,
+        (ws) => ws.root,
+        (ws) => ws.id,
+      ),
+    };
+    if (this.cacheable) this.catalogCache = snapshot;
+    return snapshot;
+  }
+
+  private async sessionIndex(): Promise<SessionIndexSnapshot> {
+    if (this.sessionIndexCache !== undefined) return this.sessionIndexCache;
+    const entries = await readSessionIndexEntries(this.storage);
+    const snapshot: SessionIndexSnapshot = {
+      idsByRootKey: rootKeyIndex(entries, (entry) => entry.workDir, (entry) =>
+        encodeWorkDirKey(entry.workDir),
+      ),
+    };
+    if (this.cacheable) this.sessionIndexCache = snapshot;
+    return snapshot;
   }
 }
 

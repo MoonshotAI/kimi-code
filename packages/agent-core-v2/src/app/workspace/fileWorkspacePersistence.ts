@@ -12,8 +12,8 @@ import {
 } from './workspacePersistence';
 
 const WORKSPACE_CATALOG_VERSION = 1;
-const WORKSPACE_CATALOG_SCOPE = '';
-const WORKSPACE_CATALOG_KEY = 'workspaces.json';
+export const WORKSPACE_CATALOG_SCOPE = '';
+export const WORKSPACE_CATALOG_KEY = 'workspaces.json';
 
 export class FileWorkspacePersistence implements IWorkspacePersistence {
   declare readonly _serviceBrand: undefined;
