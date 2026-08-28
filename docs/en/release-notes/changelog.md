@@ -16,6 +16,8 @@ This page documents the changes in each Kimi Code CLI release.
 
 - web: Fix switching the permission mode in one session changing it for every session; the permission mode is now scoped per session.
 - web: Fix signed-in users without a usable model being wrongly asked to sign in (and getting stuck there on web); the send gate now offers picking or configuring a model instead.
+- web: Fix the first IME (or keyboard) character being silently swallowed after clicking the composer placeholder.
+- web: Fix flickering and broken interactions in the image and video attachment preview popovers.
 - Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
 
 ## 0.39.0 (2026-08-27)
