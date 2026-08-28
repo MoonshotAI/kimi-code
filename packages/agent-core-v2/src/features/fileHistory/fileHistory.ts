@@ -1,0 +1,47 @@
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+
+export interface FileBackupEntry {
+  readonly key: string | null;
+  readonly version: number;
+  readonly contentHash?: string;
+  readonly size?: number;
+}
+
+export interface FileHistoryCheckpointRecord {
+  readonly turnId: number;
+  readonly entries: Readonly<Record<string, FileBackupEntry>>;
+}
+
+export interface FileHistoryState {
+  readonly checkpoints: readonly FileHistoryCheckpointRecord[];
+  readonly tracked: readonly string[];
+}
+
+export type FileHistoryChangeStatus = 'added' | 'modified' | 'deleted';
+
+export interface FileHistoryChange {
+  readonly path: string;
+  readonly status: FileHistoryChangeStatus;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly binary?: boolean;
+}
+
+export interface FileHistoryContent {
+  readonly version: number;
+  readonly content?: string;
+  readonly binary?: boolean;
+}
+
+export interface IAgentFileHistoryService {
+  readonly _serviceBrand: undefined;
+
+  enabled(): boolean;
+  history(): FileHistoryState;
+  settled(): Promise<void>;
+  changes(turnId: number): Promise<FileHistoryChange[]>;
+  contentAt(turnId: number, path: string): Promise<FileHistoryContent | undefined>;
+}
+
+export const IAgentFileHistoryService: ServiceIdentifier<IAgentFileHistoryService> =
+  createDecorator<IAgentFileHistoryService>('agentFileHistoryService');
