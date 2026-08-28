@@ -48,10 +48,6 @@ import type {
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
-import type {
-  FileHistoryCheckpointed,
-  FileHistoryTracked,
-} from '@moonshot-ai/agent-core-v2/features/fileHistory/fileHistoryOps';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
 import type {
@@ -97,11 +93,6 @@ export interface ProjectorInteraction {
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
-type FileHistoryTrackedEvent = { readonly type: 'file_history.tracked' } & FileHistoryTracked;
-type FileHistoryCheckpointedEvent = {
-  readonly type: 'file_history.checkpoint';
-} & FileHistoryCheckpointed;
-
 type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
 type PromptAcceptedEvent = { readonly type: 'prompt.accepted' } & PromptAccepted;
 type PromptQueuedEvent = { readonly type: 'prompt.queued' } & PromptQueued;
@@ -114,8 +105,6 @@ type TurnSteerEvent = { readonly type: 'turn.steer' } & TurnSteer;
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
-  | FileHistoryTrackedEvent
-  | FileHistoryCheckpointedEvent
   | ({ readonly type: 'turn.started' } & TurnStarted)
   | ({ readonly type: 'turn.ended' } & TurnEnded)
   | ({ readonly type: 'turn.step.started' } & TurnStepStarted)
@@ -251,9 +240,6 @@ export class AgentTranscriptProjector {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
-      case 'file_history.tracked':
-      case 'file_history.checkpoint':
-        return [this.markerOp(event.type, restOf(event))];
       case 'turn.started':
         return this.onTurnStarted(event);
       case 'turn.ended':

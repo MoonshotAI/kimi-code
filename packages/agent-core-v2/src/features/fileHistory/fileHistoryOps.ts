@@ -30,7 +30,6 @@ const fileHistoryTrackedSchema = z.object({
 export class FileHistoryTracked extends AgentEvent2<z.infer<typeof fileHistoryTrackedSchema>> {
   static override readonly type = 'file_history.tracked';
   static override readonly durable = true;
-  static override readonly observable = true;
   static override readonly schema = fileHistoryTrackedSchema;
 }
 export interface FileHistoryTracked {
@@ -52,7 +51,6 @@ export class FileHistoryCheckpointed extends AgentEvent2<
 > {
   static override readonly type = 'file_history.checkpoint';
   static override readonly durable = true;
-  static override readonly observable = true;
   static override readonly schema = fileHistoryCheckpointedSchema;
 }
 export interface FileHistoryCheckpointed {
