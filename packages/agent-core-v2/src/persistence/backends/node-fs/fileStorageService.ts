@@ -19,9 +19,21 @@ import { toStorageIoError } from '#/persistence/interface/storage';
 const WATCH_DEBOUNCE_MS = 150;
 const TORN_READ_RETRIES = 3;
 const TORN_READ_RETRY_DELAY_MS = 15;
+const TORN_READ_HOT_WINDOW_MS = 100;
 
 function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+async function statForVerify(
+  filePath: string,
+): Promise<{ size: number; mtimeMs: number } | undefined> {
+  try {
+    const { size, mtimeMs } = await stat(filePath);
+    return { size, mtimeMs };
+  } catch {
+    return undefined;
+  }
 }
 
 export class FileStorageService implements IFileSystemStorageService {
@@ -46,14 +58,20 @@ export class FileStorageService implements IFileSystemStorageService {
         throw toStorageIoError(error, { path: filePath, op: 'read' });
       }
       if (attempt >= TORN_READ_RETRIES) return bytes;
-      let size: number | undefined;
-      try {
-        size = (await stat(filePath)).size;
-      } catch {
-        size = undefined;
+      const first = await statForVerify(filePath);
+      if (first === undefined) return bytes;
+      if (first.size === bytes.length && Date.now() - first.mtimeMs >= TORN_READ_HOT_WINDOW_MS) {
+        return bytes;
       }
-      if (size === undefined || size === bytes.length) return bytes;
       await new Promise((resolve) => setTimeout(resolve, TORN_READ_RETRY_DELAY_MS));
+      if (first.size !== bytes.length) continue;
+      const second = await statForVerify(filePath);
+      if (
+        second === undefined ||
+        (second.size === first.size && second.mtimeMs === first.mtimeMs)
+      ) {
+        return bytes;
+      }
     }
   }
 
