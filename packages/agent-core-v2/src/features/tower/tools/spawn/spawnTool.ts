@@ -160,11 +160,12 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         const binding =
           own.modelAlias === undefined
             ? undefined
-            : resolveSubagentBinding(
-                this.config,
-                { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-                args.kind === 'reviewer' ? 'primary' : undefined,
-              );
+            : args.kind === 'reviewer'
+              ? { model: own.modelAlias, thinking: own.thinkingLevel }
+              : resolveSubagentBinding(this.config, {
+                  modelAlias: own.modelAlias,
+                  thinkingLevel: own.thinkingLevel,
+                });
         let handle: SubagentHandle;
         try {
           handle = await this.launch(prompt, description, toolCallId, controller, binding);

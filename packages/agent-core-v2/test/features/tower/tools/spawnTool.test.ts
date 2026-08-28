@@ -74,7 +74,9 @@ describe('TowerSpawnTool', () => {
   let runAgent: Mock<ISessionSubagentService['run']>;
   let registerTask: Mock<IAgentTaskService['registerTask']>;
   let completion: Deferred<{ readonly summary: string }>;
-  let secondaryModel: { readonly model: string; readonly defaultEffort?: string } | undefined;
+  let secondaryModel:
+    | { readonly model: string; readonly defaultEffort?: string; readonly force?: boolean }
+    | undefined;
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
@@ -383,6 +385,23 @@ describe('TowerSpawnTool', () => {
 
   it('binds reviewers to the tower model even when the secondary model is configured', async () => {
     secondaryModel = { model: 'cheap/fast' };
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('model: kimi-code');
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('binds reviewers to the tower model when the secondary model is forced', async () => {
+    secondaryModel = { model: 'cheap/fast', force: true };
 
     const result = await execute({
       name: 'reviewer-a',
