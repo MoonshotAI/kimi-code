@@ -1152,6 +1152,36 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     });
   });
 
+  it('still folds user-slash skill activations into the running turn by content match', () => {
+    const slashContent = [{ type: 'text', text: 'slash skill body' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: slashContent,
+          toolCalls: [],
+          origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'gen-docs' } as {
+            kind: string;
+          },
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(slashContent), 1]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'slash skill body',
+    });
+  });
+
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

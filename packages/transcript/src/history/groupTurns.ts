@@ -218,12 +218,8 @@ export function groupMessagesIntoSnapshot(
         continue;
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
-      if (markerKey !== undefined) {
-        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
-        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
-        if (opening !== undefined) {
-          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
-        }
+      if (markerKey !== undefined && !isUserSlashPrompt(message)) {
+        pushMarker(markerKey, { text: textOf(message), origin: message.origin });
         continue;
       }
       const contentKey = JSON.stringify(message.content ?? []);
@@ -246,6 +242,14 @@ export function groupMessagesIntoSnapshot(
           attachmentIds: opening.attachmentIds,
           steered: true,
         });
+        continue;
+      }
+      if (markerKey !== undefined) {
+        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
+        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
+        if (opening !== undefined) {
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        }
         continue;
       }
       if (isTaskOrigin) {
