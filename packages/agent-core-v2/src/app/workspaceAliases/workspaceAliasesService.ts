@@ -10,6 +10,7 @@ import {
   SESSION_INDEX_SCOPE,
 } from '#/app/workspace/workspaceAlias';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { IWorkspaceAliases } from './workspaceAliases';
@@ -50,13 +51,13 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   private catalogPromise: Promise<CatalogSnapshot> | undefined;
   private sessionIndexPromise: Promise<SessionIndexSnapshot> | undefined;
   private invalidationGeneration = 0;
-  private readonly sessionIndexCacheable: boolean;
   private catalogMergePrimed = false;
 
   constructor(
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IAppendLogStore private readonly appendLogs: IAppendLogStore,
   ) {
     super();
     this._register(
@@ -65,8 +66,15 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
         this.catalogCache = undefined;
       }),
     );
+    this._register(
+      this.appendLogs.onDidWrite((write) => {
+        if (write.scope === SESSION_INDEX_SCOPE && write.key === SESSION_INDEX_KEY) {
+          this.invalidationGeneration += 1;
+          this.sessionIndexCache = undefined;
+        }
+      }),
+    );
     const watchSessionIndex = this.storage.watch?.(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-    this.sessionIndexCacheable = watchSessionIndex !== undefined;
     if (watchSessionIndex !== undefined) {
       this._register(
         watchSessionIndex(() => {
@@ -140,7 +148,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
           encodeWorkDirKey(entry.workDir),
         ),
       };
-      if (this.sessionIndexCacheable && generation === this.invalidationGeneration) {
+      if (generation === this.invalidationGeneration) {
         this.sessionIndexCache = snapshot;
       }
       return snapshot;

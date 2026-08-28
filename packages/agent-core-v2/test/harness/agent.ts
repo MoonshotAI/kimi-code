@@ -976,6 +976,7 @@ function reassertServiceOverrides(
 
 class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
+  readonly onDidWrite: IAppendLogStore['onDidWrite'] = Event.None as IAppendLogStore['onDidWrite'];
   private readonly history: WireRecord[] = [];
   private readSeeded = false;
 

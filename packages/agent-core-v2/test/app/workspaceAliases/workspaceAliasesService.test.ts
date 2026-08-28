@@ -13,8 +13,10 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
@@ -85,6 +87,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {
         publish: () => {},
@@ -249,6 +252,32 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
       [legacyId, typedId].toSorted(),
+    );
+  });
+
+  it('resolveAliasIds follows in-process session-index writes synchronously', async () => {
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
+    const aliases = build();
+    expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
+
+    const appendLogs = currentHost!.app.accessor.get(IAppendLogStore);
+    appendLogs.append('', 'session_index.jsonl', {
+      sessionId: 's9',
+      sessionDir: 'sessions/s/s9',
+      workDir: 'c:\\Users\\Foo\\Proj',
+    });
+    await appendLogs.flush();
+    const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
+    expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
+      [indexOnlyId, typedId].toSorted(),
     );
   });
 

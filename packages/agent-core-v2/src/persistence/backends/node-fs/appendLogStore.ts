@@ -1,6 +1,7 @@
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
@@ -8,6 +9,7 @@ import {
   IAppendLogStore,
   type AppendLogOptions,
   type AppendLogReadOptions,
+  type AppendLogWrite,
 } from '#/persistence/interface/appendLogStore';
 
 const textEncoder = new TextEncoder();
@@ -33,12 +35,16 @@ interface LogState {
   onError?: (error: unknown) => void;
 }
 
-export class AppendLogStore implements IAppendLogStore {
+export class AppendLogStore extends Disposable implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly logs = new Map<string, LogState>();
+  private readonly writeEmitter = this._register(new Emitter<AppendLogWrite>());
+  readonly onDidWrite: Event<AppendLogWrite> = this.writeEmitter.event;
 
-  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {}
+  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {
+    super();
+  }
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void {
     const state = this.state(scope, key);
@@ -252,6 +258,7 @@ export class AppendLogStore implements IAppendLogStore {
       }
     }
     if (failure !== undefined) throw failure.error;
+    this.writeEmitter.fire({ scope, key });
   }
 
   private async drain(scope: string, key: string, state: LogState): Promise<void> {
