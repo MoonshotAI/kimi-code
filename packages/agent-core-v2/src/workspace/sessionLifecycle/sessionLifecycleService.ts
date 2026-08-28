@@ -99,6 +99,7 @@ import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
+import { SessionLeaseManager, SESSION_LEASE_FILE } from './sessionLease';
 import {
   assertForkTurnIndex,
   sliceMainRecordsAtTurn,
@@ -189,9 +190,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
+    private readonly leases: SessionLeaseManager,
     onDispose?: () => void,
   ) {
     super();
+    this._register(this.leases);
     if (onDispose !== undefined) this._register({ dispose: onDispose });
   }
 
@@ -232,6 +235,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       this.sessions.delete(sessionId);
       await this.drainAgents(handle).catch(() => {});
       void handle.dispose();
+      await this.leases.release(sessionId);
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
@@ -257,6 +261,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
+    await this.leases.acquire(opts.sessionId, () => {
+      void this.evictForLeaseLoss(opts.sessionId).catch((error: unknown) => {
+        this.log.error('session eviction after lease loss failed', { error });
+      });
+    });
     const telemetryBinding = bindTelemetryScope(this.telemetry, {
       session_id: opts.sessionId,
     });
@@ -300,6 +309,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       ) as ISessionScopeHandle;
     } catch (error) {
       telemetryBinding.dispose();
+      await this.leases.release(opts.sessionId);
       throw error;
     }
     try {
@@ -314,9 +324,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         this.pluginAgentProfileLoader.ready,
       ]);
     } catch (error) {
+      await this.leases.release(opts.sessionId);
       void handle.dispose();
       void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
+    }
+    if (!this.leases.isHeld(opts.sessionId)) {
+      void handle.dispose();
+      throw new Error2(
+        ErrorCodes.SESSION_LOCKED,
+        `Session "${opts.sessionId}" lost its lease before it finished materializing`,
+        { details: { sessionId: opts.sessionId } },
+      );
     }
     this.sessions.set(opts.sessionId, handle);
     return handle;
@@ -398,6 +417,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } catch (error) {
       this.sessions.delete(sessionId);
       void handle.dispose();
+      await this.leases.release(sessionId);
       throw error;
     }
     return handle;
@@ -414,6 +434,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async close(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
+    await this.teardownLiveSession(sessionId, handle, true);
+  }
+
+  private async evictForLeaseLoss(sessionId: string): Promise<void> {
+    const handle = this.sessions.get(sessionId);
+    if (handle === undefined) return;
+    this.log.warn('session evicted after losing its lease', { sessionId });
+    await this.teardownLiveSession(sessionId, handle, false);
+  }
+
+  private async teardownLiveSession(
+    sessionId: string,
+    handle: ISessionScopeHandle,
+    releaseLease: boolean,
+  ): Promise<void> {
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
@@ -422,6 +457,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.indexMirror.drain();
     void handle.dispose();
     await drainLogCloses();
+    if (releaseLease) await this.leases.release(sessionId);
     this._onDidCloseSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
   }
@@ -444,6 +480,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.indexMirror.drain();
     void handle.dispose();
     await drainLogCloses();
+    await this.leases.release(sessionId);
     this._onDidArchiveSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
   }
@@ -565,6 +602,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           `Session "${targetId}" already exists`,
         );
       }
+      await this.leases.acquire(targetId, () => {
+        this.log.warn('fork target session lease lost during fork', { sessionId: targetId });
+      });
 
       const turnSlice =
         opts.turnIndex === undefined
@@ -674,8 +714,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       );
       await this.appendSessionIndexEntry(targetId, this.workspaceContext.cwd);
       this._onDidForkSession.fire({ sourceSessionId: sourceId, sessionId: targetId });
+      await this.leases.release(targetId);
       return meta;
     } catch (error) {
+      if (targetId !== undefined) {
+        await this.leases.release(targetId);
+      }
       if (targetSessionDir !== undefined) {
         await this.hostFs.remove(targetSessionDir).catch(() => {});
       }
@@ -852,7 +896,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const fileWrites: Promise<void>[] = [];
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json') {
+      if (rel === 'state.json' || rel === 'logs' || rel === 'upcoming-goals.json' || rel === SESSION_LEASE_FILE) {
         continue;
       }
       if (excludeWire && entry.name === AGENT_WIRE_RECORD_KEY) continue;

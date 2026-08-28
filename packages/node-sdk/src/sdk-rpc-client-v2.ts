@@ -143,6 +143,7 @@ import {
   drainLogCloses,
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  drainSessionLeaseReleases,
   ensureKimiHome,
   ensureMainAgent,
   agentContextOf,
@@ -518,6 +519,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
     await appendLogStore.drainRetirements();
+    await drainSessionLeaseReleases();
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
     await drainLogCloses();

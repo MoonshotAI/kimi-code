@@ -35,6 +35,8 @@ import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
 import { SharedRuntimeUnitHostFactory, type RuntimeUnitHandle, type RuntimeUnitHostFactory } from '#/runtime/runtimeUnitHost';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
+import { SessionLeaseManager } from '#/workspace/sessionLifecycle/sessionLease';
+import { sessionDirOf } from '#/workspace/sessionLifecycle/internal/addressing';
 
 import { WorkspaceInstance } from './workspaceInstance';
 import { IRuntimeResolver, IWorkspaceInstanceManager, type WorkspaceInstanceRef } from './workspaceInstanceManager';
@@ -242,6 +244,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.mcp,
           this.models,
           this.modelProviders,
+          new SessionLeaseManager(input.fs, this.log, (sessionId) =>
+            sessionDirOf(this.bootstrap.homeDir, input.context.persistenceScope, sessionId)),
           input.onDispose,
         ),
       },

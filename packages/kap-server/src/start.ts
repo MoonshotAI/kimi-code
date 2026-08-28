@@ -4,6 +4,7 @@ import {
   drainSessionMetadataWrites,
   drainSessionIndexMirror,
   drainLogCloses,
+  drainSessionLeaseReleases,
   ConfigWarning,
   CapabilityChanged,
   IAppendLogStore,
@@ -328,6 +329,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();
       await appendLogStore.drainRetirements();
+      await drainSessionLeaseReleases();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();

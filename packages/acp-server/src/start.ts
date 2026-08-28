@@ -19,6 +19,7 @@ import {
   drainLogCloses,
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  drainSessionLeaseReleases,
   drainSessionMetadataWrites,
   ensureMainAgent,
   getLiveSessionById,
@@ -212,6 +213,7 @@ export async function runAcpServerWithStream(
       // an in-flight shard close (ENOTEMPTY on teardown). The same window
       // exists for the append-log retirement flushes released by disposal.
       await appendLogStore.drainRetirements();
+      await drainSessionLeaseReleases();
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();

@@ -127,6 +127,7 @@ export type KimiErrorCode =
   | 'session.export_output_conflict'
   | 'session.export_too_large'
   | 'session.closed'
+  | 'session.locked'
   | 'session.permission_mode_invalid'
   | 'session.thinking_empty'
   | 'session.model_empty'
