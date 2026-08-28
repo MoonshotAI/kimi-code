@@ -108,6 +108,31 @@ describe('messageContentSchema variants', () => {
     expect(parsed.size).toBe(12345);
   });
 
+  it('parses file content by server-local path', () => {
+    const parsed = fileContentSchema.parse({ type: 'file', path: '/data/doc.pdf' });
+    expect(parsed.path).toBe('/data/doc.pdf');
+    const parsedSource = imageContentSchema.parse({
+      type: 'image',
+      source: { kind: 'path', path: '/data/pic.png' },
+    });
+    expect(parsedSource.source.kind).toBe('path');
+  });
+
+  it('rejects file content with both file_id and path, or neither', () => {
+    expect(
+      fileContentSchema.safeParse({
+        type: 'file',
+        file_id: 'file_01',
+        path: '/data/doc.pdf',
+        name: 'doc.pdf',
+        media_type: 'application/pdf',
+        size: 1,
+      }).success,
+    ).toBe(false);
+    expect(fileContentSchema.safeParse({ type: 'file' }).success).toBe(false);
+    expect(fileContentSchema.safeParse({ type: 'file', file_id: 'file_01' }).success).toBe(false);
+  });
+
   it('parses thinking content', () => {
     const parsed = thinkingContentSchema.parse({
       type: 'thinking',

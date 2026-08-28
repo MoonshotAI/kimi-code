@@ -242,6 +242,58 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('projects turn.started file promptAttachments into path-sourced attachment entities', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: ProjectorBusEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'user' },
+        prompt: 'summarize this',
+        promptAttachments: [
+          {
+            kind: 'file',
+            name: 'report.pdf',
+            mediaType: 'application/pdf',
+            size: 1234,
+            path: '/data/report.pdf',
+          },
+        ],
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 't0.att1',
+          mediaType: 'application/pdf',
+          name: 'report.pdf',
+          size: 1234,
+        },
+      },
+    ]);
+
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('summarize this');
+    expect(turn.attachmentIds).toEqual(['t0.att1']);
+    expect(tx.getAttachment('t0.att1')).toEqual({
+      attachmentId: 't0.att1',
+      mediaType: 'application/pdf',
+      name: 'report.pdf',
+      size: 1234,
+    });
+  });
+
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {

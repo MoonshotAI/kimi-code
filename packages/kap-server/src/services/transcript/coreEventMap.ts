@@ -339,18 +339,29 @@ export class AgentTranscriptProjector {
     turnId: number;
     origin: unknown;
     prompt?: string;
-    promptAttachments?: readonly { kind: 'image' | 'video' | 'audio'; fileId: string }[];
+    promptAttachments?: readonly (
+      | { kind: 'image' | 'video' | 'audio'; fileId: string }
+      | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
+    )[];
   }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
     const ops: TranscriptOperation[] = [];
     const attachmentIds: string[] = [];
     for (const input of event.promptAttachments ?? []) {
-      const attachment: TranscriptAttachment = {
-        attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
-        mediaType: `${input.kind}/*`,
-        source: { kind: 'session_media', fileId: input.fileId },
-      };
+      const attachment: TranscriptAttachment =
+        input.kind === 'file'
+          ? {
+              attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+              mediaType: input.mediaType,
+              name: input.name,
+              size: input.size,
+            }
+          : {
+              attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+              mediaType: `${input.kind}/*`,
+              source: { kind: 'session_media', fileId: input.fileId },
+            };
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
