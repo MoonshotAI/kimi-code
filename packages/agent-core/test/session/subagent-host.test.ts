@@ -1153,13 +1153,20 @@ describe('SessionSubagentHost', () => {
       text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
     });
 
-    const session = fakeSession(parent.agent, child.agent, {
-      'agent-0': {
-        homedir: '/tmp/kimi-session/agents/agent-0',
-        type: 'sub',
-        parentAgentId: 'main',
+    const session = fakeSession(
+      parent.agent,
+      child.agent,
+      {
+        'agent-0': {
+          homedir: '/tmp/kimi-session/agents/agent-0',
+          type: 'sub',
+          parentAgentId: 'main',
+        },
       },
-    });
+      {
+        experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' }),
+      },
+    );
     const host = new SessionSubagentHost(session, 'main');
 
     const handle = await host.resume('agent-0', {
@@ -1278,6 +1285,7 @@ describe('SessionSubagentHost', () => {
 
     it('inherits the parent model when the experiment is off', async () => {
       const { parent, child } = await spawnChild({
+        experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' }),
         config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);

@@ -456,7 +456,10 @@ describe('Agent tools', () => {
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({
       subagentHost,
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
+      experimentalFlags: new FlagResolver(
+        { KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' },
+        FLAG_DEFINITIONS,
+      ),
     });
     ctx.configure({ tools: ['Agent'] });
 
