@@ -27,7 +27,6 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import {
@@ -216,15 +215,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     disposables.dispose();
   });
 
-  function service(
-    configValues: Record<string, unknown> = {},
-    secondaryModelEnabled = false,
-  ): ISessionSubagentService {
+  function service(configValues: Record<string, unknown> = {}): ISessionSubagentService {
     ix.stub(IConfigService, new StubConfigService(configValues));
-    ix.stub(
-      IFlagService,
-      stubFlag((id) => secondaryModelEnabled && id === SECONDARY_MODEL_FLAG_ID),
-    );
     ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
     return ix.get(ISessionSubagentService);
   }
@@ -312,7 +304,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           models: { 'provider/bad': 'broken' },
         },
       },
-      true,
     );
 
     const error = await planSpawnError(svc, { callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -333,7 +324,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         },
         thinking: { enabled: false },
       },
-      true,
     );
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -361,7 +351,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           defaultEffort: 'max',
         },
       },
-      true,
     );
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -383,7 +372,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           models: { 'provider/fast': 'fast model' },
         },
       },
-      true,
     );
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -406,7 +394,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
         },
         thinking: { enabled: false },
       },
-      true,
     );
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -428,7 +415,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           models: { 'provider/fast': 'fast model' },
         },
       },
-      true,
     );
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -446,7 +432,6 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           defaultEffort: 'max',
         },
       },
-      true,
     );
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
@@ -459,14 +444,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
-  it('inherits the caller model and thinking when the secondary-model experiment is off', async () => {
-    const svc = service({
-      [SECONDARY_MODEL_SECTION]: {
-        defaultModel: 'provider/fast',
-        models: { 'provider/fast': 'fast model' },
-        defaultEffort: 'max',
-      },
-    });
+  it('inherits the caller model and thinking when no pool is configured', async () => {
+    const svc = service({});
 
     const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
 

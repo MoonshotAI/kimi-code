@@ -15,7 +15,7 @@ import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
-import { buildSubagentModelDescriptions } from '../../session/subagent-binding';
+import { buildSubagentModelDescriptions, resolveSecondaryModel } from '../../session/subagent-binding';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
@@ -849,11 +849,10 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
-              showModelPreferences: this.agent.experimentalFlags.enabled('secondary-model'),
-              modelChoiceEnabled: this.agent.experimentalFlags.enabled('secondary-model'),
+              showModelPreferences: resolveSecondaryModel(this.agent.kimiConfig) !== undefined,
+              modelChoiceEnabled: resolveSecondaryModel(this.agent.kimiConfig) !== undefined,
               subagentModelDescription: buildSubagentModelDescriptions(
                 this.agent.kimiConfig,
-                this.agent.experimentalFlags,
                 this.agent.config.modelAlias,
               ),
             },
@@ -865,10 +864,9 @@ export class ToolManager {
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
             buildSubagentModelDescriptions(
               this.agent.kimiConfig,
-              this.agent.experimentalFlags,
               this.agent.config.modelAlias,
             ),
-            this.agent.experimentalFlags.enabled('secondary-model'),
+            resolveSecondaryModel(this.agent.kimiConfig) !== undefined,
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

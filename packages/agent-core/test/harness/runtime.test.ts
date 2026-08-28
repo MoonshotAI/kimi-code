@@ -235,7 +235,6 @@ micro_compaction = false
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', '1');
 
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
     const core = new KimiCore(coreRpc, { homeDir });

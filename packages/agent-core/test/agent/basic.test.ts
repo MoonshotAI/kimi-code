@@ -15,9 +15,9 @@ it('creates an independent agent with a scoped experimental flag resolver', () =
     experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
   });
 
-  // The scoped resolver reflects the registry defaults on its own:
-  // secondary-model defaults on, tool-select stays off.
-  expect(ctx.agent.experimentalFlags.enabledIds()).toEqual(['secondary-model']);
+  // The scoped resolver reflects the registry defaults on its own: every
+  // registered flag defaults off, so none report enabled.
+  expect(ctx.agent.experimentalFlags.enabledIds()).toEqual([]);
 });
 
 it('runs a text-only agent turn from prompt to completion', async () => {

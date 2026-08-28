@@ -419,7 +419,7 @@ describe('Agent tools', () => {
     expect(ctx.agent.tools.loopTools.some((tool) => tool.name === 'AgentSwarm')).toBe(true);
   });
 
-  it('shows the model preference for a subagent type when the experiment is enabled', () => {
+  it('shows the model preference for a subagent type when a secondary model is configured', () => {
     const subagentHost = {
       delegatableSubagents: vi.fn(() => ({
         coder: {
@@ -433,7 +433,7 @@ describe('Agent tools', () => {
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({
       subagentHost,
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'secondary-model': true }),
+      initialConfig: { providers: {}, secondaryModel: { model: 'cheap-model' } },
     });
     ctx.configure({ tools: ['Agent'] });
 
@@ -442,7 +442,7 @@ describe('Agent tools', () => {
     expect(description).toContain('- coder: General coding.\n  Model preference: primary');
   });
 
-  it('hides model preferences when the experiment is disabled', () => {
+  it('hides model preferences when no secondary model is configured', () => {
     const subagentHost = {
       delegatableSubagents: vi.fn(() => ({
         coder: {
@@ -456,10 +456,7 @@ describe('Agent tools', () => {
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({
       subagentHost,
-      experimentalFlags: new FlagResolver(
-        { KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '0' },
-        FLAG_DEFINITIONS,
-      ),
+      initialConfig: { providers: {} },
     });
     ctx.configure({ tools: ['Agent'] });
 

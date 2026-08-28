@@ -766,9 +766,7 @@ describe('Session secondary-model live config', () => {
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       providerManager: testProviderManager(),
-      experimentalFlags: new FlagResolver({
-        KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1',
-      }),
+      experimentalFlags: new FlagResolver({}),
       config,
     });
   }

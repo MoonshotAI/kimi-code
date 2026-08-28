@@ -139,10 +139,10 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 23 }, () => undefined),
+    ...Array.from({ length: 22 }, () => undefined),
     new TestRuntimeUnitHostFactory(),
   ];
-  args[20] = { entries: () => [] };
+  args[19] = { entries: () => [] };
   const value = Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
   const providers = (value as unknown as { providers: Map<string, RuntimeProviderFactory> }).providers;
   providers.clear();

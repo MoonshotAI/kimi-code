@@ -11,7 +11,6 @@ import {
   SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
 } from '#/session/subagent/configSection';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import { ISessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidation';
 import { SessionSubagentModelsValidationService } from '#/session/subagent/subagentModelsValidationService';
 
@@ -32,9 +31,8 @@ describe('SessionSubagentModelsValidationService', () => {
     disposables.dispose();
   });
 
-  function setup(configValues: Record<string, unknown>, flagEnabled = true): void {
+  function setup(configValues: Record<string, unknown>): void {
     ix.stub(IConfigService, new StubConfigService(configValues));
-    ix.stub(IFlagService, stubFlag((id) => flagEnabled && id === SECONDARY_MODEL_FLAG_ID));
     ix.stub(IModelCatalog, {
       _serviceBrand: undefined,
       get: (id: string) => {
@@ -70,11 +68,6 @@ describe('SessionSubagentModelsValidationService', () => {
 
   it('is a no-op when only the [subagent] timeout is configured', () => {
     setup({ [SUBAGENT_SECTION]: { timeoutMs: 5000 } });
-    expect(resolve()).toBeUndefined();
-  });
-
-  it('is a no-op for a broken pool while the secondary-model experiment is off', () => {
-    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo' } }, false);
     expect(resolve()).toBeUndefined();
   });
 

@@ -33,7 +33,6 @@ import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SECONDARY_MODEL_SECTION,
 } from '#/session/subagent/configSection';
-import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   ISessionSubagentService,
   type AgentRunHandle,
@@ -75,7 +74,6 @@ describe('TowerSpawnTool', () => {
   let runAgent: Mock<ISessionSubagentService['run']>;
   let registerTask: Mock<IAgentTaskService['registerTask']>;
   let completion: Deferred<{ readonly summary: string }>;
-  let secondaryFlagOn: boolean;
   let secondaryModel: { readonly model: string; readonly defaultEffort?: string } | undefined;
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
@@ -101,7 +99,6 @@ describe('TowerSpawnTool', () => {
     gate = { ok: true };
     release = vi.fn();
     completion = deferred();
-    secondaryFlagOn = false;
     secondaryModel = undefined;
     thinkingEnabled = undefined;
     modelMeta = {};
@@ -182,9 +179,6 @@ describe('TowerSpawnTool', () => {
             ? { enabled: thinkingEnabled }
             : undefined) as IConfigService['get'],
     });
-    ix.stub(IFlagService, {
-      enabled: (id: string) => id === SECONDARY_MODEL_FLAG_ID && secondaryFlagOn,
-    } as unknown as IFlagService);
     ix.stub(IModelCatalog, {
       get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
     } as unknown as IModelCatalog);
@@ -317,7 +311,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('binds the configured secondary model and reports it in the output and activity log', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
 
     const result = await execute(WORKER_ARGS);
@@ -333,7 +326,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('passes [secondary_model].default_effort to the spawned worker', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast', defaultEffort: 'low' };
 
     const result = await execute(WORKER_ARGS);
@@ -346,7 +338,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('falls back to the bound model default_effort when the section declares none', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
     modelMeta['cheap/fast'] = {
       capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
@@ -364,7 +355,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('leaves thinking unset for global resolution when thinking is disabled', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
     thinkingEnabled = false;
     modelMeta['cheap/fast'] = {
@@ -382,7 +372,7 @@ describe('TowerSpawnTool', () => {
     });
   });
 
-  it('inherits the tower model when the secondary-model experiment is off', async () => {
+  it('inherits the tower model when no secondary model is configured', async () => {
     const result = await execute(WORKER_ARGS);
 
     expect(result.isError).toBeUndefined();
@@ -392,7 +382,6 @@ describe('TowerSpawnTool', () => {
   });
 
   it('binds reviewers to the tower model even when the secondary model is configured', async () => {
-    secondaryFlagOn = true;
     secondaryModel = { model: 'cheap/fast' };
 
     const result = await execute({

@@ -953,7 +953,7 @@ export class Session {
   private computeSecondaryModelWarnings(): SessionWarning[] {
     if (this.secondaryModelWarnings !== undefined) return [...this.secondaryModelWarnings];
     const warnings: SessionWarning[] = [];
-    const secondary = resolveSecondaryModel(this.kimiConfig, this.experimentalFlags);
+    const secondary = resolveSecondaryModel(this.kimiConfig);
     if (secondary?.model !== undefined) {
       const boundAlias =
         secondaryModelPatch(secondary) === undefined

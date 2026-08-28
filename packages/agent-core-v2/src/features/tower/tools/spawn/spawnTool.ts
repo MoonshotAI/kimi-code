@@ -21,7 +21,6 @@ import {
 import { IAgentTowerService, TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
@@ -67,7 +66,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
     this.callerAgentId = scopeContext.agentId;
@@ -164,7 +162,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             ? undefined
             : resolveSubagentBinding(
                 this.config,
-                this.flags,
                 { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
                 args.kind === 'reviewer' ? 'primary' : undefined,
               );

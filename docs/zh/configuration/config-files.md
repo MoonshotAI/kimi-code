@@ -196,7 +196,7 @@ subagent 默认继承 main agent 正在运行的模型。`[secondary_model]` 节
 
 ### subagent 模型池
 
-模型池默认启用，在包括交互式 TUI 在内的所有启动方式下生效。如需禁用，设置 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0`（或在 `config.toml` 的 `[experimental]` 下配置 `secondary-model = false`）；禁用期间模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
+配置后在包括交互式 TUI 在内的所有启动方式下生效。
 
 最小配置只有一行——单独写下的 `default_model` 就是只含一个条目的模型池：
 

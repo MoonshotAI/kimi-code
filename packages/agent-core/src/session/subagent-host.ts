@@ -196,7 +196,6 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
       try {
-        this.reInheritParentModel(parent, child);
         return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, agentId, runOptions, error);
@@ -212,7 +211,6 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       try {
         runOptions.signal.throwIfAborted();
-        this.reInheritParentModel(parent, child);
         this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
@@ -463,7 +461,7 @@ export class SessionSubagentHost {
 
   /**
    * The model a newly spawned subagent binds to: the configured secondary
-   * model by default (when the experiment is on), otherwise the parent's
+   * model by default (when `[secondary_model]` is set), otherwise the parent's
    * model and effort, inherited as before. The bound alias is validated up
    * front so a dangling `[secondary_model]` pointer fails the spawn with a
    * wrapped, actionable error instead of a mid-turn provider failure.
@@ -475,7 +473,6 @@ export class SessionSubagentHost {
   ): SubagentModelBinding {
     const binding = resolveSubagentBinding(
       this.session.kimiConfig,
-      this.session.experimentalFlags,
       { modelAlias: parent.config.modelAlias, thinkingEffort: parent.config.thinkingEffort },
       modelChoice ?? profile.modelPreference,
     );
@@ -488,18 +485,6 @@ export class SessionSubagentHost {
       }
     }
     return binding;
-  }
-
-  /**
-   * Resume/retry historically re-synced the child to the parent's current
-   * model so subagents follow mid-session `/model` switches. With the
-   * `secondary-model` experiment on, a resumed subagent instead keeps the
-   * model it was bound to at spawn (v2 semantics: no child-follows-parent
-   * invariant).
-   */
-  private reInheritParentModel(parent: Agent, child: Agent): void {
-    if (this.session.experimentalFlags.enabled('secondary-model')) return;
-    child.config.update({ modelAlias: parent.config.modelAlias });
   }
 
   /**
