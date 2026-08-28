@@ -1,8 +1,10 @@
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
+
+import { COMMUNITY_SKINS_STYLESHEET_PATH } from './webSkins';
 
 interface WebAssetRouteHost {
   get(
@@ -54,11 +56,28 @@ async function serveWebAsset(
     return reply.code(404).type('text/plain; charset=utf-8').send('Not found');
   }
 
+  if (resolve(filePath) === resolve(join(assetsDir, 'index.html'))) {
+    const html = injectCommunitySkinStylesheet(await readFile(filePath, 'utf8'));
+    return reply
+      .type('text/html; charset=utf-8')
+      .header('Cache-Control', 'no-cache')
+      .header('Content-Length', String(Buffer.byteLength(html, 'utf8')))
+      .send(html);
+  }
+
   return reply
     .type(mimeType(filePath))
     .header('Cache-Control', cacheControl(assetsDir, filePath))
     .header('Content-Length', String(fileInfo.size))
     .send(createReadStream(filePath));
+}
+
+export function injectCommunitySkinStylesheet(html: string): string {
+  if (html.includes(`href="${COMMUNITY_SKINS_STYLESHEET_PATH}"`)) return html;
+  const closingHead = html.lastIndexOf('</head>');
+  if (closingHead < 0) return html;
+  const link = `    <link rel="stylesheet" href="${COMMUNITY_SKINS_STYLESHEET_PATH}" data-kimi-community-skins>\n`;
+  return `${html.slice(0, closingHead)}${link}${html.slice(closingHead)}`;
 }
 
 function cacheControl(assetsDir: string, filePath: string): string {

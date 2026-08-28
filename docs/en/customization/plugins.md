@@ -285,8 +285,51 @@ Supported fields:
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
 | `hooks` | Hook rules run on lifecycle events while the plugin is enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 | `commands` | One or more `./` paths pointing to a directory or `.md` file; registers the Markdown files within as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
+| `webSkin.tokens` | A `./` path to a declarative Web design-token JSON file. Web-skin plugins must not declare runtime capabilities |
 
 Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
+
+### Web skins
+
+A Web skin is a code-free plugin that overrides Kimi Web design tokens. Enabling the plugin activates its tokens after the next page refresh; disabling or removing it restores the built-in values. When several Web skins are enabled, Kimi applies them in plugin-id order, so keep only the skin layers you intend to combine enabled.
+
+Declare the token file in `kimi.plugin.json`:
+
+```json
+{
+  "name": "kimi-code-skin-moonlight",
+  "version": "1.0.0",
+  "webSkin": {
+    "tokens": "./web/skin.json"
+  },
+  "interface": {
+    "displayName": "Moonlight",
+    "shortDescription": "A violet moonlight palette for Kimi Web"
+  }
+}
+```
+
+The referenced JSON document has one versioned light and dark token map:
+
+```json
+{
+  "manifestVersion": 1,
+  "light": {
+    "--color-bg": "#fffafd",
+    "--color-accent": "#7c3aed",
+    "--radius-lg": "16px"
+  },
+  "dark": {
+    "--color-bg": "#15111d",
+    "--color-accent": "#c084fc",
+    "--radius-lg": "16px"
+  }
+}
+```
+
+Token names are limited to the Kimi design-system prefixes `--color-*`, `--font-*`, `--radius-*`, `--space-*`, `--shadow-*`, `--duration-*`, `--ease-*`, `--weight-*`, `--leading-*`, `--text-*`, and `--p-*`, plus a fixed allowlist of legacy Web compatibility tokens such as `--bg`, `--panel`, and `--blue`. Values cannot contain rules, declarations, control characters, CSS escapes, comments, `!important`, or image/network-loading functions. Function calls are limited to safe color, math, easing, and `var()` forms. The token file is limited to 64 KB, 256 tokens, and 256 UTF-8 bytes per value.
+
+Web-skin plugins cannot also declare Skills, agents, commands, hooks, MCP servers, session-start behavior, skill instructions, or system-prompt content. This keeps cosmetic packages code-free and prevents a skin from silently gaining agent-runtime authority. Kimi generates the stylesheet on the server and never serves plugin JavaScript, HTML, SVG, or arbitrary CSS.
 
 ### System-prompt instructions
 

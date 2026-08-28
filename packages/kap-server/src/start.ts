@@ -42,6 +42,7 @@ import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
 import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
+import { registerWebSkinRoutes } from './routes/webSkins';
 import {
   createServerLogger,
   type ServerLogger,
@@ -550,6 +551,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
 
   if (opts.webAssetsDir !== undefined) {
+    registerWebSkinRoutes(app, core);
     await registerWebAssetRoutes(app, opts.webAssetsDir);
   }
 

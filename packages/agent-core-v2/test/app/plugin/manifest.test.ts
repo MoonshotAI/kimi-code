@@ -4,7 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { parseManifest, PLUGIN_SYSTEM_PROMPT_MAX_BYTES } from '#/app/plugin/manifest';
+import {
+  parseManifest,
+  PLUGIN_SYSTEM_PROMPT_MAX_BYTES,
+  PLUGIN_WEB_SKIN_MAX_BYTES,
+} from '#/app/plugin/manifest';
 
 describe('plugin manifest parser', () => {
   let dir: string;
@@ -331,5 +335,169 @@ describe('plugin manifest parser', () => {
 
     expect(result.manifest?.systemPrompt).toBe('x'.repeat(PLUGIN_SYSTEM_PROMPT_MAX_BYTES));
     expect(result.diagnostics).toEqual([]);
+  });
+
+  it('resolves a declarative web-skin token file inside the plugin', async () => {
+    await mkdir(join(dir, 'web'));
+    await writeFile(join(dir, 'web', 'skin.json'), '{"manifestVersion":1,"light":{"--color-bg":"#fff"},"dark":{}}', 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', webSkin: { tokens: './web/skin.json' } }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.webSkin).toEqual({
+      light: { '--color-bg': '#fff' },
+      dark: {},
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('rejects a web skin that also requests runtime capabilities', async () => {
+    await mkdir(join(dir, 'web'));
+    await writeFile(join(dir, 'web', 'skin.json'), '{"manifestVersion":1,"light":{"--color-bg":"#fff"},"dark":{}}', 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        systemPrompt: 'Do something.',
+        webSkin: { tokens: './web/skin.json' },
+      }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.webSkin).toBeUndefined();
+    expect(result.diagnostics).toContainEqual({
+      severity: 'error',
+      message: '"webSkin" cannot be combined with runtime plugin capabilities',
+    });
+  });
+
+  it('rejects raw runtime fields even when they parse to no active contribution', async () => {
+    await writeFile(
+      join(dir, 'skin.json'),
+      '{"manifestVersion":1,"light":{},"dark":{}}',
+      'utf8',
+    );
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        skills: [],
+        webSkin: { tokens: './skin.json' },
+      }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.webSkin).toBeUndefined();
+    expect(result.diagnostics).toContainEqual({
+      severity: 'error',
+      message: '"webSkin" cannot be combined with runtime plugin capabilities',
+    });
+  });
+
+  it.each([
+    { light: { color: 'red' }, error: 'unsupported token: color' },
+    {
+      light: { '--color-bg': 'url(https://example.com/x)' },
+      error: 'unsafe token value: --color-bg',
+    },
+    {
+      light: { '--color-bg': 'u\\72l(https://example.com/x)' },
+      error: 'unsafe token value: --color-bg',
+    },
+    {
+      light: { '--color-bg': 'image-set("https://example.com/x" 1x)' },
+      error: 'unsafe token value: --color-bg',
+    },
+    {
+      light: { '--color-bg': 'red;position:fixed' },
+      error: 'unsafe token value: --color-bg',
+    },
+    {
+      light: { '--color-bg': 'red !important' },
+      error: 'unsafe token value: --color-bg',
+    },
+    { light: { '--color-bg': 42 }, error: 'token value must be a string: --color-bg' },
+  ])('rejects unsafe web-skin token input', async ({ light, error }) => {
+    await writeFile(
+      join(dir, 'skin.json'),
+      JSON.stringify({ manifestVersion: 1, light, dark: {} }),
+      'utf8',
+    );
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', webSkin: { tokens: './skin.json' } }),
+      'utf8',
+    );
+
+    const result = await parseManifest(dir);
+
+    expect(result.manifest?.webSkin).toBeUndefined();
+    expect(result.diagnostics.map((entry) => entry.message)).toEqual([
+      `"webSkin.tokens" is invalid: ${error} (./skin.json)`,
+    ]);
+  });
+
+  it('rejects unsupported web-skin schemas and excessive token counts', async () => {
+    await writeFile(
+      join(dir, 'skin.json'),
+      JSON.stringify({ manifestVersion: 2, light: {}, dark: {} }),
+      'utf8',
+    );
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', webSkin: { tokens: './skin.json' } }),
+      'utf8',
+    );
+    const schema = await parseManifest(dir);
+    expect(schema.diagnostics.map((entry) => entry.message)).toEqual([
+      '"webSkin.tokens" is invalid: token document has an invalid schema (./skin.json)',
+    ]);
+
+    const light = Object.fromEntries(
+      Array.from({ length: 257 }, (_, index) => [`--color-test-${index}`, '#fff']),
+    );
+    await writeFile(
+      join(dir, 'skin.json'),
+      JSON.stringify({ manifestVersion: 1, light, dark: {} }),
+      'utf8',
+    );
+    const count = await parseManifest(dir);
+    expect(count.diagnostics.map((entry) => entry.message)).toEqual([
+      '"webSkin.tokens" is invalid: token document has too many tokens (./skin.json)',
+    ]);
+  });
+
+  it('rejects malformed and oversized web-skin declarations', async () => {
+    await writeFile(join(dir, 'skin.css'), ':root {}', 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', webSkin: { tokens: './skin.css' } }),
+      'utf8',
+    );
+    const extension = await parseManifest(dir);
+    expect(extension.manifest?.webSkin).toBeUndefined();
+    expect(extension.diagnostics.map((entry) => entry.message)).toEqual([
+      '"webSkin.tokens" must reference a .json file (./skin.css)',
+    ]);
+
+    await writeFile(join(dir, 'skin.json'), 'x'.repeat(PLUGIN_WEB_SKIN_MAX_BYTES + 1), 'utf8');
+    await writeFile(
+      join(dir, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', webSkin: { tokens: './skin.json' } }),
+      'utf8',
+    );
+    const oversized = await parseManifest(dir);
+    expect(oversized.manifest?.webSkin).toBeUndefined();
+    expect(oversized.diagnostics.map((entry) => entry.message)).toEqual([
+      '"webSkin.tokens" exceeds the 64 KB limit (./skin.json)',
+    ]);
   });
 });

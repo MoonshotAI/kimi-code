@@ -11,12 +11,78 @@ import {
   type PluginInterface,
   type PluginManifest,
   type PluginManifestKind,
+  type PluginWebSkin,
 } from './types';
 
 const KIMI_PLUGIN_ROOT_PATH = 'kimi.plugin.json';
 const KIMI_PLUGIN_DIR_PATH = '.kimi-plugin/plugin.json';
 
 export const PLUGIN_SYSTEM_PROMPT_MAX_BYTES = 32 * 1024;
+export const PLUGIN_WEB_SKIN_MAX_BYTES = 64 * 1024;
+const WEB_SKIN_TOKEN_NAME = /^--(?:color|font|radius|space|shadow|duration|ease|weight|leading|text|p)-[a-z0-9][a-z0-9-]*$/;
+const WEB_SKIN_COMPAT_TOKEN_NAMES = new Set([
+  '--dim',
+  '--muted',
+  '--faint',
+  '--line',
+  '--line2',
+  '--canvas',
+  '--sh',
+  '--shc',
+  '--panel',
+  '--panel2',
+  '--bg',
+  '--blue',
+  '--blue2',
+  '--soft',
+  '--bd',
+  '--logo',
+  '--bluebg',
+  '--blueln',
+  '--ok',
+  '--warn',
+  '--star',
+  '--err',
+  '--hover',
+]);
+const WEB_SKIN_SAFE_FUNCTION_NAMES = new Set([
+  'calc',
+  'clamp',
+  'color',
+  'color-mix',
+  'cubic-bezier',
+  'hsl',
+  'hsla',
+  'linear',
+  'max',
+  'min',
+  'oklab',
+  'oklch',
+  'rgb',
+  'rgba',
+  'steps',
+  'var',
+]);
+const WEB_SKIN_MAX_TOKEN_COUNT = 256;
+const WEB_SKIN_MAX_TOKEN_VALUE_BYTES = 256;
+
+const RUNTIME_PLUGIN_FIELDS = [
+  'skills',
+  'agents',
+  'sessionStart',
+  'mcpServers',
+  'hooks',
+  'commands',
+  'skillInstructions',
+  'systemPrompt',
+  'systemPromptPath',
+  'tools',
+  'apps',
+  'inject',
+  'configFile',
+  'config_file',
+  'bootstrap',
+] as const;
 
 const UNSUPPORTED_RUNTIME_FIELDS = [
   'tools',
@@ -119,6 +185,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     typeof raw['skillInstructions'] === 'string' ? raw['skillInstructions'] : undefined;
 
   const systemPrompt = await readSystemPrompt(pluginRoot, raw, diagnostics);
+  const webSkin = await readWebSkin(pluginRoot, raw['webSkin'], diagnostics);
 
   recordUnsupportedRuntimeFields(raw, diagnostics);
 
@@ -138,11 +205,46 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     hooks: readHooks(raw['hooks'], diagnostics),
     commands: await readCommands(pluginRoot, raw['commands'], diagnostics),
     interface: readInterface(raw['interface']),
+    webSkin,
     skillInstructions,
     systemPrompt,
   };
 
+  if (
+    manifest.webSkin !== undefined &&
+    (hasRuntimeCapabilities(manifest) || hasDeclaredRuntimeCapabilities(raw))
+  ) {
+    diagnostics.push({
+      severity: 'error',
+      message: '"webSkin" cannot be combined with runtime plugin capabilities',
+    });
+    return {
+      manifest: { ...manifest, webSkin: undefined },
+      manifestKind,
+      manifestPath,
+      shadowedManifestPath,
+      diagnostics,
+    };
+  }
+
   return { manifest, manifestKind, manifestPath, shadowedManifestPath, diagnostics };
+}
+
+function hasDeclaredRuntimeCapabilities(raw: Record<string, unknown>): boolean {
+  return RUNTIME_PLUGIN_FIELDS.some((field) => raw[field] !== undefined);
+}
+
+function hasRuntimeCapabilities(manifest: PluginManifest): boolean {
+  return (
+    (manifest.skills?.length ?? 0) > 0 ||
+    (manifest.agents?.length ?? 0) > 0 ||
+    manifest.sessionStart !== undefined ||
+    Object.keys(manifest.mcpServers ?? {}).length > 0 ||
+    (manifest.hooks?.length ?? 0) > 0 ||
+    (manifest.commands?.length ?? 0) > 0 ||
+    manifest.skillInstructions !== undefined ||
+    manifest.systemPrompt !== undefined
+  );
 }
 
 function recordUnsupportedRuntimeFields(
@@ -240,6 +342,114 @@ async function resolvePluginPathField(input: {
     return undefined;
   }
   return real;
+}
+
+async function readWebSkin(
+  pluginRoot: string,
+  raw: unknown,
+  diagnostics: PluginDiagnostic[],
+): Promise<PluginManifest['webSkin']> {
+  if (raw === undefined) return undefined;
+  if (!isObject(raw)) {
+    diagnostics.push({ severity: 'warn', message: '"webSkin" must be an object' });
+    return undefined;
+  }
+  if (Object.keys(raw).some((key) => key !== 'tokens')) {
+    diagnostics.push({ severity: 'warn', message: '"webSkin" contains an unknown field' });
+    return undefined;
+  }
+  const tokens = raw['tokens'];
+  if (typeof tokens !== 'string' || tokens.trim().length === 0) {
+    diagnostics.push({ severity: 'warn', message: '"webSkin.tokens" must be a non-empty string' });
+    return undefined;
+  }
+  const tokensPath = await resolvePluginPathField({
+    pluginRoot,
+    field: 'webSkin.tokens',
+    value: tokens,
+    diagnostics,
+  });
+  if (tokensPath === undefined) return undefined;
+  if (path.extname(tokensPath).toLowerCase() !== '.json') {
+    diagnostics.push({ severity: 'warn', message: `"webSkin.tokens" must reference a .json file (${tokens})` });
+    return undefined;
+  }
+  const info = await stat(tokensPath).catch(() => undefined);
+  if (info?.isFile() !== true) {
+    diagnostics.push({ severity: 'warn', message: `"webSkin.tokens" is not a file (${tokens})` });
+    return undefined;
+  }
+  if (info.size > PLUGIN_WEB_SKIN_MAX_BYTES) {
+    diagnostics.push({
+      severity: 'warn',
+      message: `"webSkin.tokens" exceeds the ${PLUGIN_WEB_SKIN_MAX_BYTES / 1024} KB limit (${tokens})`,
+    });
+    return undefined;
+  }
+  try {
+    return parseWebSkinTokenDocument(await readFile(tokensPath, 'utf8'));
+  } catch (error) {
+    diagnostics.push({
+      severity: 'warn',
+      message: `"webSkin.tokens" is invalid: ${(error as Error).message} (${tokens})`,
+    });
+    return undefined;
+  }
+}
+
+export function parseWebSkinTokenDocument(source: string): PluginWebSkin {
+  if (Buffer.byteLength(source, 'utf8') > PLUGIN_WEB_SKIN_MAX_BYTES) {
+    throw new Error('token document is too large');
+  }
+  const parsed: unknown = JSON.parse(source.replace(/^\uFEFF/u, ''));
+  if (!isObject(parsed)) throw new Error('token document must be an object');
+  if (
+    Object.keys(parsed).some((key) => !['manifestVersion', 'light', 'dark'].includes(key)) ||
+    parsed['manifestVersion'] !== 1 ||
+    !isObject(parsed['light']) ||
+    !isObject(parsed['dark'])
+  ) {
+    throw new Error('token document has an invalid schema');
+  }
+  const light = parseWebSkinTokenSet(parsed['light']);
+  const dark = parseWebSkinTokenSet(parsed['dark']);
+  if (Object.keys(light).length + Object.keys(dark).length > WEB_SKIN_MAX_TOKEN_COUNT) {
+    throw new Error('token document has too many tokens');
+  }
+  return { light, dark };
+}
+
+function parseWebSkinTokenSet(value: Record<string, unknown>): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(value).map(([name, rawValue]) => {
+      if (!WEB_SKIN_TOKEN_NAME.test(name) && !WEB_SKIN_COMPAT_TOKEN_NAMES.has(name)) {
+        throw new Error(`unsupported token: ${name}`);
+      }
+      if (typeof rawValue !== 'string') throw new Error(`token value must be a string: ${name}`);
+      const tokenValue = rawValue.trim();
+      if (
+        tokenValue.length === 0 ||
+        Buffer.byteLength(tokenValue, 'utf8') > WEB_SKIN_MAX_TOKEN_VALUE_BYTES ||
+        hasUnsafeWebSkinTokenValue(tokenValue)
+      ) {
+        throw new Error(`unsafe token value: ${name}`);
+      }
+      return [name, tokenValue];
+    }),
+  );
+}
+
+function hasUnsafeWebSkinTokenValue(value: string): boolean {
+  if (
+    /[;{}@\\\u0000-\u001F\u007F]/u.test(value) ||
+    /javascript\s*:|!\s*important|\/\*|\*\//iu.test(value)
+  ) {
+    return true;
+  }
+  for (const match of value.matchAll(/([A-Za-z][A-Za-z0-9-]*)\s*\(/gu)) {
+    if (!WEB_SKIN_SAFE_FUNCTION_NAMES.has((match[1] ?? '').toLowerCase())) return true;
+  }
+  return false;
 }
 
 function readSessionStart(
