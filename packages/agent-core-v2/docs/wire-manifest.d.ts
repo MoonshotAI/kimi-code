@@ -243,6 +243,7 @@ interface FileHistoryTrackedPayload {
     contentHash?: string;
     size?: number;
     oversize?: boolean;
+    mtimeMs?: number;
   };
 }
 

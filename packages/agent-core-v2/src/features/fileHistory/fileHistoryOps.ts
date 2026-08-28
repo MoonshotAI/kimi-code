@@ -18,6 +18,7 @@ const backupEntrySchema = z.object({
   contentHash: z.string().optional(),
   size: z.number().optional(),
   oversize: z.boolean().optional(),
+  mtimeMs: z.number().optional(),
 });
 
 const fileHistoryTrackedSchema = z.object({

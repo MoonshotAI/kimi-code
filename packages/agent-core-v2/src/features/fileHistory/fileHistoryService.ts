@@ -122,7 +122,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         }
         continue;
       }
-      let liveOversize: number | undefined;
+      const beforeMissing = before === undefined || (before.key === null && before.oversize !== true);
+      let liveOversize: { size: number; mtimeMs?: number } | undefined;
+      let liveMissing = false;
       let afterBytes: Uint8Array | undefined;
       if (end !== undefined) {
         if (before?.oversize !== true && after?.oversize !== true) {
@@ -132,13 +134,24 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         const current = await this.readCurrent(path);
         if (current === 'unreadable') continue;
         if (current instanceof Uint8Array) afterBytes = current;
-        else if (current !== 'missing') liveOversize = current.oversizeBytes;
+        else if (current === 'missing') liveMissing = true;
+        else liveOversize = { size: current.oversizeBytes, mtimeMs: current.mtimeMs };
       }
+      const afterMissing =
+        end !== undefined
+          ? after === undefined || (after.key === null && after.oversize !== true)
+          : liveMissing;
       if (before?.oversize === true || after?.oversize === true || liveOversize !== undefined) {
-        if (before?.oversize === true && liveOversize !== undefined && before.size === liveOversize) {
+        if (
+          before?.oversize === true &&
+          liveOversize !== undefined &&
+          before.size === liveOversize.size &&
+          before.mtimeMs === liveOversize.mtimeMs
+        ) {
           continue;
         }
-        changes.push({ path, status: 'modified', additions: 0, deletions: 0, oversize: true });
+        const status = beforeMissing ? 'added' : afterMissing ? 'deleted' : 'modified';
+        changes.push({ path, status, additions: 0, deletions: 0, oversize: true });
         continue;
       }
       const beforeBytes = await this.entryBytes(before);
@@ -209,7 +222,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     let entry: FileBackupEntry;
     if (current === 'missing') entry = { key: null, version: 1 };
     else if (current instanceof Uint8Array) entry = await this.backup(pathKey, 1, current);
-    else entry = { key: null, version: 1, oversize: true, size: current.oversizeBytes };
+    else {
+      entry = {
+        key: null,
+        version: 1,
+        oversize: true,
+        size: current.oversizeBytes,
+        mtimeMs: current.mtimeMs,
+      };
+    }
     await this.dispatcher.dispatch(
       new FileHistoryTracked({ agentId: this.agentCtx.agentId, turnId, path: pathKey, entry }),
     );
@@ -237,12 +258,17 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         continue;
       }
       if (!(current instanceof Uint8Array)) {
-        if (latest?.oversize !== true || latest.size !== current.oversizeBytes) {
+        if (
+          latest?.oversize !== true ||
+          latest.size !== current.oversizeBytes ||
+          latest.mtimeMs !== current.mtimeMs
+        ) {
           entries[pathKey] = {
             key: null,
             version: nextVersion,
             oversize: true,
             size: current.oversizeBytes,
+            mtimeMs: current.mtimeMs,
           };
         }
         continue;
@@ -301,7 +327,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private async readCurrent(
     pathKey: string,
-  ): Promise<Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number }> {
+  ): Promise<
+    Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
+  > {
     const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
     const lease = this.runtime.acquire(['fs']);
     try {
@@ -315,9 +343,20 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         return code === 'ENOENT' ? 'missing' : 'unreadable';
       }
       if (!info.isFile) return 'unreadable';
-      if (info.size > FILE_HISTORY_MAX_FILE_BYTES) return { oversizeBytes: info.size };
+      if (info.size > FILE_HISTORY_MAX_FILE_BYTES) {
+        return { oversizeBytes: info.size, mtimeMs: info.mtimeMs };
+      }
       try {
-        return await fs.readBytes(absolute);
+        const bytes = await fs.readBytes(absolute, FILE_HISTORY_MAX_FILE_BYTES + 1);
+        if (bytes.byteLength > FILE_HISTORY_MAX_FILE_BYTES) {
+          const grown = await fs.stat(absolute).catch(() => undefined);
+          return {
+            oversizeBytes: grown?.size ?? bytes.byteLength,
+            mtimeMs: grown?.mtimeMs,
+          };
+        }
+        if (bytes.byteLength !== info.size) return 'unreadable';
+        return bytes;
       } catch {
         return 'unreadable';
       }

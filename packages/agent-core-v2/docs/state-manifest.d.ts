@@ -1506,6 +1506,7 @@ export interface AgentStateSnapshot {
         readonly contentHash?: string;
         readonly size?: number;
         readonly oversize?: boolean;
+        readonly mtimeMs?: number;
       }>>;
     }[];
     readonly tracked: readonly string[];
