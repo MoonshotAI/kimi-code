@@ -9,10 +9,6 @@ import {
   SESSION_INDEX_KEY,
   SESSION_INDEX_SCOPE,
 } from '#/app/workspace/workspaceAlias';
-import {
-  WORKSPACE_CATALOG_KEY,
-  WORKSPACE_CATALOG_SCOPE,
-} from '#/app/workspace/fileWorkspacePersistence';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -54,7 +50,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   private catalogPromise: Promise<CatalogSnapshot> | undefined;
   private sessionIndexPromise: Promise<SessionIndexSnapshot> | undefined;
   private invalidationGeneration = 0;
-  private readonly cacheable: boolean;
+  private readonly sessionIndexCacheable: boolean;
   private catalogMergePrimed = false;
 
   constructor(
@@ -63,17 +59,14 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
   ) {
     super();
-    const watchCatalog = this.storage.watch?.(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY);
+    this._register(
+      this.store.onDidChange(() => {
+        this.invalidationGeneration += 1;
+        this.catalogCache = undefined;
+      }),
+    );
     const watchSessionIndex = this.storage.watch?.(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-    this.cacheable = watchCatalog !== undefined && watchSessionIndex !== undefined;
-    if (watchCatalog !== undefined) {
-      this._register(
-        watchCatalog(() => {
-          this.invalidationGeneration += 1;
-          this.catalogCache = undefined;
-        }),
-      );
-    }
+    this.sessionIndexCacheable = watchSessionIndex !== undefined;
     if (watchSessionIndex !== undefined) {
       this._register(
         watchSessionIndex(() => {
@@ -123,7 +116,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
           (ws) => ws.id,
         ),
       };
-      if (this.cacheable && generation === this.invalidationGeneration) {
+      if (generation === this.invalidationGeneration) {
         this.catalogCache = snapshot;
       }
       return snapshot;
@@ -147,7 +140,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
           encodeWorkDirKey(entry.workDir),
         ),
       };
-      if (this.cacheable && generation === this.invalidationGeneration) {
+      if (this.sessionIndexCacheable && generation === this.invalidationGeneration) {
         this.sessionIndexCache = snapshot;
       }
       return snapshot;

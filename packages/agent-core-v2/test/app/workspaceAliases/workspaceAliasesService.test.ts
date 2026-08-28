@@ -225,6 +225,33 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect(storage.reads).toBeLessThanOrEqual(6);
   });
 
+  it('resolveAliasIds follows in-process catalog writes synchronously', async () => {
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const legacyId = 'wd_proj_deadbeef0002';
+    await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
+    const aliases = build();
+    expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
+
+    const persistence = currentHost!.app.accessor.get(IWorkspacePersistence);
+    await persistence.save({
+      workspaces: [
+        { id: typedId, root: typedRoot, name: 'proj', createdAt: 0, lastOpenedAt: 0 },
+        { id: legacyId, root: 'c:\\users\\foo\\proj', name: 'proj', createdAt: 0, lastOpenedAt: 0 },
+      ],
+      deletedIds: [],
+    });
+    expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
+      [legacyId, typedId].toSorted(),
+    );
+  });
+
   it('resolveAliasIds picks up catalog and session index changes', async () => {
     const entry = (root: string): PersistedWorkspaceEntry => ({
       root,
