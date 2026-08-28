@@ -1718,23 +1718,25 @@ describe('GlobalSearchService', () => {
       expect(thinking.items).toEqual([]);
     });
 
-    it('accepts single-character literal queries on the live route', async () => {
+    it('rejects single-character literal queries on the live route', async () => {
       const s1 = summary('s1', '苹果标题', T1);
       const service = track(makeService(home!, gettableIndex([s1])));
       service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', makeLiveStore('s1')]])));
 
-      const page = await service.search({
-        query: '苹',
-        mode: 'literal',
-        container: { sessionId: 's1' },
-      });
-      expect(page.source).toBe('live');
-      expect(page.items.length).toBe(3);
-      expect(page.items.map((h) => h.role).sort()).toEqual(['assistant', 'title', 'user']);
-
-      await expect(service.search({ query: '苹', mode: 'literal' })).rejects.toMatchObject({
-        reason: 'invalid_query',
-      });
+      await expect(
+        service.search({
+          query: '苹',
+          mode: 'literal',
+          container: { sessionId: 's1' },
+        }),
+      ).rejects.toMatchObject({ reason: 'invalid_query' });
+      await expect(
+        service.search({
+          query: '苹',
+          mode: 'literal',
+          container: { sessionId: 's1' },
+        }),
+      ).rejects.toThrow(/literal queries need at least 2 characters/);
     });
 
     it('falls back to the index route when no source is wired or the session is not live', async () => {
