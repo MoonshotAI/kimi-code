@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'pathe';
 
 import type { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -15,6 +15,7 @@ import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -494,7 +495,24 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetId: string | undefined;
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
+    const quiescenceHolds: IDisposable[] = [];
     try {
+      if (sourceHandle !== undefined) {
+        const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+        for (const agent of sourceAgents.list()) {
+          const agentHandle = sourceAgents.handleOf(agent.agentId);
+          if (agentHandle === undefined) continue;
+          const hold = agentHandle.accessor.get(IAgentLoopService).tryAcquireQuiescence();
+          if (hold === undefined) {
+            throw new Error2(
+              ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+              `Session "${sourceId}" cannot be forked while a turn is running or queued`,
+              { details: { sessionId: sourceId, agentId: agent.agentId } },
+            );
+          }
+          quiescenceHolds.push(hold);
+        }
+      }
       await this.assertSubagentModelPoolPreFlight();
       await drainSessionMetadataWrites();
       if (sourceHandle !== undefined) {
@@ -615,6 +633,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await this.hostFs.remove(targetSessionDir).catch(() => {});
       }
       throw error;
+    } finally {
+      for (const hold of quiescenceHolds) hold.dispose();
     }
   }
 
