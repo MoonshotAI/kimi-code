@@ -236,11 +236,10 @@ export function resolveModelForReady(
   providers: Readonly<Record<string, ProviderConfig>>,
   defaultProvider?: string,
 ): ModelReadyResolution {
-  const alias = nonEmpty(modelId);
-  if (alias === undefined) {
+  if (modelId === undefined || modelId.trim().length === 0) {
     return { resolved: false, reason: 'no-default' };
   }
-  const configured = models[alias];
+  const configured = models[modelId];
   if (configured === undefined) {
     return { resolved: false, reason: 'dangling-alias' };
   }

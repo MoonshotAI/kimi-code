@@ -164,6 +164,16 @@ describe('resolveModelForReady', () => {
     });
   });
 
+  it('looks up the configured id as an exact key, trimming only to reject blanks', () => {
+    const models = { m: { providerId: 'prov-a', model: 'gpt', maxContextSize: 4096 } };
+    expect(resolveModelForReady(' m ', models, providers)).toEqual({
+      resolved: false,
+      reason: 'dangling-alias',
+    });
+    const padded = { ' m ': { providerId: 'prov-a', model: 'gpt', maxContextSize: 4096 } };
+    expect(resolveModelForReady(' m ', padded, providers)).toEqual({ resolved: true });
+  });
+
   it('resolves a providerId pointing at an existing provider', () => {
     const models = { m: { providerId: 'prov-a', model: 'gpt', maxContextSize: 4096 } };
     expect(resolveModelForReady('m', models, providers)).toEqual({ resolved: true });
