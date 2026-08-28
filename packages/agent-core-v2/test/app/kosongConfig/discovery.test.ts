@@ -636,6 +636,74 @@ describe('refreshProviderModels defaultModel self-heal', () => {
     }
   });
 
+  it('keeps a default model the user selected while the catalog fetch was in flight', async () => {
+    const twoModels = {
+      'kimi-code/kimi-k2': {
+        provider: KIMI_CODE_PROVIDER_NAME,
+        model: 'kimi-k2',
+        maxContextSize: 131072,
+        capabilities: ['thinking', 'tool_use'],
+        displayName: 'Kimi K2',
+      },
+      'kimi-code/kimi-k3': {
+        provider: KIMI_CODE_PROVIDER_NAME,
+        model: 'kimi-k3',
+        maxContextSize: 131072,
+        capabilities: ['thinking', 'tool_use'],
+        displayName: 'Kimi K3',
+      },
+    };
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: managedProviders,
+        models: twoModels,
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () => {
+            await config.set('defaultModel', 'kimi-code/kimi-k3');
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: 'kimi-k2',
+                    context_length: 131072,
+                    supports_reasoning: true,
+                    display_name: 'Kimi K2',
+                  },
+                  {
+                    id: 'kimi-k3',
+                    context_length: 131072,
+                    supports_reasoning: true,
+                    display_name: 'Kimi K3',
+                  },
+                ],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+          },
+        ),
+      );
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k3');
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('reports unchanged and skips writes when the catalog and defaultModel are intact', async () => {
     stubManagedCatalogFetch();
     const { host, config, discovery, events } = await createHost(
