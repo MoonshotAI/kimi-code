@@ -138,7 +138,6 @@ export function systemPromptVars(
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
-    now: context.now ?? new Date().toISOString(),
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
     agents_md: context.agentsMd ?? '',
@@ -171,10 +170,7 @@ export function renderPromptTemplateResult(
   }
   return {
     text: renderPrompt(template, vars),
-    environment: mergeEnvironmentDisclosure(
-      environmentForTemplate(template, context),
-      baseResult?.environment,
-    ),
+    environment: mergeEnvironmentDisclosure(environmentForTemplate(context), baseResult?.environment),
   };
 }
 
@@ -188,28 +184,12 @@ export function renderSystemPromptResult(
       ...systemPromptVars(context, options),
       role_additional: roleAdditional,
     }),
-    environment: environmentForTemplate(SYSTEM_PROMPT_TEMPLATE, context),
+    environment: environmentForTemplate(context),
   };
 }
 
-function environmentForTemplate(
-  template: string,
-  context: AgentProfileContext,
-): EnvironmentDisclosureSnapshot {
-  const usesNow = template.includes('${now}');
-  const timeZone = context.timeZone ?? localTimeZone();
-  return {
-    cwd: context.cwd ?? '',
-    date: usesNow
-      ? {
-          disclosed: true,
-          value: {
-            localDate: localDateKey(context.now, timeZone),
-            timeZone,
-          },
-        }
-      : { disclosed: false },
-  };
+function environmentForTemplate(context: AgentProfileContext): EnvironmentDisclosureSnapshot {
+  return { cwd: context.cwd ?? '' };
 }
 
 function mergeEnvironmentDisclosure(
@@ -217,26 +197,5 @@ function mergeEnvironmentDisclosure(
   base: EnvironmentDisclosureSnapshot | undefined,
 ): EnvironmentDisclosureSnapshot {
   if (base === undefined) return direct;
-  return {
-    cwd: direct.cwd || base.cwd,
-    date: direct.date.disclosed ? direct.date : base.date,
-  };
-}
-
-function localDateKey(now: string | undefined, timeZone: string): string {
-  const date = now === undefined ? new Date() : new Date(now);
-  if (Number.isNaN(date.getTime())) return localDateKey(undefined, timeZone);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((candidate) => candidate.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
-}
-
-function localTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return { cwd: direct.cwd || base.cwd };
 }

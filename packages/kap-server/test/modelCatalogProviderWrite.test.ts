@@ -290,8 +290,10 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     const onDisk = await readConfigToml();
     expect(onDisk['default_model']).toBe('my-openai/gpt-4.1');
 
-    const auth = await getJson<{ ready: boolean; default_model: string | null }>('/api/v1/auth');
-    expect(auth.body.data).toMatchObject({ ready: true, default_model: 'my-openai/gpt-4.1' });
+    const config = await getJson<{ default_model: string | null }>('/api/v1/config');
+    expect(config.body.data.default_model).toBe('my-openai/gpt-4.1');
+    const auth = await getJson<{ models_ready: boolean }>('/api/v1/auth');
+    expect(auth.body.data).toMatchObject({ models_ready: true });
   });
 
   it('seeds the first model when the create body names no provider default', async () => {
