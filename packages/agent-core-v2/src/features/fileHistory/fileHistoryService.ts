@@ -14,7 +14,7 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -56,10 +56,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     this.agentState.contributeState(fileHistoryKey);
-    if (this.agentCtx.agentId !== MAIN_AGENT_ID) return;
+    if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
+      this._register(
+        toolExecutor.onWillExecuteTool((event) => this.onSubagentWillExecuteTool(event)),
+      );
+      return;
+    }
 
     this._register(
       toolExecutor.onWillExecuteTool((event) => this.onWillExecuteTool(event)),
@@ -205,6 +211,21 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     const path = editTargetPath(event.execution.display);
     if (path === undefined) return;
     event.waitUntil(this.enqueue(() => this.capture(path, event.turnId)));
+  }
+
+  private onSubagentWillExecuteTool(event: WillExecuteToolEvent): void {
+    if (!this.enabled()) return;
+    const path = editTargetPath(event.execution.display);
+    if (path === undefined) return;
+    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    event.waitUntil(main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path));
+  }
+
+  captureForActiveTurn(path: string): Promise<void> {
+    const turnId = this.activeTurnId;
+    if (!this.enabled() || turnId === undefined) return Promise.resolve();
+    return this.enqueue(() => this.capture(path, turnId));
   }
 
   private enqueue(op: () => Promise<void>): Promise<void> {
