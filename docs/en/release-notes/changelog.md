@@ -8,10 +8,6 @@ This page documents the changes in each Kimi Code CLI release.
 
 ## 0.39.1 (2026-08-28)
 
-### Polish
-
-- web: Unify right-side panel headers.
-
 ### Bug Fixes
 
 - web: Fix switching the permission mode in one session changing it for every session; the permission mode is now scoped per session.
