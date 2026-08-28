@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
-import { OAuthUnauthorizedError } from './errors';
+import { OAuthStorageUnavailableError, OAuthUnauthorizedError } from './errors';
 import {
   assertKimiHostIdentity,
   createKimiDefaultHeaders,
@@ -165,7 +165,12 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
     const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
     const manager = this.managerFor(name, oauthKey, oauthHost);
-    const hadToken = await manager.hasToken();
+    let hadToken = false;
+    try {
+      hadToken = await manager.hasToken();
+    } catch (error) {
+      if (!(error instanceof OAuthStorageUnavailableError)) throw error;
+    }
     let usedDeviceLogin = false;
     const loginWithDevice = async (): Promise<string> => {
       usedDeviceLogin = true;

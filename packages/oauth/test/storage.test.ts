@@ -89,6 +89,17 @@ describe('FileTokenStorage', () => {
     await expect(storage.remove('never-existed')).resolves.toBeUndefined();
   });
 
+  it('locks first save and remove even when the credential file is absent', async () => {
+    const target = join(dir, 'fresh.json');
+    expect(() => statSync(target)).toThrow();
+
+    await storage.save('fresh', sampleToken());
+    expect(await storage.load('fresh')).toEqual(sampleToken());
+
+    await storage.remove('fresh');
+    expect(await storage.load('fresh')).toBeUndefined();
+  });
+
   it('save() overwrites an existing token atomically', async () => {
     await storage.save('kimi-code', sampleToken({ accessToken: 'first' }));
     await storage.save('kimi-code', sampleToken({ accessToken: 'second' }));

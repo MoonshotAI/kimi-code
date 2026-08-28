@@ -1,11 +1,21 @@
-import { getRegisteredKeyringBackend, isKeyringOptedIn } from '@moonshot-ai/kimi-code-oauth';
+import {
+  getRegisteredKeyringBackend,
+  isKeyringOptedIn,
+  probeKeyringBackend,
+} from '@moonshot-ai/kimi-code-oauth';
+import { join } from 'pathe';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ILogService } from '#/_base/log/log';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import { createKeyringMcpOAuthStore } from '#/app/mcpConfig/keyringMcpOAuthStore';
+import {
+  createKeyringMcpOAuthStore,
+  keyringMcpOAuthLockTarget,
+  keyringMcpOAuthServiceForCredentialsDir,
+} from '#/app/mcpConfig/keyringMcpOAuthStore';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
@@ -47,11 +57,18 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
   constructor(
     @IAtomicDocumentStore docs: IAtomicDocumentStore,
     @ILogService log: ILogService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     const backend = getRegisteredKeyringBackend();
     this.delegate =
-      backend !== undefined && isKeyringOptedIn()
-        ? createKeyringMcpOAuthStore(backend.api, createMcpOAuthStore(docs), log)
+      backend !== undefined && isKeyringOptedIn() && probeKeyringBackend(backend.api)
+        ? createKeyringMcpOAuthStore(
+            backend.api,
+            createMcpOAuthStore(docs),
+            log,
+            keyringMcpOAuthServiceForCredentialsDir(join(bootstrap.homeDir, 'credentials')),
+            (key) => keyringMcpOAuthLockTarget(join(bootstrap.homeDir, 'credentials'), key),
+          )
         : createMcpOAuthStore(docs);
   }
 

@@ -25,7 +25,9 @@ import {
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+
+import lockfile from 'proper-lockfile';
 
 import type { TokenInfo, TokenInfoWire } from './types';
 import { tokenFromWire, tokenToWire } from './types';
@@ -36,6 +38,33 @@ export interface TokenStorage {
   save(name: string, token: TokenInfo): Promise<void>;
   remove(name: string): Promise<void>;
   list(): Promise<string[]>;
+}
+
+export interface FileTokenAccess {
+  load(): Promise<TokenInfo | undefined>;
+  save(token: TokenInfo): Promise<void>;
+  remove(): Promise<void>;
+  removeIfMatches(expected: string): Promise<boolean>;
+}
+
+export async function withFileLock<T>(target: string, fn: () => Promise<T>): Promise<T> {
+  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+  const fd = openSync(target, 'a', 0o600);
+  closeSync(fd);
+  const release = await lockfile.lock(target, {
+    retries: { retries: 120, factor: 1, minTimeout: 50, maxTimeout: 500 },
+    stale: 5_000,
+    realpath: false,
+  });
+  try {
+    return await fn();
+  } finally {
+    try {
+      await release();
+    } catch {
+      // Best effort: a stale lock must not mask the completed operation.
+    }
+  }
 }
 
 /**
@@ -75,7 +104,12 @@ export class FileTokenStorage implements TokenStorage {
     return join(this.dir, `${name}.json`);
   }
 
-  async load(name: string): Promise<TokenInfo | undefined> {
+  private lockTargetFor(name: string): string {
+    assertValidTokenName(name);
+    return join(this.dir, `${name}.lock-target`);
+  }
+
+  protected loadUnlocked(name: string): TokenInfo | undefined {
     const file = this.pathFor(name);
     let raw: string;
     try {
@@ -93,7 +127,7 @@ export class FileTokenStorage implements TokenStorage {
     return tokenFromWire(parsed as Partial<TokenInfoWire>);
   }
 
-  async save(name: string, token: TokenInfo): Promise<void> {
+  protected saveUnlocked(name: string, token: TokenInfo): void {
     this.ensureDir();
     const target = this.pathFor(name);
     const tmp = `${target}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
@@ -109,7 +143,6 @@ export class FileTokenStorage implements TokenStorage {
       closeSync(fd);
     }
     try {
-      // chmod again in case umask stripped bits during open
       chmodSync(tmp, 0o600);
       renameSync(tmp, target);
     } catch (error) {
@@ -122,7 +155,7 @@ export class FileTokenStorage implements TokenStorage {
     }
   }
 
-  async remove(name: string): Promise<void> {
+  protected removeUnlocked(name: string): void {
     try {
       unlinkSync(this.pathFor(name));
     } catch (error) {
@@ -130,6 +163,85 @@ export class FileTokenStorage implements TokenStorage {
         throw error;
       }
     }
+  }
+
+  protected removeIfMatchesUnlocked(name: string, expected: string): boolean {
+    const target = this.pathFor(name);
+    const quarantined = `${target}.remove.${process.pid}.${randomBytes(4).toString('hex')}`;
+    try {
+      renameSync(target, quarantined);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+      throw error;
+    }
+
+    let matches = false;
+    let readError: unknown;
+    try {
+      const raw = readFileSync(quarantined, 'utf-8');
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = undefined;
+      }
+      matches =
+        isRecord(parsed) &&
+        JSON.stringify(tokenToWire(tokenFromWire(parsed as Partial<TokenInfoWire>))) === expected;
+    } catch (error) {
+      readError = error;
+    }
+    if (matches) {
+      unlinkSync(quarantined);
+    } else {
+      try {
+        renameSync(quarantined, target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') unlinkSync(quarantined);
+        else throw error;
+      }
+    }
+    if (readError !== undefined) {
+      throw readError instanceof Error ? readError : new Error('failed to inspect token file', { cause: readError });
+    }
+    return matches;
+  }
+
+  async withTokenLock<T>(name: string, fn: (access: FileTokenAccess) => Promise<T>): Promise<T> {
+    assertValidTokenName(name);
+    this.ensureDir();
+    const lockTarget = this.lockTargetFor(name);
+    return withFileLock(lockTarget, () =>
+      fn({
+        load: async () => this.loadUnlocked(name),
+        save: async (token) => {
+          this.saveUnlocked(name, token);
+        },
+        remove: async () => {
+          this.removeUnlocked(name);
+        },
+        removeIfMatches: async (expected) => this.removeIfMatchesUnlocked(name, expected),
+      }),
+    );
+  }
+
+  async load(name: string): Promise<TokenInfo | undefined> {
+    assertValidTokenName(name);
+    return this.withTokenLock(name, async (access) => access.load());
+  }
+
+  async save(name: string, token: TokenInfo): Promise<void> {
+    assertValidTokenName(name);
+    await this.withTokenLock(name, async (access) => {
+      await access.save(token);
+    });
+  }
+
+  async remove(name: string): Promise<void> {
+    assertValidTokenName(name);
+    await this.withTokenLock(name, async (access) => {
+      await access.remove();
+    });
   }
 
   async list(): Promise<string[]> {

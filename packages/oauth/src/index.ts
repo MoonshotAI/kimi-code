@@ -4,6 +4,7 @@ export {
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
+  OAuthStorageUnavailableError,
   RetryableRefreshError,
 } from './errors';
 
@@ -18,7 +19,7 @@ export type {
 export { tokenFromWire, tokenToWire } from './types';
 
 export type { TokenStorage } from './storage';
-export { assertValidTokenName, FileTokenStorage } from './storage';
+export { assertValidTokenName, FileTokenStorage, withFileLock } from './storage';
 
 export type {
   KeyringApi,
@@ -35,6 +36,7 @@ export {
   KEYRING_SERVICE,
   KeyringTokenStorage,
   keyringServiceForCredentialsDir,
+  probeKeyringBackend,
   registerKeyringBackend,
   resolveTokenStorage,
   unregisterKeyringBackend,

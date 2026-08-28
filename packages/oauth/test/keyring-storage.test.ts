@@ -284,14 +284,14 @@ describe('KeyringTokenStorage', () => {
     class RacyLegacy extends FileTokenStorage {
       public loadCalls = 0;
       public removeCalls = 0;
-      override async load(): Promise<TokenInfo | undefined> {
+      override loadUnlocked(): TokenInfo | undefined {
         const value = tokens.at(this.loadCalls) ?? lastToken;
         this.loadCalls += 1;
         return value;
       }
-      override async remove(name: string): Promise<void> {
+      override removeIfMatchesUnlocked(name: string, expected: string): boolean {
         this.removeCalls += 1;
-        await super.remove(name);
+        return super.removeIfMatchesUnlocked(name, expected);
       }
     }
     const racy = new RacyLegacy(dir);
@@ -322,9 +322,9 @@ describe('KeyringTokenStorage', () => {
     const t1 = sampleToken({ accessToken: 'at-stable', refreshToken: 'rt-stable' });
     class StableLegacy extends FileTokenStorage {
       public removeCalls = 0;
-      override async remove(name: string): Promise<void> {
+      override removeIfMatchesUnlocked(name: string, expected: string): boolean {
         this.removeCalls += 1;
-        await super.remove(name);
+        return super.removeIfMatchesUnlocked(name, expected);
       }
     }
     const stable = new StableLegacy(dir);
@@ -718,6 +718,19 @@ describe('KeyringTokenStorage', () => {
     expect(await storage.load('kimi-code')).toBeUndefined();
   });
 
+  it('load() migrates a valid plaintext token when the keychain payload is corrupt', async () => {
+    const token = sampleToken({ accessToken: 'from-file', refreshToken: 'from-file' });
+    keyring.store.set(`${KEYRING_SERVICE}\u0000kimi-code`, '{ not json');
+    await legacy.save('kimi-code', token);
+
+    await expect(storage.load('kimi-code')).resolves.toEqual(token);
+    expect(keyring.createEntry(KEYRING_SERVICE, 'kimi-code').getPassword()).toBe(
+      JSON.stringify(tokenToWire(token)),
+    );
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    expect(observer.migrated).toEqual(['kimi-code']);
+  });
+
   it('remove() clears both keyring and lingering plaintext file', async () => {
     await storage.save('kimi-code', sampleToken());
     await legacy.save('kimi-code', sampleToken()); // lingering plaintext
@@ -797,6 +810,43 @@ describe('KeyringTokenStorage', () => {
       expect(await degradedStorage.list()).toEqual(['kimi-code']);
     });
 
+    it('load() does not report a keychain-only token as logged out during an outage', async () => {
+      const token = sampleToken();
+      await degradedStorage.save('kimi-code', token);
+      expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+
+      flaky.throwOnGet = true;
+      await expect(degradedStorage.load('kimi-code')).rejects.toThrow(
+        /keyring unavailable while loading credential/,
+      );
+      expect(observer.degraded).toEqual([{ operation: 'load', message: 'keychain read failed' }]);
+    });
+
+    it('remove() retries keychain deletion after an earlier outage', async () => {
+      const token = sampleToken();
+      await degradedStorage.save('kimi-code', token);
+      flaky.throwOnGet = true;
+      await expect(degradedStorage.load('kimi-code')).rejects.toThrow(
+        /keyring unavailable while loading credential/,
+      );
+
+      flaky.throwOnGet = false;
+      await expect(degradedStorage.remove('kimi-code')).resolves.toBeUndefined();
+      expect(flaky.findAccounts(KEYRING_SERVICE)).not.toContain('kimi-code');
+    });
+
+    it('does not persist a revoked tombstone after a keyring outage', async () => {
+      const token = sampleToken();
+      await degradedStorage.save('kimi-code', token);
+      flaky.throwOnGet = true;
+      await expect(degradedStorage.load('kimi-code')).rejects.toThrow();
+
+      await expect(degradedStorage.save('kimi-code', revokedTombstone(token))).rejects.toThrow(
+        /keyring unavailable while saving revoked credential/,
+      );
+      expect(await legacy.load('kimi-code')).toBeUndefined();
+    });
+
     it('save() writes the file when the keyring write throws', async () => {
       const token = sampleToken();
       flaky.throwOnSet = true;
@@ -816,30 +866,31 @@ describe('KeyringTokenStorage', () => {
       expect(flaky.store.size).toBe(0);
     });
 
-    it('remove() clears the plaintext file and resolves when the keyring delete throws', async () => {
+    it('remove() clears the plaintext file and surfaces a keyring delete failure', async () => {
       const token = sampleToken();
       await legacy.save('kimi-code', token); // lingering plaintext to clear
       expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
       flaky.throwOnDelete = true;
 
-      // A throwing keyring degrades instead of failing the logout...
-      await expect(degradedStorage.remove('kimi-code')).resolves.toBeUndefined();
+      await expect(degradedStorage.remove('kimi-code')).rejects.toThrow(
+        /failed to delete keyring credential/,
+      );
       // ...and the legacy cleanup still ran.
       expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
       expect(observer.degraded).toEqual([{ operation: 'remove', message: 'keychain delete failed' }]);
     });
 
-    it('remove() resolves and degrades when findAccounts throws (unreachable store)', async () => {
+    it('remove() clears the file but surfaces an unreachable keyring', async () => {
       // A locked / no-access store: deleteCredential returns false (nothing to
       // delete in the empty fake) and the service-scoped enumeration THROWS.
-      // The old fail-loud path is replaced by degradation: plaintext cleared,
-      // remove resolves.
       const token = sampleToken();
       await legacy.save('kimi-code', token);
       expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
       flaky.throwOnFind = true;
 
-      await expect(degradedStorage.remove('kimi-code')).resolves.toBeUndefined();
+      await expect(degradedStorage.remove('kimi-code')).rejects.toThrow(
+        /failed to delete keyring credential/,
+      );
       expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
       expect(observer.degraded).toEqual([
         { operation: 'remove', message: 'keychain store unreachable' },
@@ -890,7 +941,7 @@ describe('KeyringTokenStorage', () => {
       const tokenB = sampleToken({ accessToken: 'at-B', refreshToken: 'rt-B' });
       class FlipLegacy extends FileTokenStorage {
         private calls = 0;
-        override async load(): Promise<TokenInfo | undefined> {
+        override loadUnlocked(): TokenInfo | undefined {
           this.calls += 1;
           return this.calls === 1 ? tokenA : tokenB;
         }
@@ -943,7 +994,9 @@ describe('KeyringTokenStorage', () => {
 
     it('unregisterKeyringBackend() resets the degradation flag', async () => {
       flaky.throwOnGet = true;
-      await degradedStorage.load('kimi-code'); // degrades
+      await expect(degradedStorage.load('kimi-code')).rejects.toThrow(
+        /keyring unavailable while loading credential/,
+      );
       expect(observer.degraded).toHaveLength(1);
 
       unregisterKeyringBackend();
