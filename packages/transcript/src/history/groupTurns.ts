@@ -218,7 +218,10 @@ export function groupMessagesIntoSnapshot(
         continue;
       }
       const contentKey = JSON.stringify(message.content ?? []);
-      const steeredRemaining = steeredContents.get(contentKey) ?? 0;
+      const steeredRemaining =
+        originKind === undefined || originKind === 'user'
+          ? (steeredContents.get(contentKey) ?? 0)
+          : 0;
       if (steeredRemaining > 0) {
         steeredContents.set(contentKey, steeredRemaining - 1);
         const bundled = bundledSkillActivations(message);

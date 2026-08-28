@@ -1099,6 +1099,31 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(slashTurn.steps).toHaveLength(2);
   });
 
+  it('keeps model-tool skill activations as markers even when their content matches a steer record', () => {
+    const skillContent = [{ type: 'text', text: 'skill body' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: skillContent,
+          toolCalls: [],
+          origin: { kind: 'skill_activation', trigger: 'model-tool', skillName: 'write-tui' } as {
+            kind: string;
+          },
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'used the skill' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(skillContent), 1]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker']);
+    const marker = snapshot.items[1];
+    if (marker?.kind !== 'marker') throw new Error('expected marker');
+    expect(marker.marker).toBe('skill');
+  });
+
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

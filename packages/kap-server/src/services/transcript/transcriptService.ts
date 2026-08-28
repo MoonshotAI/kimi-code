@@ -492,6 +492,8 @@ export class TranscriptService {
         continue;
       }
       if (record.type === 'turn.steer') {
+        const steerOrigin = (record as { origin?: { kind?: unknown } }).origin;
+        if (steerOrigin !== undefined && steerOrigin.kind !== 'user') continue;
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
