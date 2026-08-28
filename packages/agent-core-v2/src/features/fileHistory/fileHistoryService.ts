@@ -134,7 +134,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === phase,
     );
     if (index < 0) return undefined;
-    const entry = entryAt(state.checkpoints, index, this.pathKey(path));
+    const pathKey = this.pathKey(path);
+    if (pathKey === undefined) return undefined;
+    const entry = entryAt(state.checkpoints, index, pathKey);
     if (entry === undefined) return undefined;
     if (entry.key === null) return { version: entry.version };
     const bytes = await this.blobs.get(this.agentCtx.scope(), entry.key);
@@ -161,6 +163,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private async capture(path: string, turnId: number): Promise<void> {
     const pathKey = this.pathKey(path);
+    if (pathKey === undefined) return;
     const state = this.history();
     if (state.tracked.includes(pathKey)) return;
 
@@ -280,12 +283,35 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     }
   }
 
-  private pathKey(path: string): string {
+  private pathKey(path: string): string | undefined {
     if (!isAbsolute(path)) return path;
-    const relativePath = relative(this.workspaceCtx.workDir, path);
-    if (relativePath === '' || relativePath === '..' || relativePath.startsWith('../')) return path;
-    return relativePath;
+    const hostRelative = relative(resolve(this.workspaceCtx.workDir), path);
+    if (containedRelative(hostRelative)) return hostRelative;
+    const lease = this.runtime.acquire();
+    try {
+      const runtime = lease.runtime;
+      const mappedWorkDir = runtime.path.resolve(
+        runtime.workspace.mapRoots({ workDir: this.workspaceCtx.workDir, additionalDirs: [] })
+          .workDir,
+      );
+      if (mappedWorkDir === resolve(this.workspaceCtx.workDir)) return path;
+      const mappedRelative = runtime.path.relative(mappedWorkDir, path);
+      if (containedRelative(mappedRelative)) return mappedRelative.replaceAll('\\', '/');
+      return undefined;
+    } finally {
+      lease.dispose();
+    }
   }
+}
+
+function containedRelative(relativePath: string): boolean {
+  return (
+    relativePath !== '' &&
+    relativePath !== '..' &&
+    !relativePath.startsWith('../') &&
+    !relativePath.startsWith('..\\') &&
+    !isAbsolute(relativePath)
+  );
 }
 
 function editTargetPath(display: ToolInputDisplay | undefined): string | undefined {
