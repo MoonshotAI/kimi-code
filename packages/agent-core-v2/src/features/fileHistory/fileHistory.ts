@@ -5,6 +5,7 @@ export interface FileBackupEntry {
   readonly version: number;
   readonly contentHash?: string;
   readonly size?: number;
+  readonly oversize?: boolean;
 }
 
 export type FileHistoryCheckpointPhase = 'start' | 'end';

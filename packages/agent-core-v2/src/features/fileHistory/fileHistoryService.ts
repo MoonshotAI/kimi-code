@@ -89,28 +89,41 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return this.queue;
   }
 
-  async changes(turnId: number): Promise<FileHistoryChange[]> {
-    if (!this.enabled()) return [];
-    await this.settled();
+  changes(turnId: number): Promise<FileHistoryChange[]> {
+    if (!this.enabled()) return Promise.resolve([]);
+    return this.enqueueValue(() => this.readChanges(turnId));
+  }
+
+  private async readChanges(turnId: number): Promise<FileHistoryChange[]> {
     const state = this.history();
     const index = state.checkpoints.findIndex(
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
     );
     if (index < 0) return [];
-    const next = state.checkpoints[index + 1];
+    const end = state.checkpoints.find(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end',
+    );
+    const live = end === undefined && index === state.checkpoints.length - 1;
+    if (end === undefined && !live) return [];
 
     const paths = new Set<string>();
     for (const path of Object.keys(state.checkpoints[index]!.entries)) paths.add(path);
-    if (next !== undefined) for (const path of Object.keys(next.entries)) paths.add(path);
+    if (end !== undefined) for (const path of Object.keys(end.entries)) paths.add(path);
     else for (const path of state.tracked) paths.add(path);
+    const endIndex = end === undefined ? -1 : state.checkpoints.indexOf(end);
 
     const changes: FileHistoryChange[] = [];
     for (const path of [...paths].toSorted()) {
       const before = entryAt(state.checkpoints, index, path);
+      const after = end !== undefined ? entryAt(state.checkpoints, endIndex, path) : undefined;
+      if (before?.oversize === true || after?.oversize === true) {
+        changes.push({ path, status: 'modified', additions: 0, deletions: 0, oversize: true });
+        continue;
+      }
       const beforeBytes = await this.entryBytes(before);
       let afterBytes: Uint8Array | undefined;
-      if (next !== undefined) {
-        afterBytes = await this.entryBytes(entryAt(state.checkpoints, index + 1, path));
+      if (end !== undefined) {
+        afterBytes = await this.entryBytes(after);
       } else {
         const current = await this.readCurrent(path);
         if (current === 'unreadable') continue;
@@ -122,20 +135,27 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return changes;
   }
 
-  async contentAt(
+  contentAt(
     turnId: number,
     path: string,
     phase: FileHistoryCheckpointPhase = 'start',
   ): Promise<FileHistoryContent | undefined> {
-    if (!this.enabled()) return undefined;
-    await this.settled();
+    if (!this.enabled()) return Promise.resolve(undefined);
+    return this.enqueueValue(() => this.readContentAt(turnId, path, phase));
+  }
+
+  private async readContentAt(
+    turnId: number,
+    path: string,
+    phase: FileHistoryCheckpointPhase,
+  ): Promise<FileHistoryContent | undefined> {
     const state = this.history();
     const index = state.checkpoints.findIndex(
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === phase,
     );
     if (index < 0) return undefined;
     const entry = entryAt(state.checkpoints, index, this.pathKey(path));
-    if (entry === undefined) return undefined;
+    if (entry === undefined || entry.oversize === true) return undefined;
     if (entry.key === null) return { version: entry.version };
     const bytes = await this.blobs.get(this.agentCtx.scope(), entry.key);
     if (bytes === undefined) return undefined;
@@ -152,10 +172,17 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private enqueue(op: () => Promise<void>): Promise<void> {
+    return this.enqueueValue(op);
+  }
+
+  private enqueueValue<T>(op: () => Promise<T>): Promise<T> {
     const run = this.queue.then(op);
-    this.queue = run.catch((error) => {
-      onUnexpectedError(error);
-    });
+    this.queue = run.then(
+      () => undefined,
+      (error) => {
+        onUnexpectedError(error);
+      },
+    );
     return run;
   }
 
@@ -187,9 +214,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       const latest = latestEntry(state.checkpoints, pathKey);
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
       const current = await this.readCurrent(pathKey);
-      if (current === 'unreadable') continue;
+      if (current === 'unreadable') {
+        if (latest?.oversize !== true) {
+          entries[pathKey] = { key: null, version: nextVersion, oversize: true };
+        }
+        continue;
+      }
       if (current === 'missing') {
-        if (latest?.key !== null) entries[pathKey] = { key: null, version: nextVersion };
+        if (latest === undefined || latest.key !== null || latest.oversize === true) {
+          entries[pathKey] = { key: null, version: nextVersion };
+        }
         continue;
       }
       const contentHash = sha256(current);

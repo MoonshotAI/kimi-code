@@ -1,6 +1,6 @@
 import {
   IAgentFileHistoryService,
-  getLiveSessionById,
+  resumeSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
@@ -47,10 +47,10 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const session = getLiveSessionById(core.accessor, session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
-          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} is not live`, req.id),
+          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
         return;
       }
@@ -80,10 +80,10 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const session = getLiveSessionById(core.accessor, session_id);
+      const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
-          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} is not live`, req.id),
+          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
         );
         return;
       }

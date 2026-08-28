@@ -242,6 +242,7 @@ interface FileHistoryTrackedPayload {
     version: number;
     contentHash?: string;
     size?: number;
+    oversize?: boolean;
   };
 }
 
