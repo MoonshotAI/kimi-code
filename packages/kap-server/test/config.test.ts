@@ -421,6 +421,35 @@ describe('configChangedPublisher', () => {
     expect(JSON.stringify(models)).not.toContain('sk-secret');
   });
 
+  it('redacts inline service credentials from the published config projection', () => {
+    vi.useFakeTimers();
+    const { published, fire, setBacking } = setup();
+    setBacking({
+      providers: {},
+      services: {
+        moonshotSearch: {
+          baseUrl: 'https://s.test',
+          apiKey: 'sk-svc',
+          customHeaders: { Authorization: 'Bearer abc', 'x-team': 'core' },
+        },
+      },
+    });
+
+    fire('services');
+    vi.advanceTimersByTime(50);
+
+    expect(published).toHaveLength(1);
+    const config = published[0]?.payload.config as Record<string, unknown>;
+    const services = config['services'] as Record<string, Record<string, unknown>>;
+    expect(services['moonshotSearch']).toEqual({
+      baseUrl: 'https://s.test',
+      has_api_key: true,
+      custom_header_keys: ['Authorization', 'x-team'],
+    });
+    expect(JSON.stringify(services)).not.toContain('sk-svc');
+    expect(JSON.stringify(services)).not.toContain('Bearer abc');
+  });
+
   it('always delivers a trailing event for late-arriving changes', () => {
     vi.useFakeTimers();
     const { published, fire } = setup();

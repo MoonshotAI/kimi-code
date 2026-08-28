@@ -91,7 +91,9 @@ export function toConfigResponse(resolved: Record<string, unknown>): ConfigRespo
         ? toProviderResponses(value)
         : domain === 'models'
           ? toModelResponses(value)
-          : value;
+          : domain === 'services'
+            ? toServiceResponses(value)
+            : value;
   }
   const defaultPermissionMode = resolved['defaultPermissionMode'];
   if (typeof defaultPermissionMode === 'string') {
@@ -155,6 +157,26 @@ function hasModelCredential(model: ModelLike): boolean {
   if (nonEmpty(model.apiKey) !== undefined) return true;
   if (model.oauth !== undefined) return true;
   return false;
+}
+
+function toServiceResponses(value: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return result;
+  for (const [id, raw] of Object.entries(value)) {
+    if (!isPlainObject(raw)) {
+      result[id] = raw;
+      continue;
+    }
+    const { apiKey: _apiKey, oauth: _oauth, customHeaders, ...rest } = raw as ModelLike & {
+      customHeaders?: unknown;
+    } & Record<string, unknown>;
+    result[id] = {
+      ...rest,
+      has_api_key: hasModelCredential(raw as ModelLike),
+      ...(isPlainObject(customHeaders) ? { custom_header_keys: Object.keys(customHeaders) } : {}),
+    };
+  }
+  return result;
 }
 
 function nonEmpty(value: unknown): string | undefined {
