@@ -108,7 +108,6 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     if (end === undefined && !live) return [];
 
     const paths = new Set<string>();
-    for (const path of Object.keys(state.checkpoints[index]!.entries)) paths.add(path);
     if (end !== undefined) for (const path of Object.keys(end.entries)) paths.add(path);
     else for (const path of state.tracked) paths.add(path);
     const endIndex = end === undefined ? -1 : state.checkpoints.indexOf(end);
@@ -118,6 +117,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     for (const path of [...paths].toSorted()) {
       const before = entryAt(state.checkpoints, index, path);
       const after = end !== undefined ? entryAt(state.checkpoints, endIndex, path) : undefined;
+      if (end !== undefined && before?.version === after?.version) continue;
       if (before?.oversize === true && after?.oversize === true) {
         if (before.version !== after.version) {
           changes.push({ path, status: 'modified', additions: 0, deletions: 0, oversize: true });

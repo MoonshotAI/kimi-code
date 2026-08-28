@@ -85,19 +85,23 @@ export const fileHistoryKey = defineState(
   .replayable({ schema: z.custom<FileHistoryState>() })
   .on(FileHistoryCheckpointed, (s, e) => {
     const phase = checkpointPhaseOf(e);
-    const base = s.checkpoints.at(-1)?.entries;
-    const merged = cloneEntries(base ?? {});
-    for (const [path, entry] of Object.entries(e.entries)) merged[path] = { ...entry };
     const existing = s.checkpoints.find(
       (c) => c.turnId === e.turnId && checkpointPhaseOf(c) === phase,
     );
     if (existing !== undefined) {
-      existing.entries = merged;
+      existing.entries = cloneEntries(e.entries);
       return;
     }
-    s.checkpoints.push({ turnId: e.turnId, phase, entries: merged });
+    s.checkpoints.push({ turnId: e.turnId, phase, entries: cloneEntries(e.entries) });
     if (s.checkpoints.length > FILE_HISTORY_CHECKPOINT_CAP) {
-      s.checkpoints.splice(0, s.checkpoints.length - FILE_HISTORY_CHECKPOINT_CAP);
+      const removed = s.checkpoints.splice(0, s.checkpoints.length - FILE_HISTORY_CHECKPOINT_CAP);
+      const head = s.checkpoints[0]!;
+      const folded = cloneEntries({});
+      for (const record of removed) {
+        for (const [path, entry] of Object.entries(record.entries)) folded[path] = entry;
+      }
+      for (const [path, entry] of Object.entries(head.entries)) folded[path] = entry;
+      head.entries = folded;
     }
   })
   .on(FileHistoryTracked, (s, e) => {
