@@ -26,6 +26,7 @@ import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersisten
 import {
   IWorkspacePersistence,
   type PersistedWorkspaceEntry,
+  type WorkspaceCatalog,
 } from '#/app/workspace/workspacePersistence';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
@@ -83,11 +84,13 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   function build(
     hostFs: IHostFileSystem = new HostFileSystem(),
     fileStorage: FileStorageService = new FileStorageService(homeDir),
+    persistence?: IWorkspacePersistence,
   ): IWorkspaceAliases {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
+      ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {
         publish: () => {},
@@ -256,12 +259,78 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   });
 
   it('resolveAliasIds retries a shared load that spanned a write', async () => {
+    class GatedPersistence implements IWorkspacePersistence {
+      declare readonly _serviceBrand: undefined;
+      loads = 0;
+      gate: Promise<void> | undefined;
+      constructor(private readonly inner: IWorkspacePersistence) {}
+      get onDidChange(): IWorkspacePersistence['onDidChange'] {
+        return this.inner.onDidChange;
+      }
+      async load(): ReturnType<IWorkspacePersistence['load']> {
+        this.loads += 1;
+        const catalog = await this.inner.load();
+        if (this.gate !== undefined) await this.gate;
+        return catalog;
+      }
+      save(catalog: WorkspaceCatalog): Promise<void> {
+        return this.inner.save(catalog);
+      }
+    }
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const legacyId = 'wd_proj_deadbeef0002';
+    await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
+    const storage = new FileStorageService(homeDir);
+    const persistence = new GatedPersistence(
+      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage)),
+    );
+    const aliases = build(undefined, storage, persistence);
+    const ws = (id: string, root: string): Workspace => ({
+      id,
+      root,
+      name: 'proj',
+      createdAt: 0,
+      lastOpenedAt: 0,
+    });
+
+    await aliases.resolveAliasIds(typedId);
+    await persistence.save({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] });
+
+    let release: (() => void) | undefined;
+    persistence.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const baseline = persistence.loads;
+    const p1 = aliases.resolveAliasIds(typedId);
+    await vi.waitFor(() => {
+      expect(persistence.loads).toBe(baseline + 1);
+    });
+    await persistence.save({
+      workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
+      deletedIds: [],
+    });
+    const p2 = aliases.resolveAliasIds(legacyId);
+    release!();
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.toSorted()).toEqual([legacyId, typedId].toSorted());
+    expect(r2.toSorted()).toEqual([legacyId, typedId].toSorted());
+  });
+
+  it('resolveAliasIds does not mix snapshots across a mid-resolution write', async () => {
     class GatedStorage extends FileStorageService {
-      catalogReads = 0;
+      indexReads = 0;
       gate: Promise<void> | undefined;
       override async read(scope: string, key: string): Promise<Uint8Array | undefined> {
-        if (key === 'workspaces.json') {
-          this.catalogReads += 1;
+        if (key === 'session_index.jsonl') {
+          this.indexReads += 1;
           if (this.gate !== undefined) await this.gate;
         }
         return super.read(scope, key);
@@ -280,6 +349,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const storage = new GatedStorage(homeDir);
     const aliases = build(undefined, storage);
     const persistence = currentHost!.app.accessor.get(IWorkspacePersistence);
+    const appendLogs = currentHost!.app.accessor.get(IAppendLogStore);
     const ws = (id: string, root: string): Workspace => ({
       id,
       root,
@@ -289,27 +359,29 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
 
     await aliases.resolveAliasIds(typedId);
-    await persistence.save({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] });
+    appendLogs.append('', 'session_index.jsonl', {
+      sessionId: 's9',
+      sessionDir: 'sessions/s/s9',
+      workDir: join(homeDir, 'unrelated'),
+    });
+    await appendLogs.flush();
 
     let release: (() => void) | undefined;
     storage.gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const baseline = storage.catalogReads;
-    const p1 = aliases.resolveAliasIds(typedId);
+    const baseline = storage.indexReads;
+    const p = aliases.resolveAliasIds(typedId);
     await vi.waitFor(() => {
-      expect(storage.catalogReads).toBe(baseline + 1);
+      expect(storage.indexReads).toBe(baseline + 1);
     });
     await persistence.save({
       workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
       deletedIds: [],
     });
-    const p2 = aliases.resolveAliasIds(legacyId);
     release!();
 
-    const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.toSorted()).toEqual([legacyId, typedId].toSorted());
-    expect(r2.toSorted()).toEqual([legacyId, typedId].toSorted());
+    expect((await p).toSorted()).toEqual([legacyId, typedId].toSorted());
   });
 
   it('resolveAliasIds follows in-process session-index writes synchronously', async () => {

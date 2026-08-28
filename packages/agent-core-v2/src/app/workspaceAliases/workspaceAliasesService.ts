@@ -90,20 +90,23 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   }
 
   async resolveAliasIds(id: string): Promise<readonly string[]> {
-    const catalog = await this.catalog();
-    const entry = catalog.byId.get(id);
-    if (entry === undefined) return [id];
-    const rootKey = workspaceRootKey(entry.root);
-    const index = await this.sessionIndex();
-    const fromCatalog = catalog.idsByRootKey.get(rootKey);
-    const fromIndex = index.idsByRootKey.get(rootKey);
-    if (fromCatalog === undefined) return fromIndex ?? [id];
-    if (fromIndex === undefined) return fromCatalog;
-    const merged = [...fromCatalog];
-    for (const alias of fromIndex) {
-      if (!merged.includes(alias)) merged.push(alias);
+    for (;;) {
+      const generation = this.invalidationGeneration;
+      const [catalog, index] = await Promise.all([this.catalog(), this.sessionIndex()]);
+      if (generation !== this.invalidationGeneration) continue;
+      const entry = catalog.byId.get(id);
+      if (entry === undefined) return [id];
+      const rootKey = workspaceRootKey(entry.root);
+      const fromCatalog = catalog.idsByRootKey.get(rootKey);
+      const fromIndex = index.idsByRootKey.get(rootKey);
+      if (fromCatalog === undefined) return fromIndex ?? [id];
+      if (fromIndex === undefined) return fromCatalog;
+      const merged = [...fromCatalog];
+      for (const alias of fromIndex) {
+        if (!merged.includes(alias)) merged.push(alias);
+      }
+      return merged;
     }
-    return merged;
   }
 
   private async catalog(): Promise<CatalogSnapshot> {
