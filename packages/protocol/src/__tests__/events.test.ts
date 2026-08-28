@@ -154,6 +154,17 @@ describe('events / display re-exports', () => {
         failed: [{ provider: 'managed:kimi-code', reason: 'network disabled' }],
       }).success,
     ).toBe(true);
+
+    const parsed = eventSchema.parse({
+      type: 'event.config.changed',
+      agentId: 'main',
+      sessionId: '__global__',
+      changedFields: ['mcp'],
+      config: { providers: {}, mcp: { servers: { fs: { command: 'mcp-fs' } } } },
+    });
+    expect((parsed as { config: Record<string, unknown> }).config['mcp']).toEqual({
+      servers: { fs: { command: 'mcp-fs' } },
+    });
   });
 
   it('rejects malformed config and model catalog events through the full event union', () => {
