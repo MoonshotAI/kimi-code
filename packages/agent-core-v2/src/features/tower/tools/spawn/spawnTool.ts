@@ -398,7 +398,8 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     const target = reviewTarget ?? '';
     const targetMission = state.missions.find((m) => m.branch === target);
     const author = targetMission?.owner;
-    const reviewBase = targetMission?.spawnBase ?? state.base;
+    const reviewBase =
+      targetMission !== undefined ? await store.diffBase(state, targetMission) : state.base;
     return (
       `You are "${args.name}", a tower reviewer agent in a multi-agent workspace.\n\n` +
       `# Your assignment\n` +

@@ -20,7 +20,7 @@ export async function listBaseDirtyEntries(cwd: string): Promise<readonly BaseDi
     if (record.length < 4) continue;
     const code = record.slice(0, 2);
     const raw = record.slice(3).replace(/\/+$/, '');
-    if (raw.length === 0 || raw === TOWER_ROOT || raw.startsWith(`${TOWER_ROOT}/`)) continue;
+    if (raw.length === 0 || raw.split('/').includes(TOWER_ROOT)) continue;
     entries.push({ path: raw, unmerged: UNMERGED_CODES.has(code) });
   }
   return entries;
@@ -33,21 +33,22 @@ export async function snapshotBaseWip(
   message: string,
 ): Promise<string | null> {
   if (paths.length === 0) return null;
-  const baseTip = await git(cwd, ['rev-parse', base]);
+  const topLevel = await git(cwd, ['rev-parse', '--show-toplevel']);
+  const baseTip = await git(topLevel, ['rev-parse', base]);
   const indexDir = await mkdtemp(join(tmpdir(), 'tower-wip-index-'));
   const env = {
     GIT_INDEX_FILE: join(indexDir, 'index'),
     GIT_LITERAL_PATHSPECS: '1',
   };
   try {
-    await git(cwd, ['read-tree', baseTip], { env });
+    await git(topLevel, ['read-tree', baseTip], { env });
     for (let i = 0; i < paths.length; i += ADD_PATHS_CHUNK) {
-      await git(cwd, ['add', '-A', '--', ...paths.slice(i, i + ADD_PATHS_CHUNK)], { env });
+      await git(topLevel, ['add', '-A', '--', ...paths.slice(i, i + ADD_PATHS_CHUNK)], { env });
     }
-    const tree = await git(cwd, ['write-tree'], { env });
-    const baseTree = await git(cwd, ['rev-parse', `${baseTip}^{tree}`]);
+    const tree = await git(topLevel, ['write-tree'], { env });
+    const baseTree = await git(topLevel, ['rev-parse', `${baseTip}^{tree}`]);
     if (tree === baseTree) return null;
-    return await git(cwd, ['commit-tree', tree, '-p', baseTip, '-m', message], { env });
+    return await git(topLevel, ['commit-tree', tree, '-p', baseTip, '-m', message], { env });
   } finally {
     await rm(indexDir, { recursive: true, force: true });
   }

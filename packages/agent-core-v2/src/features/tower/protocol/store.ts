@@ -12,6 +12,7 @@ import {
   currentBranch,
   diffNameOnly,
   hasAnyCommit,
+  isAncestor,
   isInsideRepo,
   isWorktreeDirty,
   mergeNoFf,
@@ -776,7 +777,7 @@ export class TowerStore {
     }
 
     if (mission.kind === 'survey') {
-      const changed = await diffNameOnly(this.repoRoot, this.diffBase(state, mission), branch);
+      const changed = await diffNameOnly(this.repoRoot, await this.diffBase(state, mission), branch);
       if (changed.length > 0) {
         throw await block(
           'read-only-survey',
@@ -813,7 +814,7 @@ export class TowerStore {
       );
     }
 
-    const changed = await diffNameOnly(this.repoRoot, this.diffBase(state, mission), branch);
+    const changed = await diffNameOnly(this.repoRoot, await this.diffBase(state, mission), branch);
     const outOfScope = changed.filter(
       (file) => !mission.scope.some((glob) => picomatch.isMatch(file, glob)),
     );
@@ -860,7 +861,7 @@ export class TowerStore {
     for (const other of state.missions) {
       if (other.branch === branch || !isOpenMission(other)) continue;
       if (!(await branchExists(this.repoRoot, other.branch))) continue;
-      const otherChanged = await diffNameOnly(this.repoRoot, this.diffBase(state, other), other.branch);
+      const otherChanged = await diffNameOnly(this.repoRoot, await this.diffBase(state, other), other.branch);
       const overlap = otherChanged.filter((file) => changedSet.has(file));
       if (overlap.length > 0) {
         conflictsWith.push({ branch: other.branch, files: overlap });
@@ -874,8 +875,14 @@ export class TowerStore {
     return { mergeCommit, conflictsWith };
   }
 
-  private diffBase(state: TowerState, mission: TowerMission): string {
-    return mission.spawnBase ?? state.base;
+  async diffBase(state: TowerState, mission: TowerMission): Promise<string> {
+    if (
+      mission.spawnBase !== undefined &&
+      (await isAncestor(this.repoRoot, mission.spawnBase, mission.branch))
+    ) {
+      return mission.spawnBase;
+    }
+    return state.base;
   }
 
   async addWorktree(worktree: string, branch: string, base: string): Promise<TowerAddWorktreeResult> {
@@ -887,6 +894,21 @@ export class TowerStore {
         throw new TowerProtocolError(
           'the base checkout has unmerged paths (an in-progress merge, rebase, or cherry-pick) — finish or abort it before spawning workers',
         );
+      }
+      if (dirty.length > 0) {
+        let checkout: string;
+        try {
+          checkout = await currentBranch(this.repoRoot);
+        } catch {
+          throw new TowerProtocolError(
+            `the main checkout is in a detached HEAD state with uncommitted changes, and the recorded base is "${base}" — a WIP snapshot would carry detached-HEAD content into the mission branch; check out "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
+          );
+        }
+        if (checkout !== base) {
+          throw new TowerProtocolError(
+            `the main checkout is on "${checkout}" with uncommitted changes, not the recorded base "${base}" — a WIP snapshot would carry "${checkout}" content into the mission branch; switch back to "${base}" (\`git checkout ${base}\`) or commit/stash the changes before spawning workers`,
+          );
+        }
       }
       spawnBase =
         (await snapshotBaseWip(

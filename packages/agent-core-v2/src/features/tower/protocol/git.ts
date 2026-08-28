@@ -74,6 +74,10 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
   );
 }
 
+export async function isAncestor(cwd: string, ancestor: string, ref: string): Promise<boolean> {
+  return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
+}
+
 export async function worktreeAdd(
   cwd: string,
   path: string,

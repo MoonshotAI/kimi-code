@@ -810,6 +810,26 @@ describe('dirty base checkout', () => {
     await expect(stat(join(worktreeOf(mission!), 'ignored'))).rejects.toThrow();
   });
 
+  it('snapshots base WIP when the tower root is a repository subdirectory', async () => {
+    const sub = join(repo, 'sub');
+    await mkdir(sub, { recursive: true });
+    const subStore = new TowerStore(sub);
+    await subStore.init();
+    await writeFile(join(sub, 'wip.ts'), 'export const wip = 1;\n');
+
+    const [mission] = await subStore.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await subStore.load();
+    const added = await subStore.addWorktree(mission!.worktree, mission!.branch, state.base);
+
+    expect(added.spawnBase).toBeDefined();
+    const snapshotFiles = (
+      await git(repo, 'diff', '--name-only', `${added.spawnBase}^`, added.spawnBase!)
+    ).split('\n');
+    expect(snapshotFiles).toEqual(['sub/wip.ts']);
+    const wt = join(sub, '.tower/worktrees', mission!.worktree);
+    expect(await readFile(join(wt, 'sub/wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
+  });
+
   it('refuses to create a worktree while the base checkout has unmerged paths', async () => {
     await git(repo, 'checkout', '-b', 'side');
     await commitFile(repo, 'conflict.txt', 'side\n', 'side change');
@@ -824,6 +844,31 @@ describe('dirty base checkout', () => {
     ).rejects.toThrow(/unmerged paths/);
 
     await git(repo, 'merge', '--abort');
+  });
+
+  it('refuses to snapshot WIP from a checkout that is not the recorded base', async () => {
+    await git(repo, 'checkout', '-b', 'side');
+    await commitFile(repo, 'README.md', '# side\n', 'side version');
+    await writeFile(join(repo, 'README.md'), '# side wip\n');
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    await expect(
+      store.addWorktree(mission!.worktree, mission!.branch, state.base),
+    ).rejects.toThrow(/on "side" with uncommitted changes, not the recorded base "main"/);
+    await expect(stat(join(repo, '.tower/worktrees', mission!.worktree))).rejects.toThrow();
+    await expect(git(repo, 'rev-parse', '--verify', mission!.branch)).rejects.toThrow();
+  });
+
+  it('refuses to snapshot WIP from a detached HEAD checkout', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    await git(repo, 'checkout', '--detach', 'HEAD');
+
+    const [mission] = await store.plan([{ title: 'wip consumer', scope: ['src/**'] }]);
+    const state = await store.load();
+    await expect(
+      store.addWorktree(mission!.worktree, mission!.branch, state.base),
+    ).rejects.toThrow(/detached HEAD state with uncommitted changes/);
   });
 
   it('the merge gate ignores snapshotted base WIP and blocks only while the checkout still holds it', async () => {
@@ -855,6 +900,38 @@ describe('dirty base checkout', () => {
     expect((await store.load()).missions[0]?.status).toBe('merged');
     expect(await readFile(join(repo, 'wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
     expect(await readFile(join(repo, 'src/x/x.ts'), 'utf8')).toBe('export const x = 1;\n');
+  });
+
+  it('falls back to the base branch for the scope diff after a rebase drops the snapshot', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const state = await store.load();
+    const added = await store.addWorktree(mission!.worktree, mission!.branch, state.base);
+    expect(added.spawnBase).toBeDefined();
+    await store.updateMission('tower', mission!.id, { spawnBase: added.spawnBase });
+    const wt = worktreeOf(mission!);
+    await commitFile(wt, 'src/x/x.ts', 'export const x = 1;\n', 'work on M1');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: mission!.branch }),
+    );
+
+    await git(repo, 'add', 'wip.ts');
+    await git(repo, 'commit', '-m', 'commit my wip');
+    await commitFile(repo, 'src/other/base.ts', 'export const other = 1;\n', 'later base work');
+
+    await git(wt, 'rebase', state.base);
+    await expect(
+      git(repo, 'merge-base', '--is-ancestor', added.spawnBase!, mission!.branch),
+    ).rejects.toThrow();
+
+    await cleanReview('rev', mission!.branch);
+    const { mergeCommit } = await store.merge(mission!.branch);
+    expect(mergeCommit).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect((await store.load()).missions[0]?.status).toBe('merged');
+    expect(await readFile(join(repo, 'src/x/x.ts'), 'utf8')).toBe('export const x = 1;\n');
+    expect(await readFile(join(repo, 'src/other/base.ts'), 'utf8')).toBe(
+      'export const other = 1;\n',
+    );
   });
 
   it('merges when checkout dirt does not intersect the files the merge touches', async () => {
