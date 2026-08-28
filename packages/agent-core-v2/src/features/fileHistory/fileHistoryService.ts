@@ -44,6 +44,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   declare readonly _serviceBrand: undefined;
 
   private queue: Promise<void> = Promise.resolve();
+  private activeTurnId: number | undefined;
 
   constructor(
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -65,13 +66,17 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
     this._register(
       eventBus.subscribe(TurnStarted, (event) => {
-        if (event.agentId !== this.agentCtx.agentId || !this.enabled()) return;
+        if (event.agentId !== this.agentCtx.agentId) return;
+        this.activeTurnId = event.turnId;
+        if (!this.enabled()) return;
         void this.enqueue(() => this.checkpoint(event.turnId, 'start'));
       }),
     );
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {
-        if (event.agentId !== this.agentCtx.agentId || !this.enabled()) return;
+        if (event.agentId !== this.agentCtx.agentId) return;
+        if (this.activeTurnId === event.turnId) this.activeTurnId = undefined;
+        if (!this.enabled()) return;
         void this.enqueue(() => this.checkpoint(event.turnId, 'end'));
       }),
     );
@@ -104,7 +109,10 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     const end = state.checkpoints.find(
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end',
     );
-    const live = end === undefined && index === state.checkpoints.length - 1;
+    const live =
+      end === undefined &&
+      index === state.checkpoints.length - 1 &&
+      this.activeTurnId === turnId;
     if (end === undefined && !live) return [];
 
     const paths = new Set<string>();
