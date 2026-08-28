@@ -234,7 +234,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         const resolved = await resolvePromptFromSession(session, req.body.agent_id);
         reservation = reservePrompt(resolved.prompt, req.body.prompt_id);
-        await resolved.auth.ensureReady(req.body.model ?? (resolved.profile.getModel() || undefined));
+        const sessionModel = resolved.profile.getModel();
+        const switchingProfile =
+          req.body.profile !== undefined &&
+          req.body.profile !== resolved.profile.data().profileName;
+        await resolved.auth.ensureReady(
+          req.body.model ?? (switchingProfile ? undefined : sessionModel || undefined),
+        );
 
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         preparedMedia = await resolvePromptMediaFiles(
