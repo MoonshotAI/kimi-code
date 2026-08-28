@@ -5,9 +5,6 @@ import { kimiCodeCdnLatestJsonUrl, kimiCodeCdnLatestUrl } from '#/constant/app';
 
 import type { UpdateManifest } from './types';
 
-// Background budget: passive checks (startup refresh, prompt pre-refresh)
-// must never stall the CLI. The interactive `kimi update` command overrides
-// this via refreshUpdateCache's timeoutMs (INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS).
 const CDN_FETCH_TIMEOUT_MS = 3_000;
 
 const RolloutBatchSchema = z.object({

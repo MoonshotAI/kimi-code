@@ -11,9 +11,6 @@ export interface RefreshUpdateCacheDeps {
   readonly fetchLatest: () => Promise<FetchLatestResult>;
   readonly writeCache: (cache: UpdateCache) => Promise<void>;
   readonly now: () => Date;
-  /** Per-request CDN timeout for the default fetchLatest; ignored when
-   * fetchLatest is injected. Defaults to the background budget in cdn.ts —
-   * the interactive `kimi update` command passes a longer one. */
   readonly timeoutMs?: number;
 }
 

@@ -85,8 +85,6 @@ describe('refreshUpdateCache', () => {
         rejected = true;
       });
       const expectation = expect(result).rejects.toThrow(/aborted/);
-      // The 3s background budget would have rejected by now; the custom
-      // budget must still be waiting.
       await vi.advanceTimersByTimeAsync(6_000);
       expect(rejected).toBe(false);
       await vi.advanceTimersByTimeAsync(14_000);

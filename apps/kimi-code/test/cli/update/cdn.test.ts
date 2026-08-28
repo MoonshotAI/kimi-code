@@ -248,11 +248,8 @@ describe('fetchLatestFromCdn', () => {
         rejected = true;
       });
       const expectation = expect(result).rejects.toThrow(/aborted/);
-      // Past the 3s background budget (manifest 3s + fallback 3s) the default
-      // would already have rejected; the custom budget must still be waiting.
       await vi.advanceTimersByTimeAsync(6_000);
       expect(rejected).toBe(false);
-      // Manifest fetch aborts at 10s, the /latest fallback at 20s.
       await vi.advanceTimersByTimeAsync(14_000);
 
       await expectation;

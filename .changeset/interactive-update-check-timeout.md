@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-The interactive `kimi update` version check no longer aborts slow CDN connections after 3 seconds (`error: failed to check for updates: This operation was aborted`); it now waits up to 10 seconds, while background checks keep the 3-second budget.
+`kimi update` no longer fails with "This operation was aborted" on slow connections: the interactive version check now waits up to 10 seconds for the CDN instead of 3.
