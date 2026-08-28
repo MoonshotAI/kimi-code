@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -10,7 +14,9 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { IFlagService } from '#/app/flag/flag';
+import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { AgentFileHistoryService } from '#/features/fileHistory/fileHistoryService';
+import { FILE_HISTORY_FLAG_ENV } from '#/features/fileHistory/flag';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -26,6 +32,7 @@ import type { RunnableToolExecution } from '#/tool/toolContract';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { registerTestAgentWire, registerTestEventDispatcher, testWireScope } from '../../wire/stubs';
+import { createTestAgent } from '../../harness';
 
 const SCOPE = 'wire';
 const KEY = 'file-history-test';
@@ -271,5 +278,109 @@ describe('AgentFileHistoryService', () => {
     await fireEdit(service, '/elsewhere/notes.md', 1);
 
     expect(service.history().tracked).toEqual(['/elsewhere/notes.md']);
+  });
+});
+
+describe('file history through real scripted turns', () => {
+  beforeEach(() => {
+    process.env[FILE_HISTORY_FLAG_ENV] = '1';
+  });
+
+  afterEach(() => {
+    delete process.env[FILE_HISTORY_FLAG_ENV];
+  });
+
+  it('checkpoints edits across turns and serves exact per-turn changes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'file-history-e2e-'));
+    const file = join(dir, 'notes.txt');
+    await writeFile(file, 'alpha\nbeta\n');
+    const ctx = createTestAgent();
+    try {
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+
+      const editCall = (id: string, oldString: string, newString: string): ToolCall => ({
+        type: 'function',
+        id,
+        name: 'Edit',
+        arguments: JSON.stringify({ path: file, old_string: oldString, new_string: newString }),
+      });
+      const readCall: ToolCall = {
+        type: 'function',
+        id: 'call_r1',
+        name: 'Read',
+        arguments: JSON.stringify({ path: file }),
+      };
+      ctx.mockNextResponse({ type: 'text', text: 'Reading.' }, readCall);
+      ctx.mockNextResponse({ type: 'text', text: 'First edit.' }, editCall('call_e1', 'beta', 'gamma'));
+      ctx.mockNextResponse({ type: 'text', text: 'Second edit.' }, editCall('call_e2', 'gamma', 'delta'));
+      ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Edit the file twice' }] });
+      await ctx.untilTurnEnd();
+
+      ctx.mockNextResponse({ type: 'text', text: 'Nothing else.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Thanks' }] });
+      await ctx.untilTurnEnd();
+
+      const service = ctx.get(IAgentFileHistoryService);
+      await service.settled();
+      expect(await readFile(file, 'utf8')).toBe('alpha\ndelta\n');
+
+      const state = service.history();
+      expect(state.tracked).toEqual([file]);
+      const checkpoint1 = state.checkpoints.find((c) => c.turnId === 0);
+      const checkpoint2 = state.checkpoints.find((c) => c.turnId === 1);
+      expect(checkpoint1?.entries[file]?.version).toBe(1);
+      expect(checkpoint2?.entries[file]?.version).toBe(2);
+
+      expect((await service.contentAt(0, file))?.content).toBe('alpha\nbeta\n');
+      expect((await service.contentAt(1, file))?.content).toBe('alpha\ndelta\n');
+
+      expect(await service.changes(0)).toEqual([
+        { path: file, status: 'modified', additions: 1, deletions: 1 },
+      ]);
+      expect(await service.changes(1)).toEqual([]);
+    } finally {
+      await ctx.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('records a Write-created file as added with its real content', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'file-history-e2e-'));
+    const file = join(dir, 'fresh.txt');
+    const ctx = createTestAgent();
+    try {
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+
+      const writeCall: ToolCall = {
+        type: 'function',
+        id: 'call_w1',
+        name: 'Write',
+        arguments: JSON.stringify({ path: file, content: 'one\ntwo\nthree\n' }),
+      };
+      ctx.mockNextResponse({ type: 'text', text: 'Writing.' }, writeCall);
+      ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Create the file' }] });
+      await ctx.untilTurnEnd();
+
+      ctx.mockNextResponse({ type: 'text', text: 'Idle.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Thanks' }] });
+      await ctx.untilTurnEnd();
+
+      const service = ctx.get(IAgentFileHistoryService);
+      await service.settled();
+
+      const state = service.history();
+      expect(state.checkpoints.find((c) => c.turnId === 0)?.entries[file]).toEqual({
+        key: null,
+        version: 1,
+      });
+      expect(await service.changes(0)).toEqual([
+        { path: file, status: 'added', additions: 3, deletions: 0 },
+      ]);
+    } finally {
+      await ctx.dispose();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
