@@ -219,6 +219,22 @@ describe('resolveModelForReady', () => {
     });
   });
 
+  it('looks up the default provider as an exact key, trimming only to reject blanks', () => {
+    const models = { m: { model: 'gpt', maxContextSize: 4096 } };
+    expect(resolveModelForReady('m', models, providers, ' prov-a ')).toEqual({
+      resolved: false,
+      reason: 'provider-missing',
+    });
+    const paddedProviders = { ' prov-a ': { type: 'openai', apiKey: 'sk-a' } };
+    expect(resolveModelForReady('m', models, paddedProviders, ' prov-a ')).toEqual({
+      resolved: true,
+    });
+    expect(resolveModelForReady('m', models, providers, '   ')).toEqual({
+      resolved: false,
+      reason: 'unresolvable',
+    });
+  });
+
   it('reports unresolvable when provider id, provider field, and baseUrl are all absent', () => {
     expect(resolveModelForReady('m', { m: { model: 'gpt' } }, providers)).toEqual({
       resolved: false,

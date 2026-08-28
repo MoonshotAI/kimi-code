@@ -244,7 +244,9 @@ export function resolveModelForReady(
     return { resolved: false, reason: 'dangling-alias' };
   }
   const model = effectiveModelConfig(configured);
-  const providerId = model.providerId ?? model.provider ?? nonEmpty(defaultProvider);
+  const fallbackProvider =
+    defaultProvider === undefined || defaultProvider.trim().length === 0 ? undefined : defaultProvider;
+  const providerId = model.providerId ?? model.provider ?? fallbackProvider;
   const provider = providerId === undefined ? undefined : providers[providerId];
   if (providerId !== undefined && provider === undefined) {
     return { resolved: false, reason: 'provider-missing' };
