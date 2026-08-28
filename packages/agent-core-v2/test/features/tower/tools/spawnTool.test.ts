@@ -446,4 +446,31 @@ describe('TowerSpawnTool', () => {
     expect(result.output).toContain('Agent(resume="agent-old"');
     expect(createAgent).not.toHaveBeenCalled();
   });
+
+  it('snapshots base WIP into the worker branch and records the spawn base', async () => {
+    await writeFile(join(repo, 'wip.ts'), 'export const wip = 1;\n');
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('base snapshot:');
+    const worktreeAbs = join(repo, '.tower/worktrees/wt-1');
+    expect(await readFile(join(worktreeAbs, 'wip.ts'), 'utf8')).toBe('export const wip = 1;\n');
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-7' }),
+      { kind: 'prompt', prompt: expect.stringContaining('snapshot commit') },
+      { signal: expect.any(AbortSignal) },
+    );
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.spawnBase).toBeDefined();
+  });
+
+  it('records no spawn base when the base checkout is clean', async () => {
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).not.toContain('base snapshot:');
+    const mission = (await store.load()).missions.find((m) => m.id === 'M1');
+    expect(mission?.spawnBase).toBeUndefined();
+  });
 });
