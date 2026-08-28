@@ -79,6 +79,7 @@ import {
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
+import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
   createAuthTokenService,
@@ -291,6 +292,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   const close = async (): Promise<void> => {
+    configChangedPublisher.close();
     await app.close();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
@@ -351,6 +353,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
+  const configChangedPublisher = startConfigChangedPublisher(core);
 
   const pluginService = core.accessor.get(IPluginService);
   const pluginChangeSubscription = pluginService.onDidReload(() => {

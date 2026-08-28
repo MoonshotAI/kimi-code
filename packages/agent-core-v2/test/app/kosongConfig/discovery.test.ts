@@ -568,6 +568,203 @@ describe('refreshProviderModels write behavior', () => {
   });
 });
 
+describe('refreshProviderModels defaultModel self-heal', () => {
+  const managedProviders = {
+    [KIMI_CODE_PROVIDER_NAME]: {
+      type: 'kimi',
+      baseUrl: 'https://api.example.test/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    },
+  };
+
+  const managedModels = {
+    'kimi-code/kimi-k2': {
+      provider: KIMI_CODE_PROVIDER_NAME,
+      model: 'kimi-k2',
+      maxContextSize: 131072,
+      capabilities: ['thinking', 'tool_use'],
+      displayName: 'Kimi K2',
+    },
+  };
+
+  function stubManagedCatalogFetch(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'kimi-k2',
+                  context_length: 131072,
+                  supports_reasoning: true,
+                  display_name: 'Kimi K2',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+  }
+
+  it('rewrites a missing defaultModel even when the catalog is unchanged', async () => {
+    stubManagedCatalogFetch();
+    const { host, config, discovery, events, models } = await createHost(
+      {
+        providers: managedProviders,
+        models: managedModels,
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.failed).toEqual([]);
+      expect(result.unchanged).toEqual([]);
+      expect(result.changed).toEqual([
+        { provider_id: KIMI_CODE_PROVIDER_NAME, provider_name: 'Kimi Code', added: 0, removed: 0 },
+      ]);
+      expect(replaceSections).toHaveBeenCalledTimes(1);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+      expect(config.get('thinking')).toEqual({ enabled: true });
+      expect(models.list()['kimi-code/kimi-k2']).toBeDefined();
+      expect(events.published).toEqual([
+        expect.objectContaining({ type: 'event.model_catalog.changed' }),
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('keeps a default model the user selected while the catalog fetch was in flight', async () => {
+    const twoModels = {
+      'kimi-code/kimi-k2': {
+        provider: KIMI_CODE_PROVIDER_NAME,
+        model: 'kimi-k2',
+        maxContextSize: 131072,
+        capabilities: ['thinking', 'tool_use'],
+        displayName: 'Kimi K2',
+      },
+      'kimi-code/kimi-k3': {
+        provider: KIMI_CODE_PROVIDER_NAME,
+        model: 'kimi-k3',
+        maxContextSize: 131072,
+        capabilities: ['thinking', 'tool_use'],
+        displayName: 'Kimi K3',
+      },
+    };
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: managedProviders,
+        models: twoModels,
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () => {
+            await config.set('defaultModel', 'kimi-code/kimi-k3');
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: 'kimi-k2',
+                    context_length: 131072,
+                    supports_reasoning: true,
+                    display_name: 'Kimi K2',
+                  },
+                  {
+                    id: 'kimi-k3',
+                    context_length: 131072,
+                    supports_reasoning: true,
+                    display_name: 'Kimi K3',
+                  },
+                ],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
+          },
+        ),
+      );
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k3');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reports unchanged and skips writes when the catalog and defaultModel are intact', async () => {
+    stubManagedCatalogFetch();
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: managedProviders,
+        models: managedModels,
+        defaultModel: 'kimi-code/kimi-k2',
+        thinking: { enabled: true },
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('reports unchanged when the defaultModel belongs to a static provider', async () => {
+    stubManagedCatalogFetch();
+    const { host, config, discovery, events } = await createHost(
+      {
+        providers: { ...staticProviders, ...managedProviders },
+        models: { ...staticModels, ...managedModels },
+        defaultModel: 's1',
+        thinking: { enabled: false },
+      },
+      stubOAuthService(stubTokenProvider(['access-token'])),
+    );
+    try {
+      const replaceSections = vi.spyOn(config, 'replaceSections');
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result).toEqual({
+        changed: [],
+        unchanged: [KIMI_CODE_PROVIDER_NAME],
+        failed: [],
+      });
+      expect(replaceSections).not.toHaveBeenCalled();
+      expect(events.published).toEqual([]);
+      expect(config.get<string>('defaultModel')).toBe('s1');
+      expect(config.get('thinking')).toEqual({ enabled: false });
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
 describe('modelCatalog config section', () => {
   it('self-registers and validates', () => {
     const registry = new ConfigRegistry();

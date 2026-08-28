@@ -83,7 +83,7 @@ describe('Remote Control output', () => {
     pngPath: '/tmp/example-qr.png',
   };
 
-  it('keeps the full URL clickable while showing a short link and the setup contract', () => {
+  it('shows the full URL as the clickable link text alongside the setup contract', () => {
     vi.stubEnv('FORCE_HYPERLINK', '1');
     const output = formatRemoteControlOutput(outputOptions);
     const url = outputOptions.url;
@@ -91,8 +91,12 @@ describe('Remote Control output', () => {
     expect(output).toContain('1.');
     expect(output).toContain('2.');
     expect(output).toContain('3.');
-    expect(output).toContain('example.test/devices/exampl…vice/');
     expect(output).toContain(`\u001B]8;;${url}`);
+    const plain = output
+      .replaceAll(/\u001B\]8;;.*?\u0007/g, '')
+      .replaceAll(/\u001B\[[0-9;]*m/g, '');
+    expect(plain).toContain(`open ${url}`);
+    expect(plain).not.toContain('exampl…');
     expect(output).toContain('Connected to example.test');
     expect(output).toContain('This device:');
     expect(output).not.toContain('Manage devices');

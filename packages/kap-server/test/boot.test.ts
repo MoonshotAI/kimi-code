@@ -74,10 +74,10 @@ describe('server-v2 boot', () => {
     expect(auth.status).toBe(200);
     const authBody = await auth.json() as {
       code: number;
-      data: { ready: boolean; providers_count: number; default_model: string | null };
+      data: { models_ready: boolean; providers_count: number };
     };
     expect(authBody.code).toBe(0);
-    expect(typeof authBody.data.ready).toBe('boolean');
+    expect(typeof authBody.data.models_ready).toBe('boolean');
     expect(authBody.data.providers_count).toBeGreaterThanOrEqual(0);
 
     const oauthPoll = await authedFetch(server, base, '/api/v1/oauth/login');
