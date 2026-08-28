@@ -173,7 +173,7 @@ function toServiceResponses(value: unknown): Record<string, unknown> {
     result[id] = {
       ...rest,
       has_api_key: hasModelCredential(raw as ModelLike),
-      ...(isPlainObject(customHeaders) ? { custom_header_keys: Object.keys(customHeaders) } : {}),
+      custom_header_keys: isPlainObject(customHeaders) ? Object.keys(customHeaders) : undefined,
     };
   }
   return result;
