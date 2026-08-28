@@ -51,6 +51,9 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
 
   private catalogCache: CatalogSnapshot | undefined;
   private sessionIndexCache: SessionIndexSnapshot | undefined;
+  private catalogPromise: Promise<CatalogSnapshot> | undefined;
+  private sessionIndexPromise: Promise<SessionIndexSnapshot> | undefined;
+  private invalidationGeneration = 0;
   private readonly cacheable: boolean;
   private catalogMergePrimed = false;
 
@@ -66,6 +69,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
     if (watchCatalog !== undefined) {
       this._register(
         watchCatalog(() => {
+          this.invalidationGeneration += 1;
           this.catalogCache = undefined;
         }),
       );
@@ -73,6 +77,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
     if (watchSessionIndex !== undefined) {
       this._register(
         watchSessionIndex(() => {
+          this.invalidationGeneration += 1;
           this.sessionIndexCache = undefined;
         }),
       );
@@ -96,35 +101,59 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
     return merged;
   }
 
-  private async catalog(): Promise<CatalogSnapshot> {
-    if (this.catalogCache !== undefined) return this.catalogCache;
-    if (!this.catalogMergePrimed) {
-      await this.workspaces.list();
-      this.catalogMergePrimed = true;
-    }
-    const workspaces = (await this.store.load())?.workspaces ?? [];
-    const snapshot: CatalogSnapshot = {
-      byId: new Map(workspaces.map((ws) => [ws.id, ws] as const)),
-      idsByRootKey: rootKeyIndex(
-        workspaces,
-        (ws) => ws.root,
-        (ws) => ws.id,
-      ),
-    };
-    if (this.cacheable) this.catalogCache = snapshot;
-    return snapshot;
+  private catalog(): Promise<CatalogSnapshot> {
+    if (this.catalogCache !== undefined) return Promise.resolve(this.catalogCache);
+    this.catalogPromise ??= this.loadCatalog();
+    return this.catalogPromise;
   }
 
-  private async sessionIndex(): Promise<SessionIndexSnapshot> {
-    if (this.sessionIndexCache !== undefined) return this.sessionIndexCache;
-    const entries = await readSessionIndexEntries(this.storage);
-    const snapshot: SessionIndexSnapshot = {
-      idsByRootKey: rootKeyIndex(entries, (entry) => entry.workDir, (entry) =>
-        encodeWorkDirKey(entry.workDir),
-      ),
-    };
-    if (this.cacheable) this.sessionIndexCache = snapshot;
-    return snapshot;
+  private async loadCatalog(): Promise<CatalogSnapshot> {
+    try {
+      if (!this.catalogMergePrimed) {
+        await this.workspaces.list();
+        this.catalogMergePrimed = true;
+      }
+      const generation = this.invalidationGeneration;
+      const workspaces = (await this.store.load())?.workspaces ?? [];
+      const snapshot: CatalogSnapshot = {
+        byId: new Map(workspaces.map((ws) => [ws.id, ws] as const)),
+        idsByRootKey: rootKeyIndex(
+          workspaces,
+          (ws) => ws.root,
+          (ws) => ws.id,
+        ),
+      };
+      if (this.cacheable && generation === this.invalidationGeneration) {
+        this.catalogCache = snapshot;
+      }
+      return snapshot;
+    } finally {
+      this.catalogPromise = undefined;
+    }
+  }
+
+  private sessionIndex(): Promise<SessionIndexSnapshot> {
+    if (this.sessionIndexCache !== undefined) return Promise.resolve(this.sessionIndexCache);
+    this.sessionIndexPromise ??= this.loadSessionIndex();
+    return this.sessionIndexPromise;
+  }
+
+  private async loadSessionIndex(): Promise<SessionIndexSnapshot> {
+    try {
+      const generation = this.invalidationGeneration;
+      const entries = await readSessionIndexEntries(this.storage);
+      const snapshot: SessionIndexSnapshot = {
+        idsByRootKey: rootKeyIndex(entries, (entry) => entry.workDir, (entry) =>
+          encodeWorkDirKey(entry.workDir),
+        ),
+      };
+      if (this.cacheable && generation === this.invalidationGeneration) {
+        this.sessionIndexCache = snapshot;
+      }
+      return snapshot;
+    } finally {
+      this.sessionIndexPromise = undefined;
+    }
   }
 }
 

@@ -70,6 +70,14 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
+  class CountingStorage extends FileStorageService {
+    reads = 0;
+    override async read(scope: string, key: string): Promise<Uint8Array | undefined> {
+      this.reads += 1;
+      return super.read(scope, key);
+    }
+  }
+
   function build(
     hostFs: IHostFileSystem = new HostFileSystem(),
     fileStorage: FileStorageService = new FileStorageService(homeDir),
@@ -172,13 +180,6 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   });
 
   it('resolveAliasIds reuses the loaded catalog and session index across calls', async () => {
-    class CountingStorage extends FileStorageService {
-      reads = 0;
-      override async read(scope: string, key: string): Promise<Uint8Array | undefined> {
-        this.reads += 1;
-        return super.read(scope, key);
-      }
-    }
     const root = join(homeDir, 'proj');
     const id = encodeWorkDirKey(root);
     await writeWorkspacesJson({
@@ -198,6 +199,30 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await aliases.resolveAliasIds(id);
     await aliases.resolveAliasIds('wd_missing_000000000000');
     expect(storage.reads).toBe(readsAfterWarm);
+  });
+
+  it('resolveAliasIds coalesces concurrent cold loads', async () => {
+    const root = join(homeDir, 'proj');
+    const id = encodeWorkDirKey(root);
+    await writeWorkspacesJson({
+      [id]: {
+        root,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    await seedSessionIndex([{ sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: root }]);
+    const storage = new CountingStorage(homeDir);
+    const aliases = build(undefined, storage);
+
+    await Promise.all([
+      aliases.resolveAliasIds(id),
+      aliases.resolveAliasIds(id),
+      aliases.resolveAliasIds('wd_missing_000000000000'),
+      aliases.resolveAliasIds(encodeWorkDirKey(join(homeDir, 'nowhere'))),
+    ]);
+    expect(storage.reads).toBeLessThanOrEqual(6);
   });
 
   it('resolveAliasIds picks up catalog and session index changes', async () => {
