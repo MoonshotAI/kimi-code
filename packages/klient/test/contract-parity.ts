@@ -31,6 +31,10 @@ import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/promp
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type {
+  FileHistoryChange,
+  FileHistoryContent,
+} from '@moonshot-ai/agent-core-v2/features/fileHistory/fileHistory';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
@@ -182,6 +186,8 @@ import {
   cancelPlanPayloadSchema,
   cancelShellCommandPayloadSchema,
   emptyPayloadSchema,
+  fileHistoryChangeSchema,
+  fileHistoryContentSchema,
   getTaskOutputPayloadSchema,
   getTasksPayloadSchema,
   planDataSchema,
@@ -699,6 +705,8 @@ const _agentCommandInfo: AssertWire<typeof agentCommandInfoSchema, AgentCommandI
 const _runtimeBinding: AssertWire<typeof runtimeBindingSchema, RuntimeBinding> = true;
 const _runCommandPayload: AssertWire<typeof runCommandPayloadSchema, RunCommandPayload> = true;
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;
+const _fileHistoryChange: AssertWire<typeof fileHistoryChangeSchema, FileHistoryChange> = true;
+const _fileHistoryContent: AssertWire<typeof fileHistoryContentSchema, FileHistoryContent> = true;
 const _cancelPlanPayload: AssertWire<typeof cancelPlanPayloadSchema, CancelPlanPayload> = true;
 const _getTasksPayload: AssertWire<typeof getTasksPayloadSchema, GetTasksPayload> = true;
 // The wire task union mirrors the protocol `TaskInfo`; the engine's

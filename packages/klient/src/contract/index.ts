@@ -11,6 +11,7 @@ import { agentActivityViewContract } from './agent/activity.js';
 import {
   agentCommandContract,
   agentContextMemoryContract,
+  agentFileHistoryContract,
   agentFullCompactionContract,
   agentLoopContract,
   agentMcpContract,
@@ -88,6 +89,7 @@ export const globalContract: KlientContract = {
   agentProfileService: agentProfileContract,
   agentUsageService: agentUsageContract,
   agentPlanService: agentPlanContract,
+  agentFileHistoryService: agentFileHistoryContract,
   agentTaskService: agentTaskContract,
   agentMcpService: agentMcpContract,
   agentFullCompactionService: agentFullCompactionContract,

@@ -230,3 +230,18 @@ export const getTaskOutputPayloadSchema = z.object({
   taskId: z.string(),
   tail: z.number().optional(),
 });
+
+/** Mirrors `FileHistoryChange` / `FileHistoryContent` from the engine's `features/fileHistory/fileHistory.ts`. */
+export const fileHistoryChangeSchema = z.object({
+  path: z.string(),
+  status: z.enum(['added', 'modified', 'deleted']),
+  additions: z.number(),
+  deletions: z.number(),
+  binary: z.boolean().optional(),
+});
+
+export const fileHistoryContentSchema = z.object({
+  version: z.number(),
+  content: z.string().optional(),
+  binary: z.boolean().optional(),
+});

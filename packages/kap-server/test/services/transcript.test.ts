@@ -1426,6 +1426,46 @@ describe('AgentTranscriptProjector', () => {
     ).toHaveLength(2);
   });
 
+  it('projects file_history events as markers with their manifest payloads', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.map(
+        ev({
+          type: 'file_history.tracked',
+          agentId: 'main',
+          turnId: 3,
+          path: 'src/a.ts',
+          entry: { key: 'file-history/abc123@v1', version: 1, contentHash: 'deadbeef', size: 12 },
+        }),
+      ),
+    );
+    tx.apply(
+      projector.map(
+        ev({
+          type: 'file_history.checkpoint',
+          agentId: 'main',
+          turnId: 4,
+          entries: { 'src/a.ts': { key: 'file-history/abc123@v2', version: 2 } },
+        }),
+      ),
+    );
+
+    const markers = tx
+      .getItems()
+      .filter((item) => item.kind === 'marker' && item.marker.startsWith('file_history.'));
+    expect(markers).toHaveLength(2);
+    expect(markers[0]).toMatchObject({
+      marker: 'file_history.tracked',
+      payload: { turnId: 3, path: 'src/a.ts', entry: { version: 1 } },
+    });
+    expect(markers[1]).toMatchObject({
+      marker: 'file_history.checkpoint',
+      payload: { turnId: 4, entries: { 'src/a.ts': { version: 2 } } },
+    });
+  });
+
   it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');

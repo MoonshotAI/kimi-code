@@ -14,6 +14,8 @@ import {
   activateSkillPayloadSchema,
   agentCommandInfoSchema,
   agentTaskInfoSchema,
+  fileHistoryChangeSchema,
+  fileHistoryContentSchema,
   permissionModeSchema,
   planDataSchema,
   promptLaunchResultSchema,
@@ -99,6 +101,15 @@ export const agentPlanContract = {
   enter: { input: z.tuple([]), output: noResult },
   clear: { input: z.tuple([]), output: noResult },
   cancel: { input: z.tuple([z.string().optional()]), output: noResult },
+} satisfies ServiceContract;
+
+export const agentFileHistoryContract = {
+  enabled: { input: z.tuple([]), output: z.boolean() },
+  changes: { input: z.tuple([z.number()]), output: z.array(fileHistoryChangeSchema) },
+  contentAt: {
+    input: z.tuple([z.number(), z.string()]),
+    output: maybe(fileHistoryContentSchema),
+  },
 } satisfies ServiceContract;
 
 /** `McpServerEntry` from the engine's `mcpCore/connection-manager`. */

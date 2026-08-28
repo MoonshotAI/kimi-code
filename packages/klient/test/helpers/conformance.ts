@@ -560,6 +560,28 @@ export function defineKlientConformance(
       }
     });
 
+    it('agent file history reads dispatch and normalize across the wire', async () => {
+      const created = await target.klient.global.sessions.create({
+        workDir: process.cwd(),
+        title: 'conformance file history',
+      });
+      const session = getLiveSessionById(target.app.accessor, created.id);
+      if (session === undefined) throw new Error('conformance session was not materialized');
+      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+      try {
+        const agent = target.klient.session(created.id).agent('main');
+        // The file_history flag is off and no turn ran: both reads take the
+        // empty path, which still exercises dispatch, schema validation, and
+        // the ipc transport's null → undefined normalization.
+        await expect(agent.getFileChanges({ turnId: 1 })).resolves.toEqual([]);
+        await expect(
+          agent.getFileContentAt({ turnId: 1, path: 'missing.txt' }),
+        ).resolves.toBeUndefined();
+      } finally {
+        await target.klient.session(created.id).close();
+      }
+    });
+
     it('propagates prompt id conflicts with the same 40927 error', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),

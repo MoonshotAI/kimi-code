@@ -14,6 +14,7 @@ import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp'
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
+import type { IAgentFileHistoryService } from '@moonshot-ai/agent-core-v2/features/fileHistory/fileHistory';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
@@ -42,6 +43,10 @@ export type AgentContextData = {
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
 export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
+export type FileHistoryChange = Awaited<ReturnType<IAgentFileHistoryService['changes']>>[number];
+export type FileHistoryContent = NonNullable<
+  Awaited<ReturnType<IAgentFileHistoryService['contentAt']>>
+>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 
@@ -102,6 +107,22 @@ export interface AgentFacade {
    * Throws when there is nothing to compact or a turn is active.
    */
   compact(input?: { instruction?: string }): Promise<boolean>;
+  /**
+   * Per-turn file changes computed from the daemon's turn-level file
+   * snapshots (the `file_history` experimental flag). Empty when the flag is
+   * off, the turn is unknown, or the turn touched no tracked files.
+   */
+  getFileChanges(input: { turnId: number }): Promise<readonly FileHistoryChange[]>;
+  /**
+   * A file's content as captured at a turn's checkpoint. `undefined` when the
+   * file was not tracked at that turn; `content` is absent (with `binary`
+   * set, or for a file that did not exist yet) when there is no UTF-8 text to
+   * return.
+   */
+  getFileContentAt(input: {
+    turnId: number;
+    path: string;
+  }): Promise<FileHistoryContent | undefined>;
 }
 
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
@@ -179,5 +200,16 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
       call(scope, 'agentFullCompactionService', 'begin', [
         { source: 'manual', instruction: input?.instruction },
       ]) as Promise<boolean>,
+    getFileChanges: (input) =>
+      call(scope, 'agentFileHistoryService', 'changes', [input.turnId]) as Promise<
+        readonly FileHistoryChange[]
+      >,
+    getFileContentAt: async (input) => {
+      const result = (await call(scope, 'agentFileHistoryService', 'contentAt', [
+        input.turnId,
+        input.path,
+      ])) as FileHistoryContent | null | undefined;
+      return result ?? undefined;
+    },
   };
 }
