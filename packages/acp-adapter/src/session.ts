@@ -56,6 +56,7 @@ import {
   turnEndReasonToStopReason,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
+import { mapPromptFailure } from './prompt-failure';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
 import { detectSlashIntent } from './slash';
 
@@ -89,9 +90,9 @@ export class AcpSession {
    *
    * Updated inside the existing `onEvent` listener in {@link prompt}
    * (any event carrying a numeric `turnId` advances the value), and
-   * reset to `undefined` on `turn.ended`. Approval flows are gated by
-   * the SDK on the active turn so a stale value is effectively
-   * unreachable in practice; the `undefined` fallback in
+   * cleared when the owning prompt settles if it still points to that
+   * prompt. Approval flows are gated by the SDK on the active turn so a
+   * stale value is effectively unreachable in practice; the fallback in
    * `buildPermissionToolCallUpdate` exists for defence-in-depth.
    */
   private currentTurnId: number | undefined = undefined;
@@ -770,17 +771,18 @@ export class AcpSession {
   /**
    * Run an ACP `session/prompt` against the underlying SDK session.
    *
-   * Error mapping (Phase 11.1):
+   * Error mapping:
    *  - Auth-coded errors (`AUTH_LOGIN_REQUIRED`, `PROVIDER_AUTH_ERROR`)
    *    surface as `RequestError.authRequired()` so the ACP client can
    *    drive its own re-auth UX rather than a generic internal error.
-   *  - Everything else becomes `RequestError.internalError(...)` with
-   *    the stack/message logged to the agent log file but NOT exposed
-   *    to the client (the JSON-RPC layer would otherwise leak details).
-   *  - Auth-coded failures may arrive on TWO paths: a `turn.ended`
-   *    event with `reason: 'failed'` and an `event.error` payload, OR
-   *    a synchronous `session.prompt(...)` rejection. Both are
-   *    routed through {@link mapPromptError} for parity.
+   *  - Provider filtering and prompt-hook blocks use ACP's native
+   *    `refusal` stop reason.
+   *  - Other failed turns become `RequestError.internalError(...)`.
+   *    Public Kimi failures expose only code, canonical retryability, and
+   *    a valid HTTP status; private codes and raw diagnostics stay local.
+   *  - Failures may arrive on TWO paths: a `turn.ended` event with an
+   *    error payload, or a `session.prompt(...)` rejection. Both use the
+   *    same safe JSON-RPC data shape.
    *
    * Subscribes to the session event stream; for every `assistant.delta`,
    * pushes an `agent_message_chunk` `session/update` notification to the
@@ -1019,29 +1021,63 @@ export class AcpSession {
       // each turn produces a distinct wire-level tool call that needs
       // its own CREATE.
       const startedToolCalls = new Set<string>();
+      // Lock this request to the first main-agent turn.started for a new turn;
+      // a previously active request's terminal event must not settle it.
       const initialActiveTurnId = this.currentTurnId;
-      let hasReceivedOwnTurnStarted = false;
-      const unsub = this.session.onEvent((event) => {
+      let ownTurnId: number | undefined;
+      let unsubscribe: (() => void) | undefined;
+      const cleanup = (): void => {
+        argsByToolCall.clear();
+        startedToolCalls.clear();
+        if (ownTurnId !== undefined && this.currentTurnId === ownTurnId) {
+          this.currentTurnId = undefined;
+        }
+        const stopListening = unsubscribe;
+        unsubscribe = undefined;
+        stopListening?.();
+      };
+      const settle = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        action();
+      };
+      const settleFailure = (failure: ReturnType<typeof mapPromptFailure>): void => {
+        if (failure.kind === 'refusal') {
+          settle(() => {
+            resolve(failure.response);
+          });
+        } else {
+          settle(() => {
+            reject(failure.error);
+          });
+        }
+      };
+
+      unsubscribe = this.session.onEvent((event) => {
         if (
+          ownTurnId === undefined &&
           event.type === 'turn.started' &&
           isFromMainAgent(event) &&
           (initialActiveTurnId === undefined || event.turnId !== initialActiveTurnId)
         ) {
-          hasReceivedOwnTurnStarted = true;
+          ownTurnId = event.turnId;
         }
-        // Track the active turn so `handleApproval` (registered once at
-        // construction, called via `setApprovalHandler`) can compose the
-        // prefixed `${turnId}:${toolCallId}` wire id that matches the
-        // tool card the client already rendered. This branch is purely
-        // additive: it runs before the existing dispatch and never
-        // returns, so the if-chain below behaves exactly as in Phase 4.
-        // Subagent turn events carry their own `turnId`; filtering on
-        // `agentId` keeps `currentTurnId` aligned with the parent turn
-        // that the approval prompt actually belongs to.
+        if (event.type === 'turn.ended' && isFromMainAgent(event)) {
+          if (ownTurnId === undefined) {
+            if (initialActiveTurnId !== undefined) return;
+            // Compatibility fallback for Session implementations that omit
+            // turn.started. A terminal event can only adopt ownership when no
+            // turn was active before this prompt subscribed.
+            ownTurnId = event.turnId;
+          } else if (event.turnId !== ownTurnId) {
+            return;
+          }
+        }
         if (
+          isFromMainAgent(event) &&
           'turnId' in event &&
-          typeof event.turnId === 'number' &&
-          isFromMainAgent(event)
+          typeof event.turnId === 'number'
         ) {
           this.currentTurnId = event.turnId;
         }
@@ -1049,22 +1085,19 @@ export class AcpSession {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
           if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
-          if (hasReceivedOwnTurnStarted) return;
-          settled = true;
-          argsByToolCall.clear();
-          startedToolCalls.clear();
-          this.currentTurnId = undefined;
-          unsub();
+          if (ownTurnId !== undefined) return;
           log.warn('acp: prompt rejected because another turn is active', {
             sessionId,
             details: event.details,
           });
-          reject(
-            RequestError.invalidRequest(
-              { code: event.code, details: event.details },
-              event.message,
-            ),
-          );
+          settle(() => {
+            reject(
+              RequestError.invalidRequest(
+                { code: event.code, details: event.details },
+                event.message,
+              ),
+            );
+          });
           return;
         }
         if (event.type === 'assistant.delta') {
@@ -1228,56 +1261,51 @@ export class AcpSession {
         if (event.type === 'turn.ended') {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
-          settled = true;
           if (event.reason === 'failed') {
-            // Failures bubble up via the SDK `error` payload. Phase 11.1
-            // upgrades the prior "log + resolve end_turn" behaviour to
-            // route auth-coded failures through `RequestError.authRequired()`
-            // so the client can trigger its re-auth UX. Other failure
-            // codes still resolve with `end_turn` (the spec discourages
-            // signaling errors through `stopReason`; the failure is
-            // observable in the log).
             log.warn('acp: turn ended with failed reason', {
               sessionId,
               error: event.error,
             });
-            argsByToolCall.clear();
-            startedToolCalls.clear();
-            this.currentTurnId = undefined;
-            unsub();
-            const authErr = authRequiredFromPayload(event.error);
-            if (authErr) {
-              reject(authErr);
-              return;
-            }
-          } else {
-            if (event.reason === 'blocked') {
-              // Provider safety and prompt hooks both map to ACP `refusal`
-              // (see turnEndReasonToStopReason); log them here too so the
-              // block stays observable in the agent logs, mirroring the
-              // `failed` branch above.
-              log.warn('acp: turn ended with blocked reason', {
-                reason: event.reason,
-                sessionId,
-              });
-            }
-            argsByToolCall.clear();
-            startedToolCalls.clear();
-            // Drop the turnId so a late-arriving approval (e.g. an SDK
-            // reverse-RPC racing the turn boundary) falls back to the raw
-            // SDK id rather than re-prefixing with a stale value.
-            this.currentTurnId = undefined;
-            unsub();
+          } else if (event.reason === 'blocked') {
+            log.warn('acp: turn ended with blocked reason', {
+              reason: event.reason,
+              sessionId,
+            });
           }
-          resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
+          if (event.reason === 'failed') {
+            settleFailure(mapPromptFailure(event.error));
+            return;
+          }
+          const stopReason = turnEndReasonToStopReason(event.reason);
+          settle(() => {
+            resolve({ stopReason });
+          });
         }
       });
+      if (settled) cleanup();
 
-      kick().catch((err) => {
+      void kick().catch((error) => {
         if (settled) return;
-        settled = true;
-        unsub();
-        reject(mapPromptError(err, sessionId));
+        const failure = mapPromptFailure(error);
+        if (failure.kind === 'authRequired') {
+          log.warn('acp: prompt rejected with auth error; mapping to authRequired', {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } else if (failure.kind === 'refusal') {
+          log.warn('acp: prompt rejected by provider filtering; mapping to refusal', {
+            sessionId,
+          });
+        } else {
+          log.error('acp: prompt failed', {
+            sessionId,
+            error:
+              error instanceof Error
+                ? { message: error.message, stack: error.stack }
+                : String(error),
+          });
+        }
+        settleFailure(failure);
       });
     });
   }
@@ -1450,21 +1478,6 @@ export class AcpSession {
   }
 }
 
-/**
- * Map a Kimi SDK error (raw `Error`, `KimiError`, or `KimiErrorPayload`)
- * into the ACP {@link RequestError} shape used by the JSON-RPC layer.
- *
- * Auth-coded inputs (`auth.login_required`, `provider.auth_error`)
- * become `RequestError.authRequired()` so the client can drive its own
- * re-auth UX. Everything else becomes `RequestError.internalError(...)`
- * with the raw error logged to the agent log file but NOT exposed in
- * the JSON-RPC response — the client only sees the canonical
- * "session prompt failed" message, preventing accidental leakage of
- * stack frames or PII through the wire.
- *
- * The kimi-cli Python reference performs the same mapping at
- * `kimi-cli/src/kimi_cli/acp/session.py:218-247`; this is the TS port.
- */
 type CompactionCompletedResult = Extract<Event, { type: 'compaction.completed' }>['result'];
 
 type CompactionOutcome =
@@ -1590,71 +1603,6 @@ function detectLeadingSlashIntent(
   const first = blocks[0];
   if (!first || first.type !== 'text') return { kind: 'passthrough' };
   return detectSlashIntent(first.text, skillCommandMap);
-}
-
-function mapPromptError(err: unknown, sessionId: string): RequestError {
-  const authErr = authRequiredFromUnknown(err);
-  if (authErr) {
-    log.warn('acp: prompt rejected with auth error; mapping to authRequired', {
-      sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return authErr;
-  }
-  log.error('acp: prompt failed', {
-    sessionId,
-    error: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
-  });
-  return RequestError.internalError(undefined, 'session prompt failed');
-}
-
-/**
- * Inspect a {@link KimiErrorPayload} (as carried on `turn.ended`
- * failed events) and return a `RequestError.authRequired()` if its
- * `code` is one of the auth-required codes; otherwise `undefined`.
- *
- * Kept separate from {@link authRequiredFromUnknown} because the
- * `turn.ended` event hands us a serialized payload (no class identity
- * to branch on) — we only need the `code` discriminator here.
- */
-function authRequiredFromPayload(
-  payload: { readonly code: unknown } | undefined,
-): RequestError | undefined {
-  if (!payload) return undefined;
-  if (isAuthErrorCode(payload.code)) {
-    return RequestError.authRequired();
-  }
-  return undefined;
-}
-
-/**
- * Type-narrowing predicate for the codes the adapter treats as
- * "the client must re-authenticate before retrying". Currently:
- *  - `auth.login_required` — Kimi Platform / OAuth login flow needed.
- *  - `provider.auth_error` — the downstream provider rejected the
- *    request with a 401 (the node SDK lifts these into `KimiError`
- *    at `kimi-code-model-provider.ts:99-103`).
- */
-function isAuthErrorCode(code: unknown): boolean {
-  return code === ErrorCodes.AUTH_LOGIN_REQUIRED || code === ErrorCodes.PROVIDER_AUTH_ERROR;
-}
-
-/**
- * Best-effort detection of "auth required" for the `session.prompt(...)`
- * rejection path. The thrown value MAY be:
- *  - A `KimiError` instance with a recognized `code` field.
- *  - A plain object that happens to expose a `code` (covers RPC-layer
- *    deserialized payloads that lost class identity).
- *  - Anything else — returns `undefined`.
- */
-function authRequiredFromUnknown(err: unknown): RequestError | undefined {
-  if (err && typeof err === 'object' && 'code' in err) {
-    const code = (err as { code?: unknown }).code;
-    if (isAuthErrorCode(code)) {
-      return RequestError.authRequired();
-    }
-  }
-  return undefined;
 }
 
 /**
