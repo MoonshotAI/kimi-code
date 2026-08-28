@@ -245,11 +245,23 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private async readCurrent(pathKey: string): Promise<Uint8Array | 'missing' | 'unreadable'> {
-    const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
     const lease = this.runtime.acquire(['fs']);
     try {
       const fs = lease.runtime.fs;
       if (fs === undefined) return 'unreadable';
+      const runtime = lease.runtime;
+      const hostWorkDir = resolve(this.workspaceCtx.workDir);
+      const mappedWorkDir = runtime.path.resolve(
+        runtime.workspace.mapRoots({ workDir: this.workspaceCtx.workDir, additionalDirs: [] })
+          .workDir,
+      );
+      let absolute: string;
+      if (isAbsolute(pathKey)) {
+        if (mappedWorkDir !== hostWorkDir) return 'unreadable';
+        absolute = pathKey;
+      } else {
+        absolute = runtime.path.resolve(mappedWorkDir, pathKey);
+      }
       let info;
       try {
         info = await fs.stat(absolute);
@@ -423,29 +435,63 @@ export function countLineDiff(
 
 const LCS_CELL_BUDGET = 4_000_000;
 
+function greedyCommonLength(a: readonly string[], b: readonly string[]): number {
+  let common = 0;
+  const positions = new Map<string, number[]>();
+  for (let j = b.length - 1; j >= 0; j -= 1) {
+    const line = b[j]!;
+    const list = positions.get(line);
+    if (list === undefined) positions.set(line, [j]);
+    else list.push(j);
+  }
+  let cursor = 0;
+  for (const line of a) {
+    const list = positions.get(line);
+    if (list === undefined) continue;
+    while (list.length > 0 && list[list.length - 1]! < cursor) list.pop();
+    const match = list.pop();
+    if (match !== undefined) {
+      common += 1;
+      cursor = match + 1;
+    }
+  }
+  return common;
+}
+
+function uniqueAnchorCommonLength(a: readonly string[], b: readonly string[]): number {
+  const countIn = (lines: readonly string[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+    return counts;
+  };
+  const aCounts = countIn(a);
+  const bPosition = new Map<string, number>();
+  const bCounts = countIn(b);
+  for (let j = 0; j < b.length; j += 1) {
+    const line = b[j]!;
+    if (bCounts.get(line) === 1 && aCounts.get(line) === 1) bPosition.set(line, j);
+  }
+  const sequence: number[] = [];
+  for (const line of a) {
+    const j = bPosition.get(line);
+    if (j === undefined) continue;
+    let low = 0;
+    let high = sequence.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (sequence[mid]! < j) low = mid + 1;
+      else high = mid;
+    }
+    sequence[low] = j;
+  }
+  return sequence.length;
+}
+
+
 function lcsLength(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
   if (a.length * b.length > LCS_CELL_BUDGET) {
-    let common = 0;
-    const positions = new Map<string, number[]>();
-    for (let j = b.length - 1; j >= 0; j -= 1) {
-      const line = b[j]!;
-      const list = positions.get(line);
-      if (list === undefined) positions.set(line, [j]);
-      else list.push(j);
-    }
-    let cursor = 0;
-    for (const line of a) {
-      const list = positions.get(line);
-      if (list === undefined) continue;
-      while (list.length > 0 && list[list.length - 1]! < cursor) list.pop();
-      const match = list.pop();
-      if (match !== undefined) {
-        common += 1;
-        cursor = match + 1;
-      }
-    }
-    return common;
+    return Math.max(greedyCommonLength(a, b), uniqueAnchorCommonLength(a, b));
   }
   let previous = new Uint32Array(b.length + 1);
   let current = new Uint32Array(b.length + 1);

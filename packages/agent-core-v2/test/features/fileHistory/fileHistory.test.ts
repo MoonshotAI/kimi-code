@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -83,7 +83,14 @@ describe('AgentFileHistoryService', () => {
 
   function stubRuntime(): IAgentRuntimeService {
     return {
-      acquire: () => ({ runtime: { fs: hostFs() }, dispose: () => {} }),
+      acquire: () => ({
+        runtime: {
+          fs: hostFs(),
+          path: posix,
+          workspace: { mapRoots: (roots: unknown) => roots },
+        },
+        dispose: () => {},
+      }),
     } as unknown as IAgentRuntimeService;
   }
 
@@ -322,6 +329,15 @@ describe('AgentFileHistoryService', () => {
     const diff = countLineDiff(before, after);
     expect(diff.additions).toBe(1);
     expect(diff.deletions).toBe(901);
+  });
+
+  it('keeps over-budget diff approximations accurate on rotations', () => {
+    const body = Array.from({ length: 3000 }, (_, i) => `line-${String(i)}`);
+    const before = ['moved', ...body].join('\n');
+    const after = [...body, 'moved'].join('\n');
+    const diff = countLineDiff(before, after);
+    expect(diff.additions).toBe(1);
+    expect(diff.deletions).toBe(1);
   });
 
   it('keeps over-budget diff approximations order-aware on reordered files', () => {
