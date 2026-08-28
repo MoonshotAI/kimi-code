@@ -1,6 +1,7 @@
 import {
   SECONDARY_DERIVED_MODEL_ALIAS,
   SECONDARY_MODEL_ENV,
+  secondaryModelAlias,
   secondaryModelPatch,
   type KimiConfig,
   type SecondaryModelConfig,
@@ -49,13 +50,14 @@ export function resolveSubagentBinding(
   requested?: SubagentModelChoice,
 ): SubagentModelBinding {
   const secondary = resolveSecondaryModel(config);
-  if (requested !== 'primary' && secondary?.model !== undefined) {
+  const secondaryAlias = secondaryModelAlias(secondary);
+  if (requested !== 'primary' && secondaryAlias !== undefined) {
     return {
       modelAlias:
         secondaryModelPatch(secondary) === undefined
-          ? secondary.model
+          ? secondaryAlias
           : SECONDARY_DERIVED_MODEL_ALIAS,
-      thinkingEffort: secondary.defaultEffort,
+      thinkingEffort: secondary?.defaultEffort,
     };
   }
   return { modelAlias: own.modelAlias, thinkingEffort: own.thinkingEffort };
@@ -70,7 +72,7 @@ export function buildSubagentModelDescriptions(
   config: KimiConfig | undefined,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const secondaryModel = resolveSecondaryModel(config)?.model;
+  const secondaryModel = secondaryModelAlias(resolveSecondaryModel(config));
   if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
   return [
     'Available models (pass via model):',

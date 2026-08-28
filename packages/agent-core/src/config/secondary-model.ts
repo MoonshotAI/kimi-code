@@ -29,6 +29,18 @@ export const SECONDARY_DERIVED_MODEL_ALIAS = '__secondary__';
 export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
 export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
 
+/**
+ * The model pointer of the recipe, accepting the v2 engine's `default_model`
+ * as an alias for the legacy `model` key (`model` wins when both are set).
+ * Use this instead of reading `.model` directly anywhere a binding or a
+ * schema/warning decision needs "which model did the user configure".
+ */
+export function secondaryModelAlias(
+  secondary: SecondaryModelConfig | undefined,
+): string | undefined {
+  return secondary?.model ?? secondary?.defaultModel;
+}
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 function trimmed(value: string | undefined): string | undefined {
@@ -82,7 +94,7 @@ export function applySecondaryModelConfig(config: KimiConfig, env: Env = process
   let next = secondary === config.secondaryModel ? config : { ...config, secondaryModel: secondary };
 
   const patch = secondaryModelPatch(secondary);
-  const baseId = secondary?.model;
+  const baseId = secondaryModelAlias(secondary);
   if (patch === undefined || baseId === undefined || baseId === SECONDARY_DERIVED_MODEL_ALIAS) {
     return next;
   }

@@ -56,6 +56,7 @@ import {
 } from './subagent-binding';
 import {
   SECONDARY_DERIVED_MODEL_ALIAS,
+  secondaryModelAlias,
   secondaryModelPatch,
 } from '../config/secondary-model';
 import {
@@ -954,10 +955,11 @@ export class Session {
     if (this.secondaryModelWarnings !== undefined) return [...this.secondaryModelWarnings];
     const warnings: SessionWarning[] = [];
     const secondary = resolveSecondaryModel(this.kimiConfig);
-    if (secondary?.model !== undefined) {
+    const secondaryAlias = secondaryModelAlias(secondary);
+    if (secondary !== undefined && secondaryAlias !== undefined) {
       const boundAlias =
         secondaryModelPatch(secondary) === undefined
-          ? secondary.model
+          ? secondaryAlias
           : SECONDARY_DERIVED_MODEL_ALIAS;
       try {
         const resolved = this.options.providerManager?.resolveProviderConfig(boundAlias);

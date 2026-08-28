@@ -15,7 +15,11 @@ import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
-import { buildSubagentModelDescriptions, resolveSecondaryModel } from '../../session/subagent-binding';
+import {
+  buildSubagentModelDescriptions,
+  resolveSecondaryModel,
+} from '../../session/subagent-binding';
+import { secondaryModelAlias } from '../../config/secondary-model';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
@@ -849,8 +853,10 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
-              showModelPreferences: resolveSecondaryModel(this.agent.kimiConfig) !== undefined,
-              modelChoiceEnabled: resolveSecondaryModel(this.agent.kimiConfig) !== undefined,
+              showModelPreferences:
+                secondaryModelAlias(resolveSecondaryModel(this.agent.kimiConfig)) !== undefined,
+              modelChoiceEnabled:
+                secondaryModelAlias(resolveSecondaryModel(this.agent.kimiConfig)) !== undefined,
               subagentModelDescription: buildSubagentModelDescriptions(
                 this.agent.kimiConfig,
                 this.agent.config.modelAlias,
@@ -866,7 +872,7 @@ export class ToolManager {
               this.agent.kimiConfig,
               this.agent.config.modelAlias,
             ),
-            resolveSecondaryModel(this.agent.kimiConfig) !== undefined,
+            secondaryModelAlias(resolveSecondaryModel(this.agent.kimiConfig)) !== undefined,
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

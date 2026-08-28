@@ -1215,6 +1215,17 @@ describe('SessionSubagentHost', () => {
       expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
     });
 
+    it('binds the v2-style default_model when the legacy model key is unset', async () => {
+      const { parent, child } = await spawnChild({
+        config: {
+          providers: {},
+          secondaryModel: { defaultModel: 'cheap-model' },
+        },
+      });
+      expect(child.agent.config.modelAlias).toBe('cheap-model');
+      expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
+    });
+
     it('binds the derived entry when the recipe carries patch fields', async () => {
       const { child } = await spawnChild({
         config: {

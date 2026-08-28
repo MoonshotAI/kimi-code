@@ -442,6 +442,29 @@ describe('Agent tools', () => {
     expect(description).toContain('- coder: General coding.\n  Model preference: primary');
   });
 
+  it('shows the model preference when only the v2-style default_model is configured', () => {
+    const subagentHost = {
+      delegatableSubagents: vi.fn(() => ({
+        coder: {
+          name: 'coder',
+          description: 'General coding.',
+          systemPrompt: () => 'coder prompt',
+          tools: ['Read'],
+          modelPreference: 'primary' as const,
+        },
+      })),
+    } as unknown as SessionSubagentHost;
+    const ctx = testAgent({
+      subagentHost,
+      initialConfig: { providers: {}, secondaryModel: { defaultModel: 'cheap-model' } },
+    });
+    ctx.configure({ tools: ['Agent'] });
+
+    const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
+
+    expect(description).toContain('- coder: General coding.\n  Model preference: primary');
+  });
+
   it('hides model preferences when no secondary model is configured', () => {
     const subagentHost = {
       delegatableSubagents: vi.fn(() => ({
