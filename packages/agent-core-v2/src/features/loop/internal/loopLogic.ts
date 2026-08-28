@@ -29,7 +29,7 @@ import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemo
 import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/features/contextMemory/loopEventFold';
 import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
@@ -128,7 +128,7 @@ export class AgentLoopLogic extends Disposable implements LoopControl {
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IConfigService private readonly config: IConfigService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentStateService private readonly states: IAgentStateService,

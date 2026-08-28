@@ -5,7 +5,8 @@ import { AsyncEmitter, Emitter } from '#/_base/event';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { AgentPluginService } from '#/agent/plugin/agentPluginService';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -48,7 +49,7 @@ function messageText(message: { readonly content: readonly { readonly type: stri
 
 async function runInjectionBoundary(ctx: TestAgentContext): Promise<void> {
   await ctx.restoreRuntimes();
-  await ctx.get(LoopControlToken).hooks.onWillBeginStep.run({
+  await getLoopControl(ctx.agentContext).hooks.onWillBeginStep.run({
     turnId: 0,
     step: 1,
     firstStepOfTurn: true,

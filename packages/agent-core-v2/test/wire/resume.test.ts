@@ -60,7 +60,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended).toEqual([expect.objectContaining({ type: 'runtime.set_binding' })]);
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
@@ -214,10 +214,12 @@ describe('Agent resume', () => {
     await ctx.restorePersisted();
     const plan = await ctx.get(IAgentPlanService).status();
     expect(plan?.path).toContain('resume-plan');
-    expect(ctx.newEvents()).toMatchInlineSnapshot(`[]`);
+    expect(ctx.newEvents()).toMatchInlineSnapshot(
+      `[wire] runtime.set_binding   { "workspaceId": "test-workspace", "runtimeId": "local", "agentId": "main", "time": "<time>" }`,
+    );
     expect(ctx.llmCalls).toHaveLength(0);
     expect(execWithEnv).not.toHaveBeenCalled();
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended).toEqual([expect.objectContaining({ type: 'runtime.set_binding' })]);
     await ctx.expectResumeMatches();
 
     ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
@@ -416,7 +418,7 @@ describe('Agent resume', () => {
     ]);
     expect(textContent(ctx.project()[2])).toBe('lookup result');
     expect(textContent(ctx.project()[3])).toBe('Follow-up recorded before result');
-    expect(persistence.appended).toEqual([]);
+    expect(persistence.appended).toEqual([expect.objectContaining({ type: 'runtime.set_binding' })]);
     await ctx.expectResumeMatches();
   });
 
@@ -787,6 +789,7 @@ describe('Agent resume', () => {
         },
       });
       expect(persistence.appended).toEqual([
+        expect.objectContaining({ type: 'runtime.set_binding' }),
         expect.objectContaining({
           type: 'goal.update',
           status: 'paused',
@@ -838,6 +841,7 @@ describe('Agent resume', () => {
         wallClockMs: 5_000,
       });
       expect(persistence.appended).toEqual([
+        expect.objectContaining({ type: 'runtime.set_binding' }),
         expect.objectContaining({
           type: 'goal.update',
           status: 'paused',

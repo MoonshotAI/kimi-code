@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ContentPart } from '#/kosong/contract/message';
@@ -24,7 +22,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IAgentScopeContext agent: IAgentScopeContext,
+    agent: IAgentScopeContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
   ) {
     this.storageScope = agent.scope('tool-results');
@@ -101,10 +99,3 @@ function safeToolResultFileStem(toolName: string, toolCallId: string): string {
   return label || 'tool-result';
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentToolResultTruncationService,
-  ToolResultTruncationService,
-  ScopeActivation.OnScopeCreated,
-  'toolResultTruncation',
-);

@@ -1,7 +1,7 @@
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentTowerService } from '#/features/tower/tower';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { IAgentTowerService } from '#/features/tower/tower';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
@@ -16,9 +16,9 @@ export class TowerPlanTool implements ITowerPlanTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerPlanToolInputSchema);
 
   constructor(
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentTowerService private readonly tower: IAgentTowerService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly sessionContext: ISessionContext,
+    private readonly tower: IAgentTowerService,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerPlanToolInput): ToolExecution {

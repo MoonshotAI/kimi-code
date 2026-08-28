@@ -29,10 +29,19 @@ export function registerLoopControl(
 export function getLoopControl(
   context: AgentRuntimeContext<unknown> | IAgentScopeContext | AgentContext,
 ): LoopControl {
-  const agent = 'agent' in context ? context.agent : 'agentContext' in context ? context.agentContext : context;
-  const control = controls.get(agent);
-  if (control === undefined) throw new Error(`Loop control for agent '${agent.agentId}' is unavailable`);
+  const control = tryGetLoopControl(context);
+  if (control === undefined) {
+    const agent = 'agent' in context ? context.agent : 'agentContext' in context ? context.agentContext : context;
+    throw new Error(`Loop control for agent '${agent.agentId}' is unavailable`);
+  }
   return control;
+}
+
+export function tryGetLoopControl(
+  context: AgentRuntimeContext<unknown> | IAgentScopeContext | AgentContext,
+): LoopControl | undefined {
+  const agent = 'agent' in context ? context.agent : 'agentContext' in context ? context.agentContext : context;
+  return controls.get(agent);
 }
 
 export function getLoopDurableState(

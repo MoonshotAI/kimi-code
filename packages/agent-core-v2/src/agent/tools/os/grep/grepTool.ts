@@ -6,12 +6,12 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -68,10 +68,10 @@ export class GrepTool implements IGrepTool {
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspaceCtx: ISessionWorkspaceContext,
+    private readonly telemetry: ITelemetryService,
+    private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private workspace(view: RuntimeWorkspaceView): WorkspaceConfig {
@@ -342,10 +342,16 @@ export class GrepTool implements IGrepTool {
   }
 }
 
-registerAgentToolService(IGrepTool, GrepTool, {
+registerAgentToolService({
   name: 'Grep',
   domain: 'os/backends',
   requiredRuntimeCapabilities: ['fs', 'process'],
+  create: (context) => new GrepTool(
+    context.host.agentRuntime,
+    context.get(ISessionWorkspaceContext),
+    context.host.telemetry,
+    context.get(ISessionSkillCatalog),
+  ),
 });
 
 function formatSpawnError(error: unknown): string {

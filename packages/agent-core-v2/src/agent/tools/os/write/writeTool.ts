@@ -1,7 +1,7 @@
 import { dirname } from 'pathe';
 
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -28,9 +28,9 @@ export class WriteTool implements IWriteTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WriteInputSchema);
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspaceCtx: ISessionWorkspaceContext,
+    private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
@@ -133,8 +133,13 @@ export class WriteTool implements IWriteTool {
   }
 }
 
-registerAgentToolService(IWriteTool, WriteTool, {
+registerAgentToolService({
   name: 'Write',
   domain: 'os/backends',
   requiredRuntimeCapabilities: ['fs'],
+  create: (context) => new WriteTool(
+    context.host.agentRuntime,
+    context.get(ISessionWorkspaceContext),
+    context.get(ISessionSkillCatalog),
+  ),
 });

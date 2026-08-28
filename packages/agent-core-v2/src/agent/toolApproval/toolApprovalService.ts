@@ -1,17 +1,14 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { randomUUID } from 'node:crypto';
 
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
 } from '#/features/toolExecutor/permissionTypes';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import type {
   BeforeExecuteDecision,
@@ -66,12 +63,12 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @ISessionApprovalService private readonly approval?: ISessionApprovalService,
   ) {
     super();
   }
@@ -138,7 +135,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
-    const approvalService = this.tryApprovalService();
+    const approvalService = this.approval;
     if (approvalService === undefined) {
       response = { decision: 'approved' };
     } else {
@@ -254,25 +251,8 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     return message;
   }
 
-  private tryApprovalService(): ISessionApprovalService | undefined {
-    try {
-      return this.instantiation.invokeFunction(
-        (accessor) => accessor.get(ISessionApprovalService) as ISessionApprovalService | undefined,
-      );
-    } catch {
-      return undefined;
-    }
-  }
-
   private usesWorkerRejectionGuidance(): boolean {
     return this.scopeContext.agentId !== 'main';
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentToolApprovalService,
-  AgentToolApprovalService,
-  ScopeActivation.OnScopeCreated,
-  'toolApproval',
-);

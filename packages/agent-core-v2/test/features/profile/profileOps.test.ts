@@ -266,7 +266,11 @@ describe('ProfileRuntime durable config.update', () => {
 
     expect(ctx.resolve(AgentProfile).data().profileName).toBe('coder');
     expect(replayEmits).toBe(0);
-    expect(persistence.records.filter((record) => record.type !== 'metadata')).toEqual(written);
+    expect(
+      persistence.records.filter(
+        (record) => record.type !== 'metadata' && record.type !== 'runtime.set_binding',
+      ),
+    ).toEqual(written);
   });
 });
 

@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { createScopedChildHandle } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -59,6 +58,7 @@ import { stubFlag } from '../../../app/flag/stubs';
 import { stubSkill } from '../catalog/stubs';
 import { stubProviderService } from '../../../app/provider/stubs';
 import { stubLog } from '../../../_base/log/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const bootstrapStub = stubBootstrap('/home');
 

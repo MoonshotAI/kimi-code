@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ContentPart } from '#/kosong/contract/message';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import {
   BLOBREF_PROTOCOL,
@@ -23,7 +21,7 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
 
   constructor(
     @IBlobStore private readonly blobs: IBlobStore,
-    @IAgentScopeContext agentCtx: IAgentScopeContext,
+    agentCtx: IAgentScopeContext,
   ) {
     this.storageScope = agentCtx.scope('blobs');
   }
@@ -160,10 +158,3 @@ function asMediaContainer(value: unknown): { url: unknown } | undefined {
   return 'url' in obj ? (obj as { url: unknown }) : undefined;
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentBlobService,
-  AgentBlobServiceImpl,
-  ScopeActivation.OnScopeCreated,
-  'agentBlob',
-);

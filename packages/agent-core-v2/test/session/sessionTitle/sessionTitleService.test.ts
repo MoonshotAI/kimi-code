@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { OAuthConnectionError, OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
-import { type IAgentScopeHandle } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IOAuthService } from '#/app/auth/auth';
@@ -18,12 +16,17 @@ import {
   type ProviderConfig,
 } from '#/kosong/provider/provider';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/features/contextMemory/types';
+import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
 import {
-  IAgentTitlePromptSource,
   type TitleDigestExcerpt,
   type TitleTurnExcerpt,
 } from '#/session/sessionTitle/agentTitlePromptSource';
@@ -40,6 +43,7 @@ import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const SESSION_ID = 'sess-1';
 const MANAGED_PROVIDER: ProviderConfig = {
@@ -131,6 +135,23 @@ function createPendingFetch() {
   };
 }
 
+function userMessage(text: string): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }],
+    toolCalls: [],
+    origin: { kind: 'user' },
+  };
+}
+
+function assistantMessage(text: string): ContextMessage {
+  return {
+    role: 'assistant',
+    content: [{ type: 'text', text }],
+    toolCalls: [],
+  };
+}
+
 describe('SessionTitleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
@@ -142,7 +163,6 @@ describe('SessionTitleService', () => {
   let forceTokenError: Error | undefined;
   let resolvedOAuthRefs: Array<OAuthRef | undefined>;
   let titlePrompts: readonly string[];
-  let promptSourceImpl: (limit: number) => Promise<readonly string[]>;
   let turnExcerpt: TitleTurnExcerpt;
   let digestExcerpt: TitleDigestExcerpt;
   let tokenCalls: boolean[];
@@ -153,7 +173,6 @@ describe('SessionTitleService', () => {
     forceTokenError = undefined;
     resolvedOAuthRefs = [];
     titlePrompts = [];
-    promptSourceImpl = async (limit) => titlePrompts.slice(0, limit);
     turnExcerpt = {};
     digestExcerpt = { turns: [] };
     tokenCalls = [];
@@ -185,20 +204,40 @@ describe('SessionTitleService', () => {
           }),
         );
         reg.defineInstance(ISessionMetadata, metadata);
-        const promptSource: IAgentTitlePromptSource = {
-          _serviceBrand: undefined,
-          firstUserPrompts: (limit) => promptSourceImpl(limit),
-          firstTurnExcerpt: async () => turnExcerpt,
-          digestExcerpt: async () => digestExcerpt,
+        const fixtureMessages = (): ContextMessage[] => {
+          if (digestExcerpt.turns.length > 0) {
+            return digestExcerpt.turns.flatMap((turn) => [
+              userMessage(turn.user),
+              ...(turn.assistant === undefined ? [] : [assistantMessage(turn.assistant)]),
+            ]);
+          }
+          if (turnExcerpt.user !== undefined) {
+            return [
+              userMessage(turnExcerpt.user),
+              ...(turnExcerpt.assistant === undefined ? [] : [assistantMessage(turnExcerpt.assistant)]),
+            ];
+          }
+          return titlePrompts.map(userMessage);
         };
-        const mainAgent: IAgentScopeHandle = {
-          id: MAIN_AGENT_ID,
-          kind: LifecycleScope.Agent,
-          accessor: { get: <T>() => promptSource as T },
-          dispose: () => undefined,
-        };
+        const mainScopeContext = makeAgentScopeContext({ agentId: MAIN_AGENT_ID, agentScope: 'agents/main' });
+        const mainContext = mainScopeContext.agentContext;
         reg.definePartialInstance(IAgentLifecycleService, {
-          handleOf: () => mainAgent,
+          get: (id: string) => (id === MAIN_AGENT_ID ? mainContext : undefined),
+          list: () => [],
+          onDidCreate: () => ({ dispose: () => {} }),
+          onDidClose: () => ({ dispose: () => {} }),
+          resolve: ((_agent: AgentContext, definition: unknown) => {
+            if (definition === AgentContextMemory) {
+              return { get: () => fixtureMessages() };
+            }
+            if (definition === AgentPrompt) {
+              return { list: () => ({ active: undefined, pending: [] }) };
+            }
+            throw new Error('unexpected resolve');
+          }) as IAgentLifecycleService['resolve'],
+        });
+        reg.definePartialInstance(IAgentHostService, {
+          of: () => ({ scopeContext: mainScopeContext }) as never,
         });
         reg.defineInstance(IEventService, events);
         reg.defineInstance(IProviderService, stubProviderService(providers));

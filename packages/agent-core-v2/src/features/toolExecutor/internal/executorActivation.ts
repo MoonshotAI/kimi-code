@@ -10,15 +10,15 @@ export function activateToolExecutorWhenReady(
   options?: { readonly deferToScopeCreated?: boolean },
 ): IDisposable {
   let active: IDisposable | undefined;
-  let scopeCreated = options?.deferToScopeCreated !== true;
+  let agentCreated = options?.deferToScopeCreated !== true;
   const tryActivate = (): void => {
-    if (active !== undefined || !scopeCreated) return;
-    if (lifecycle.handleOf(scope.agentId) === undefined) return;
+    if (active !== undefined || !agentCreated) return;
+    if (lifecycle.get(scope.agentId) === undefined) return;
     active = activate(lifecycle.resolve(scope.agentContext, AgentTools));
   };
-  const created = lifecycle.onDidCreateScope(({ context }) => {
+  const created = lifecycle.onDidCreate((context) => {
     if (context !== scope.agentContext) return;
-    scopeCreated = true;
+    agentCreated = true;
     tryActivate();
   });
   tryActivate();

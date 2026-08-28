@@ -1,8 +1,5 @@
 import {
   IAgentLifecycleService,
-  IAgentActivityView,
-  IAgentTaskService,
-  IEventBus,
   ISessionMetadata,
   MAIN_AGENT_ID,
   listSessionPendingInteractions,
@@ -10,10 +7,13 @@ import {
   onSessionInteractionDidResolve,
   type AgentMeta,
   type IDisposable,
-  type IAgentScopeHandle,
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
+import { IAgentHostService } from '@moonshot-ai/agent-core-v2';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
+import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
+import type { AgentContext } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
 import {
@@ -84,17 +84,17 @@ export function bindSessionTranscript(
           return undefined;
         },
         stepOrdinal: (turnId) => {
-          const agentHandle = agents.handleOf(agentId);
-          if (agentHandle === undefined) return undefined;
-          const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
-          const turn = view?.state().turn;
+          const agent = agents.get(agentId);
+          if (agent === undefined) return undefined;
+          const view = session.accessor.get(ISessionActivityViewService).of(agent);
+          const turn = view.state().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
       });
-      const agentHandle = agents.handleOf(agentId);
-      if (agentHandle !== undefined) {
-        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
+      const agentContext = agents.get(agentId);
+      if (agentContext !== undefined) {
+        const tasks = session.accessor.get(ISessionTaskService).of(agentContext).list();
         for (const info of tasks) {
           if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
             applyOps(
@@ -116,18 +116,18 @@ export function bindSessionTranscript(
     return projector;
   };
 
-  const subscribeAgent = (handle: IAgentScopeHandle): void => {
-    if (subscribedAgents.has(handle.id)) return;
-    subscribedAgents.add(handle.id);
-    const projector = projectorFor(handle.id);
-    store.ensureAgent(handle.id, { agentId: handle.id });
-    const bus = handle.accessor.get(IEventBus);
+  const subscribeAgent = (context: AgentContext): void => {
+    if (subscribedAgents.has(context.agentId)) return;
+    subscribedAgents.add(context.agentId);
+    const projector = projectorFor(context.agentId);
+    store.ensureAgent(context.agentId, { agentId: context.agentId });
+    const bus = session.accessor.get(IAgentHostService).of(context).eventBus;
     const busD = bus.subscribe((event) =>
-      applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
+      applyOps(context.agentId, projector.map(event as ProjectorBusEvent)),
     );
-    const list = agentDisposables.get(handle.id) ?? [];
+    const list = agentDisposables.get(context.agentId) ?? [];
     list.push(busD);
-    agentDisposables.set(handle.id, list);
+    agentDisposables.set(context.agentId, list);
   };
 
   const interactionAgentId = (interaction: Interaction): string => {
@@ -166,13 +166,11 @@ export function bindSessionTranscript(
   };
 
   for (const agent of agents.list()) {
-    const handle = agents.handleOf(agent.agentId);
-    if (handle !== undefined) subscribeAgent(handle);
+    subscribeAgent(agent);
   }
   disposables.push(
     agents.onDidCreate((context) => {
-      const handle = agents.handleOf(context.agentId);
-      if (handle !== undefined) subscribeAgent(handle);
+      subscribeAgent(context);
       seededAgents.add(context.agentId);
       refreshDescriptors();
     }),

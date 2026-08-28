@@ -15,7 +15,7 @@ import {
   type AgentRuntimeContext,
 } from '#/agent/runtime/agentRuntime';
 import { IEventService } from '#/app/event/event';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -247,7 +247,7 @@ export class SkillRuntime {
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
-    const telemetry = this.context.get(ITelemetryService);
+    const telemetry = this.context.get(IAgentHostService).of(this.context.agent).telemetry;
     telemetry.track2('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,

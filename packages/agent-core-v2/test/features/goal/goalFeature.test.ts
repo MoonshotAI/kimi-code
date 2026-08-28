@@ -6,8 +6,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { LoopControlToken } from '#/features/loop/internal/loop';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { LoopControl } from '#/features/loop/internal/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
@@ -16,7 +15,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { IFlagService } from '#/app/flag/flag';
-import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
@@ -27,6 +25,7 @@ import {
 import { GoalFeature } from '#/features/goal/goalFeature';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 describe('GoalFeature', () => {
   beforeEach(() => {

@@ -34,16 +34,18 @@ import { ToolDedupePolicy } from '#/features/toolExecutor/internal/toolDedupe';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { Event } from '#/_base/event';
 import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IEventBus } from '#/app/event/eventBus';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
 import type { PromptOrigin } from '#/features/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
@@ -118,6 +120,13 @@ function createHarness(
   const telemetryEvents: TelemetryRecord[] = [];
   const reminders: CapturedReminder[] = [];
   const events = stubToolExecutorEvents();
+  const agentContext = stubAgentContext('main', 0);
+  const agentScope = {
+    _serviceBrand: undefined,
+    agentId: 'main',
+    agentContext,
+    scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
+  } satisfies IAgentScopeContext;
   const instructionsChange = disposables.add(new Emitter<readonly HostFsChange[]>());
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
@@ -127,18 +136,25 @@ function createHarness(
           publish: () => {},
           subscribe: () => ({ dispose: () => {} }),
         });
+        reg.defineInstance(IAgentHostService, {
+          _serviceBrand: undefined,
+          of: () => ({ telemetry: ix.get(ITelemetryService) }),
+        } as unknown as IAgentHostService);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
-        reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
+        let truncationImpl: ToolResultTruncationService | undefined;
+        reg.defineInstance(ISessionToolResultTruncationService, {
+          _serviceBrand: undefined,
+          attach: () => {},
+          of: () => (truncationImpl ??= new ToolResultTruncationService(
+            ix.get(IBootstrapService),
+            agentScope,
+            ix.get(IFileSystemStorageService),
+          )),
+        } as ISessionToolResultTruncationService);
         registerLogServices(reg);
       }
-      reg.defineInstance(IAgentScopeContext, {
-        _serviceBrand: undefined,
-        agentId: 'main',
-        agentContext: stubAgentContext('main', 0),
-        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
-      } satisfies IAgentScopeContext);
       const dispatcher: IEventDispatcher = {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },
@@ -232,16 +248,15 @@ function createHarness(
         options.telemetry ?? recordingTelemetry(telemetryEvents),
       );
       if (options.withDedupe === true) {
-        reg.defineInstance(LoopControlToken, stubLoopWithHooks());
+        registerLoopControl(agentContext, stubLoopWithHooks(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
       }
-      reg.define(IAgentAgentsMdReminderService, AgentAgentsMdReminderService);
     },
     strict: true,
   });
   let executorRuntime: AgentToolsRuntime = events.executor;
   if (options.withRealExecutor === true) {
     const context: AgentRuntimeContext<unknown> = {
-      agent: stubAgentContext('main', 0),
+      agent: agentContext,
       get: (id) => ix.get(id as never),
       getState: () => {
         throw new Error('no durable state');
@@ -260,7 +275,7 @@ function createHarness(
     };
     const pipeline = new ToolExecutorPipeline(context, catalog as never);
     if (options.withDedupe === true) {
-      const loop = ix.get(LoopControlToken);
+      const loop = getLoopControl(agentScope.agentContext);
       const dedupe = new ToolDedupePolicy(context, pipeline);
       loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
         dedupe.beginStep(ctx.turnId, ctx.step);
@@ -279,7 +294,19 @@ function createHarness(
     IAgentLifecycleService,
     lifecycleWithToolExecutor(executorRuntime, ix.get(IAgentLifecycleService)),
   );
-  const reminder = ix.get(IAgentAgentsMdReminderService);
+  const reminder = new AgentAgentsMdReminderService(
+    ix.get(IAgentLifecycleService),
+    agentScope,
+    ix.get(IAgentStateService),
+    ix.get(ISessionContext),
+    ix.get(IAgentRuntimeService),
+    ix.get(IBootstrapService),
+    ix.get(IBashParserService),
+    ix.get(ITelemetryService),
+    ix.get(IEventDispatcher),
+    ix.get(ISessionInstructionsProvider),
+  );
+  ix.set(IAgentAgentsMdReminderService, reminder);
   const dispatcher = ix.get(IEventDispatcher);
   return { ix, executor: executorRuntime, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
 }

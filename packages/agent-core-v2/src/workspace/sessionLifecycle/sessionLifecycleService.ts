@@ -12,7 +12,7 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { AsyncEmitter, Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { drainLogCloses } from '#/_base/log/logService';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/features/plan/configSection';
-import { IAgentPlanService } from '#/features/plan/plan';
+import { ISessionPlanService } from '#/features/plan/sessionPlanService';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -45,7 +45,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { drainSessionMetadataWrites, toEpochMs } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
@@ -69,7 +69,7 @@ import {
   IWorkspaceAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
+import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
 import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -197,11 +197,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             });
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const planAgent = main ?? (await ensureMainAgent(handle));
-        const planHandle = agents.handleOf(planAgent.agentId);
-        if (planHandle === undefined) {
+        const planContext = agents.get(planAgent.agentId);
+        if (planContext === undefined) {
           throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
         }
-        await planHandle.accessor.get(IAgentPlanService).enter();
+        await handle.accessor.get(ISessionPlanService).of(planContext).enter();
       }
       await this.appendSessionIndexEntry(sessionId, opts.workDir);
     } catch (error) {
@@ -467,10 +467,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     if (sourceHandle !== undefined) {
       const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+      const sourceHosts = sourceHandle.accessor.get(IAgentHostService);
+      const activityViews = sourceHandle.accessor.get(ISessionActivityViewService);
       for (const agent of sourceAgents.list()) {
-        const agentHandle = sourceAgents.handleOf(agent.agentId);
-        if (agentHandle === undefined) continue;
-        if (agentHandle.accessor.get(IAgentActivityView).state().turn !== undefined) {
+        if (sourceHosts.tryOf(agent) === undefined) continue;
+        if (activityViews.of(agent).state().turn !== undefined) {
           throw new Error2(
             ErrorCodes.SESSION_FORK_ACTIVE_TURN,
             `Session "${sourceId}" cannot be forked while a turn is running`,
@@ -656,11 +657,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     agentId: string,
   ): Promise<WireRecord[]> {
     if (sourceHandle !== undefined) {
-      const agentHandle = sourceHandle.accessor
-        .get(IAgentLifecycleService)
-        .handleOf(agentId);
-      if (agentHandle !== undefined) {
-        await agentHandle.accessor.get(IEventDispatcher).flush();
+      const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
+      const agent = sourceAgents.get(agentId);
+      if (agent !== undefined) {
+        await sourceHandle.accessor.get(IAgentHostService).of(agent).dispatcher.flush();
       }
     }
     return collect(

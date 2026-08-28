@@ -1,9 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
-import { LoopControlToken } from '#/features/loop/internal/loop';
 import {
   AssistantDelta,
   ThinkingDelta,
@@ -14,8 +11,8 @@ import {
   TurnStepInterrupted,
 } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
-import { getLoopDurableState } from '#/features/loop/internal/access';
-import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
+import { getLoopDurableState, tryGetLoopControl } from '#/features/loop/internal/access';
+import { TurnStepRetrying } from '#/features/loop/internal/stepRetry';
 import { ToolCallStarted, ToolResultEvent } from '#/features/toolExecutor/toolExecutorEvents';
 import {
   PermissionApprovalRequested,
@@ -28,7 +25,7 @@ import {
   CompactionStarted,
 } from '#/features/fullCompaction/fullCompactionEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -79,12 +76,11 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
 
   constructor(
     @IEventBus private readonly eventBus: IEventBus,
-    @LoopControlToken private readonly loop: LoopControlToken,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
     this.states.contributeState(activityViewLifecycleKey);
@@ -238,8 +234,8 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
   }
 
   private seedFromLoop(): void {
-    const status = this.loop.status();
-    if (status.state === 'running' && status.activeTurnId !== undefined) {
+    const status = tryGetLoopControl(this.scopeContext)?.status();
+    if (status?.state === 'running' && status.activeTurnId !== undefined) {
       this.turn = new MutableTurn(status.activeTurnId, USER_PROMPT_ORIGIN);
       this.publish();
       return;
@@ -449,11 +445,3 @@ function activityEqual(a: AgentActivityState, b: AgentActivityState): boolean {
   }
   return true;
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentActivityView,
-  AgentActivityView,
-  ScopeActivation.OnScopeCreated,
-  'activityView',
-);

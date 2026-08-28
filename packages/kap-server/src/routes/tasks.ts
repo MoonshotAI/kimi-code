@@ -1,10 +1,11 @@
 import {
-  IAgentTaskService,
   ISessionIndex,
   getLiveSessionById,
   type AgentTaskInfo,
+  type IAgentTaskService,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   cancelTaskResultSchema,
@@ -215,7 +216,7 @@ async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTa
   const session = getLiveSessionById(core.accessor, sid);
   if (session === undefined) return { kind: 'resolved', tasks: undefined };
   const agent = await ensureMainAgent(session);
-  const tasks = agent.accessor.get(IAgentTaskService);
+  const tasks = session.accessor.get(ISessionTaskService).of(agent.context);
   return { kind: 'resolved', tasks };
 }
 

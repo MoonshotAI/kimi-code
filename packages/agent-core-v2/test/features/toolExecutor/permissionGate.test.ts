@@ -13,6 +13,8 @@ import type { ToolExecutionPermissionPolicyChain } from '#/features/toolExecutor
 import { ToolExecutionPermissionGatePolicy } from '#/features/toolExecutor/internal/permissionGate';
 import type { PermissionMode, PermissionPolicyResolution } from '#/features/toolExecutor/permissionTypes';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
 import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
@@ -99,7 +101,11 @@ describe('ToolExecutionPermissionGatePolicy', () => {
       get: (id) => {
         if (id === IAgentLifecycleService) return lifecycle as never;
         if (id === IAgentToolApprovalService) return toolApproval as never;
+        if (id === ISessionToolApprovalService) return { of: () => toolApproval } as never;
         if (id === ITelemetryService) return recordingTelemetry(records) as never;
+        if (id === IAgentHostService) {
+          return { of: () => ({ telemetry: recordingTelemetry(records) }) } as never;
+        }
         throw new Error('unexpected get');
       },
       getState: () => {

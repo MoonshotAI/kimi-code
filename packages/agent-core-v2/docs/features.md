@@ -19,9 +19,12 @@ export class PlanFeature extends Feature {
 
   constructor() {
     super();
-    this.contributeAgentService(IAgentPlanService, AgentPlanService);
-    this.contributeTool(IEnterPlanModeTool, EnterPlanModeTool, { name: 'EnterPlanMode', domain: 'plan' });
-    this.contributeTool(IExitPlanModeTool, ExitPlanModeTool, { name: 'ExitPlanMode', domain: 'plan' });
+    this.contributeService(LifecycleScope.Session, ISessionPlanService, SessionPlanService);
+    this.contributeTool({
+      name: 'EnterPlanMode',
+      domain: 'plan',
+      create: (ctx) => new EnterPlanModeTool(ctx.get(ISessionPlanService).of(ctx.agent), ctx.host.telemetry),
+    });
     this.onDispose(() => { /* cleanup */ });
   }
 }
@@ -40,11 +43,10 @@ compositions over the existing seams:
 |---|---|---|
 | `contribute(token, value)` | `this.provide(token, value)` | raw collection record |
 | `contributeService(scope, id, ctor, opts?)` | `ScopeUnits(scope)` function recipe | one live unit per present AND future scope of that kind; retracted everywhere when the feature dies |
-| `contributeAgentService(id, ctor, opts?)` | `contributeService(LifecycleScope.Agent, …)` | the common case |
-| `contributeTool(id, ctor, options)` | per-agent `OnDemand` registration + `AgentToolContribution` record | the tool ctor keeps full `@IXxx` DI; the activation fold filters by name before constructing |
+| `contributeTool(options)` | `AgentToolContribution` record | the tool is a plain class constructed by `options.create(ctx)` at activation; `ctx` carries the agent, its host, App/Session `get`, and the catalog/policy query surface; the activation fold filters by name before constructing |
 | `contributeProfiles(profiles, opts?)` | `AgentProfileContribution` record | `sourceId` defaults to `feature:<name>` |
 | `contributeConfig(domain, schema, options?)` | `ConfigSectionContribution` record | see the static-channel rule below before using |
-| `contributeCommand({ name, description?, run })` | `CommandContribution` record | runs engine-side; `ctx.get(id)` resolves through the agent container and is valid only during the synchronous part of `run` (resolve up front, then `await`) |
+| `contributeCommand({ name, description?, run })` | `CommandContribution` record | runs engine-side; `ctx.get(id)` resolves App/Session services through the session container and is valid only during the synchronous part of `run` (resolve up front, then `await`) |
 | `onDispose(fn)` | `this._register(toDisposable(fn))` | cleanup on retraction |
 
 ## Assembly lifecycle
@@ -60,8 +62,10 @@ compositions over the existing seams:
    visible in the kimi-inspect DI view), and individually retractable
    (`unprovideUnit(name)` / `updateUnit(name, config)`).
 4. Per-scope materialization goes through the kernel's `ScopeUnits` fold: a service a
-   feature contributes at Agent scope appears in every existing and future Agent scope,
-   bound by the same cascade rules as a static registration.
+   feature contributes at App or Session scope appears in every existing and future scope
+   of that kind, bound by the same cascade rules as a static registration. Agent-granular
+   behavior is contributed as an Agent Runtime (`contributeAgentRuntime`), not as a
+   service — there is no Agent DI scope.
 
 ## Static channels vs Feature channels (the rule for built-in features)
 
@@ -84,15 +88,16 @@ keep their static registrations; the service and the two tools go through the Fe
 
 ## Events and hooks inside a feature
 
-- Agent-scope services a feature contributes can use the string form of the unit `on`
+- Services a feature contributes can use the string form of the unit `on`
   capability — `this.on('turn.ended', …)` — backed by the production `FiberEventResolver`
   (`src/app/event/fiberEventResolver.ts`), which resolves the event against the scope's
   `IEventBus` (attaching lazily if the bus is not materialized yet). Constructor
   injection of `@IEventBus` + `subscribe` remains the fully explicit equivalent.
-- Tool-call guards (e.g. the plan-mode write veto) subscribe to
-  `IAgentToolExecutorService.onBeforeExecuteTool` inside the contributed Agent-scope
-  service — see `src/features/plan/planService.ts` for the canonical veto-listener
-  pattern.
+- Tool-call guards (e.g. the plan-mode write veto) ride the `AgentTools` runtime
+  participation: the per-agent impl resolves the `AgentToolsRuntime` and registers its
+  guard on the pinned veto bus — see `registerPlanGuard` in
+  `src/features/plan/planService.ts` for the canonical pattern and
+  `src/features/toolExecutor/internal/participants.ts` for the cross-domain order.
 
 ## Adding a new feature
 

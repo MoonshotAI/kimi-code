@@ -1,14 +1,16 @@
 import { type Event } from '#/_base/event';
-import { setup } from 'xstate';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
-import { LoopControlToken } from './internal/loop';
+import { fromCallback, setup } from 'xstate';
+import { IConfigService } from '#/app/config/config';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
 import { AgentLoopLogic } from './internal/loopLogic';
+import { AgentStepRetry } from './internal/stepRetry';
+import { AgentLoopContinuation } from './internal/loopContinuation';
 import { registerLoopControl, type LoopDurableState } from './internal/access';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '#/features/loop/turnOps';
 import { AgentLoop, type LoopRuntime } from './loop';
@@ -16,11 +18,34 @@ import type { LoopResult, LoopStatus, TurnEndedEvent, TurnStartedEvent } from '.
 
 class AgentLoopRuntime implements LoopRuntime {
   private readonly loop: AgentLoopLogic;
+  private readonly stepRetry: AgentStepRetry;
+  private readonly continuation: AgentLoopContinuation;
   private lastResult: LoopResult = { status: 'idle' };
 
   constructor(private readonly context: AgentRuntimeContext<LoopDurableState>) {
-    this.loop = context.get(LoopControlToken) as unknown as AgentLoopLogic;
+    const host = context.get(IAgentHostService).of(context.agent);
+    this.loop = new AgentLoopLogic(
+      context.get(IAgentLifecycleService),
+      context.get(IConfigService),
+      host.dispatcher,
+      host.scopeContext,
+      host.telemetry,
+      host.telemetryContext,
+      host.state,
+    );
     registerLoopControl(context.agent, this.loop, () => context.getState());
+    this.stepRetry = new AgentStepRetry(
+      this.loop,
+      context.get(IConfigService),
+      host.eventBus,
+      host.dispatcher,
+      host.scopeContext,
+      host.state,
+    );
+    this.continuation = new AgentLoopContinuation(this.loop);
+    const bucket = loopLogicDisposalBuckets.get(context.agent) ?? [];
+    bucket.push(this.continuation, this.stepRetry, this.loop);
+    loopLogicDisposalBuckets.set(context.agent, bucket);
     this.loop.onDidEndTurn(({ result }) => {
       this.lastResult = { status: result.type === 'completed' ? 'settled' : result.type === 'cancelled' ? 'cancelled' : 'idle' };
     });
@@ -86,17 +111,34 @@ interface LoopCommitEvent {
   readonly state: LoopDurableState;
 }
 
+const loopLogicHost = fromCallback(
+  ({ input }: { input: AgentRuntimeContext<unknown> }) => {
+    return () => {
+      const bucket = loopLogicDisposalBuckets.get(input.agent) ?? [];
+      loopLogicDisposalBuckets.delete(input.agent);
+      for (const control of bucket.reverse()) control.dispose();
+    };
+  },
+);
+
+const loopLogicDisposalBuckets = new WeakMap<object, Array<{ dispose(): void }>>();
+
 const loopActorLogic = setup({
   types: {} as {
     context: LoopActorContext;
     input: AgentRuntimeContext<unknown>;
     events: AgentRuntimeRestoreEvent | LoopCommitEvent;
   },
+  actors: { loopLogicHost },
 }).createMachine({
   context: ({ input }) => ({
     runtime: input,
     state: { nextTurnId: 0, cancelledTurnIds: [] },
   }),
+  invoke: {
+    src: loopLogicHost,
+    input: ({ context }) => context.runtime,
+  },
   on: {
     'loop.commit': {
       actions: ({ context, event }) => {
@@ -137,11 +179,3 @@ export const loopAgentRuntimeProvider = defineAgentRuntimeProvider<LoopDurableSt
   },
   createApi: (context) => new AgentLoopRuntime(context),
 });
-
-registerScopedService(
-  LifecycleScope.Agent,
-  LoopControlToken,
-  AgentLoopLogic,
-  ScopeActivation.OnScopeCreated,
-  'loop-control',
-);

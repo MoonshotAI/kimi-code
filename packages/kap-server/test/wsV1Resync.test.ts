@@ -7,6 +7,7 @@ import {
   IEventBus,
   IAgentLifecycleService,
   getLiveSessionById,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -138,7 +139,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.handleOf('main') === undefined) {
+    if (agents.get('main') === undefined) {
       await agents.create({ agentId: 'main' });
     }
   }
@@ -151,9 +152,9 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    const main = agents.handleOf('main');
+    const main = agents.get('main');
     expect(main).toBeDefined();
-    main!.accessor.get(IEventBus).publish(event);
+    session!.accessor.get(IAgentHostService).of(main!).eventBus.publish(event);
   }
 
   it('server_hello then client_hello ack with accepted subscription', async () => {
@@ -252,7 +253,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     await agents.create({ agentId: 'agent-0' });
-    const sub = agents.handleOf('agent-0')!;
+    const sub = agents.get('agent-0')!;
 
     const c = await openConn(wsUrl, server!.authTokenService.getToken());
     await c.next((f) => f.type === 'server_hello');
@@ -267,11 +268,9 @@ describe('server-v2 /api/v1/ws resync', () => {
     });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    agents.handleOf('main')!
-      .accessor.get(IEventBus)
+    session!.accessor.get(IAgentHostService).of(agents.get('main')!).eventBus
       .publish({ type: 'turn.ended', turnId: 1 } as unknown as Event2<any>);
-    sub.accessor
-      .get(IEventBus)
+    session!.accessor.get(IAgentHostService).of(sub).eventBus
       .publish({ type: 'turn.ended', turnId: 2 } as unknown as Event2<any>);
 
     const ev = await c.next((f) => f.type === 'turn.ended');

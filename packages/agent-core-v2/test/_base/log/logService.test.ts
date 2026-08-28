@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -22,6 +21,7 @@ import {
   resolveLoggingConfig,
 } from '#/_base/log/logConfig';
 import { AppLogService, BoundLogger } from '#/_base/log/logService';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 describe('BoundLogger', () => {
   let sink: MemoryLogWriter;

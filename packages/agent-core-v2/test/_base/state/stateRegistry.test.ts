@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -16,8 +15,8 @@ import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+const LifecycleScope = { App: 'app', Session: 'session' } as const;
 
 describe('StateRegistry', () => {
   const countKey = defineState('test.count', () => 0);
@@ -246,13 +245,6 @@ describe('state services (scoped)', () => {
       ScopeActivation.OnScopeCreated,
       'state',
     );
-    registerScopedService(
-      LifecycleScope.Agent,
-      IAgentStateService,
-      AgentStateService,
-      ScopeActivation.OnScopeCreated,
-      'state',
-    );
     host = createScopedTestHost();
   });
 
@@ -261,29 +253,29 @@ describe('state services (scoped)', () => {
   function createChain() {
     const workspace = host.app;
     const session = host.childOf(workspace, LifecycleScope.Session, 's1');
-    const agent = host.childOf(session, LifecycleScope.Agent, 'main');
-    return { workspace, session, agent };
+    const otherSession = host.childOf(workspace, LifecycleScope.Session, 's2');
+    return { workspace, session, otherSession };
   }
 
   it('resolves a distinct state service per scope tier', () => {
     const appState = host.app.accessor.get(IAppStateService);
-    const { workspace, session, agent } = createChain();
+    const { workspace, session, otherSession } = createChain();
     const workspaceState = workspace.accessor.get(IWorkspaceStateService);
     const sessionState = session.accessor.get(ISessionStateService);
-    const agentState = agent.accessor.get(IAgentStateService);
+    const otherSessionState = otherSession.accessor.get(ISessionStateService);
     expect(appState).not.toBe(workspaceState);
     expect(workspaceState).not.toBe(sessionState);
-    expect(sessionState).not.toBe(agentState);
+    expect(sessionState).not.toBe(otherSessionState);
   });
 
   it('keeps registered state invisible to sibling scope tiers', () => {
     const sessionKey = defineState('test.sessionOnly', () => 'seed');
-    const { workspace, session, agent } = createChain();
+    const { workspace, session, otherSession } = createChain();
     const sessionState = session.accessor.get(ISessionStateService);
     sessionState.contributeState(sessionKey);
     sessionState.set(sessionKey, 'live');
     expect(sessionState.get(sessionKey)).toBe('live');
-    expect(agent.accessor.get(IAgentStateService).has(sessionKey)).toBe(false);
+    expect(otherSession.accessor.get(ISessionStateService).has(sessionKey)).toBe(false);
     expect(workspace.accessor.get(IWorkspaceStateService).has(sessionKey)).toBe(false);
     expect(host.app.accessor.get(IAppStateService).has(sessionKey)).toBe(false);
   });
@@ -307,9 +299,10 @@ describe('state services (scoped)', () => {
   it('cascades inspect from the agent tier to the session state', () => {
     const sessionKey = defineState('test.sessionCascade', () => 's');
     const agentKey = defineState('test.agentOnly', () => 'g');
-    const { session, agent } = createChain();
-    session.accessor.get(ISessionStateService).contributeState(sessionKey);
-    const agentState = agent.accessor.get(IAgentStateService);
+    const { session } = createChain();
+    const sessionState = session.accessor.get(ISessionStateService);
+    sessionState.contributeState(sessionKey);
+    const agentState = new AgentStateService(sessionState);
     agentState.contributeState(agentKey);
 
     expect(agentState.inspect()).toEqual({

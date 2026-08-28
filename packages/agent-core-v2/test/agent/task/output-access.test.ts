@@ -6,7 +6,8 @@ import { join } from 'pathe';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentTaskService } from '#/agent/task/task';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
@@ -87,7 +88,7 @@ async function waitForTaskNotifications(
     expect(delivered).toBeGreaterThanOrEqual(tasks.length);
   });
   await vi.waitFor(() => {
-    const loop = ctx.get(LoopControlToken);
+    const loop = getLoopControl(ctx.agentContext);
     expect(loop.status().state).toBe('idle');
     expect(loop.hasPendingRequests()).toBe(false);
   });

@@ -4,14 +4,14 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { loadAgentsMdDetailed } from '#/features/profile/profileContext';
-import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { ISessionAgentsMdReminderService } from '#/agent/agentsMdReminder/sessionAgentsMdReminderService';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
@@ -29,11 +29,15 @@ export class SessionInitService implements ISessionInitService {
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
+    @ISessionAgentsMdReminderService private readonly agentsMdReminder: ISessionAgentsMdReminderService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
+    @ISessionPermissionModeService private readonly permissionModes: ISessionPermissionModeService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @ISessionTokenCountingService private readonly tokenCounting?: ISessionTokenCountingService,
   ) {}
 
   cancelInit(): void {
@@ -41,7 +45,7 @@ export class SessionInitService implements ISessionInitService {
   }
 
   async generateAgentsMd(): Promise<void> {
-    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
@@ -49,13 +53,12 @@ export class SessionInitService implements ISessionInitService {
     const controller = new AbortController();
     this.initRun = controller;
     try {
-      const own = this.agentLifecycle.resolve(agentContextOf(main), AgentProfile).data();
+      const own = this.agentLifecycle.resolve(main, AgentProfile).data();
       if (own.modelAlias === undefined) {
         throw new Error2(ErrorCodes.SESSION_INIT_FAILED, 'Main agent has no model bound');
       }
-      const permissionMode = main.accessor
-        .get(ISessionPermissionModeService)
-        .mode(agentContextOf(main));
+      const bundle = this.hosts.of(main);
+      const permissionMode = this.permissionModes.mode(main);
 
       const childContext = await this.agentLifecycle.create({
         binding: {
@@ -64,10 +67,14 @@ export class SessionInitService implements ISessionInitService {
           thinking: own.thinkingLevel,
         },
       });
-      const child = this.agentLifecycle.handleOf(childContext.agentId)!;
-      child.accessor.get(ISessionPermissionModeService).setMode(agentContextOf(child), permissionMode);
+      this.permissionModes.setMode(childContext, permissionMode);
 
-      emitAgentRunSpawned(main, child.id, {
+      const mirrorServices = {
+        agentLifecycle: this.agentLifecycle,
+        subagents: this.subagents,
+        tokenCounting: this.tokenCounting,
+      };
+      emitAgentRunSpawned(this.hosts, mirrorServices, main, childContext.agentId, {
         profileName: INIT_PROFILE_NAME,
         parentToolCallId: INIT_PARENT_TOOL_CALL_ID,
         description: INIT_DESCRIPTION,
@@ -76,11 +83,11 @@ export class SessionInitService implements ISessionInitService {
       });
 
       const run = await this.subagents.run(
-        agentContextOf(child),
+        childContext,
         { kind: 'prompt', prompt: DEFAULT_INIT_PROMPT },
         { signal: controller.signal },
       );
-      await mirrorAgentRun(main, run, {
+      await mirrorAgentRun(this.hosts, mirrorServices, main, run, {
         profileName: INIT_PROFILE_NAME,
         prompt: DEFAULT_INIT_PROMPT,
         signal: controller.signal,
@@ -92,13 +99,13 @@ export class SessionInitService implements ISessionInitService {
         this.sessionContext.cwd,
         this.bootstrap.homeDir,
       );
-      main.accessor
-        .get(IAgentAgentsMdReminderService)
+      this.agentsMdReminder
+        .of(main)
         .seedInjected(agentsMdPaths, this.sessionContext.cwd);
       this.agentLifecycle
-        .resolve(agentContextOf(main), AgentReminder)
+        .resolve(main, AgentReminder)
         .notify(initCompletionReminder(agentsMd), { variant: 'init' });
-      await main.accessor.get(IEventDispatcher).flush();
+      await bundle.dispatcher.flush();
     } catch (error) {
       if (isUserCancellation(error) || isAbortError(error)) {
         throw error;

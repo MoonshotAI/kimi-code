@@ -5,10 +5,8 @@ import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import {
@@ -165,7 +163,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   constructor(
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentScopeContext private readonly agentScope: IAgentScopeContext | undefined,
+    private readonly agentScope: IAgentScopeContext | undefined,
     @IAgentBlobService private readonly blobService: IAgentBlobService,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @EventStateContribution view: CollectionView<EventStateContributionRecord>,
@@ -638,10 +636,3 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IEventDispatcher,
-  EventDispatcherService,
-  ScopeActivation.OnScopeCreated,
-  'state',
-);

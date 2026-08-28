@@ -11,7 +11,6 @@ import {
   ISessionMetadata,
   TOWER_FLAG_ID,
   followSessionLifecycles,
-  agentContextOf,
   getLiveSessionById,
   isTowerFeatureAssembled,
   isUndoAnchor,
@@ -320,10 +319,10 @@ export class TranscriptService {
     const agent =
       session === undefined
         ? undefined
-        : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+        : session.accessor.get(IAgentLifecycleService).get(agentId);
     const status = agent === undefined
       ? undefined
-      : agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status();
+      : session!.accessor.get(IAgentLifecycleService).resolve(agent, AgentLoop).status();
     if (status !== 'running') return undefined;
     const ordinal = snapshot.items.reduce(
       (max, item) => item.kind === 'turn' ? Math.max(max, item.ordinal) : max,
@@ -351,13 +350,12 @@ export class TranscriptService {
   }
 
   private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
-    const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
-      ?.accessor.get(IAgentLifecycleService)
-      .handleOf(agentId);
-    const lifecycle = agent === undefined ? undefined : agent.accessor.get(IAgentLifecycleService);
+    const lifecycle = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService);
+    const agent = lifecycle?.get(agentId);
     const queue = agent === undefined || lifecycle === undefined
       ? undefined
-      : lifecycle.resolve(agentContextOf(agent), AgentPrompt).list();
+      : lifecycle.resolve(agent, AgentPrompt).list();
     if (queue === undefined) return [];
     const ops: TranscriptOperation[] = [];
     if (queue.active !== undefined) {
@@ -514,12 +512,12 @@ export class TranscriptService {
       sawTurnPrompt ? { taskOriginTurnTaskIds } : undefined,
     );
     const folded = foldWireRecordFacts(records, base);
-    const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
-      ?.accessor.get(IAgentLifecycleService)
-      .handleOf(agentId);
-    const status = agent === undefined
+    const lifecycle = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService);
+    const agent = lifecycle?.get(agentId);
+    const status = agent === undefined || lifecycle === undefined
       ? undefined
-      : agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status();
+      : lifecycle.resolve(agent, AgentLoop).status();
     const activity: ActivityMeta = status === 'running' ? 'turn' : 'idle';
     const snapshot = { ...folded, meta: { ...folded.meta, activity } };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;

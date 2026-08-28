@@ -5,7 +5,7 @@ import type { IAgentPlanService, PlanData } from '#/features/plan/plan';
 import { EnterPlanModeTool } from '#/features/plan/tools/enter-plan-mode/enterPlanModeTool';
 import { type ExitPlanModeInput } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { type IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';

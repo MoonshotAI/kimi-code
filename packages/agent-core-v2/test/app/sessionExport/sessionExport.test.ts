@@ -27,8 +27,7 @@ import {
   type ServiceRegistration,
   type TestInstantiationService,
 } from '#/_base/di/test';
-import { LifecycleScope } from '#/app/scopes';
-import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import { type ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
 import { IWireService } from '#/wire/wire';
@@ -54,7 +53,10 @@ import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/se
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const fsOpenHook = vi.hoisted(() => ({
   afterOpen: undefined as ((path: string, handle: FileHandle) => Promise<void>) | undefined,
@@ -937,8 +939,9 @@ function liveSessionHandle(options: {
   readonly sessionLog: LogService;
   readonly agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>;
 }): ISessionScopeHandle {
-  const agentHandle = testAgentHandle(options.agentWire);
-  const lifecycle = stubAgentLifecycle([agentHandle]);
+  const agentHost = testAgentHost(options.agentWire);
+  const lifecycle = stubAgentLifecycle([agentHost.agent]);
+  const hosts = stubAgentHosts([agentHost]);
   return {
     id: options.meta.id,
     kind: LifecycleScope.Session,
@@ -946,18 +949,39 @@ function liveSessionHandle(options: {
       [ISessionMetadata, stubSessionMetadata(options.meta)],
       [ILogService, options.sessionLog],
       [IAgentLifecycleService, lifecycle],
+      [IAgentHostService, hosts],
     ]),
     dispose: () => {},
   };
 }
 
-function testAgentHandle(agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>): IAgentScopeHandle {
+function testAgentHost(agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>): {
+  readonly agent: string;
+  readonly wire: ReturnType<typeof stubAgentWire>;
+} {
+  return { agent: 'main', wire: stubAgentWire(agentWire.flush) };
+}
+
+function stubAgentHosts(
+  agents: ReadonlyArray<{ readonly agent: string; readonly wire: unknown }>,
+): IAgentHostService {
   return {
-    id: 'main',
-    kind: LifecycleScope.Agent,
-    accessor: accessorFrom([[IWireService, stubAgentWire(agentWire.flush)]]),
-    dispose: () => {},
-  };
+    _serviceBrand: undefined,
+    of: (agent: AgentContext) => {
+      const entry = agents.find((a) => a.agent === agent.agentId);
+      if (entry === undefined) throw new Error(`missing host for ${agent.agentId}`);
+      return { wire: entry.wire } as never;
+    },
+    tryOf: (agent: AgentContext) => {
+      const entry = agents.find((a) => a.agent === agent.agentId);
+      if (entry === undefined) return undefined;
+      return { wire: entry.wire } as never;
+    },
+    create: () => {
+      throw new Error('not implemented');
+    },
+    release: () => {},
+  } as unknown as IAgentHostService;
 }
 
 function accessorFrom(
@@ -988,18 +1012,17 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
   };
 }
 
-function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecycleService {
+function stubAgentLifecycle(agents: readonly string[]): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
     onDidCreate: noopEvent,
-    onDidCreateScope: noopEvent,
     onWillClose: noopEvent,
     onDidClose: noopEvent,
-    create: async () => stubAgentContext(agents[0]!.id, 1),
-    fork: async () => stubAgentContext(agents[0]!.id, 1),
+    create: async () => stubAgentContext(agents[0]!, 1),
+    fork: async () => stubAgentContext(agents[0]!, 1),
     get: (agentId: string) =>
-      agents.some((agent) => agent.id === agentId) ? stubAgentContext(agentId, 1) : undefined,
-    list: () => agents.map((agent) => stubAgentContext(agent.id, 1)),
+      agents.some((id) => id === agentId) ? stubAgentContext(agentId, 1) : undefined,
+    list: () => agents.map((id) => stubAgentContext(id, 1)),
     resolve: () => {
       throw new Error('unexpected resolve');
     },
@@ -1008,8 +1031,6 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     },
     remove: async () => {},
     broadcastPermissionMode: () => {},
-    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
-    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
     attachRuntimes: () => {},
   };
 }

@@ -15,14 +15,30 @@
  */
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
-import type { IAgentScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { ISessionMcpHandle } from '@moonshot-ai/agent-core-v2/session/mcp/sessionMcpHandle';
-import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '@moonshot-ai/agent-core-v2/agent/host/agentHost';
+import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
+import { ISessionPlanService } from '@moonshot-ai/agent-core-v2/features/plan/sessionPlanService';
+import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
+import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
+import { ISessionCommandService } from '@moonshot-ai/agent-core-v2/agent/command/sessionCommandService';
+import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
+import { ISessionShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/sessionShellCommandService';
+import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
+import { IAgentTowerService } from '@moonshot-ai/agent-core-v2/features/tower/tower';
+import { ISessionTowerService } from '@moonshot-ai/agent-core-v2/features/tower/sessionTowerService';
+import { IAgentPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
+import { ISessionPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/sessionPluginCommandService';
+import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
+import { ISessionSwarmAgentService } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmAgentService';
+import type { AgentContext } from '@moonshot-ai/agent-core-v2/agent/agentContext/agentContext';
 import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
 import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
@@ -51,6 +67,16 @@ import {
   respondSessionInteraction,
 } from '@moonshot-ai/agent-core-v2/features/interaction/sessionInteractions';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '@moonshot-ai/agent-core-v2/app/telemetry/agentTelemetryContext';
+import { IAgentBlobService } from '@moonshot-ai/agent-core-v2/agent/blob/agentBlobService';
+import { IAgentContextProjectorService } from '@moonshot-ai/agent-core-v2/agent/contextProjector/contextProjector';
+import type { AgentHost } from '@moonshot-ai/agent-core-v2/agent/host/agentHost';
+import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
+import { IAgentRuntimeService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/agentRuntime';
+import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
+import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
+import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import type {
   FileMeta,
   GetResult,
@@ -70,6 +96,60 @@ export interface ScopeLike {
   readonly accessor: {
     get<T>(id: ServiceIdentifier<T>): T;
   };
+}
+
+function agentHostMember(host: AgentHost, id: ServiceIdentifier<unknown>): unknown {
+  switch (id) {
+    case IAgentBlobService:
+      return host.blob;
+    case IWireService:
+      return host.wire;
+    case IAgentStateService:
+      return host.state;
+    case IEventBus:
+      return host.eventBus;
+    case IEventDispatcher:
+      return host.dispatcher;
+    case ITelemetryService:
+      return host.telemetry;
+    case IAgentTelemetryContextService:
+      return host.telemetryContext;
+    case IAgentRuntimeBindingService:
+      return host.runtimeBinding;
+    case IAgentRuntimeService:
+      return host.agentRuntime;
+    case IAgentContextProjectorService:
+      return host.contextProjector;
+    default:
+      return undefined;
+  }
+}
+
+function shellService(
+  session: ScopeLike,
+  agent: AgentContext,
+  id: ServiceIdentifier<unknown>,
+): unknown {
+  switch (id) {
+    case IAgentPlanService:
+      return session.accessor.get(ISessionPlanService).of(agent);
+    case IAgentTaskService:
+      return session.accessor.get(ISessionTaskService).of(agent);
+    case IAgentCommandService:
+      return session.accessor.get(ISessionCommandService).of(agent);
+    case IAgentShellCommandService:
+      return session.accessor.get(ISessionShellCommandService).of(agent);
+    case IAgentActivityView:
+      return session.accessor.get(ISessionActivityViewService).of(agent);
+    case IAgentTowerService:
+      return session.accessor.get(ISessionTowerService).of(agent);
+    case IAgentPluginCommandService:
+      return session.accessor.get(ISessionPluginCommandService).of(agent);
+    case IAgentSwarmService:
+      return session.accessor.get(ISessionSwarmAgentService).of(agent);
+    default:
+      return undefined;
+  }
 }
 
 /** JSON round-trip so in-process data matches wire data exactly. */
@@ -110,9 +190,9 @@ function interactionServiceView(session: ScopeLike): Record<string, unknown> {
  * kernel into a per-agent runtime: the view forwards to the agent's resolved
  * `AgentSkill` facade through the session's agent lifecycle.
  */
-function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+function agentSkillServiceView(agent: AgentScopeLike): Record<string, unknown> {
   const manager = agent.accessor.get(IAgentLifecycleService);
-  const skill = () => manager.resolve(agentContextOf(agent), AgentSkill);
+  const skill = () => manager.resolve(agent.context, AgentSkill);
   return {
     activate: (input: SkillActivationInput) => skill().activate(input),
     promptWithSkills: (input: PromptWithSkillsInput) => skill().promptWithSkills(input),
@@ -128,9 +208,9 @@ function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown
  * `AgentPrompt` facade through the session's agent lifecycle, keeping the
  * legacy `submit` / `submitSteer` payloads and `{ turn_id }` results.
  */
-function agentPromptServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+function agentPromptServiceView(agent: AgentScopeLike): Record<string, unknown> {
   const manager = agent.accessor.get(IAgentLifecycleService);
-  const prompt = () => manager.resolve(agentContextOf(agent), AgentPrompt);
+  const prompt = () => manager.resolve(agent.context, AgentPrompt);
   const launchResult = (result: PromptSubmitResult): { turn_id: number } | undefined =>
     result.turnId === undefined ? undefined : { turn_id: result.turnId };
   return {
@@ -159,9 +239,9 @@ function agentPromptServiceView(agent: IAgentScopeHandle): Record<string, unknow
  * context history into a per-agent runtime: the view forwards to the agent's
  * resolved `AgentContextMemory` facade through the session's agent lifecycle.
  */
-function agentContextMemoryServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+function agentContextMemoryServiceView(agent: AgentScopeLike): Record<string, unknown> {
   const manager = agent.accessor.get(IAgentLifecycleService);
-  const memory = () => manager.resolve(agentContextOf(agent), AgentContextMemory);
+  const memory = () => manager.resolve(agent.context, AgentContextMemory);
   return {
     get: () => memory().get(),
   };
@@ -172,9 +252,9 @@ function agentContextMemoryServiceView(agent: IAgentScopeHandle): Record<string,
  * kernel into a per-agent runtime: the view forwards to the agent's resolved
  * `AgentProfile` facade through the session's agent lifecycle.
  */
-function agentProfileServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+function agentProfileServiceView(agent: AgentScopeLike): Record<string, unknown> {
   const manager = agent.accessor.get(IAgentLifecycleService);
-  const profile = () => manager.resolve(agentContextOf(agent), AgentProfile);
+  const profile = () => manager.resolve(agent.context, AgentProfile);
   return {
     getModel: () => profile().model(),
     setModel: (model: string) => profile().setModel(model),
@@ -190,7 +270,7 @@ function agentProfileServiceView(agent: IAgentScopeHandle): Record<string, unkno
  * MCP service: the view projects the session's shared MCP connection manager
  * (Session scope) so the `list` payload stays byte-identical.
  */
-function agentMcpServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+function agentMcpServiceView(agent: AgentScopeLike): Record<string, unknown> {
   return {
     list: () => agent.accessor.get(ISessionMcpHandle).connectionManager.list(),
   };
@@ -267,9 +347,14 @@ function rethrowMcpManagementErrorAsRpc(error: unknown): never {
 
 type ScopeKind = 'core' | 'workspace' | 'session' | 'agent';
 
+interface AgentScopeLike extends ScopeLike {
+  readonly kind: 'agent';
+  readonly context: AgentContext;
+}
+
 interface ResolvedScope {
   readonly kind: ScopeKind;
-  readonly like: ScopeLike;
+  readonly like: ScopeLike | AgentScopeLike;
 }
 
 /** Structural view of the engine's `IFileService` used by the wire adaptation. */
@@ -296,17 +381,30 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     if (scope.agentId === undefined) return { kind: 'session', like: session };
     if (scope.agentId === 'main') {
       const context = await ensureMainAgent(session);
-      const handle = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
-      if (handle === undefined) {
-        throw new RPCError(NOT_FOUND, 'main agent was not found');
-      }
-      return { kind: 'agent', like: handle };
+      return { kind: 'agent', like: syntheticAgentScope(session, context) };
     }
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(scope.agentId);
+    const agent = session.accessor.get(IAgentLifecycleService).get(scope.agentId);
     if (agent === undefined) {
       throw new RPCError(NOT_FOUND, `agent not found: ${scope.agentId}`);
     }
-    return { kind: 'agent', like: agent };
+    return { kind: 'agent', like: syntheticAgentScope(session, agent) };
+  }
+
+  function syntheticAgentScope(session: ScopeLike, agent: AgentContext): AgentScopeLike {
+    return {
+      kind: 'agent',
+      context: agent,
+      accessor: {
+        get: <T>(id: never): T => {
+          const host = session.accessor.get(IAgentHostService).of(agent);
+          const member = agentHostMember(host, id as unknown as ServiceIdentifier<unknown>);
+          if (member !== undefined) return member as T;
+          const shell = shellService(session, agent, id as unknown as ServiceIdentifier<unknown>);
+          if (shell !== undefined) return shell as T;
+          return session.accessor.get(id as unknown as ServiceIdentifier<T>);
+        },
+      },
+    };
   }
 
   function resolveService(resolved: ResolvedScope, service: string): Record<string, unknown> {
@@ -320,32 +418,32 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      return agentSkillServiceView(resolved.like as IAgentScopeHandle);
+      return agentSkillServiceView(resolved.like as AgentScopeLike);
     }
     if (service === 'agentContextMemoryService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      return agentContextMemoryServiceView(resolved.like as IAgentScopeHandle);
+      return agentContextMemoryServiceView(resolved.like as AgentScopeLike);
     }
     if (service === 'agentProfileService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      return agentProfileServiceView(resolved.like as IAgentScopeHandle);
+      return agentProfileServiceView(resolved.like as AgentScopeLike);
     }
     if (service === 'agentPromptService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      return agentPromptServiceView(resolved.like as IAgentScopeHandle);
+      return agentPromptServiceView(resolved.like as AgentScopeLike);
     }
     if (service === 'agentLoopService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      const agent = resolved.like as IAgentScopeHandle;
-      const runtime = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop);
+      const agent = resolved.like as AgentScopeLike;
+      const runtime = agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentLoop);
       return {
         cancelFromUser: () => runtime.cancelByUser(),
         status: () => runtime.status(),
@@ -355,12 +453,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      const agent = resolved.like as IAgentScopeHandle;
+      const agent = resolved.like as AgentScopeLike;
       const runtime = agent.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentFullCompaction);
+        .resolve(agent.context, AgentFullCompaction);
       return {
-        begin: ([input]: [{ source?: 'manual' | 'auto'; instruction?: string }]) => {
+        begin: (input: { source?: 'manual' | 'auto'; instruction?: string }) => {
           const already = runtime.status() === 'running';
           return runtime.begin(input).then(() => !already);
         },
@@ -370,7 +468,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
-      return agentMcpServiceView(resolved.like as IAgentScopeHandle);
+      return agentMcpServiceView(resolved.like as AgentScopeLike);
     }
     const token = serviceTokens[service];
     if (token === undefined) {
@@ -480,7 +578,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       const clonedArgs = args.map(wireClone);
       const callArgs = AGENT_CONTEXT_SERVICES.has(service)
-        ? [agentContextOf(resolved.like as IAgentScopeHandle), ...clonedArgs]
+        ? [(resolved.like as AgentScopeLike).context, ...clonedArgs]
         : clonedArgs;
       try {
         const result = await (member as (...a: unknown[]) => unknown).apply(instance, callArgs);

@@ -1,8 +1,8 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentTodo, type TodoRuntime } from '#/features/todo/todoAgentRuntime';
 import {
   TODO_LIST_TOOL_NAME,
@@ -27,8 +27,8 @@ export class TodoListTool implements ITodoListTool {
   private readonly todo: TodoRuntime;
 
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentScopeContext scope: IAgentScopeContext,
+    manager: IAgentLifecycleService,
+    scope: IAgentScopeContext,
   ) {
     this.todo = manager.resolve(scope.agentContext, AgentTodo);
   }

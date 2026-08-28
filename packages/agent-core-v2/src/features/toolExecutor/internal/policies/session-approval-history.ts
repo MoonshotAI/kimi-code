@@ -1,7 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
@@ -11,8 +11,8 @@ export class SessionApprovalHistoryPermissionPolicyService implements Permission
   readonly name = 'session-approval-history';
 
   constructor(
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly agentLifecycle: IAgentLifecycleService,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {

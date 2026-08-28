@@ -37,7 +37,7 @@ describe('check-import-boundaries', () => {
 
   it('allows arbitrary cross-domain imports outside kosong', () => {
     const violations = checkSource(
-      `import { LoopControlToken } from '#/features/loop/internal/loop';`,
+      `import type { LoopControl } from '#/features/loop/internal/loop';`,
       at('log', 'log.ts'),
     );
     expect(violations).toHaveLength(0);

@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentCacheProbeService } from '#/agent/usage/cacheProbeService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -23,6 +23,7 @@ import {
   attachUsageRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 
@@ -40,12 +41,13 @@ beforeEach(() => {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), {
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, KEY));
+  registerTestAgentWire(ix, agentScope, {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
-  const dispatcher = registerTestEventDispatcher(ix);
-  const runtimes = attachUsageRuntime(ix, dispatcher);
+  const dispatcher = registerTestEventDispatcher(ix, agentScope);
+  const runtimes = attachUsageRuntime(ix, dispatcher, agentScope.agentContext);
   ix.stub(IAgentLifecycleService, {
     resolve: (_agent: unknown, definition: unknown) => {
       if (definition !== AgentUsage) throw new Error('unexpected resolve');
@@ -54,7 +56,7 @@ beforeEach(() => {
   } as unknown as IAgentLifecycleService);
   ix.set(ISessionUsageService, new SyncDescriptor(SessionUsageService));
   svc = ix.get(ISessionUsageService);
-  agent = ix.get(IAgentScopeContext).agentContext;
+  agent = agentScope.agentContext;
 });
 
 afterEach(() => disposables.dispose());
@@ -64,7 +66,7 @@ const a2 = { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation:
 const b1 = { inputOther: 100, output: 200, inputCacheRead: 300, inputCacheCreation: 400 };
 
 describe('AgentCacheProbeService', () => {
-  function stubProbeDeps(forkedFrom: string | undefined): ReturnType<typeof vi.fn> {
+  function stubProbeDeps(): ReturnType<typeof vi.fn> {
     const track2 = vi.fn();
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -77,16 +79,21 @@ describe('AgentCacheProbeService', () => {
         return { id: alias, protocol: 'anthropic', providerType: 'kimi' } as unknown as Model;
       },
     } as unknown as IModelCatalog);
-    ix.stub(
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: 'test-agent', agentScope: '', forkedFrom }),
-    );
     return track2;
   }
 
+  function createCacheProbe(forkedFrom: string | undefined): AgentCacheProbeService {
+    return new AgentCacheProbeService(
+      ix.get(ISessionUsageService),
+      makeAgentScopeContext({ agentId: 'test-agent', agentScope: '', forkedFrom }),
+      ix.get(ITelemetryService),
+      ix.get(IModelCatalog),
+    );
+  }
+
   it('probes the first turn request of a forked agent', async () => {
-    const track2 = stubProbeDeps('main');
-    disposables.add(ix.createInstance(AgentCacheProbeService));
+    const track2 = stubProbeDeps();
+    disposables.add(createCacheProbe('main'));
 
     await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
 
@@ -104,8 +111,8 @@ describe('AgentCacheProbeService', () => {
   });
 
   it('probes only once', async () => {
-    const track2 = stubProbeDeps('main');
-    disposables.add(ix.createInstance(AgentCacheProbeService));
+    const track2 = stubProbeDeps();
+    disposables.add(createCacheProbe('main'));
 
     await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
     await svc.record(agent, 'model-a', a2, { type: 'turn', turnId: 2 });
@@ -114,8 +121,8 @@ describe('AgentCacheProbeService', () => {
   });
 
   it('stays silent for a non-forked agent', async () => {
-    const track2 = stubProbeDeps(undefined);
-    disposables.add(ix.createInstance(AgentCacheProbeService));
+    const track2 = stubProbeDeps();
+    disposables.add(createCacheProbe(undefined));
 
     await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
 
@@ -123,8 +130,8 @@ describe('AgentCacheProbeService', () => {
   });
 
   it('stays silent when the first record is not a turn request', async () => {
-    const track2 = stubProbeDeps('main');
-    disposables.add(ix.createInstance(AgentCacheProbeService));
+    const track2 = stubProbeDeps();
+    disposables.add(createCacheProbe('main'));
 
     await svc.record(agent, 'model-a', a1);
     await svc.record(agent, 'model-a', a2, { type: 'turn', turnId: 1 });
@@ -133,8 +140,8 @@ describe('AgentCacheProbeService', () => {
   });
 
   it('probes without provider fields when the model alias is unknown', async () => {
-    const track2 = stubProbeDeps('main');
-    disposables.add(ix.createInstance(AgentCacheProbeService));
+    const track2 = stubProbeDeps();
+    disposables.add(createCacheProbe('main'));
 
     await svc.record(agent, 'model-b', b1, { type: 'turn', turnId: 1 });
 

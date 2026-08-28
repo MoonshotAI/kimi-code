@@ -5,10 +5,11 @@ import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contex
 import { newMessageId } from '#/features/contextMemory/messageId';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/features/contextMemory/types';
 import { AgentFullCompaction, type FullCompactionRuntime } from '#/features/fullCompaction/fullCompactionAgentRuntime';
-import { LoopControlToken, type Turn, type TurnResult } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
+import { IAgentHostService, type AgentHost } from '#/agent/host/agentHost';
+import type { LoopControl, Turn, TurnResult } from '#/features/loop/internal/loop';
 import { TurnSteer } from '#/features/loop/turnOps';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
@@ -19,9 +20,7 @@ import type { ContentPart } from '#/kosong/contract/message';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
-import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -117,10 +116,14 @@ export class PromptDomain {
 
   constructor(private readonly runtime: AgentRuntimeContext<ReadonlySet<string>>) {}
 
+  private get host(): AgentHost {
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent);
+  }
+
   attach(): IDisposable {
     const registration = activateToolExecutorWhenReady(
       this.runtime.get(IAgentLifecycleService),
-      this.runtime.get(IAgentScopeContext),
+      this.host.scopeContext,
       (executor) =>
         executor.registerDidExecuteHook('prompt-service-delivery', async (ctx, next) => {
           await this.deliverToolResult(ctx);
@@ -225,7 +228,7 @@ export class PromptDomain {
   }
 
   private async submitSteer(input: PromptSubmitInput): Promise<PromptSubmitResult> {
-    this.runtime.get(ITelemetryService).track2('input_steer', { parts: input.content.length });
+    this.host.telemetry.track2('input_steer', { parts: input.content.length });
     await this.updatePromptMetadata(promptMetadataTextFromContentParts(input.content));
     const queued = await this.enqueue({ message: {
       role: 'user',
@@ -331,7 +334,7 @@ export class PromptDomain {
       this.pending.splice(index, 1);
     }
     const request = new SteerStepRequest(rerouted, captions, this.reminder(), (materialized) => {
-      void this.runtime.get(IEventDispatcher).dispatch(
+      void this.host.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.agentId,
           input: materialized.content,
@@ -354,7 +357,7 @@ export class PromptDomain {
     }
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
-    void this.runtime.get(IEventDispatcher).dispatch(
+    void this.host.dispatcher.dispatch(
       new PromptSteered({ agentId: this.agentId, activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: selected.flatMap((item) => stripBundledSkillBlocks(item.message)), steeredAt: new Date().toISOString() }),
     );
     return selected.map((item) => item.handle);
@@ -380,7 +383,7 @@ export class PromptDomain {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
     await this.materializeDaemonRefs(rerouted);
     const request = new SteerStepRequest(rerouted, captions, this.reminder(), (materialized) => {
-      void this.runtime.get(IEventDispatcher).dispatch(
+      void this.host.dispatcher.dispatch(
         new TurnSteer({
           agentId: this.agentId,
           input: materialized.content,
@@ -399,8 +402,8 @@ export class PromptDomain {
     void this.context.clear();
   }
 
-  private get loop(): LoopControlToken {
-    return this.runtime.get(LoopControlToken);
+  private get loop(): LoopControl {
+    return getLoopControl(this.runtime.agent);
   }
 
   private async startNext(): Promise<void> {
@@ -486,12 +489,12 @@ export class PromptDomain {
     const { delivery: _delivery, ...rest } = ctx.result; ctx.result = rest as ExecutableToolResult;
     if (delivery.kind === 'steer') await this.inject(delivery.message as ContextMessage);
   }
-  private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { void this.runtime.get(IEventDispatcher).dispatch(new PromptCompleted({ agentId: this.agentId, promptId, finishedAt: new Date().toISOString(), reason })); }
+  private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { void this.host.dispatcher.dispatch(new PromptCompleted({ agentId: this.agentId, promptId, finishedAt: new Date().toISOString(), reason })); }
   private publishQueued(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    void this.runtime.get(IEventDispatcher).dispatch(new PromptQueued({ agentId: this.agentId, promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
+    void this.host.dispatcher.dispatch(new PromptQueued({ agentId: this.agentId, promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
   }
-  private publishAborted(promptId: string): void { void this.runtime.get(IEventDispatcher).dispatch(new PromptAborted({ agentId: this.agentId, promptId, abortedAt: new Date().toISOString() })); }
+  private publishAborted(promptId: string): void { void this.host.dispatcher.dispatch(new PromptAborted({ agentId: this.agentId, promptId, abortedAt: new Date().toISOString() })); }
 }
 
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }

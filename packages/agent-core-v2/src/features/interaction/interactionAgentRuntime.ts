@@ -7,7 +7,7 @@ import {
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
 } from '#/agent/runtime/agentRuntime';
-import { IEventBus } from '#/app/event/eventBus';
+import { IAgentHostService } from '#/agent/host/agentHost';
 
 import {
   type Interaction,
@@ -188,7 +188,7 @@ const interactionEffects = fromCallback(({
     readonly effects: InteractionEffectState;
   };
 }) => {
-  const subscription = input.runtime.get(IEventBus).subscribe(TurnEnded, (e) => {
+  const subscription = input.runtime.get(IAgentHostService).of(input.runtime.agent).eventBus.subscribe(TurnEnded, (e) => {
     cancelTurnPending(input.runtime, input.effects, e.turnId);
   });
   return () => {

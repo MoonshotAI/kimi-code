@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -31,6 +30,7 @@ import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubFlag } from '../flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const WORKSPACE = 'wd_test';
 const GENERATION = 1;

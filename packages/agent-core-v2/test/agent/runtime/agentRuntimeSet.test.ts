@@ -13,7 +13,7 @@ import {
   type DurableAgentRuntimeParticipant,
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import type { DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
+import { IEventDispatcher, type DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 
 const agent: AgentContext = { agentId: 'main', generation: 1 };
@@ -45,7 +45,7 @@ function host<T extends DurableRuntimeParticipantHost['attach']>(
 describe('AgentRuntimeSet', () => {
   it('exposes an opaque definition token while preserving typed resolution', async () => {
     const runtime = record('opaque', () => ({ read: () => 42 }));
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(runtime);
 
     expect(Object.keys(runtime.definition)).toEqual([]);
@@ -68,7 +68,7 @@ describe('AgentRuntimeSet', () => {
       1,
       fromCallback(() => () => { stopped += 1; }),
     );
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(runtime);
 
     expect(() => set.resolve(runtime.definition)).toThrow('runtimeInstance failed');
@@ -87,7 +87,7 @@ describe('AgentRuntimeSet', () => {
       1,
       fromCallback(() => { throw new Error('actor failed'); }),
     );
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(runtime);
     set.resolve(runtime.definition);
     await Promise.resolve();
@@ -100,7 +100,7 @@ describe('AgentRuntimeSet', () => {
 
   it('attaches each durable runtime only once and detaches it on close', async () => {
     const attach = vi.fn(() => ({ dispose: vi.fn() }));
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     const runtime = record('durable', undefined, 1, undefined, {
       events: [],
       undoable: false,
@@ -125,7 +125,7 @@ describe('AgentRuntimeSet', () => {
       rehydrate: (state: string[]) => state,
     };
     let attached: DurableAgentRuntimeParticipant | undefined;
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     const runtime = record('durable-channels', undefined, 1, undefined, {
       events: [],
       undoable: true,
@@ -166,7 +166,7 @@ describe('AgentRuntimeSet', () => {
       logic: fromCallback(() => {}),
       createApi: () => ({}),
     });
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply({ definition: eager, provider: eagerProvider, generation: 1, active: true });
     set.apply({ definition: lazy, provider: lazyProvider, generation: 1, active: true });
 
@@ -211,7 +211,7 @@ describe('AgentRuntimeSet', () => {
         commit: () => {},
       },
     );
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(runtime);
     set.attachDurable(host(vi.fn(() => ({ dispose: vi.fn() }))));
 
@@ -238,7 +238,7 @@ describe('AgentRuntimeSet', () => {
       restored: false,
       status: 'materialized',
     };
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     const restoreEntry = (set as unknown as { restoreEntry(entry: never): Promise<void> }).restoreEntry.bind(set);
 
     const first = restoreEntry(entry as never);
@@ -272,7 +272,7 @@ describe('AgentRuntimeSet', () => {
         commit: (actor, state) => { actor.send({ type: 'commit', value: state }); },
       },
     );
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(runtime);
     set.attachDurable(host(vi.fn((attached: DurableAgentRuntimeParticipant) => {
       participant = attached;
@@ -295,7 +295,7 @@ describe('AgentRuntimeSet', () => {
     const old = record('identity', () => ({ generation: 1 }), 1);
     const current = record('identity', () => ({ generation: 2 }), 2);
     const forged = defineAgentRuntimeContract<{ generation: number }>('identity');
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(old);
 
     expect(set.resolve(old.definition).generation).toBe(1);
@@ -324,7 +324,7 @@ describe('AgentRuntimeSet', () => {
       2,
       fromCallback(() => () => { secondStopped += 1; }),
     );
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply(first);
     set.resolve(first.definition);
     set.retireDefinition(first);
@@ -343,7 +343,7 @@ describe('AgentRuntimeSet', () => {
       id: 'stateless',
       createApi: () => ({ read: () => 7 }),
     });
-    const set = new AgentRuntimeSet(agent, accessor);
+    const set = new AgentRuntimeSet(agent, accessor, () => accessor.get(IEventDispatcher));
     set.apply({ definition: stateless, provider, generation: 1, active: true });
 
     expect(set.resolve(stateless).read()).toBe(7);

@@ -57,7 +57,7 @@
  *   too (default-profile bind + permission mode).
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
- *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
+ *   `ISessionPluginCommandService` for the target agent; `activateSkill` →
  *   the main agent's `AgentSkill` runtime (the engine settles
  *   `{turn_id}` and applies v1's main-only metadata update itself);
  *   `generateAgentsMd` →
@@ -70,7 +70,7 @@
  *   with the v1 snapshot
  *   shape restored; `listBackgroundTasks` / `getBackgroundTaskOutput` → the
  *   `klient.session(id).agent(id)` facade; `stopBackgroundTask` /
- *   `detachBackgroundTask` → `IAgentTaskService` through the agent scope
+ *   `detachBackgroundTask` → `ISessionTaskService` for the target agent
  *   (the facade's no-reason stop substitutes a user-cancellation reason v1
  *   never records); `waitForBackgroundTasksOnPrint` /
  *   `handlePrintMainTurnCompleted` → rebuilt over the v2 print-mode config
@@ -124,7 +124,7 @@
  *   `ISessionBtwService`; `setSwarmMode` / `swarm` → the agent scope's
  *   `IAgentSwarmService` (the v2 port of v1's `SwarmMode`), with `swarm()`
  *   recomposed over the `setSwarmMode` + `prompt` overrides; `setTowerMode` →
- *   the agent scope's `IAgentTowerService` (v2-only — the base class throws
+ *   the session scope's `ISessionTowerService` (v2-only — the base class throws
  *   `not_implemented`).
  *   `createSessionWithKaos` / `resumeSessionWithKaos` deliberately keep the
  *   base class's kaos-ignoring degradation (the v2 engine has no kaos
@@ -161,27 +161,22 @@ import {
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
-  agentContextOf,
-  IAgentActivityView,
   AgentReminder,
   AgentContextMemory,
   AgentCron,
   AgentGoal,
   AgentUndo,
   AgentFullCompaction,
-  IAgentPluginService,
   IAgentLifecycleService,
   AgentLoop,
   ISessionPermissionModeService,
   AgentPermissionRules,
-  IAgentPluginCommandService,
   AgentProfile,
   AgentSkill,
   AgentTools,
   IAgentSwarmService,
-  IAgentTaskService,
   ISessionTokenCountingService,
-  IAgentTowerService,
+  ISessionTowerService,
   IBootstrapService,
   IConfigService,
   IEventService,
@@ -230,7 +225,6 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   summarizeSkill,
-  type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
   type McpManagedServer,
@@ -238,6 +232,10 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
+import { ISessionPluginService } from '@moonshot-ai/agent-core-v2/agent/plugin/sessionPluginService';
+import { ISessionPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/sessionPluginCommandService';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -339,6 +337,7 @@ import {
   v2SummaryToSessionSummary,
 } from '#/v2/session-mapper';
 import { SessionEventWiring } from '#/v2/session-wiring';
+import { liveAgentScope, syntheticAgentScope, type AgentScopeView } from '#/v2/agentScopeView';
 
 export interface SDKRpcClientV2Options {
   readonly homeDir?: string;
@@ -1044,7 +1043,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           await handle.accessor.get(IAgentLifecycleService).create({ agentId });
           agents[agentId] = await this.resumedAgentState(
             handle,
-            handle.accessor.get(IAgentLifecycleService).handleOf(agentId)!,
+            liveAgentScope(handle, agentId)!,
             'sub',
             replay.replayTurnLimit,
           );
@@ -1074,7 +1073,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private async resumedAgentState(
     session: ISessionScopeHandle,
-    agent: IAgentScopeHandle,
+    agent: AgentScopeView,
     type: 'main' | 'sub',
     replayTurnLimit?: number,
   ): Promise<ResumedAgentState> {
@@ -1089,11 +1088,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     ]);
     const profile = agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile)
+      .resolve(agent.context, AgentProfile)
       .data();
     const agentTools = agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentTools);
+      .resolve(agent.context, AgentTools);
     const tools = agentTools.availableTools().map((tool) => ({
       name: tool.name,
       description: tool.description,
@@ -1114,11 +1113,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       context: context as AgentContextData,
       replay: limitAgentReplayByTurns(folded.replay, replayTurnLimit),
       permission: {
-        mode: agent.accessor.get(ISessionPermissionModeService).mode(agentContextOf(agent)),
+        mode: agent.accessor.get(ISessionPermissionModeService).mode(agent.context),
         rules: [
           ...agent.accessor
             .get(IAgentLifecycleService)
-            .resolve(agentContextOf(agent), AgentPermissionRules)
+            .resolve(agent.context, AgentPermissionRules)
             .rules(),
         ],
       } as ResumedAgentState['permission'],
@@ -1288,7 +1287,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         thinking: input.thinking,
       });
       if (input.permission !== undefined) {
-        agent.accessor.get(ISessionPermissionModeService).setMode(agentContextOf(agent), input.permission);
+        agent.accessor.get(ISessionPermissionModeService).setMode(agent.context, input.permission);
       }
     }
     if (input.metadata !== undefined) {
@@ -1449,9 +1448,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (live !== undefined) {
         const agentLifecycle = live.accessor.get(IAgentLifecycleService);
         for (const agent of agentLifecycle.list()) {
-          const agentHandle = agentLifecycle.handleOf(agent.agentId);
+          const agentHandle = agentLifecycle.get(agent.agentId);
           if (agentHandle === undefined) continue;
-          if (agentHandle.accessor.get(IAgentActivityView).state().turn !== undefined) {
+          if (live.accessor.get(ISessionActivityViewService).of(agentHandle).state().turn !== undefined) {
             throw new KimiError(
               ErrorCodes.TURN_AGENT_BUSY,
               `Session "${sessionId}" cannot be reloaded while a turn is running`,
@@ -1471,8 +1470,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
-      const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-      await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+      const main = handle.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
+      if (main !== undefined) {
+        await handle.accessor.get(ISessionPluginService).of(main).refreshSessionStart();
+      }
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
     });
@@ -1494,9 +1495,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             if (session.id === excludedSessionId) return;
             const main = session.accessor
               .get(IAgentLifecycleService)
-              .handleOf(MAIN_AGENT_ID);
+              .get(MAIN_AGENT_ID);
             if (main === undefined) return;
-            await main.accessor.get(IAgentPluginService).refreshSessionStart();
+            await session.accessor.get(ISessionPluginService).of(main).refreshSessionStart();
           }),
         );
       }),
@@ -1602,16 +1603,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   private async materializeMainAgent(
     session: ISessionScopeHandle,
     binding?: { readonly model?: string; readonly thinking?: string },
-  ): Promise<IAgentScopeHandle> {
+  ): Promise<AgentScopeView> {
     await this.modelReady;
     const context = await ensureMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
-    if (agent === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
-    }
+    const agent = syntheticAgentScope(session, context);
     const profile = agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile);
+      .resolve(agent.context, AgentProfile);
     if (binding !== undefined || profile.data().profileName === undefined) {
       try {
         await profile.bind({
@@ -1634,11 +1632,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /** The target agent's live scope handle (see the section header). */
-  private async agentScope(sessionId: string): Promise<IAgentScopeHandle> {
+  private async agentScope(sessionId: string): Promise<AgentScopeView> {
     const session = this.requireLiveSession(sessionId);
     const agentId = this.interactiveAgentId;
     if (agentId === MAIN_AGENT_ID) return this.materializeMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+    const agent = liveAgentScope(session, agentId);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }
@@ -1677,7 +1675,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile)
+      .resolve(agent.context, AgentProfile)
       .setThinking(input.effort);
   }
 
@@ -1763,7 +1761,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     ]);
     const profile = agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile)
+      .resolve(agent.context, AgentProfile)
       .data();
     const capability = profile.modelCapabilities;
     const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
@@ -1776,10 +1774,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return {
       model: profile.modelAlias,
       thinkingEffort: profile.thinkingLevel,
-      permission: agent.accessor.get(ISessionPermissionModeService).mode(agentContextOf(agent)),
+      permission: agent.accessor.get(ISessionPermissionModeService).mode(agent.context),
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
-      towerMode: agent.accessor.get(IAgentTowerService).isActive,
+      towerMode: agent.accessor.get(ISessionTowerService).of(agent.context).isActive,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -1812,7 +1810,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentFullCompaction)
+      .resolve(agent.context, AgentFullCompaction)
       .begin({
         source: 'manual',
         instruction: input.instruction,
@@ -1828,7 +1826,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentFullCompaction)
+      .resolve(agent.context, AgentFullCompaction)
       .cancel();
   }
 
@@ -1853,7 +1851,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentUndo)
+      .resolve(agent.context, AgentUndo)
       .undo(input.count);
   }
 
@@ -1865,7 +1863,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async clearContext(input: SessionIdRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    void agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory).clear();
+    void agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentContextMemory).clear();
   }
 
   /**
@@ -1882,10 +1880,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async importContext(input: ImportContextRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     if (
-      agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).status() === 'running' ||
+      agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentLoop).status() === 'running' ||
       agent.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentFullCompaction)
+        .resolve(agent.context, AgentFullCompaction)
         .status() === 'running'
     ) {
       throw new KimiError(
@@ -1896,17 +1894,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const message = buildImportContextMessage(input.content, input.source);
     const capability = agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile)
+      .resolve(agent.context, AgentProfile)
       .data().modelCapabilities;
     const currentTokenCount = agent.accessor
       .get(ISessionTokenCountingService)
-      .get(agentContextOf(agent)).size;
+      .get(agent.context).size;
     assertImportFits(
       message,
       currentTokenCount,
       capability.max_input_tokens ?? capability.max_context_tokens,
     );
-    void agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory).append(message);
+    void agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentContextMemory).append(message);
   }
 
   /**
@@ -1996,13 +1994,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     await agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentSkill)
+      .resolve(agent.context, AgentSkill)
       .activate({ name: input.name, args: input.args });
   }
 
   /**
-   * Through the agent scope (`IAgentPluginCommandService.activate`): the same
-   * `request.invalid` rejection text for an unknown command, the same
+   * Through the session shell (`ISessionPluginCommandService.of(agent).activate`):
+   * the same `request.invalid` rejection text for an unknown command, the same
    * argument expansion, the activation event, the prompt enqueue, and the
    * main-agent-only metadata update. Two gaps vs v1,
    * pinned in the migration tracker: v1 resolves the command against the
@@ -2011,7 +2009,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentPluginCommandService).activate({
+    const session = this.requireLiveSession(input.sessionId);
+    await session.accessor.get(ISessionPluginCommandService).of(agent.context).activate({
       pluginId: input.pluginId,
       commandName: input.commandName,
       args: input.args,
@@ -2049,7 +2048,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     let warning = agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile)
+      .resolve(agent.context, AgentProfile)
       .agentsMdWarning();
     if (warning === undefined) {
       const session = this.requireLiveSession(input.sessionId);
@@ -2104,7 +2103,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       swarm.exit();
     }
-    await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentReminder).reconcileWhenIdle('swarm_mode');
+    await agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentReminder).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */
@@ -2113,10 +2112,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.prompt(input);
   }
 
-  /** Through the agent scope (`IAgentTowerService.enter` / `.exit`) — no klient facade exists. */
+  /** Through the session tower service (`ISessionTowerService.of(agent).enter` / `.exit`) — no klient facade exists. */
   override async setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    const tower = agent.accessor.get(IAgentTowerService);
+    const tower = agent.accessor.get(ISessionTowerService).of(agent.context);
     if (input.enabled) {
       await tower.enter();
       if (!tower.isActive) {
@@ -2128,7 +2127,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       tower.exit();
     }
-    await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentReminder).reconcileWhenIdle('tower_mode');
+    await agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentReminder).reconcileWhenIdle('tower_mode');
   }
 
   // -----------------------------------------------------------------------
@@ -2156,7 +2155,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     return this.requireLiveSession(input.sessionId)
       .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+      .resolve(agent.context, AgentGoal)
       .createGoal({ objective: input.objective, replace: input.replace });
   }
 
@@ -2164,7 +2163,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     return this.requireLiveSession(input.sessionId)
       .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+      .resolve(agent.context, AgentGoal)
       .getGoal();
   }
 
@@ -2172,7 +2171,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     return this.requireLiveSession(input.sessionId)
       .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+      .resolve(agent.context, AgentGoal)
       .pauseGoal();
   }
 
@@ -2180,7 +2179,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     return this.requireLiveSession(input.sessionId)
       .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+      .resolve(agent.context, AgentGoal)
       .resumeGoal();
   }
 
@@ -2188,7 +2187,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const agent = await this.agentScope(input.sessionId);
     return this.requireLiveSession(input.sessionId)
       .accessor.get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+      .resolve(agent.context, AgentGoal)
       .cancelGoal();
   }
 
@@ -2250,7 +2249,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentTaskService.stop`) — deliberately NOT the
+   * Through the session shell (`ISessionTaskService.of(agent).stop`) — deliberately NOT the
    * facade's `stopTask`, whose no-reason path routes to `stopByUser` and
    * stamps a user-cancellation `stopReason` where v1's
    * `background.stop(taskId, reason)` records none. The direct call matches
@@ -2262,11 +2261,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: SessionIdRpcInput & { taskId: string; reason?: string },
   ): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentTaskService).stop(input.taskId, input.reason);
+    const session = this.requireLiveSession(input.sessionId);
+    await session.accessor.get(ISessionTaskService).of(agent.context).stop(input.taskId, input.reason);
   }
 
   /**
-   * Through the agent scope (`IAgentTaskService.detach`) — no klient facade
+   * Through the session shell (`ISessionTaskService.of(agent).detach`) — no klient facade
    * exists. Same semantics as v1's `background.detach`: releases the
    * foreground tool-call waiter, returns the live info (or the ghost / live
    * info for an already-terminal task, `undefined` for an unknown id).
@@ -2275,7 +2275,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     input: SessionIdRpcInput & { taskId: string },
   ): Promise<BackgroundTaskInfo | undefined> {
     const agent = await this.agentScope(input.sessionId);
-    return agent.accessor.get(IAgentTaskService).detach(input.taskId) as
+    const session = this.requireLiveSession(input.sessionId);
+    return session.accessor.get(ISessionTaskService).of(agent.context).detach(input.taskId) as
       | BackgroundTaskInfo
       | undefined;
   }
@@ -2357,9 +2358,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       let activeCount = 0;
       const agentLifecycle = session.accessor.get(IAgentLifecycleService);
       for (const agent of agentLifecycle.list()) {
-        const agentHandle = agentLifecycle.handleOf(agent.agentId);
-        if (agentHandle === undefined) continue;
-        const tasks = agentHandle.accessor.get(IAgentTaskService);
+        const tasks = session.accessor.get(ISessionTaskService).of(agent);
         for (const task of tasks.list(true)) {
           activeCount++;
           if (seen.has(task.taskId)) continue;
@@ -2388,9 +2387,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     let count = 0;
     const agentLifecycle = session.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
-      const agentHandle = agentLifecycle.handleOf(agent.agentId);
-      if (agentHandle === undefined) continue;
-      count += agentHandle.accessor.get(IAgentTaskService).list(true).length;
+      count += session.accessor.get(ISessionTaskService).of(agent).list(true).length;
     }
     return count;
   }

@@ -8,7 +8,6 @@ import {
 } from '#/_base/di/scope';
 import { Service } from '#/_base/di/service';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { LifecycleScope } from '#/app/scopes';
 import {
   IAgentCommandService,
 } from '#/agent/command/agentCommand';
@@ -18,6 +17,7 @@ import {
   type CommandRunContext,
 } from '#/agent/command/commandContribution';
 import { ErrorCodes } from '#/errors';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 interface IEcho {
   readonly _serviceBrand: undefined;
@@ -31,7 +31,7 @@ describe('AgentCommandService — CommandContribution fold', () => {
   beforeEach(() => {
     _clearScopedRegistryForTests();
     registerScopedService(
-      LifecycleScope.Agent,
+      'agent',
       IAgentCommandService,
       AgentCommandService,
       ScopeActivation.OnDemand,
@@ -57,7 +57,7 @@ describe('AgentCommandService — CommandContribution fold', () => {
     const host = createScopedTestHost([stubPair(IEcho, { _serviceBrand: undefined, value: 'echo!' })]);
     const handle = host.app.instantiation.provide(ICommandProvider, new SyncDescriptor(CommandProvider));
     host.app.accessor.get(ICommandProvider);
-    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    const agent = host.child('agent', 'agent-1');
     return { host, agent, handle, commands: agent.accessor.get(IAgentCommandService) };
   }
 

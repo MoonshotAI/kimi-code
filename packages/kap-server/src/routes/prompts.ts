@@ -8,7 +8,6 @@ import {
   AgentProfile,
   type ProfileRuntime,
   AgentTools,
-  agentContextOf,
   AgentSkill,
   IAuthSummaryService,
   IEventBus,
@@ -59,6 +58,7 @@ import {
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
+import { liveAgentScope } from '../transport/agentScopeView';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 
 interface PromptRouteHost {
@@ -104,24 +104,24 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
-      : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      : liveAgentScope(session, agentId);
   if (agent === undefined) {
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
-    prompt: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt),
-    skill: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentSkill),
+    prompt: agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentPrompt),
+    skill: agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentSkill),
     events: agent.accessor.get(IEventBus),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile),
-    tools: agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentTools),
+      .resolve(agent.context, AgentProfile),
+    tools: agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentTools),
     permissionMode: {
       setMode: (mode: PromptPermissionMode) => {
         agent
           .accessor.get(ISessionPermissionModeService)
-          .setMode(agentContextOf(agent), mode);
+          .setMode(agent.context, mode);
       },
     },
   };

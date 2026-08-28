@@ -117,7 +117,6 @@ export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
 
 export type IAppScopeHandle = IScopeHandle<'app'>;
 export type ISessionScopeHandle = IScopeHandle<'session'>;
-export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
 function buildCollection(seeds?: ScopeSeed): ServiceCollection {
   const collection = new ServiceCollection();

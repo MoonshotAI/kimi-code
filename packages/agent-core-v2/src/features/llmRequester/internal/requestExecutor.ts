@@ -12,7 +12,9 @@ import {
   AgentTools,
   type AgentToolsRuntime,
 } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { IAgentHostService, type AgentHost } from '#/agent/host/agentHost';
+import { type IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { ISessionMediaService } from '#/agent/media/sessionMediaService';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -122,6 +124,10 @@ export class LlmRequestExecutor {
     return this.runtime.get(IAgentLifecycleService);
   }
 
+  private get host(): AgentHost {
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent);
+  }
+
   private get context(): ContextMemoryRuntime {
     return this.manager.resolve(this.runtime.agent, AgentContextMemory);
   }
@@ -131,7 +137,7 @@ export class LlmRequestExecutor {
   }
 
   private get projector(): IAgentContextProjectorService {
-    return this.runtime.get(IAgentContextProjectorService);
+    return this.host.contextProjector;
   }
 
   private get tokenCounting(): ISessionTokenCountingService {
@@ -143,7 +149,7 @@ export class LlmRequestExecutor {
   }
 
   private get mediaResolver(): IAgentMediaResolverService {
-    return this.runtime.get(IAgentMediaResolverService);
+    return this.runtime.get(ISessionMediaService).resolverOf(this.runtime.agent);
   }
 
   private get usage(): ISessionUsageService {
@@ -167,7 +173,7 @@ export class LlmRequestExecutor {
   }
 
   private get telemetry(): ITelemetryService {
-    return this.runtime.get(ITelemetryService);
+    return this.host.telemetry;
   }
 
   private get bootstrap(): IBootstrapService {

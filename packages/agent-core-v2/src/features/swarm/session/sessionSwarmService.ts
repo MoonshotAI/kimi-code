@@ -2,11 +2,11 @@
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { Event2 } from '#/app/event/event2';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   isSubagentMeta,
@@ -14,10 +14,10 @@ import {
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { emitAgentRunSpawned, mirrorAgentRun, type AgentRunMirrorServices } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 
 import {
   ISessionSwarmService,
@@ -54,9 +54,19 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
+    @ISessionTokenCountingService private readonly tokenCounting?: ISessionTokenCountingService,
   ) {}
+
+  private get mirrorServices(): AgentRunMirrorServices {
+    return {
+      agentLifecycle: this.agentLifecycle,
+      subagents: this.subagents,
+      tokenCounting: this.tokenCounting,
+    };
+  }
 
   async getSwarmItem(args: {
     readonly callerAgentId: string;
@@ -82,13 +92,15 @@ export class SessionSwarmService implements ISessionSwarmService {
       resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
-        const caller = this.agentLifecycle.handleOf(callerAgentId);
-        void caller?.accessor.get(IEventDispatcher)?.dispatch(
-          new SubagentSuspended({
-            subagentId: event.agentId,
-            reason: event.reason,
-          }),
-        );
+        const caller = this.agentLifecycle.get(callerAgentId);
+        if (caller !== undefined) {
+          void this.hosts.of(caller).dispatcher.dispatch(
+            new SubagentSuspended({
+              subagentId: event.agentId,
+              reason: event.reason,
+            }),
+          );
+        }
       },
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();
@@ -117,7 +129,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
       prompt: options.prompt,
     });
-    emitAgentRunSpawned(caller, spawned.agentId, {
+    emitAgentRunSpawned(this.hosts, this.mirrorServices, caller, spawned.agentId, {
       profileName: plan.profileName,
       parentToolCallId: options.parentToolCallId,
       parentToolCallUuid: options.parentToolCallUuid,
@@ -128,6 +140,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       model: plan.model,
     });
     const child = this.requireHandle(spawned.agentId, 'Agent instance');
+
     return this.observe(
       caller,
       child,
@@ -151,11 +164,11 @@ export class SessionSwarmService implements ISessionSwarmService {
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
-    const childProfile = this.agentLifecycle.resolve(agentContextOf(child), AgentProfile).data();
+    const childProfile = this.agentLifecycle.resolve(child, AgentProfile).data();
     const profileName = childProfile.profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
       const resumedModel = childProfile.modelAlias;
-      emitAgentRunSpawned(caller, agentId, {
+      emitAgentRunSpawned(this.hosts, this.mirrorServices, caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
         parentToolCallUuid: options.parentToolCallUuid,
@@ -172,18 +185,18 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private async observe(
-    caller: IAgentScopeHandle,
-    child: IAgentScopeHandle,
+    caller: AgentContext,
+    child: AgentContext,
     profileName: string,
     request: { kind: 'prompt'; prompt: string } | { kind: 'retry' },
     options: AgentRunAttemptOptions,
   ): Promise<AgentRunAttemptHandle> {
-    const agentId = child.id;
-    const run = await this.subagents.run(agentContextOf(child), request, {
+    const agentId = child.agentId;
+    const run = await this.subagents.run(child, request, {
       signal: options.signal,
       onReady: options.onReady,
     });
-    const mirrored = mirrorAgentRun(caller, run, {
+    const mirrored = mirrorAgentRun(this.hosts, this.mirrorServices, caller, run, {
       profileName,
       prompt: request.kind === 'prompt' ? request.prompt : undefined,
       suppressRateLimitFailureEvent: options.suppressRateLimitFailureEvent,
@@ -196,8 +209,8 @@ export class SessionSwarmService implements ISessionSwarmService {
     };
   }
 
-  private requireHandle(agentId: string, label: string): IAgentScopeHandle {
-    const handle = this.agentLifecycle.handleOf(agentId);
+  private requireHandle(agentId: string, label: string): AgentContext {
+    const handle = this.agentLifecycle.get(agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `${label} "${agentId}" does not exist`, {
         details: { agentId },
@@ -206,8 +219,8 @@ export class SessionSwarmService implements ISessionSwarmService {
     return handle;
   }
 
-  private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {
-    if (child.accessor.get(LoopControlToken).status().state === 'running') {
+  private requireIdleSubagent(agentId: string, child: AgentContext): void {
+    if (getLoopControl(child).status().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,

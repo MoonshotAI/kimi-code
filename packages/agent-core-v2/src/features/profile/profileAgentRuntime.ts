@@ -1,8 +1,7 @@
 import { assign, fromCallback, setup, type Snapshot } from 'xstate';
 
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
-import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { ISessionAgentsMdReminderService } from '#/agent/agentsMdReminder/sessionAgentsMdReminder';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -17,8 +16,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ProfileError, ProfileErrors } from '#/features/profile/errors';
 import {
@@ -75,6 +72,7 @@ import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import type { LoopControl } from '#/features/loop/configSection';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { IAgentHostService, type AgentHost } from '#/agent/host/agentHost';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -180,6 +178,10 @@ const profileActorLogic = setup({
 
 export class ProfileRuntime {
   constructor(private readonly context: AgentRuntimeContext<ProfileState>) {}
+
+  private get host(): AgentHost {
+    return this.context.get(IAgentHostService).of(this.context.agent);
+  }
 
   data(): ProfileData {
     const model = this.tryResolveRawModel();
@@ -392,7 +394,8 @@ export class ProfileRuntime {
       disallowedTools: data.disallowedTools ?? [],
     });
     this.context
-      .get(IAgentAgentsMdReminderService)
+      .get(ISessionAgentsMdReminderService)
+      .of(this.context.agent)
       .seedInjected(agentsMdPaths, this.context.get(ISessionContext).cwd);
   }
 
@@ -400,10 +403,10 @@ export class ProfileRuntime {
     const model = this.context.get(IModelCatalog).get(alias);
     if (this.currentProfileName() === undefined) {
       await this.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: alias });
-      this.context.get(ITelemetryService).track2('model_switch', { model: alias });
+      this.host.telemetry.track2('model_switch', { model: alias });
     } else if (this.currentModelAlias() !== alias) {
       this.update({ modelAlias: alias });
-      this.context.get(ITelemetryService).track2('model_switch', { model: alias });
+      this.host.telemetry.track2('model_switch', { model: alias });
     }
     return {
       model: alias,
@@ -423,7 +426,7 @@ export class ProfileRuntime {
     this.update({ thinkingLevel: normalized ?? level });
     const effort = this.storedThinkingLevel();
     if (effort !== previousEffort) {
-      this.context.get(ITelemetryService).track2('thinking_toggle', {
+      this.host.telemetry.track2('thinking_toggle', {
         enabled: effort !== 'off',
         effort,
         from: previousEffort,
@@ -505,7 +508,7 @@ export class ProfileRuntime {
   private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
     if (changed.modelAlias !== undefined) {
       const model = this.tryResolveRawModel();
-      this.context.get(IAgentTelemetryContextService).set({
+      this.host.telemetryContext.set({
         provider_type: model?.providerType ?? model?.protocol,
         protocol: model?.protocol,
       });
@@ -560,7 +563,7 @@ export class ProfileRuntime {
     options: ApplyProfileOptions | undefined,
   ): Promise<SystemPromptContext> {
     const deps: SystemPromptContextDeps = {
-      runtime: this.context.get(IAgentRuntimeService),
+      runtime: this.host.agentRuntime,
       sessionContext: this.context.get(ISessionContext),
       workspace: this.context.get(ISessionWorkspaceContext),
       instructions: this.context.get(ISessionInstructionsProvider),
@@ -601,7 +604,8 @@ export class ProfileRuntime {
 
   private seedAgentsMdReminder(context: SystemPromptContext): void {
     this.context
-      .get(IAgentAgentsMdReminderService)
+      .get(ISessionAgentsMdReminderService)
+      .of(this.context.agent)
       .seedInjected(
         context.agentsMdPaths ?? [],
         context.cwd ?? this.context.get(ISessionContext).cwd,

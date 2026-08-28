@@ -6,6 +6,7 @@ import {
   type PermissionModeRuntime,
 } from '#/features/permissionMode/permissionModeAgentRuntime';
 import type { WirePermissionMode } from '#/features/permissionMode/permissionModeOps';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -18,6 +19,7 @@ export class SessionPermissionModeService implements ISessionPermissionModeServi
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
   ) {}
 
   mode(agent: AgentContext): WirePermissionMode {
@@ -50,7 +52,7 @@ export class SessionPermissionModeService implements ISessionPermissionModeServi
   }
 
   private telemetry(agent: AgentContext): ITelemetryService {
-    return this.agentLifecycle.handleOf(agent.agentId)!.accessor.get(ITelemetryService);
+    return this.hosts.of(agent).telemetry;
   }
 
   private runtime(agent: AgentContext): PermissionModeRuntime {

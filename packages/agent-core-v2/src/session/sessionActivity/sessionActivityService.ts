@@ -1,19 +1,16 @@
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
-import {
-  ScopeActivation,
-  registerScopedService,
-  type IAgentScopeHandle,
-} from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
-import { IEventBus } from '#/app/event/eventBus';
 import {
   AgentActivityUpdated,
-  IAgentActivityView,
   type AgentActivityState,
 } from '#/agent/activityView/activityView';
 import type { TurnEndReason } from '#/features/loop/turnEvents';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import type { Interaction } from '#/features/interaction/interaction';
 import {
@@ -59,18 +56,19 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
+    @ISessionActivityViewService private readonly activityViews: ISessionActivityViewService,
   ) {
     super();
     this.states.contributeState(sessionActivityFoldsKey);
     this.states.contributeState(sessionActivityCurrentKey);
     for (const agent of this.agents.list()) {
-      const handle = this.agents.handleOf(agent.agentId);
-      if (handle !== undefined) this.attachAgent(handle);
+      this.attachAgent(agent);
     }
     this.current = this.aggregate();
     this._register(
-      this.agents.onDidCreateScope(({ handle }) => {
-        this.attachAgent(handle);
+      this.agents.onDidCreate((agent) => {
+        this.attachAgent(agent);
         this.recompute('agent_lifecycle');
       }),
     );
@@ -108,15 +106,14 @@ export class SessionActivityView extends Disposable implements ISessionActivityV
     return this.current;
   }
 
-  private attachAgent(handle: IAgentScopeHandle): void {
-    if (this.folds.has(handle.id)) return;
-    const view = handle.accessor.get(IAgentActivityView) as IAgentActivityView | undefined;
-    this.folds.set(handle.id, foldOf(handle.id, view?.state()));
-    const bus = handle.accessor.get(IEventBus) as IEventBus | undefined;
-    if (bus === undefined) return;
+  private attachAgent(agent: AgentContext): void {
+    if (this.folds.has(agent.agentId)) return;
+    const bundle = this.hosts.of(agent);
+    const view = this.activityViews.of(agent);
+    this.folds.set(agent.agentId, foldOf(agent.agentId, view.state()));
     this.agentSubscriptions.set(
-      handle.id,
-      bus.subscribe(AgentActivityUpdated, (event) => this.onActivity(handle.id, event)),
+      agent.agentId,
+      bundle.eventBus.subscribe(AgentActivityUpdated, (event) => this.onActivity(agent.agentId, event)),
     );
   }
 

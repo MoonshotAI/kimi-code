@@ -1,11 +1,30 @@
 import {
   Disposable,
   getScopedServiceDescriptors,
+  IAgentActivityView,
+  IAgentBlobService,
+  IAgentCommandService,
+  IAgentContextProjectorService,
+  IAgentPlanService,
+  IAgentPluginCommandService,
+  IAgentRuntimeBindingService,
+  IAgentRuntimeService,
+  IAgentShellCommandService,
+  IAgentStateService,
+  IAgentSwarmService,
+  IAgentTaskService,
+  IAgentTelemetryContextService,
+  IAgentTowerService,
+  IEventBus,
+  IEventDispatcher,
   IFeatureManager,
+  ITelemetryService,
+  IWireService,
   LifecycleScope,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { Scope, ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type { Scope, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+
 
 export interface ChannelMethodDescriptor {
   readonly name: string;
@@ -24,8 +43,28 @@ export interface ChannelDescriptor {
 const SCOPE_NAME: Record<string, ChannelDescriptor['scope']> = {
   [LifecycleScope.App]: 'app',
   [LifecycleScope.Session]: 'session',
-  [LifecycleScope.Agent]: 'agent',
 };
+
+const AGENT_GRANULAR_TOKENS: readonly ServiceIdentifier<unknown>[] = [
+  IAgentBlobService,
+  IWireService,
+  IAgentStateService,
+  IEventBus,
+  IEventDispatcher,
+  ITelemetryService,
+  IAgentTelemetryContextService,
+  IAgentRuntimeBindingService,
+  IAgentRuntimeService,
+  IAgentContextProjectorService,
+  IAgentPlanService,
+  IAgentTaskService,
+  IAgentCommandService,
+  IAgentShellCommandService,
+  IAgentActivityView,
+  IAgentTowerService,
+  IAgentPluginCommandService,
+  IAgentSwarmService,
+];
 
 let serviceNameIndex: Map<string, ServiceIdentifier<unknown>> | undefined;
 
@@ -35,12 +74,15 @@ function scopedServiceNameIndex(): Map<string, ServiceIdentifier<unknown>> {
     for (const scope of [
       LifecycleScope.App,
       LifecycleScope.Session,
-      LifecycleScope.Agent,
     ]) {
       for (const entry of getScopedServiceDescriptors(scope)) {
         const name = entry.id.toString();
         if (!map.has(name)) map.set(name, entry.id);
       }
+    }
+    for (const token of AGENT_GRANULAR_TOKENS) {
+      const name = token.toString();
+      if (!map.has(name)) map.set(name, token);
     }
     return map;
   })();
@@ -104,19 +146,25 @@ function describeMethods(
 }
 
 export function describeAllChannels(): readonly ChannelDescriptor[] {
-  const byName = new Map<string, ScopedEntry>();
-  for (const scope of [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]) {
+  const byName = new Map<string, { scope: ChannelDescriptor['scope']; domain: string; ctor: new (...args: any[]) => unknown }>();
+  for (const scope of [LifecycleScope.App, LifecycleScope.Session]) {
     for (const entry of getScopedServiceDescriptors(scope)) {
       const name = entry.id.toString();
-      if (!byName.has(name)) byName.set(name, entry);
+      if (!byName.has(name)) {
+        byName.set(name, {
+          scope: SCOPE_NAME[entry.scope] ?? 'app',
+          domain: entry.domain,
+          ctor: entry.descriptor.ctor,
+        });
+      }
     }
   }
   return [...byName.entries()]
     .map(([name, entry]) => ({
       name,
-      scope: SCOPE_NAME[entry.scope] ?? 'app',
+      scope: entry.scope,
       domain: entry.domain,
-      methods: describeMethods(entry.descriptor.ctor),
+      methods: describeMethods(entry.ctor),
     }))
     .toSorted((a, b) => a.name.localeCompare(b.name));
 }

@@ -1,18 +1,14 @@
 import {
   ensureMainAgent as ensureMainAgentContext,
-  IAgentLifecycleService,
-  MAIN_AGENT_ID,
-  type IAgentScopeHandle,
+  MAIN_AGENT_ID as CORE_MAIN_AGENT_ID,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 
-export { MAIN_AGENT_ID };
+import { syntheticAgentScope, type AgentScopeView } from './agentScopeView';
 
-export async function ensureMainAgent(session: ISessionScopeHandle): Promise<IAgentScopeHandle> {
+export const MAIN_AGENT_ID = CORE_MAIN_AGENT_ID;
+
+export async function ensureMainAgent(session: ISessionScopeHandle): Promise<AgentScopeView> {
   const context = await ensureMainAgentContext(session);
-  const handle = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
-  if (handle === undefined) {
-    throw new Error('Main agent was not found');
-  }
-  return handle;
+  return syntheticAgentScope(session, context);
 }

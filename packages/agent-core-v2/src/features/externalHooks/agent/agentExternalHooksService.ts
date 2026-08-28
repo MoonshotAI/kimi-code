@@ -1,12 +1,11 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
+import { type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import {
@@ -15,7 +14,8 @@ import {
   type FullCompactionRuntime,
 } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import type { CompactionResult } from '#/features/fullCompaction/types';
-import { LoopControlToken, type AfterStepContext } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
+import type { AfterStepContext, LoopControl } from '#/features/loop/internal/loop';
 import { ContinuationStepRequest } from '#/features/loop/internal/stepRequest';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
@@ -76,11 +76,10 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
@@ -150,17 +149,13 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     this.registerTurnHooks();
 
-    this.registerLoopHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(LoopControlToken)),
-    );
+    this.registerLoopHooks(getLoopControl(this.scopeContext));
 
     this.registerFullCompactionHooks(
       this.manager.resolve(this.scopeContext.agentContext, AgentFullCompaction),
     );
 
-    this.registerTaskHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskService)),
-    );
+    this.registerTaskHooks();
   }
 
   private registerToolHooks(executor: AgentToolsRuntime): IDisposable {
@@ -239,7 +234,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerLoopHooks(loop: LoopControlToken): void {
+  private registerLoopHooks(loop: LoopControl): void {
     this._register(
       loop.hooks.onDidFinishStep.register('externalHooks', async (ctx, next) => {
         await next();
@@ -283,7 +278,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private registerTaskHooks(_tasks: IAgentTaskService): void {
+  private registerTaskHooks(): void {
     this._register(
       this.eventBus.subscribe(TaskNotified, (e) => {
         const { type: _type, time: _time, ...ctx } = e;

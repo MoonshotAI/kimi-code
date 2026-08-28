@@ -22,8 +22,6 @@ import {
   drainSessionMetadataWrites,
   ensureMainAgent,
   getLiveSessionById,
-  IAgentLifecycleService,
-  IAgentRuntimeBindingService,
   IAppendLogStore,
   IHostEnvironment,
   IHostProcessService,
@@ -37,6 +35,7 @@ import {
   type Scope,
   type ScopeSeed,
   sessionMediaOriginalsDir,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import type { Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
@@ -160,10 +159,9 @@ export async function runAcpServerWithStream(
       sessionWorkspaces.set(sessionId, context.workspaceId);
       const agentContext = await ensureMainAgent(handle, { runtimeId });
       handle.accessor
-        .get(IAgentLifecycleService)
-        .handleOf(agentContext.agentId)!
-        .accessor.get(IAgentRuntimeBindingService)
-        .switch(runtimeId);
+        .get(IAgentHostService)
+        .of(agentContext)
+        .runtimeBinding.switch(runtimeId);
     },
     unbindSessionRuntime: async (sessionId) => {
       const workspaceId = sessionWorkspaces.get(sessionId);

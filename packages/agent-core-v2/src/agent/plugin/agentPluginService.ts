@@ -1,6 +1,4 @@
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
@@ -8,7 +6,7 @@ import { activateReminderWhenReady } from '#/features/reminder/internal/reminder
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import type { ContextInjectionContext } from '#/features/reminder/types';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { systemReminderContent } from '#/features/reminder/systemReminder';
@@ -68,7 +66,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
   private readonly context: ContextMemoryRuntime;
 
   constructor(
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
@@ -264,10 +262,3 @@ function renderSessionStartBlock(
   );
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentPluginService,
-  AgentPluginService,
-  ScopeActivation.OnScopeCreated,
-  'agentPlugin',
-);

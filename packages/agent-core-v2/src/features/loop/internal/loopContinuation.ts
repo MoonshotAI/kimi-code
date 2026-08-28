@@ -1,9 +1,17 @@
-import { createDecorator } from '#/_base/di/instantiation';
+import { Disposable } from '#/_base/di/lifecycle';
 
-export interface IAgentLoopContinuationService {
-  readonly _serviceBrand: undefined;
+import type { LoopControl } from './loop';
+import { ContinuationStepRequest } from './stepRequest';
+
+export class AgentLoopContinuation extends Disposable {
+  constructor(loop: LoopControl) {
+    super();
+    this._register(
+      loop.hooks.onDidFinishStep.register('loop-continuation', async (ctx, next) => {
+        await next();
+        if (ctx.stopTurn || ctx.finishReason !== 'tool_calls') return;
+        loop.enqueue(new ContinuationStepRequest());
+      }),
+    );
+  }
 }
-
-export const IAgentLoopContinuationService = createDecorator<IAgentLoopContinuationService>(
-  'agentLoopContinuationService',
-);

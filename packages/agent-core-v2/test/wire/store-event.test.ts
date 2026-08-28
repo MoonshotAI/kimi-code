@@ -22,6 +22,7 @@ import {
   recordingWireLog,
   registerTestAgentWire,
   registerTestEventDispatcher,
+  stubAgentScopeContext,
   stubWireJournal,
   testWireScope,
 } from './stubs';
@@ -109,12 +110,13 @@ function setup(blob?: IAgentBlobService): void {
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   bus = ix.get(IEventBus);
   journal = [];
-  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), {
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, KEY));
+  registerTestAgentWire(ix, agentScope, {
     log: recordingWireLog(journal),
     blob,
     eventBus: bus,
   });
-  dispatcher = registerTestEventDispatcher(ix);
+  dispatcher = registerTestEventDispatcher(ix, agentScope);
   agentState = ix.get(IAgentStateService);
   agentState.contributeState(noteKey);
   agentState.contributeState(attachKey);
@@ -218,7 +220,7 @@ describe('durable observable events', () => {
     replayIx.set(IEventBus, new SyncDescriptor(EventBusService));
     replayIx.set(IAgentBlobService, blob);
     replayIx.set(IWireService, stubWireJournal([...journal]));
-    const replayed = registerTestEventDispatcher(replayIx);
+    const replayed = registerTestEventDispatcher(replayIx, undefined);
     const restored = { state: [] as unknown[] };
     replayed.attach(runtimeBlobsParticipant(restored));
 

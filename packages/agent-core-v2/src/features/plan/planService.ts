@@ -11,7 +11,7 @@ import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAge
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
@@ -58,7 +58,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionContext private readonly sessionCtx: ISessionContext,
-    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    private readonly agentCtx: IAgentScopeContext,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @ITelemetryService telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,

@@ -2,13 +2,13 @@ import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/co
 import { type TokenUsage } from '#/kosong/contract/usage';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { LoopControlToken, type Turn, type TurnResult } from '#/features/loop/internal/loop';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { getLoopControl } from '#/features/loop/internal/access';
+import type { Turn, TurnResult } from '#/features/loop/internal/loop';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -29,13 +29,20 @@ export interface RunAgentTurnOptions {
   readonly onReady?: () => void;
 }
 
+export interface RunAgentTurnServices {
+  readonly agentLifecycle: IAgentLifecycleService;
+  readonly usage?: ISessionUsageService;
+}
+
 export async function runAgentTurn(
-  target: IAgentScopeHandle,
+  services: RunAgentTurnServices,
+  target: AgentContext,
   request: AgentRunRequest,
   options: RunAgentTurnOptions,
 ): Promise<AgentRunHandle> {
   options.signal.throwIfAborted();
-  const promptService = target.accessor.get(IAgentLifecycleService).resolve(agentContextOf(target), AgentPrompt);
+  const agentLifecycle = services.agentLifecycle;
+  const promptService = agentLifecycle.resolve(target, AgentPrompt);
   const turn =
     request.kind === 'prompt'
       ? await (await promptService.enqueue({ message: {
@@ -51,18 +58,20 @@ export async function runAgentTurn(
     void turn.ready.then(() => options.onReady?.()).catch(() => {});
   }
 
-  const completion = awaitRun(target, turn, options);
-  return { agentId: target.id, turn, completion };
+  const completion = awaitRun(services, target, turn, options);
+  return { agentId: target.agentId, turn, completion };
 }
 
 async function awaitRun(
-  target: IAgentScopeHandle,
+  services: RunAgentTurnServices,
+  target: AgentContext,
   turn: Turn,
   options: RunAgentTurnOptions,
 ): Promise<{ summary: string; usage?: TokenUsage }> {
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
-  const loop = target.accessor.get(LoopControlToken);
+  const agentLifecycle = services.agentLifecycle;
+  const loop = getLoopControl(target);
   const cancelTurn = (turnToCancel: Turn, reason: unknown): void => {
     loop.cancel(turnToCancel.id, reason);
   };
@@ -72,6 +81,7 @@ async function awaitRun(
     classifyTurnResult(result);
     const summary = await distillSummary(
       target,
+      agentLifecycle,
       controller,
       options.summaryPolicy,
       (t) => {
@@ -79,7 +89,7 @@ async function awaitRun(
       },
       cancelTurn,
     );
-    const usage = target.accessor.get(ISessionUsageService)?.status(agentContextOf(target)).total;
+    const usage = services.usage?.status(target).total;
     return { summary, usage };
   } finally {
     unlink();
@@ -111,20 +121,19 @@ async function awaitTurn(
 }
 
 async function distillSummary(
-  target: IAgentScopeHandle,
+  target: AgentContext,
+  agentLifecycle: IAgentLifecycleService,
   controller: AbortController,
   policy: AgentProfileSummaryPolicy | undefined,
   setTurn: (turn: Turn) => void,
   cancelTurn: (turn: Turn, reason: unknown) => void,
 ): Promise<string> {
-  const memory = target.accessor
-    .get(IAgentLifecycleService)
-    .resolve(agentContextOf(target), AgentContextMemory);
+  const memory = agentLifecycle.resolve(target, AgentContextMemory);
   let summary = latestAssistantText(memory.get());
   if (policy === undefined) return summary;
   if (isSummaryAdequate(summary, policy)) return summary;
 
-  const promptService = target.accessor.get(IAgentLifecycleService).resolve(agentContextOf(target), AgentPrompt);
+  const promptService = agentLifecycle.resolve(target, AgentPrompt);
   for (let attempt = 0; attempt < policy.retries; attempt++) {
     const turn = await (await promptService.enqueue({ message: {
       role: 'user',

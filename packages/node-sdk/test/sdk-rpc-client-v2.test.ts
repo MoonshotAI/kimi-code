@@ -41,13 +41,14 @@ import {
   HostProcessError,
   AgentTodo,
   IAgentLifecycleService,
-  IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  ISessionTowerService,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
+import { IAgentHostService } from '@moonshot-ai/agent-core-v2';
 
 import { McpOAuthService } from '../../agent-core/src/mcp/oauth/service';
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
@@ -1043,9 +1044,9 @@ key = "${titleOAuthRef.key}"
       const mainTower = () => {
         const handle = getLiveSessionById(client.engineAccessor, 'ses_tower');
         expect(handle).toBeDefined();
-        const agent = handle!.accessor.get(IAgentLifecycleService).handleOf('main');
+        const agent = handle!.accessor.get(IAgentLifecycleService).get('main');
         expect(agent).toBeDefined();
-        return agent!.accessor.get(IAgentTowerService);
+        return handle!.accessor.get(ISessionTowerService).of(agent!);
       };
 
       await client.setTowerMode({ sessionId: 'ses_tower', enabled: true });

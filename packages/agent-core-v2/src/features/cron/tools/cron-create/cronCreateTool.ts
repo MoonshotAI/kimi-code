@@ -1,8 +1,8 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/features/cron/internal/cron-expr';
 import { formatLocalIsoWithOffset } from '#/features/cron/internal/format';
@@ -30,8 +30,8 @@ export class CronCreateTool implements ICronCreateTool {
   );
 
   constructor(
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly manager: IAgentLifecycleService,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   private get cron(): CronRuntime {

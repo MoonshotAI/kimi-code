@@ -25,8 +25,6 @@ import {
 import {
   AgentToolContribution,
   type AgentToolContributionOptions,
-  type AgentToolCtor,
-  type AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
 import {
   AgentRuntimeContributionPoint,
@@ -74,20 +72,8 @@ export abstract class Feature extends Service {
     });
   }
 
-  contributeAgentService<T>(
-    id: ServiceIdentifier<T>,
-    ctor: ServiceClassRecipe,
-    opts?: FiberProvideOptions,
-  ): FiberHandle {
-    return this.contributeService(LifecycleScope.Agent, id, ctor, opts);
-  }
-
-  contributeTool<T extends AnyAgentTool>(
-    id: ServiceIdentifier<T>,
-    ctor: AgentToolCtor<T>,
-    options: AgentToolContributionOptions,
-  ): void {
-    this.provide(AgentToolContribution, { id, ctor, options });
+  contributeTool(options: AgentToolContributionOptions): void {
+    this.provide(AgentToolContribution, { options });
   }
 
   contributeCommand(contribution: CommandContributionPayload): FiberHandle {

@@ -1,3 +1,5 @@
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -20,11 +22,11 @@ export class ToolExecutionPermissionGatePolicy {
   }
 
   private get toolApproval(): IAgentToolApprovalService {
-    return this.runtime.get(IAgentToolApprovalService);
+    return this.runtime.get(ISessionToolApprovalService).of(this.runtime.agent);
   }
 
   private get telemetry(): ITelemetryService {
-    return this.runtime.get(ITelemetryService);
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent).telemetry;
   }
 
   async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {

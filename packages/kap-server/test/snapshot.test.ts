@@ -6,7 +6,6 @@ import {
   AgentContextMemory,
   type Event2,
   IAgentBlobService,
-  IAgentScopeContext,
   IAppendLogStore,
   IEventBus,
   IAgentLifecycleService,
@@ -21,9 +20,9 @@ import {
   ISessionManager,
   ITelemetryService,
   IWorkspaceService,
-  agentContextOf,
   getLiveSessionById,
   resumeSessionById,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
@@ -71,7 +70,6 @@ describe('server-v2 snapshot route enrichment', () => {
           },
         ],
         [IWireService, { flush: async () => {} }],
-        [IAgentScopeContext, { scope: () => 'scope/sess_snapshot' }],
         [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
         [
           ISessionUsageService,
@@ -105,8 +103,26 @@ describe('server-v2 snapshot route enrichment', () => {
             create: async () => ({ agentId: 'main', generation: 1 }) as never,
             handleOf: () => main,
             list: () => [],
+            resolve: (agent: unknown, definition: unknown) =>
+              (
+                main.accessor.get(IAgentLifecycleService) as {
+                  resolve(a: unknown, d: unknown): unknown;
+                }
+              ).resolve(agent, definition),
           },
         ],
+        [
+          IAgentHostService,
+          {
+            of: () => ({
+              wire: main.accessor.get(IWireService),
+              blob: main.accessor.get(IAgentBlobService),
+              scopeContext: { scope: () => 'agents/main' },
+            }),
+          },
+        ],
+        [ISessionUsageService, main.accessor.get(ISessionUsageService)],
+        [ISessionTokenCountingService, main.accessor.get(ISessionTokenCountingService)],
       ]),
     };
     const handler = {
@@ -250,7 +266,6 @@ describe('server-v2 snapshot route enrichment', () => {
           },
         ],
         [IWireService, { flush: async () => {} }],
-        [IAgentScopeContext, { scope: () => 'scope/sess_snapshot_degraded' }],
         [IAgentBlobService, { loadParts: async (parts: unknown) => parts }],
         [ISessionUsageService, undefined],
         [ISessionTokenCountingService, undefined],
@@ -277,8 +292,26 @@ describe('server-v2 snapshot route enrichment', () => {
             create: async () => ({ agentId: 'main', generation: 1 }) as never,
             handleOf: () => main,
             list: () => [],
+            resolve: (agent: unknown, definition: unknown) =>
+              (
+                main.accessor.get(IAgentLifecycleService) as {
+                  resolve(a: unknown, d: unknown): unknown;
+                }
+              ).resolve(agent, definition),
           },
         ],
+        [
+          IAgentHostService,
+          {
+            of: () => ({
+              wire: main.accessor.get(IWireService),
+              blob: main.accessor.get(IAgentBlobService),
+              scopeContext: { scope: () => 'agents/main' },
+            }),
+          },
+        ],
+        [ISessionUsageService, undefined],
+        [ISessionTokenCountingService, undefined],
       ]),
     };
     const handler = {
@@ -403,13 +436,13 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   function emit(sessionId: string, event: Event2<any>): void {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    main!.accessor.get(IEventBus).publish(event);
+    const main = session!.accessor.get(IAgentLifecycleService).get('main');
+    session!.accessor.get(IAgentHostService).of(main!).eventBus.publish(event);
   }
 
   async function snapshot(sid: string) {
@@ -457,14 +490,14 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     const sid = await createSession();
     await ensureMainAgent(sid);
     const session = getLiveSessionById(server!.core.accessor, sid);
-    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    await main.accessor.get(ISessionUsageService).record(agentContextOf(main), 'kimi-for-test', {
+    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
+    await session!.accessor.get(ISessionUsageService).record(main, 'kimi-for-test', {
       inputOther: 120,
       output: 34,
       inputCacheRead: 56,
       inputCacheCreation: 7,
     });
-    void main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory).append({
+    void session!.accessor.get(IAgentLifecycleService).resolve(main, AgentContextMemory).append({
       role: 'user',
       content: [{ type: 'text', text: 'hello' }],
       toolCalls: [],
@@ -571,8 +604,8 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     const resumed = await resumeSessionById(server!.core.accessor, sid);
     if (resumed === undefined) throw new Error(`session ${sid} failed to resume`);
     await resumed.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-    const main = resumed.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const context = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory);
+    const main = resumed.accessor.get(IAgentLifecycleService).get('main')!;
+    const context = resumed.accessor.get(IAgentLifecycleService).resolve(main, AgentContextMemory);
     void context.append({ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] });
     void context.append({ role: 'assistant', content: [{ type: 'text', text: 'hi' }], toolCalls: [] });
 

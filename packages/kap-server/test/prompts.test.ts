@@ -5,9 +5,6 @@ import { deflateSync } from 'node:zlib';
 
 import {
   AgentContextMemory,
-  agentContextOf,
-  type IAgentScopeHandle,
-  IAgentTitlePromptSource,
   IAgentLifecycleService,
   ISessionPermissionModeService,
   AgentProfile,
@@ -18,7 +15,10 @@ import {
   ISessionMetadata,
   closeSessionById,
   getLiveSessionById,
+  IAgentHostService,
+  type AgentContext,
 } from '@moonshot-ai/agent-core-v2';
+import { AgentTitlePromptSourceService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/agentTitlePromptSourceService';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -255,8 +255,8 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const history = session!.accessor.get(IAgentLifecycleService).resolve(agent!, AgentContextMemory).get();
     const bundled = history.find((message) => message.origin?.kind === 'user');
     expect(bundled?.origin).toMatchObject({
       kind: 'user',
@@ -321,9 +321,9 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const lifecycle = session.accessor.get(IAgentLifecycleService);
-    const mainHandle = lifecycle.handleOf('main');
+    const mainHandle = lifecycle.get('main');
     if (mainHandle === undefined) throw new Error('main agent not found');
-    const child = await lifecycle.fork(agentContextOf(mainHandle));
+    const child = await lifecycle.fork(mainHandle);
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'bundled side question' }],
@@ -379,8 +379,8 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(40415);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    const history = session!.accessor.get(IAgentLifecycleService).resolve(agent!, AgentContextMemory).get();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });
 
@@ -396,9 +396,9 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(40415);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    expect(agent!.accessor.get(ISessionPermissionModeService).mode(agentContextOf(agent!))).toBe('manual');
-    const history = agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).get();
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    expect(session!.accessor.get(ISessionPermissionModeService).mode(agent!)).toBe('manual');
+    const history = session!.accessor.get(IAgentLifecycleService).resolve(agent!, AgentContextMemory).get();
     expect(history.filter((message) => message.origin?.kind === 'user')).toHaveLength(0);
   });
 
@@ -412,7 +412,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(40415);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
   it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
@@ -427,7 +427,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(40001);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
   it('cleans bundled staging through the settlement tracker', async () => {
@@ -493,8 +493,14 @@ describe('server-v2 /api/v1 prompts', () => {
     }
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const agent = session === undefined ? undefined : session.accessor.get(IAgentLifecycleService).handleOf('main');
-    const source = agent?.accessor.get(IAgentTitlePromptSource);
+    const agent = session === undefined ? undefined : session.accessor.get(IAgentLifecycleService).get('main');
+    const source =
+      agent === undefined
+        ? undefined
+        : new AgentTitlePromptSourceService(
+            session!.accessor.get(IAgentLifecycleService),
+            session!.accessor.get(IAgentHostService).of(agent).scopeContext,
+          );
     expect(source).toBeDefined();
     await expect(source!.firstUserPrompts(3)).resolves.toEqual(prompts);
   });
@@ -512,7 +518,7 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(body.code).toBe(40407);
 
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
   it('rejects a mis-kinded file reference without creating the agent', async () => {
@@ -537,7 +543,7 @@ describe('server-v2 /api/v1 prompts', () => {
       ],
     });
     expect(body.code).toBe(40001);
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
   it('carries an uploaded video into the prompt as an internal kimi-file reference', async () => {
@@ -618,8 +624,8 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(JSON.stringify(content)).not.toContain('kimi-file://');
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const memory = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory).get();
+    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
+    const memory = session!.accessor.get(IAgentLifecycleService).resolve(main, AgentContextMemory).get();
     const reminder = memory.find((m) => m.origin?.kind === 'injection');
     const reminderText = reminder?.content[0];
     expect(reminderText?.type).toBe('text');
@@ -718,9 +724,9 @@ describe('server-v2 /api/v1 prompts', () => {
     ]);
 
     const session = getLiveSessionById(server!.core.accessor, id);
-    const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
     await vi.waitFor(() => {
-      const replayedMessage = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory)
+      const replayedMessage = session!.accessor.get(IAgentLifecycleService).resolve(main, AgentContextMemory)
         .get()
         .find(
           (message) =>
@@ -757,9 +763,9 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(submitted.body.code).toBe(0);
 
       const session = getLiveSessionById(server!.core.accessor, id);
-      const main = session!.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const main = session!.accessor.get(IAgentLifecycleService).get('main')!;
       await vi.waitFor(() => {
-        const message = main.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentContextMemory)
+        const message = session!.accessor.get(IAgentLifecycleService).resolve(main, AgentContextMemory)
           .get()
           .find((m) => m.role === 'user' && m.content.some((part) => part.type === 'image_url'));
         expect(message).toBeDefined();
@@ -1076,10 +1082,10 @@ describe('server-v2 /api/v1 prompts', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     const lifecycle = session.accessor.get(IAgentLifecycleService);
-    const mainHandle = lifecycle.handleOf('main');
+    const mainHandle = lifecycle.get('main');
     if (mainHandle === undefined) throw new Error('main agent not found');
-    const childContext = await lifecycle.fork(agentContextOf(mainHandle));
-    const child = lifecycle.handleOf(childContext.agentId)!;
+    const childContext = await lifecycle.fork(mainHandle);
+    const child = lifecycle.get(childContext.agentId)!;
 
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'side question' }],
@@ -1088,10 +1094,10 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     const contextHasUserText = (
-      handle: IAgentScopeHandle,
+      handle: AgentContext,
       text: string,
     ): boolean =>
-      handle.accessor.get(IAgentLifecycleService).resolve(agentContextOf(handle), AgentContextMemory)
+      session!.accessor.get(IAgentLifecycleService).resolve(handle, AgentContextMemory)
         .get()
         .some(
           (m) =>
@@ -1101,7 +1107,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     expect(contextHasUserText(child, 'side question')).toBe(true);
 
-    const main = lifecycle.handleOf('main');
+    const main = lifecycle.get('main');
     expect(main).toBeDefined();
     expect(contextHasUserText(main!, 'side question')).toBe(false);
   });
@@ -1156,11 +1162,11 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
     expect(
       session.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(main!), AgentProfile)
+        .resolve(main!, AgentProfile)
         .data().profileName,
     ).toBe('route-reviewer');
 
@@ -1204,11 +1210,11 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
     const profile =
       main === undefined
         ? undefined
-        : session.accessor.get(IAgentLifecycleService).resolve(agentContextOf(main), AgentProfile);
+        : session.accessor.get(IAgentLifecycleService).resolve(main, AgentProfile);
     expect(profile?.data().profileName).toBe('agent');
     expect(profile?.data().thinkingLevel).toBe('high');
   });
@@ -1226,10 +1232,10 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
     const toolPolicy = main === undefined ? undefined : session.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(main), AgentTools);
+      .resolve(main, AgentTools);
     expect(toolPolicy?.isActive('Bash')).toBe(false);
     expect(toolPolicy?.isActive('Read')).toBe(true);
 
@@ -1269,10 +1275,10 @@ describe('server-v2 /api/v1 prompts', () => {
       },
     });
     const child = session.accessor.get(IAgentLifecycleService).list().at(-1);
-    const childHandle = session.accessor.get(IAgentLifecycleService).handleOf(child!.agentId)!;
+    const childHandle = session.accessor.get(IAgentLifecycleService).get(child!.agentId)!;
     const childToolPolicy = session.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(childHandle), AgentTools);
+      .resolve(childHandle, AgentTools);
     expect(childToolPolicy.isActive('Bash')).toBe(false);
     expect(childToolPolicy.isActive('Read')).toBe(true);
   });
@@ -1309,10 +1315,10 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
     const toolPolicy = main === undefined ? undefined : session.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(main), AgentTools);
+      .resolve(main, AgentTools);
     expect(toolPolicy?.isActive('Bash')).toBe(false);
     expect(toolPolicy?.isActive('Read')).toBe(true);
   });

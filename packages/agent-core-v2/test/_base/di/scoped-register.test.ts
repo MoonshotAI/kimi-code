@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createDecorator } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -10,6 +9,7 @@ import {
   overrideScopedService,
   registerScopedService,
 } from '#/_base/di/scope';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 interface IApp {
   tag: 'app';
@@ -61,7 +61,7 @@ describe('registerScopedService / getScopedServiceDescriptors', () => {
       'session-domain',
     );
     registerScopedService(
-      LifecycleScope.Agent,
+      'agent',
       IAgent,
       AgentSvc,
       ScopeActivation.OnScopeCreated,
@@ -70,7 +70,7 @@ describe('registerScopedService / getScopedServiceDescriptors', () => {
 
     expect(getScopedServiceDescriptors(LifecycleScope.App).map((e) => e.id)).toEqual([IApp]);
     expect(getScopedServiceDescriptors(LifecycleScope.Session).map((e) => e.id)).toEqual([ISession]);
-    expect(getScopedServiceDescriptors(LifecycleScope.Agent).map((e) => e.id)).toEqual([IAgent]);
+    expect(getScopedServiceDescriptors('agent').map((e) => e.id)).toEqual([IAgent]);
   });
 
   it('records domain and scope activation', () => {
@@ -82,7 +82,7 @@ describe('registerScopedService / getScopedServiceDescriptors', () => {
       'session-domain',
     );
     registerScopedService(
-      LifecycleScope.Agent,
+      'agent',
       IAgent,
       AgentSvc,
       ScopeActivation.OnScopeCreated,
@@ -90,7 +90,7 @@ describe('registerScopedService / getScopedServiceDescriptors', () => {
     );
 
     const [sessionEntry] = getScopedServiceDescriptors(LifecycleScope.Session);
-    const [agentEntry] = getScopedServiceDescriptors(LifecycleScope.Agent);
+    const [agentEntry] = getScopedServiceDescriptors('agent');
 
     expect(sessionEntry?.domain).toBe('session-domain');
     expect(sessionEntry?.activation).toBe(ScopeActivation.OnDemand);

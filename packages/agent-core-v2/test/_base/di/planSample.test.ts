@@ -7,11 +7,11 @@ import { createDecorator, ScopeActivation } from '#/_base/di/instantiation';
 import { type InstantiationService } from '#/_base/di/instantiationService';
 import { Scope } from '#/_base/di/scope';
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { EventStateContribution } from '#/state/stateContribution';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 interface IAgentPlanService {
   readonly _serviceBrand: undefined;
@@ -55,7 +55,7 @@ describe('Plan sample (plan-domain-plugin.manifest.ts) — API acceptance', () =
           sourceId: 'builtin',
           contribution: { profiles: [planProfile] },
         });
-        this.provide(ScopeUnits(LifecycleScope.Agent), PlanAgentFeature);
+        this.provide(ScopeUnits('agent'), PlanAgentFeature);
       }
     }
 
@@ -106,7 +106,7 @@ describe('Plan sample (plan-domain-plugin.manifest.ts) — API acceptance', () =
     expect(seen).toEqual(['config:+defaultPlanMode']);
     expect(featureHandle.uid).toBeTypeOf('number');
 
-    const agent = app.createChild(LifecycleScope.Agent, 'agent-1');
+    const agent = app.createChild('agent', 'agent-1');
     expect(log).toEqual(['agent feature up']);
     expect(agent.accessor.get(IAgentPlanService).marker).toBe('plan-service');
     const toolView = (agent.instantiation as InstantiationService).fiberHost.collectionView(AgentToolContribution);

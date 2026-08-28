@@ -19,7 +19,9 @@ import {
   AgentLlmRequester,
   type LlmRequesterRuntime,
 } from '#/features/llmRequester/llmRequesterAgentRuntime';
-import { LoopControlToken, type LoopErrorContext } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import type { LoopErrorContext } from '#/features/loop/internal/loop';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
@@ -29,7 +31,6 @@ import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentTodo, type TodoRuntime } from '#/features/todo/todoAgentRuntime';
 import { renderTodoList } from '#/features/todo/todoItem';
-import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
@@ -116,7 +117,7 @@ export class FullCompactionDomain {
   }
 
   private get telemetry(): ITelemetryService {
-    return this.runtime.get(ITelemetryService);
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent).telemetry;
   }
 
   private get manager(): IAgentLifecycleService {
@@ -140,8 +141,8 @@ export class FullCompactionDomain {
   }
 
   attach(): IDisposable {
-    const loop = this.runtime.get(LoopControlToken);
-    const eventBus = this.runtime.get(IEventBus);
+    const loop = getLoopControl(this.runtime.agent);
+    const eventBus = this.runtime.get(IAgentHostService).of(this.runtime.agent).eventBus;
     const registrations: IDisposable[] = [
       eventBus.subscribe(TurnStarted, () => this.resetForTurn()),
       eventBus.subscribe(TurnEnded, () => {
@@ -207,7 +208,7 @@ export class FullCompactionDomain {
 
     const tokenCount = this.validateCompactionStart(data.source);
     const quiescence = data.source === 'manual'
-      ? this.runtime.get(LoopControlToken).tryAcquireQuiescence()
+      ? getLoopControl(this.runtime.agent).tryAcquireQuiescence()
       : undefined;
     if (data.source === 'manual' && quiescence === undefined) {
       throw new Error2(
@@ -352,7 +353,7 @@ export class FullCompactionDomain {
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    if (source === 'manual' && this.runtime.get(LoopControlToken).status().state !== 'idle') {
+    if (source === 'manual' && getLoopControl(this.runtime.agent).status().state !== 'idle') {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',

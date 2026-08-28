@@ -1,9 +1,7 @@
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { RuntimeBinding } from '#/runtime/runtime';
 import { RuntimeError } from '#/runtime/runtimeRegistry';
@@ -23,7 +21,7 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   private readonly restoreHook: IDisposable;
 
   constructor(
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly state: IAgentStateService,
     @IAgentRuntimeBindingSeed seed: IAgentRuntimeBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
@@ -92,4 +90,3 @@ export class AgentRuntimeBindingService implements IAgentRuntimeBindingService {
   }
 }
 
-registerScopedService(LifecycleScope.Agent, IAgentRuntimeBindingService, AgentRuntimeBindingService, ScopeActivation.OnScopeCreated, 'agentRuntimeBinding');

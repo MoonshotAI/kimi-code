@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -24,6 +23,7 @@ import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
 import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspace/workspacePersistence';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 interface SessionIndexLine {
   readonly sessionId: string;

@@ -1,5 +1,7 @@
-import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { collection } from '#/_base/di/collection';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type { AgentHost } from '#/agent/host/agentHost';
 import type {
   AgentTool,
   ToolDisclosure,
@@ -9,9 +11,9 @@ import type { RuntimeCapability } from '#/runtime/runtime';
 
 export type AnyAgentTool = AgentTool<any>;
 
-export type AgentToolCtor<T extends AnyAgentTool = AnyAgentTool> = new (...args: any[]) => T;
-
 export interface AgentToolFactoryContext {
+  readonly agent: AgentContext;
+  readonly host: AgentHost;
   get<T>(id: ServiceIdentifier<T>): T;
   enabled(): boolean;
   load(names: readonly string[]): {
@@ -32,17 +34,15 @@ export interface AgentToolFactoryContext {
 
 export interface AgentToolContributionOptions {
   readonly name: string;
-  readonly create?: (context: AgentToolFactoryContext) => AnyAgentTool;
+  readonly create: (context: AgentToolFactoryContext) => AnyAgentTool;
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
-  readonly when?: (accessor: ServicesAccessor) => boolean;
+  readonly when?: (context: AgentToolFactoryContext) => boolean;
   readonly requiredRuntimeCapabilities?: readonly RuntimeCapability[];
   readonly domain?: string;
 }
 
-export interface AgentToolContribution<T extends AnyAgentTool = AnyAgentTool> {
-  readonly id: ServiceIdentifier<T>;
-  readonly ctor: AgentToolCtor<T>;
+export interface AgentToolContribution {
   readonly options: AgentToolContributionOptions;
 }
 
@@ -64,25 +64,8 @@ export const AgentToolProviderContribution =
 
 const _agentToolContributions: AgentToolContribution[] = [];
 
-export function registerAgentToolService<T extends AnyAgentTool>(
-  id: ServiceIdentifier<T>,
-  ctor: AgentToolCtor<T>,
-  options: AgentToolContributionOptions,
-): void {
-  _agentToolContributions.push({ id, ctor, options });
-}
-
-export function overrideAgentToolService<T extends AnyAgentTool>(
-  id: ServiceIdentifier<T>,
-  ctor: AgentToolCtor<T>,
-  options: AgentToolContributionOptions,
-): void {
-  const index = _agentToolContributions.findIndex((contribution) => contribution.id === id);
-  if (index === -1) {
-    _agentToolContributions.push({ id, ctor, options });
-  } else {
-    _agentToolContributions[index] = { id, ctor, options };
-  }
+export function registerAgentToolService(options: AgentToolContributionOptions): void {
+  _agentToolContributions.push({ options });
 }
 
 export function getAgentToolContributions(): readonly AgentToolContribution[] {

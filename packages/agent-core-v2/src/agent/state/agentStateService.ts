@@ -1,6 +1,4 @@
-import { LifecycleScope } from '#/app/scopes';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
 import { StateRegistry, type StateKey } from '#/_base/state/stateRegistry';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -75,10 +73,3 @@ export class AgentStateService extends StateRegistry implements IAgentStateServi
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentStateService,
-  AgentStateService,
-  ScopeActivation.OnScopeCreated,
-  'state',
-);

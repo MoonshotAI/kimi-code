@@ -21,14 +21,14 @@ import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProce
 import { UpdateGoalToolInputSchema } from '#/features/goal/tools/update-goal/update-goal';
 import {
   createMaxStepsExceededError,
-  LoopControlToken,
+  type LoopControl,
   type AfterStepContext,
   type EnqueueReceipt,
   type Step,
   type Turn,
 } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import type { PermissionMode, PermissionPolicyResult } from '#/features/toolExecutor/permissionTypes';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -868,10 +868,11 @@ describe('AgentGoalService core workflow hooks', () => {
   beforeEach(() => {
     loopService = stubLoopWithHooks();
     clock = new ManualGoalDeadlineScheduler();
-    ctx = createTestAgent(
+    ctx = createUnrestoredTestAgent(
       appService(IGoalDeadlineScheduler, clock),
-      agentService(LoopControlToken, loopService),
     );
+    registerLoopControl(ctx.agentContext, loopService, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
+    void ctx.restoreRuntimes();
     applyPermissionMode(ctx, 'auto');
     context = ctx.resolve(AgentContextMemory);
     goals = ctx.resolve(AgentGoal);
@@ -1761,15 +1762,7 @@ describe('AgentGoalService agent eligibility', () => {
   let ctx: TestAgentContext;
 
   beforeEach(() => {
-    ctx = createTestAgent(
-      agentService(IAgentScopeContext, {
-        _serviceBrand: undefined,
-        agentId: 'sub-1',
-        agentContext: stubAgentContext('sub-1', 0),
-        scope: (subKey?: string) =>
-          subKey === undefined ? 'test/agents/sub-1' : `test/agents/sub-1/${subKey}`,
-      }),
-    );
+    ctx = createTestAgent({ agentId: 'sub-1' });
   });
 
   afterEach(async () => {

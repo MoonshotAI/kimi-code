@@ -55,7 +55,7 @@ export class SelectToolsTool implements ISelectToolsTool {
   }
 }
 
-registerAgentToolService(ISelectToolsTool, SelectToolsTool, {
+registerAgentToolService({
   name: SELECT_TOOLS_TOOL_NAME,
   domain: 'toolSelect',
   create: (context) => new SelectToolsTool(context),

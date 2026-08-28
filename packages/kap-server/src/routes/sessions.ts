@@ -19,7 +19,6 @@ import {
   IWorkspaceAliases,
   ISessionManager,
   IWorkspaceService,
-  agentContextOf,
   getLiveSessionById,
   programForSession,
   resumeSessionById,
@@ -27,7 +26,6 @@ import {
   isError2,
   Error2,
   type ContextMessage,
-  type IAgentScopeHandle,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
@@ -65,6 +63,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
+import type { AgentScopeView } from '../transport/agentScopeView';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
@@ -821,7 +820,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor
           .get(IAgentLifecycleService)
-          .resolve(agentContextOf(agent), AgentProfile)
+          .resolve(agent.context, AgentProfile)
           .agentsMdWarning();
         const warnings =
           agentsMdWarning === undefined
@@ -906,7 +905,7 @@ async function compactSessionAction(
   const agent = await resolveMainAgent(core, id);
   await agent.accessor
     .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentFullCompaction)
+    .resolve(agent.context, AgentFullCompaction)
     .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
@@ -919,11 +918,11 @@ async function undoSessionAction(
   const agent = await resolveMainAgent(core, id);
   await agent.accessor
     .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentUndo)
+    .resolve(agent.context, AgentUndo)
     .undo(body.count);
   const history = agent.accessor
     .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentContextMemory)
+    .resolve(agent.context, AgentContextMemory)
     .get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const legacy = core.accessor.get(ISessionLegacyService);
@@ -945,7 +944,7 @@ async function undoSessionAction(
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const agent = await resolveMainAgent(core, id);
-  await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentLoop).cancelByUser();
+  await agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentLoop).cancelByUser();
   requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
@@ -1052,7 +1051,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
   return { ...handle.accessor.get(ISessionActivityView).state(), live: true };
 }
 
-async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
+async function resolveMainAgent(core: Scope, sessionId: string): Promise<AgentScopeView> {
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);

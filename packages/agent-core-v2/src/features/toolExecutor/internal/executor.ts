@@ -47,7 +47,9 @@ import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
-import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { IAgentHostService, type AgentHost } from '#/agent/host/agentHost';
+import { type IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
 import { BeforeToolExecuteBus } from '#/features/toolExecutor/internal/beforeToolExecute';
 import {
   ToolCallStarted,
@@ -158,12 +160,16 @@ export class ToolExecutorPipeline {
     private readonly toolRegistry: ToolCatalog,
   ) {}
 
+  private get host(): AgentHost {
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent);
+  }
+
   private get telemetry(): ITelemetryService {
-    return this.runtime.get(ITelemetryService);
+    return this.host.telemetry;
   }
 
   private get resultTruncation(): IAgentToolResultTruncationService {
-    return this.runtime.get(IAgentToolResultTruncationService);
+    return this.runtime.get(ISessionToolResultTruncationService).of(this.runtime.agent);
   }
 
   private get log(): ILogService {

@@ -1,4 +1,4 @@
-import { ITodoListTool } from '#/features/todo/tools/todo-list/todo-list';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { TodoListTool } from '#/features/todo/tools/todo-list/todoListTool';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
@@ -10,7 +10,11 @@ export class TodoFeature extends Feature {
   constructor() {
     super();
     this.contributeAgentRuntime(todoAgentRuntimeProvider);
-    this.contributeTool(ITodoListTool, TodoListTool, { name: 'TodoList', domain: 'todo' });
+    this.contributeTool({
+      name: 'TodoList',
+      domain: 'todo',
+      create: (ctx) => new TodoListTool(ctx.get(IAgentLifecycleService), ctx.host.scopeContext),
+    });
   }
 }
 

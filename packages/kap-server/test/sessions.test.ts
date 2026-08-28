@@ -16,7 +16,6 @@ import {
   AgentCron,
   AgentGoal,
   AgentUndo,
-  agentContextOf,
   IAgentLifecycleService,
   IEventBus,
   IEventService,
@@ -28,6 +27,7 @@ import {
   resumeSessionById,
   sessionDirOf,
   type ScopeSeed,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -284,14 +284,14 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     const session = getLiveSessionById((server as RunningServer).core.accessor, id);
     if (session === undefined) throw new Error('expected a live session');
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
     if (agent === undefined) throw new Error('expected a live main agent');
 
-    const eventBus = agent.accessor.get(IEventBus);
+    const eventBus = session!.accessor.get(IAgentHostService).of(agent).eventBus;
     const events: Event2<any>[] = [];
     const subscription = eventBus.subscribe((event) => events.push(event));
 
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = session!.accessor.get(IAgentLifecycleService).resolve(agent, AgentGoal);
     const snapshot =
       status === 'blocked'
         ? await goal.markBlocked({ reason: 'need credentials' })
@@ -877,12 +877,12 @@ describe('server-v2 /api/v1/sessions', () => {
     await session.accessor
       .get(IAgentLifecycleService)
       .create({ agentId: MAIN_AGENT_ID });
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID)!;
     const undo = vi
       .spyOn(
         session.accessor
           .get(IAgentLifecycleService)
-          .resolve(agentContextOf(agent), AgentUndo),
+          .resolve(agent, AgentUndo),
         'undo',
       )
       .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));

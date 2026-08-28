@@ -13,8 +13,8 @@ import { GetGoalTool } from '#/features/goal/tools/get-goal/getGoalTool';
 import { SetGoalBudgetTool } from '#/features/goal/tools/set-goal-budget/setGoalBudgetTool';
 import { UpdateGoalToolInputSchema } from '#/features/goal/tools/update-goal/update-goal';
 import { UpdateGoalTool } from '#/features/goal/tools/update-goal/updateGoalTool';
-import { LoopControlToken } from '#/features/loop/internal/loop';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { ToolExecutionResult } from '#/features/toolExecutor/toolExecutor';
@@ -36,7 +36,7 @@ const signal = new AbortController().signal;
 describe('goal tools', () => {
   let ctx: TestAgentContext;
   let goals: GoalRuntime;
-  let loopService: LoopControlToken;
+  let loopService: LoopControl;
   let eventBus: IEventBus;
   let toolExecutor: AgentToolsRuntime;
   let setGoalBudgetTool: SetGoalBudgetTool;
@@ -45,16 +45,16 @@ describe('goal tools', () => {
   beforeEach(() => {
     loopService = stubLoopWithHooks({ hasActiveTurn: true });
     ctx = createTestAgent(
-      agentService(LoopControlToken, loopService),
       agentService(IAgentSwarmService, stubAgentSwarm()),
     );
+    registerLoopControl(ctx.agentContext, loopService, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
     applyPermissionMode(ctx, 'auto');
     goals = ctx.resolve(AgentGoal);
     void ctx.restoreRuntimes();
     eventBus = ctx.get(IEventBus);
     toolExecutor = ctx.resolve(AgentTools);
     const manager = { resolve: () => goals } as unknown as IAgentLifecycleService;
-    const scope = ctx.get(IAgentScopeContext);
+    const scope = ctx.scopeContext;
     setGoalBudgetTool = new SetGoalBudgetTool(manager, scope);
     updateGoalTool = new UpdateGoalTool(manager, scope);
   });

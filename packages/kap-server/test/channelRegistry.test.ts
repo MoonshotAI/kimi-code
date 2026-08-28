@@ -1,6 +1,9 @@
 import {
   createDecorator,
   Feature,
+  IAgentPlanService,
+  IAgentTaskService,
+  IAgentTowerService,
   IFeatureManager,
   LifecycleScope,
   Service,
@@ -13,7 +16,15 @@ import { describeAllChannels, resolveAnyScopedServiceId } from '../src/transport
 describe('channelRegistry', () => {
   it('describes only real DI scopes', () => {
     const scopes = new Set(describeAllChannels().map((channel) => channel.scope));
-    expect(scopes).toEqual(new Set(['app', 'session', 'agent']));
+    expect(scopes).toEqual(new Set(['app', 'session']));
+  });
+
+  it('resolves agent-granular wire names', () => {
+    const core = createAppScope();
+    expect(resolveAnyScopedServiceId(core, 'agentPlanService')).toBe(IAgentPlanService);
+    expect(resolveAnyScopedServiceId(core, 'agentTaskService')).toBe(IAgentTaskService);
+    expect(resolveAnyScopedServiceId(core, 'agentTowerService')).toBe(IAgentTowerService);
+    core.dispose();
   });
 
   it('resolves contributed services from the current core only', async () => {
@@ -22,7 +33,7 @@ describe('channelRegistry', () => {
     class TestFeature extends Feature {
       constructor() {
         super();
-        this.contributeService(LifecycleScope.Agent, id, TestService);
+        this.contributeService('agent' as never, id, TestService);
       }
     }
     const first = createAppScope();

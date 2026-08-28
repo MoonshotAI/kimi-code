@@ -74,8 +74,8 @@
 //     runtimeBinding                          src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                      src/agent/shellCommand/shellCommandService.ts
 //     staleGuard                              src/features/staleGuard/staleGuardOps.ts
-//     stepRetry.failedAttempts                src/agent/stepRetry/stepRetryService.ts
-//     stepRetry.lastFailedDriverId            src/agent/stepRetry/stepRetryService.ts
+//     stepRetry.failedAttempts                src/features/loop/internal/stepRetry.ts
+//     stepRetry.lastFailedDriverId            src/features/loop/internal/stepRetry.ts
 //     swarm                                   src/features/swarm/swarmOps.ts
 //     task                                    src/agent/task/taskOps.ts
 //     task.activeTaskReminderPending          src/agent/task/taskService.ts
@@ -1023,9 +1023,6 @@ export interface AgentStateSnapshot {
   };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
-  // src/agent/stepRetry/stepRetryService.ts
-  'stepRetry.failedAttempts': number;
-  'stepRetry.lastFailedDriverId': string | undefined;
   // src/agent/task/taskOps.ts
   // replayable · durable — folds: TaskStarted, TaskTerminated
   'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
@@ -1136,6 +1133,9 @@ export interface AgentStateSnapshot {
   'loop.disposing': boolean;
   'loop.lastRequestTraceId': string | undefined;
   'loop.nextReservedTurnId': number | undefined;
+  // src/features/loop/internal/stepRetry.ts
+  'stepRetry.failedAttempts': number;
+  'stepRetry.lastFailedDriverId': string | undefined;
   // src/features/plan/injection/planModeInjection.ts
   'plan.wasActive': boolean;
   // src/features/plan/planOps.ts

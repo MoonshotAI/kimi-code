@@ -2,10 +2,9 @@ import {
   ErrorCodes,
   IAgentLifecycleService,
   Error2,
-  agentContextOf,
   getLiveSessionById,
+  type AgentContext,
   type ContentPart,
-  type IAgentScopeHandle,
   type IScopeHandle,
   type PromptSubmitResult,
   type Scope,
@@ -17,6 +16,7 @@ import type { ScopeKind } from './channel';
 import { resolveAnyScopedServiceId } from './channelRegistry';
 import { assertSerializable } from './errors';
 import { MAIN_AGENT_ID, ensureMainAgent } from './mainAgent';
+import { syntheticAgentScope } from './agentScopeView';
 
 export type ChannelLookup = (name: string) => ServiceIdentifier<unknown> | undefined;
 
@@ -44,14 +44,14 @@ export async function resolveScope(
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
       }
       if (agentId === MAIN_AGENT_ID) return ensureMainAgent(session);
-      const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      const agent = session.accessor.get(IAgentLifecycleService).get(agentId);
       if (agent === undefined) {
         throw new Error2(
           ErrorCodes.AGENT_NOT_FOUND,
           `agent ${agentId} not found in session ${sessionId}`,
         );
       }
-      return agent;
+      return syntheticAgentScope(session, agent);
     }
   }
 }
@@ -66,9 +66,9 @@ function promptLaunchWireResult(result: PromptSubmitResult): { turn_id: number }
   return result.turnId === undefined ? undefined : { turn_id: result.turnId };
 }
 
-function agentPromptServiceView(agent: IAgentScopeHandle): object {
+function agentPromptServiceView(agent: IScopeHandle, agentContext: AgentContext): object {
   const prompt = () =>
-    agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt);
+    agent.accessor.get(IAgentLifecycleService).resolve(agentContext, AgentPrompt);
   return {
     submit: async (payload: PromptSubmitWirePayload) =>
       promptLaunchWireResult(
@@ -105,7 +105,11 @@ export async function resolveService(
         `service not available in ${scopeKind} scope: ${serviceName}`,
       );
     }
-    return agentPromptServiceView(scope as IAgentScopeHandle);
+    const sessionId = params['session_id'] ?? '';
+    const session = getLiveSessionById(core.accessor, sessionId)!;
+    const agentId = params['agent_id'] ?? MAIN_AGENT_ID;
+    const agentContext = session.accessor.get(IAgentLifecycleService).get(agentId)!;
+    return agentPromptServiceView(scope as IScopeHandle, agentContext);
   }
   if (scope === undefined) {
     throw new Error2(

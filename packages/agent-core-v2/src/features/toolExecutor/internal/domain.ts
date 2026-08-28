@@ -2,9 +2,11 @@ import { fromCallback } from 'xstate';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { IInstantiationService } from '#/_base/di/instantiation';
-import { IEventBus } from '#/app/event/eventBus';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { IGitService } from '#/app/git/git';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { TurnEnded } from '#/features/loop/turnOps';
 
 import { ToolCatalog } from '#/features/toolExecutor/internal/catalog';
@@ -18,10 +20,14 @@ import { ToolExecutionPermissionGatePolicy } from '#/features/toolExecutor/inter
 import { ToolDedupePolicy } from '#/features/toolExecutor/internal/toolDedupe';
 import { AgentToolsPolicy } from '#/features/toolExecutor/internal/toolPolicy';
 import { SELECT_TOOLS_TOOL_NAME } from '#/features/toolExecutor/toolSelection';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { AgentToolsSelection } from '#/features/toolExecutor/internal/selection';
 import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
 import { McpToolProvider } from '#/features/toolExecutor/internal/mcpToolProvider';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import {
+  DYNAMIC_TOOL_SCHEMA_VARIANT,
+  LOADABLE_TOOLS_VARIANT,
+} from '#/agent/toolSelect/dynamicTools';
 
 export class ToolExecutorDomain {
   readonly catalog: ToolCatalog;
@@ -32,8 +38,11 @@ export class ToolExecutorDomain {
   readonly dedupe: ToolDedupePolicy;
 
   constructor(readonly runtime: AgentRuntimeContext<unknown>) {
+    const host = runtime.get(IAgentHostService).of(runtime.agent);
     this.policy = new AgentToolsPolicy(runtime);
     this.catalog = new ToolCatalog(runtime, {
+      agent: runtime.agent,
+      host,
       get: (id) => runtime.get(id),
       enabled: () => this.selection.enabled(),
       load: (names) => this.selection.load(names),
@@ -45,7 +54,7 @@ export class ToolExecutorDomain {
       listReferences: () => this.catalog.listReferences(),
     }, (record) => {
       const required = record.options.requiredRuntimeCapabilities;
-      const runtimeAllowed = required === undefined || runtime.get(IAgentRuntimeService).isAvailable(required);
+      const runtimeAllowed = required === undefined || host.agentRuntime.isAvailable(required);
       return runtimeAllowed && this.policy.isActive(
         record.options.name,
         record.options.source ?? 'builtin',
@@ -61,7 +70,11 @@ export class ToolExecutorDomain {
       return active ? undefined : `Tool "${name}" is disabled by the active tool policy`;
     });
     const policyChain = new ToolExecutionPermissionPolicyChain(
-      runtime.get(IInstantiationService),
+      runtime.get(IAgentLifecycleService),
+      host.scopeContext,
+      host.agentRuntime,
+      runtime.get(ISessionWorkspaceContext),
+      runtime.get(IGitService),
     );
     const gate = new ToolExecutionPermissionGatePolicy(runtime, policyChain);
     this.dedupe = new ToolDedupePolicy(runtime, this.pipeline);
@@ -75,10 +88,12 @@ export class ToolExecutorDomain {
 
 export const toolExecutorEffects = fromCallback(
   ({ input }: { input: ToolExecutorDomain }) => {
-    const loop = input.runtime.get(LoopControlToken);
+    const host = input.runtime.get(IAgentHostService).of(input.runtime.agent);
+    const loop = getLoopControl(input.runtime.agent);
     input.catalog.activateContributions();
+    const lifecycle = input.runtime.get(IAgentLifecycleService);
     const disposables: IDisposable[] = [
-      input.runtime.get(IEventBus).subscribe(TurnEnded, () => {
+      host.eventBus.subscribe(TurnEnded, () => {
         input.dedupe.clearTurnRecords();
       }),
       loop.hooks.onWillBeginStep.register(TOOL_DEDUPE_PARTICIPANT, async (ctx, next) => {
@@ -89,6 +104,20 @@ export const toolExecutorEffects = fromCallback(
         input.dedupe.endStep();
         await next();
       }),
+      activateReminderWhenReady(lifecycle, host.scopeContext, (reminder) =>
+        reminder.register(LOADABLE_TOOLS_VARIANT, ({ isNewTurn }) =>
+          isNewTurn
+            ? input.selection.loadableToolsAnnouncement()
+            : undefined,
+        ),
+      ),
+      activateReminderWhenReady(lifecycle, host.scopeContext, (reminder) =>
+        reminder.register(DYNAMIC_TOOL_SCHEMA_VARIANT, () => {
+          const tools = input.selection.drainPendingToolSchemas();
+          if (tools === undefined) return undefined;
+          return { message: { role: 'system', content: [], tools } };
+        }),
+      ),
     ];
     return () => {
       for (let index = disposables.length - 1; index >= 0; index -= 1) {

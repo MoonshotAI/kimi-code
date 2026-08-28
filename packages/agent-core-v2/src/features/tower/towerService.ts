@@ -1,12 +1,11 @@
 import { join } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
@@ -15,7 +14,6 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
-import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -34,7 +32,7 @@ import {
   TOWER_TOOL_NAMES,
   TOWER_WORKER_PROFILE,
 } from './tower';
-import { isTowerFeatureAssembled } from './towerFeature';
+import { isTowerFeatureAssembled } from './towerAssembly';
 import { TowerModeEnter, TowerModeExit, towerKey, towerOwnerKey } from './towerOps';
 
 export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_NAMES];
@@ -46,7 +44,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
     @ISessionManager private readonly sessions: ISessionManager,
@@ -267,10 +265,3 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentTowerService,
-  AgentTowerService,
-  ScopeActivation.OnScopeCreated,
-  'tower',
-);

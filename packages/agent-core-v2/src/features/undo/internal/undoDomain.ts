@@ -11,7 +11,7 @@ import {
   isValidUndoCount,
 } from '#/features/contextMemory/conversationTime';
 import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
-import { LoopControlToken, type LoopControl } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { promptMetadataTextFromContentParts } from '#/features/prompt/promptMetadataText';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -27,6 +27,8 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { keepsUndoCheckpoints } from '#/state/state';
 
 import type { AgentConversationUndoParticipant, UndoAvailability, UndoResult } from '../undoAgentRuntime';
+import { IAgentHostService, type AgentHost } from '#/agent/host/agentHost';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { ContextUndone } from '../undoEvents';
 
 export class UndoDomain {
@@ -35,8 +37,12 @@ export class UndoDomain {
 
   constructor(private readonly runtime: AgentRuntimeContext<null>) {}
 
+  private get host(): AgentHost {
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent);
+  }
+
   private get loop(): LoopControl {
-    return this.runtime.get(LoopControlToken);
+    return getLoopControl(this.runtime.agent);
   }
 
   private get manager(): IAgentLifecycleService {
@@ -56,15 +62,15 @@ export class UndoDomain {
   }
 
   private get telemetry(): ITelemetryService {
-    return this.runtime.get(ITelemetryService);
+    return this.host.telemetry;
   }
 
   private get dispatcher(): IEventDispatcher {
-    return this.runtime.get(IEventDispatcher);
+    return this.host.dispatcher;
   }
 
   private get agentState(): IAgentStateService {
-    return this.runtime.get(IAgentStateService);
+    return this.host.state;
   }
 
   private get log(): ILogService {

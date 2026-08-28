@@ -1,7 +1,7 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
 import { cronToHuman, parseCronExpression } from '#/features/cron/internal/cron-expr';
 import { type CronTask } from '#/features/cron/cronTask';
@@ -33,8 +33,8 @@ export class CronListTool implements ICronListTool {
   );
 
   constructor(
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scope: IAgentScopeContext,
+    private readonly manager: IAgentLifecycleService,
+    private readonly scope: IAgentScopeContext,
   ) {}
 
   private get cron(): CronRuntime {

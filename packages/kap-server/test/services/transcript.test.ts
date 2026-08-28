@@ -8,8 +8,8 @@ import {
   AgentInteraction,
   AgentLoop,
   AgentPrompt,
+  IAgentHostService,
   IAgentLifecycleService,
-  IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
   IFlagService,
@@ -35,6 +35,8 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { Emitter, Event } from '@moonshot-ai/agent-core-v2/_base/event';
+import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
@@ -2409,6 +2411,7 @@ describe('bindSessionTranscript', () => {
 
   class FakeAgents {
     private readonly handles = new Map<string, FakeAgentHandle>();
+    private readonly buses = new Map<string, FakeBus>();
     private readonly loopStatuses = new Map<string, unknown>();
     private readonly kernels = new Map<
       string,
@@ -2416,6 +2419,14 @@ describe('bindSessionTranscript', () => {
     >();
     private readonly createHandlers = new Set<(context: AgentContext) => void>();
     private readonly closeHandlers = new Set<(context: AgentContext) => void>();
+    busFor(id: string): FakeBus {
+      let bus = this.buses.get(id);
+      if (bus === undefined) {
+        bus = new FakeBus();
+        this.buses.set(id, bus);
+      }
+      return bus;
+    }
     list(): AgentContext[] {
       const handleIds = new Set(this.handles.keys());
       return [
@@ -2478,7 +2489,7 @@ describe('bindSessionTranscript', () => {
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
     add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
-      const bus = new FakeBus();
+      const bus = this.busFor(id);
       const scope = makeAgentScopeContext({
         agentId: id,
         agentScope: `agents/${id}`,
@@ -2492,7 +2503,6 @@ describe('bindSessionTranscript', () => {
         kernel,
         accessor: {
           get: (token: unknown) => {
-            if (token === IAgentScopeContext) return scope;
             if (token === IEventBus) return bus;
             if (token === IAgentLifecycleService) return this;
             if (token === AgentLoop) {
@@ -2520,10 +2530,42 @@ describe('bindSessionTranscript', () => {
   }
 
   function fakeSession(manager: FakeAgents | FakeInteractionHub): ISessionScopeHandle {
+    const buses = new Map<string, FakeBus>();
+    const busFor = (agentId: string): FakeBus => {
+      if (manager instanceof FakeAgents) return manager.busFor(agentId);
+      let bus = buses.get(agentId);
+      if (bus === undefined) {
+        bus = new FakeBus();
+        buses.set(agentId, bus);
+      }
+      return bus;
+    };
+    const hosts = {
+      of: (agent: AgentContext) => ({ eventBus: busFor(agent.agentId) }),
+    };
+    const tasks = {
+      of: (agent: AgentContext) => ({
+        list: () => {
+          if (manager instanceof FakeAgents) {
+            const service = manager.handleOf(agent.agentId)?.accessor.get(IAgentTaskService) as
+              | { list(): unknown[] }
+              | undefined;
+            return service?.list() ?? [];
+          }
+          return [];
+        },
+      }),
+    };
+    const activityViews = {
+      of: () => ({ state: () => ({}) }),
+    };
     return {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLifecycleService) return manager;
+          if (token === IAgentHostService) return hosts;
+          if (token === ISessionTaskService) return tasks;
+          if (token === ISessionActivityViewService) return activityViews;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },

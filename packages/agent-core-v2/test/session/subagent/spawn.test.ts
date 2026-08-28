@@ -4,8 +4,6 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
@@ -18,14 +16,15 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { type ProfileData } from '#/features/profile/profile';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
+import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import type { RuntimeLease } from '#/runtime/runtime';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { SECONDARY_MODEL_SECTION } from '#/session/subagent/configSection';
@@ -44,6 +43,7 @@ import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { StubConfigService } from '../../kosong/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const CALLER_ID = 'main';
 
@@ -54,8 +54,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   let profiles: CatalogAgentProfile[];
   let modelIds: Set<string>;
   let modelMeta: Map<string, Partial<Model>>;
-  let caller: IAgentScopeHandle;
-  let createdHandles: Map<string, IAgentScopeHandle>;
+  let caller: AgentContext;
+  let createdHandles: Map<string, AgentContext>;
   let createAgent: ReturnType<typeof vi.fn>;
   let forkAgent: ReturnType<typeof vi.fn>;
   let acquireRuntime: ReturnType<typeof vi.fn>;
@@ -84,21 +84,8 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     } as unknown as ProfileRuntime;
   }
 
-  function createdHandle(agentId: string): IAgentScopeHandle {
-    return {
-      id: agentId,
-      kind: LifecycleScope.Agent,
-      accessor: {
-        get: (serviceId: unknown) => {
-          if (serviceId === IAgentScopeContext) {
-            return { agentContext: stubAgentContext(agentId, 1) };
-          }
-          if (serviceId === IAgentUserToolService) return createdUserTools;
-          return undefined;
-        },
-      } as IAgentScopeHandle['accessor'],
-      dispose: () => {},
-    };
+  function createdHandle(agentId: string): AgentContext {
+    return stubAgentContext(agentId, 1);
   }
 
   beforeEach(() => {
@@ -134,32 +121,27 @@ describe('SessionSubagentService planSpawn and spawn', () => {
       dispose: vi.fn(),
     };
     acquireRuntime = vi.fn(() => lease);
-    caller = {
-      id: CALLER_ID,
-      kind: LifecycleScope.Agent,
-      accessor: {
-        get: (serviceId: unknown) => {
-          if (serviceId === ISessionPermissionModeService) return sessionPermissionModes;
-          if (serviceId === IAgentUserToolService) return callerUserTools;
-          if (serviceId === IAgentRuntimeService) {
-            return {
+    caller = stubAgentContext(CALLER_ID, 1);
+    ix.stub(IAgentHostService, {
+      _serviceBrand: undefined,
+      of: (agent: AgentContext) => {
+        if (agent.agentId === CALLER_ID) {
+          return {
+            agentRuntime: {
               _serviceBrand: undefined,
               acquire: acquireRuntime,
-            };
-          }
-          if (serviceId === IAgentScopeContext) {
-            return {
-              _serviceBrand: undefined,
-              agentId: CALLER_ID,
-              agentContext: stubAgentContext(CALLER_ID, 1),
-              scope: () => '',
-            };
-          }
-          return undefined;
-        },
-      } as IAgentScopeHandle['accessor'],
-      dispose: () => {},
-    };
+            },
+          };
+        }
+        return {};
+      },
+    } as unknown as IAgentHostService);
+    ix.stub(ISessionPermissionModeService, sessionPermissionModes as unknown as ISessionPermissionModeService);
+    ix.stub(ISessionUserToolService, {
+      _serviceBrand: undefined,
+      of: (agent: AgentContext) =>
+        agent.agentId === CALLER_ID ? callerUserTools : createdUserTools,
+    } as unknown as ISessionUserToolService);
     createdHandles = new Map();
     createAgent = vi.fn(async (input: { readonly agentId?: string } = {}) => {
       const agentId = input.agentId ?? 'agent-child';
@@ -173,14 +155,11 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       onDidCreate: Event.None,
-      onDidCreateScope: Event.None,
       onWillClose: Event.None,
       onDidClose: Event.None,
       create: createAgent,
       fork: forkAgent,
-      get: (agentId: string) => (agentId === CALLER_ID ? stubAgentContext(CALLER_ID, 1) : undefined),
-      handleOf: (agentId: string) =>
-        agentId === CALLER_ID ? caller : createdHandles.get(agentId),
+      get: (agentId: string) => (agentId === CALLER_ID ? caller : undefined),
       resolve: (agent: AgentContext, definition: unknown) => {
         if (definition !== AgentProfile) return undefined;
         return agent.agentId === CALLER_ID

@@ -3,12 +3,14 @@ import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
 import './configSection';
-import { IAgentExternalHooksService } from './agent/agentExternalHooks';
-import { AgentExternalHooksService } from './agent/agentExternalHooksService';
 import { IExternalHooksRunnerService } from './app/externalHooksRunner';
 import { ExternalHooksRunnerService } from './app/externalHooksRunnerService';
 import { ISessionExternalHooksService } from './session/sessionExternalHooks';
 import { SessionExternalHooksService } from './session/sessionExternalHooksService';
+import {
+  ISessionAgentExternalHooksService,
+  SessionAgentExternalHooksService,
+} from './session/sessionAgentExternalHooksService';
 
 export class ExternalHooksFeature extends Feature {
   static override readonly name = 'externalHooks';
@@ -25,7 +27,11 @@ export class ExternalHooksFeature extends Feature {
       ISessionExternalHooksService,
       SessionExternalHooksService,
     );
-    this.contributeAgentService(IAgentExternalHooksService, AgentExternalHooksService);
+    this.contributeService(
+      LifecycleScope.Session,
+      ISessionAgentExternalHooksService,
+      SessionAgentExternalHooksService,
+    );
   }
 }
 

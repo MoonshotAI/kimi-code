@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { Service } from '#/_base/di/service';
+import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import type {
@@ -11,14 +9,14 @@ import type {
   ExecutableToolContext,
   ExecutableToolResult,
 } from '#/tool/toolContract';
-import { AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
+import { type AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   AgentInteraction,
   type InteractionRuntime,
 } from '#/features/interaction/interactionAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
@@ -35,15 +33,16 @@ interface UserToolExecutionRequest {
   readonly args: unknown;
 }
 
-export class AgentUserToolService extends Service implements IAgentUserToolService {
+export class AgentUserToolService extends Disposable implements IAgentUserToolService {
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<string, { readonly tool: ExecutableTool; readonly disclosure?: UserToolRegistration['disclosure'] }>();
   private readonly changeEmitter = new Emitter<void>();
   private readonly interaction: InteractionRuntime;
+  readonly contribution: AgentToolProviderContribution;
 
   constructor(
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentStateService private readonly agentState: IAgentStateService,
@@ -51,7 +50,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
     super();
     this.interaction = manager.resolve(scopeContext.agentContext, AgentInteraction);
     this.agentState.contributeState(userToolKey);
-    this.provide(AgentToolProviderContribution, {
+    this.contribution = {
       agentId: scopeContext.agentId,
       id: 'user-tools',
       snapshot: () => [...this.registrations.values()].map(({ tool, disclosure }) => ({
@@ -60,7 +59,7 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
         disclosure,
       })),
       onDidChange: this.changeEmitter.event,
-    });
+    };
     this._register(
       this.dispatcher.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
         this.restoreRegisteredTools();
@@ -171,10 +170,3 @@ export class AgentUserToolService extends Service implements IAgentUserToolServi
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentUserToolService,
-  AgentUserToolService,
-  ScopeActivation.OnScopeCreated,
-  'userTool',
-);

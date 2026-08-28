@@ -10,12 +10,12 @@ import {
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -62,10 +62,10 @@ export class GlobTool implements IGlobTool {
   readonly name = 'Glob' as const;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspaceCtx: ISessionWorkspaceContext,
+    private readonly telemetry: ITelemetryService,
+    private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   get description(): string {
@@ -285,10 +285,16 @@ export class GlobTool implements IGlobTool {
   }
 }
 
-registerAgentToolService(IGlobTool, GlobTool, {
+registerAgentToolService({
   name: 'Glob',
   domain: 'os/backends',
   requiredRuntimeCapabilities: ['fs', 'process'],
+  create: (context) => new GlobTool(
+    context.host.agentRuntime,
+    context.get(ISessionWorkspaceContext),
+    context.host.telemetry,
+    context.get(ISessionSkillCatalog),
+  ),
 });
 
 function createRgProbe(processService: IHostProcessService): RgProbe {

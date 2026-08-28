@@ -22,9 +22,9 @@ import {
   AgentInteraction,
   IAgentActivityView,
   LifecycleScope,
+  IAgentHostService,
   IAgentLifecycleService,
   AgentProfile,
-  IAgentScopeContext,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -103,7 +103,7 @@ class FakeEventBus {
 }
 
 class FakeAgentHandle {
-  readonly kind = LifecycleScope.Agent;
+  readonly kind = 'agent';
   readonly bus = new FakeAgentBus();
   readonly accessor;
   readonly context: AgentContext;
@@ -115,7 +115,6 @@ class FakeAgentHandle {
       generation: 1,
     });
     this.context = scope.agentContext;
-    this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
     this.services.set(IAgentLifecycleService, {
       resolve: (_agent: unknown, definition: unknown) => this.services.get(definition),
@@ -258,8 +257,12 @@ class FakeLifecycle {
     context: AgentContext,
     definition: Definition,
   ): RuntimeOf<Definition> {
-    if (definition !== AgentInteraction) throw new Error('unsupported runtime');
-    return this.kernelFor(context.agentId) as RuntimeOf<Definition>;
+    if (definition === AgentInteraction) {
+      return this.kernelFor(context.agentId) as RuntimeOf<Definition>;
+    }
+    const service = this.get(context)?.accessor.get(definition);
+    if (service === undefined) throw new Error('unsupported runtime');
+    return service as RuntimeOf<Definition>;
   }
   private readonly turnCounters = new Map<string, { dispose(): void }>();
   private createHandlers: Array<(context: AgentContext) => void> = [];
@@ -472,11 +475,49 @@ function makeCore(
   const sessionFor = (sid: string) => {
     const lifecycle = sessions.get(sid);
     if (lifecycle === undefined) return undefined;
+    const hosts = {
+      of: (agent: AgentContext) => {
+        const handle = lifecycle.get(agent);
+        if (handle === undefined) throw new Error(`fake host for ${agent.agentId} unavailable`);
+        return { eventBus: handle.bus };
+      },
+    };
+    const delegated = (token: unknown): unknown => {
+      const providers = lifecycle.handles.filter((h) => h.accessor.get(token) !== undefined);
+      if (providers.length === 0) return undefined;
+      return new Proxy(
+        {},
+        {
+          get: (_target, prop: string) =>
+            (...args: unknown[]) => {
+              const first = args[0] as AgentContext | undefined;
+              const handle =
+                first !== undefined && typeof first === 'object' && 'agentId' in first
+                  ? lifecycle.get(first)
+                  : undefined;
+              const service = (handle ?? providers[0]!).accessor.get(token) as Record<
+                string,
+                (...a: unknown[]) => unknown
+              >;
+              return service[prop]!(...args);
+            },
+        },
+      );
+    };
     const sessionAccessor = {
       get: (t: unknown) => {
         if (t === IAgentLifecycleService) return lifecycle;
+        if (t === IAgentHostService) return hosts;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
+        if (
+          t === ISessionUsageService ||
+          t === ISessionTokenCountingService ||
+          t === IModelService ||
+          t === IModelCatalog
+        ) {
+          return delegated(t);
+        }
         return undefined;
       },
     };

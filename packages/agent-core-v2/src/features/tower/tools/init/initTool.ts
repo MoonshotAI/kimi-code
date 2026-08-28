@@ -1,9 +1,9 @@
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IAgentTowerService } from '#/features/tower/tower';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { ISessionManager } from '#/app/sessionManager/sessionManager';
+import type { IAgentTowerService } from '#/features/tower/tower';
 import { TowerProtocolError } from '#/features/tower/protocol/index';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
@@ -18,10 +18,10 @@ export class TowerInitTool implements ITowerInitTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerInitToolInputSchema);
 
   constructor(
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentTowerService private readonly tower: IAgentTowerService,
-    @ISessionManager private readonly sessions: ISessionManager,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly sessionContext: ISessionContext,
+    private readonly tower: IAgentTowerService,
+    private readonly sessions: ISessionManager,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerInitToolInput): ToolExecution {

@@ -9,8 +9,10 @@ import { emptyUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -28,7 +30,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
 import { stubToolExecutorEvents } from './stubs';
 import { registerToolResultTruncationServices } from '../../agent/toolResultTruncation/stubs';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { registerTestAgentWireServices, stubAgentHostService } from '../../wire/stubs';
 import { createTestAgent, execEnvServices, telemetryServices } from '../../harness';
 import { createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -68,7 +70,7 @@ afterEach(() => disposables.dispose());
 
 interface Harness {
   readonly ix: TestInstantiationService;
-  readonly loop: LoopControlToken;
+  readonly loop: LoopControl;
   readonly executor: ToolExecutorPipeline;
   readonly registry: TestToolCatalog;
   readonly fireBefore: (
@@ -82,9 +84,16 @@ function createHarness(
 ): Harness {
   const loop = stubLoopWithHooks();
   const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
+  const agentContext = stubAgentContext('main', 0);
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
-      registerTestAgentWireServices(reg, 'wire/tool-dedupe');
+      const agentScope = {
+        _serviceBrand: undefined,
+        agentId: 'main',
+        agentContext,
+        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
+      } satisfies IAgentScopeContext;
+      registerTestAgentWireServices(reg, 'wire/tool-dedupe', agentScope);
       reg.defineInstance(ITelemetryService, telemetry);
       reg.defineInstance(IEventBus, noopEventBus);
       const homedir = '/tmp/tool-dedupe-homedir';
@@ -98,16 +107,11 @@ function createHarness(
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
-      reg.defineInstance(IAgentScopeContext, {
-        _serviceBrand: undefined,
-        agentId: 'main',
-        agentContext: stubAgentContext('main', 0),
-        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
-      } satisfies IAgentScopeContext);
+      reg.defineInstance(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), agentScope));
+      registerLoopControl(agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
       reg.defineInstance(IBootstrapService, {
         homeDir: homedir,
       } as unknown as IBootstrapService);
-      reg.defineInstance(LoopControlToken, loop);
       reg.defineInstance(IAgentStateService, new AgentStateService());
       registerToolResultTruncationServices(reg);
       registerLogServices(reg);
@@ -115,7 +119,7 @@ function createHarness(
     strict: true,
   });
   const context: AgentRuntimeContext<unknown> = {
-    agent: stubAgentContext('main', 0),
+    agent: agentContext,
     get: (id) => ix.get(id as never),
     getState: () => {
       throw new Error('no durable state');

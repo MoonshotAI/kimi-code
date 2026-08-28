@@ -9,7 +9,7 @@ import type {
   PermissionMode,
   PermissionPolicyResult,
 } from '#/features/toolExecutor/permissionTypes';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { type IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import {
   AgentToolApprovalService,
@@ -89,19 +89,18 @@ describe('AgentToolApprovalService', () => {
   let records: TelemetryRecord[];
   let recorded: Event2[];
   let eventBus: IEventBus;
+  let agentScope: IAgentScopeContext;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     eventBus = disposables.add(new EventBusService());
     mode = 'manual';
+    broker = undefined;
     records = [];
     recorded = [];
+    agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: 'main' });
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(
-          IAgentScopeContext,
-          makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }),
-        );
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
             if (definition === AgentPermissionRules) {
@@ -125,35 +124,43 @@ describe('AgentToolApprovalService', () => {
           _serviceBrand: undefined,
           hooks: { onDidRestore: new OrderedHookSlot() },
           dispatch: async (event: Event2) => {
-            eventBus.publish(event, ix.get(IAgentScopeContext).agentContext);
+            eventBus.publish(event, agentScope.agentContext);
           },
         } as unknown as IEventDispatcher;
         reg.defineInstance(IEventDispatcher, dispatcher);
-        reg.define(IAgentToolApprovalService, AgentToolApprovalService);
       },
       strict: true,
     });
-    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
+    (eventBus as EventBusService).activateAgent(agentScope.agentContext);
   });
   afterEach(() => {
     disposables.dispose();
   });
 
+  let broker: ISessionApprovalService | undefined;
+
   function make(): IAgentToolApprovalService {
-    return ix.get(IAgentToolApprovalService);
+    return new AgentToolApprovalService(
+      agentScope,
+      ix.get(ISessionContext),
+      ix.get(ITelemetryService),
+      ix.get(IEventDispatcher),
+      ix.get(IAgentLifecycleService),
+      broker,
+    );
   }
 
   function useBroker(
     request: (approval: ApprovalRequest) => Promise<ApprovalResponse>,
   ): ReturnType<typeof vi.fn<(approval: ApprovalRequest) => Promise<ApprovalResponse>>> {
     const requestSpy = vi.fn(request);
-    ix.set(ISessionApprovalService, {
+    broker = {
       _serviceBrand: undefined,
       request: requestSpy,
       enqueue: (approval) => ({ ...approval, id: approval.id ?? 'approval-1' }),
       decide: () => {},
       listPending: () => [],
-    });
+    };
     return requestSpy;
   }
 
@@ -169,11 +176,8 @@ describe('AgentToolApprovalService', () => {
   }
 
   function useSubagentScope(): void {
-    ix.set(
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: 'sub-1', agentScope: 'sub-1' }),
-    );
-    (eventBus as EventBusService).activateAgent(ix.get(IAgentScopeContext).agentContext);
+    agentScope = makeAgentScopeContext({ agentId: 'sub-1', agentScope: 'sub-1' });
+    (eventBus as EventBusService).activateAgent(agentScope.agentContext);
   }
 
   describe('resolvePermissionResolution', () => {

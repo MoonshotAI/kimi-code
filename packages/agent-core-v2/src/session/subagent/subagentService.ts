@@ -2,11 +2,7 @@ import { Service } from '#/_base/di/service';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
-import {
-  type IAgentScopeHandle,
-  ScopeActivation,
-  registerScopedService,
-} from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
@@ -19,8 +15,8 @@ import {
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import type { Runtime } from '#/runtime/runtime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -29,8 +25,8 @@ import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 
 import {
   type AgentRunHandle,
@@ -69,25 +65,24 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IConfigService private readonly configService: IConfigService,
     @IFlagService private readonly flags: IFlagService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
+    @ISessionUserToolService private readonly userTools: ISessionUserToolService,
+    @ISessionPermissionModeService private readonly permissionModes: ISessionPermissionModeService,
+    @ISessionUsageService private readonly usage?: ISessionUsageService,
   ) {
     super();
   }
 
   run(agent: AgentContext, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
-    const handle = this.agentLifecycle.handleOf(agent.agentId);
-    if (handle === undefined) {
-      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, {
-        details: { agentId: agent.agentId },
-      });
-    }
-    return runAgentTurn(handle, request, {
-      summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(handle),
+    const target = this.requireCaller(agent.agentId);
+    return runAgentTurn({ agentLifecycle: this.agentLifecycle, usage: this.usage }, target, request, {
+      summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(target),
       signal: opts.signal,
       onReady: opts.onReady,
     });
@@ -97,7 +92,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(input.callerAgentId);
     const fork = input.fork === true;
     await this.catalog.ready;
-    const own = this.agentLifecycle.resolve(agentContextOf(caller), AgentProfile).data();
+    const own = this.agentLifecycle.resolve(caller, AgentProfile).data();
     const requested = input.profileName !== undefined && input.profileName.length > 0
       ? input.profileName
       : undefined;
@@ -156,17 +151,16 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const { plan } = opts;
     const lease = plan.fork
       ? undefined
-      : caller.accessor.get(IAgentRuntimeService).acquire(['process']);
+      : this.hosts.of(caller).agentRuntime.acquire(['process']);
     try {
-      let created: IAgentScopeHandle;
+      let created: AgentContext;
       try {
         if (plan.fork) {
-          const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
+          created = await this.agentLifecycle.fork(caller, {
             labels: opts.labels,
           });
-          created = this.agentLifecycle.handleOf(forked.agentId)!;
         } else {
-          const createdContext = await this.agentLifecycle.create({
+          created = await this.agentLifecycle.create({
             binding: {
               profile: plan.profileName,
               model: plan.model,
@@ -175,25 +169,24 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
             labels: opts.labels,
             runtimeId: lease!.runtime.identity.runtimeId,
           });
-          created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }
       } catch (error) {
         throw wrapSubagentModelError(
           error,
           plan.model,
-          this.agentLifecycle.resolve(agentContextOf(caller), AgentProfile).data().modelAlias,
+          this.agentLifecycle.resolve(caller, AgentProfile).data().modelAlias,
         );
       }
-      const permissionModes = caller.accessor.get(ISessionPermissionModeService);
+      const permissionModes = this.permissionModes;
       permissionModes.setMode(
-        agentContextOf(created),
-        permissionModes.mode(agentContextOf(caller)),
+        created,
+        permissionModes.mode(caller),
       );
-      const createdUserTools = created.accessor.get(IAgentUserToolService);
-      const callerUserTools = caller.accessor.get(IAgentUserToolService);
+      const createdUserTools = this.userTools.of(created);
+      const callerUserTools = this.userTools.of(caller);
       if (plan.fork) {
         const activeToolNames = this.agentLifecycle
-          .resolve(agentContextOf(created), AgentProfile)
+          .resolve(created, AgentProfile)
           .activeTools();
         createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
       } else {
@@ -203,7 +196,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         ? `${FORK_CONTEXT_NOTICE}\n\n${opts.prompt}`
         : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
       return {
-        agentId: created.id,
+        agentId: created.agentId,
         profileName: plan.profileName,
         model: plan.model,
         promptText,
@@ -234,19 +227,19 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     });
   }
 
-  private requireCaller(agentId: string): IAgentScopeHandle {
-    const handle = this.agentLifecycle.handleOf(agentId);
-    if (handle === undefined) {
+  private requireCaller(agentId: string): AgentContext {
+    const caller = this.agentLifecycle.get(agentId);
+    if (caller === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Caller agent "${agentId}" does not exist`, {
         details: { agentId },
       });
     }
-    return handle;
+    return caller;
   }
 
-  private summaryPolicyFor(handle: IAgentScopeHandle): AgentProfileSummaryPolicy | undefined {
+  private summaryPolicyFor(agent: AgentContext): AgentProfileSummaryPolicy | undefined {
     const profileName = this.agentLifecycle
-      .resolve(agentContextOf(handle), AgentProfile)
+      .resolve(agent, AgentProfile)
       .data().profileName;
     if (profileName === undefined) return undefined;
     return this.catalog.get(profileName)?.summaryPolicy;

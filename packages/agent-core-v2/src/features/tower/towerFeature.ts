@@ -1,59 +1,131 @@
 import { ScopeActivation } from '#/_base/di/instantiation';
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import type {
-  AgentToolCtor,
+  AgentToolFactoryContext,
   AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
+import { IModelCatalog } from '#/kosong/model/catalog';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 import { TOWER_FLAG_ID } from './tower';
 import { ITowerRateLimitService } from './towerRateLimit';
 import { TowerRateLimitService } from './towerRateLimitService';
-import { ITowerFindingTool } from './tools/finding/finding';
+import { ISessionTowerService } from './sessionTowerService';
+import {
+  markTowerFeatureAssembled,
+  unmarkTowerFeatureAssembled,
+} from './towerAssembly';
 import { TowerFindingTool } from './tools/finding/findingTool';
-import { ITowerInboxTool } from './tools/inbox/inbox';
 import { TowerInboxTool } from './tools/inbox/inboxTool';
-import { ITowerInitTool } from './tools/init/init';
 import { TowerInitTool } from './tools/init/initTool';
-import { ITowerMergeTool } from './tools/merge/merge';
 import { TowerMergeTool } from './tools/merge/mergeTool';
-import { ITowerMissionTool } from './tools/mission/mission';
 import { TowerMissionTool } from './tools/mission/missionTool';
-import { ITowerPlanTool } from './tools/plan/plan';
 import { TowerPlanTool } from './tools/plan/planTool';
-import { ITowerReviewTool } from './tools/review/review';
 import { TowerReviewTool } from './tools/review/reviewTool';
-import { ITowerSendTool } from './tools/send/send';
 import { TowerSendTool } from './tools/send/sendTool';
-import { ITowerSpawnTool } from './tools/spawn/spawn';
 import { TowerSpawnTool } from './tools/spawn/spawnTool';
-import { ITowerStatusTool } from './tools/status/status';
 import { TowerStatusTool } from './tools/status/statusTool';
-import { ITowerTeardownTool } from './tools/teardown/teardown';
 import { TowerTeardownTool } from './tools/teardown/teardownTool';
 import { TOWER_WORKER_PROFILE_DEF } from './workerProfile';
 
 interface TowerToolContribution {
-  readonly id: ServiceIdentifier<AnyAgentTool>;
-  readonly ctor: AgentToolCtor;
   readonly name: string;
+  readonly create: (ctx: AgentToolFactoryContext) => AnyAgentTool;
 }
 
 export const TOWER_TOOL_CONTRIBUTIONS: readonly TowerToolContribution[] = [
-  { id: ITowerInitTool, ctor: TowerInitTool, name: 'TowerInit' },
-  { id: ITowerPlanTool, ctor: TowerPlanTool, name: 'TowerPlan' },
-  { id: ITowerSpawnTool, ctor: TowerSpawnTool, name: 'TowerSpawn' },
-  { id: ITowerMergeTool, ctor: TowerMergeTool, name: 'TowerMerge' },
-  { id: ITowerTeardownTool, ctor: TowerTeardownTool, name: 'TowerTeardown' },
-  { id: ITowerSendTool, ctor: TowerSendTool, name: 'TowerSend' },
-  { id: ITowerInboxTool, ctor: TowerInboxTool, name: 'TowerInbox' },
-  { id: ITowerFindingTool, ctor: TowerFindingTool, name: 'TowerFinding' },
-  { id: ITowerReviewTool, ctor: TowerReviewTool, name: 'TowerReview' },
-  { id: ITowerMissionTool, ctor: TowerMissionTool, name: 'TowerMission' },
-  { id: ITowerStatusTool, ctor: TowerStatusTool, name: 'TowerStatus' },
+  {
+    name: 'TowerInit',
+    create: (ctx) =>
+      new TowerInitTool(
+        ctx.get(ISessionContext),
+        ctx.get(ISessionTowerService).of(ctx.agent),
+        ctx.get(ISessionManager),
+        ctx.host.scopeContext,
+      ),
+  },
+  {
+    name: 'TowerPlan',
+    create: (ctx) =>
+      new TowerPlanTool(
+        ctx.get(ISessionContext),
+        ctx.get(ISessionTowerService).of(ctx.agent),
+        ctx.host.scopeContext,
+      ),
+  },
+  {
+    name: 'TowerSpawn',
+    create: (ctx) =>
+      new TowerSpawnTool(
+        ctx.get(ISessionTowerService).of(ctx.agent),
+        ctx.get(ITowerRateLimitService),
+        ctx.get(ISessionContext),
+        ctx.host.scopeContext,
+        ctx.get(IAgentLifecycleService),
+        ctx.get(IAgentHostService),
+        ctx.get(ISessionSubagentService),
+        ctx.get(ISessionTaskService).of(ctx.agent),
+        ctx.get(IConfigService),
+        ctx.get(IFlagService),
+        ctx.get(IModelCatalog),
+        ctx.get(ISessionPermissionModeService),
+        ctx.get(ISessionTokenCountingService),
+      ),
+  },
+  {
+    name: 'TowerMerge',
+    create: (ctx) => new TowerMergeTool(ctx.get(ISessionContext), ctx.host.scopeContext),
+  },
+  {
+    name: 'TowerTeardown',
+    create: (ctx) =>
+      new TowerTeardownTool(
+        ctx.get(ISessionContext),
+        ctx.get(ISessionTowerService).of(ctx.agent),
+        ctx.get(ISessionManager),
+        ctx.host.scopeContext,
+      ),
+  },
+  {
+    name: 'TowerSend',
+    create: (ctx) => new TowerSendTool(ctx.get(ISessionContext), ctx.host.scopeContext),
+  },
+  {
+    name: 'TowerInbox',
+    create: (ctx) => new TowerInboxTool(ctx.get(ISessionContext), ctx.host.scopeContext),
+  },
+  {
+    name: 'TowerFinding',
+    create: (ctx) => new TowerFindingTool(ctx.get(ISessionContext), ctx.host.scopeContext),
+  },
+  {
+    name: 'TowerReview',
+    create: (ctx) => new TowerReviewTool(ctx.get(ISessionContext), ctx.host.scopeContext),
+  },
+  {
+    name: 'TowerMission',
+    create: (ctx) => new TowerMissionTool(ctx.get(ISessionContext), ctx.host.scopeContext),
+  },
+  {
+    name: 'TowerStatus',
+    create: (ctx) =>
+      new TowerStatusTool(
+        ctx.get(ISessionContext),
+        ctx.host.scopeContext,
+        ctx.get(ITowerRateLimitService),
+      ),
+  },
 ];
 
 export class TowerFeature extends Feature {
@@ -62,32 +134,24 @@ export class TowerFeature extends Feature {
   constructor(@IFlagService flags: IFlagService) {
     super();
     if (!flags.enabled(TOWER_FLAG_ID)) return;
-    assembledFlagServices.add(flags);
+    markTowerFeatureAssembled(flags);
     this.onDispose(() => {
-      assembledFlagServices.delete(flags);
+      unmarkTowerFeatureAssembled(flags);
     });
     this.contributeService(LifecycleScope.App, ITowerRateLimitService, TowerRateLimitService, {
       activation: ScopeActivation.OnDemand,
     });
     for (const tool of TOWER_TOOL_CONTRIBUTIONS) {
-      this.contributeTool(tool.id, tool.ctor, {
+      this.contributeTool({
         name: tool.name,
         domain: 'tower',
+        create: tool.create,
       });
     }
     this.contributeProfiles([TOWER_WORKER_PROFILE_DEF]);
   }
 }
 
-const assembledFlagServices = new WeakSet<IFlagService>();
-let assembledOverrideForTests: boolean | undefined;
-
-export function isTowerFeatureAssembled(flags: IFlagService): boolean {
-  return assembledOverrideForTests ?? assembledFlagServices.has(flags);
-}
-
-export function _setTowerFeatureAssembledForTests(value: boolean | undefined): void {
-  assembledOverrideForTests = value;
-}
+export { isTowerFeatureAssembled, _setTowerFeatureAssembledForTests } from './towerAssembly';
 
 registerFeature(TowerFeature);

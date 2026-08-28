@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { getLiveSessionById, IAgentLifecycleService, IAgentHostService, IEventBus } from '@moonshot-ai/agent-core-v2';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -506,8 +506,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
-    const bus = agentHandle?.accessor.get(IEventBus);
+    const main = session?.accessor.get(IAgentLifecycleService).get('main');
+    const bus = main === undefined ? undefined : session?.accessor.get(IAgentHostService).of(main).eventBus;
     expect(bus).toBeDefined();
     bus!.publish(
       new ToolProgress({

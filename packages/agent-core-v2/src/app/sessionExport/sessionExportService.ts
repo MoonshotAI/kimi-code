@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
-import { IWireService } from '#/wire/wire';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -128,11 +128,12 @@ export class SessionExportService implements ISessionExportService {
       handle.accessor.get(ILogService).flush(),
     );
     const agents = handle.accessor.get(IAgentLifecycleService);
+    const hosts = handle.accessor.get(IAgentHostService);
     for (const agent of agents.list()) {
-      const agentHandle = agents.handleOf(agent.agentId);
-      if (agentHandle === undefined) continue;
+      const bundle = hosts.tryOf(agent);
+      if (bundle === undefined) continue;
       await this.warnIfFails('export agent wire flush failed', () =>
-        agentHandle.accessor.get(IWireService).flush(),
+        bundle.wire.flush(),
       );
     }
 

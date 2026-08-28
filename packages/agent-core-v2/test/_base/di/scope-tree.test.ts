@@ -2,14 +2,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   Scope,
   _clearScopedRegistryForTests,
   createAppScope,
   registerScopedService,
+  setScopeTopology,
 } from '#/_base/di/scope';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
+
+setScopeTopology([LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]);
 
 interface IAppSvc {
   tag: 'app';
@@ -48,13 +51,13 @@ describe('Scope tree', () => {
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, IAppSvc, AppSvc);
     registerScopedService(LifecycleScope.Session, ISessionSvc, SessionSvc);
-    registerScopedService(LifecycleScope.Agent, IAgentSvc, AgentSvc);
+    registerScopedService('agent', IAgentSvc, AgentSvc);
   });
 
   function buildTree(): { app: Scope; session: Scope; agent: Scope } {
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1');
-    const agent = session.createChild(LifecycleScope.Agent, 'main');
+    const agent = session.createChild('agent', 'main');
     return { app, session, agent };
   }
 
@@ -129,11 +132,11 @@ describe('Scope tree', () => {
     }
     registerScopedService(LifecycleScope.App, IA, A);
     registerScopedService(LifecycleScope.Session, IB, B);
-    registerScopedService(LifecycleScope.Agent, IC, C);
+    registerScopedService('agent', IC, C);
 
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1');
-    const agent = session.createChild(LifecycleScope.Agent, 'main');
+    const agent = session.createChild('agent', 'main');
     app.accessor.get(IA);
     session.accessor.get(IB);
     agent.accessor.get(IC);
@@ -179,7 +182,7 @@ describe('Scope tree', () => {
     const app = createAppScope();
     const session = app.createChild(LifecycleScope.Session, 's1');
     session.dispose();
-    expect(() => session.createChild(LifecycleScope.Agent, 'a1')).toThrow(/disposed/);
+    expect(() => session.createChild('agent', 'a1')).toThrow(/disposed/);
     app.dispose();
   });
 

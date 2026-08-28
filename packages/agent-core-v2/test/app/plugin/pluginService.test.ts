@@ -17,12 +17,12 @@ import { PluginService } from '#/app/plugin/pluginService';
 import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
-import { LifecycleScope } from '#/app/scopes';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubProviderService } from '../provider/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 vi.mock('#/app/plugin/store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/app/plugin/store')>();

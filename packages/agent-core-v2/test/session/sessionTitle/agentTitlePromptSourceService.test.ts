@@ -6,7 +6,7 @@ import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemor
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { lifecycleWithPrompt, stubPromptRuntime } from '../../features/prompt/stubs';
 import type { PromptQueueSnapshot } from '#/features/prompt/prompt';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
@@ -50,21 +50,21 @@ describe('AgentTitlePromptSource', () => {
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(
-          IAgentLifecycleService,
-          lifecycleWithPrompt(
-            stubPromptRuntime({ list: () => queue }),
-            lifecycleWithReminder(
-              createReminderStub(),
-              { get: () => liveMessages } as unknown as ContextMemoryRuntime,
-            ),
+        const lifecycle = lifecycleWithPrompt(
+          stubPromptRuntime({ list: () => queue }),
+          lifecycleWithReminder(
+            createReminderStub(),
+            { get: () => liveMessages } as unknown as ContextMemoryRuntime,
           ),
         );
+        reg.defineInstance(IAgentLifecycleService, lifecycle);
         reg.defineInstance(
-          IAgentScopeContext,
-          makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
+          IAgentTitlePromptSource,
+          new AgentTitlePromptSourceService(
+            lifecycle,
+            makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 }),
+          ),
         );
-        reg.define(IAgentTitlePromptSource, AgentTitlePromptSourceService);
       },
     });
   });

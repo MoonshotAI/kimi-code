@@ -1,6 +1,5 @@
 import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import type {
   AgentToolContribution as AgentToolContributionRecord,
@@ -86,24 +85,22 @@ export class ToolCatalog {
       if (this.tools.get(entry.tool.name) === entry) this.tools.delete(entry.tool.name);
       changed = true;
     }
-    const instantiation = this.runtime.get(IInstantiationService);
-    instantiation.invokeFunction((accessor) => {
-      for (const record of records) {
-        if (this.contributionEntries.has(record)) continue;
-        if (!this.shouldActivate(record)) continue;
-        if (record.options.when !== undefined && !record.options.when(accessor)) continue;
-        const tool = record.options.create?.(this.factoryContext) ?? instantiation.createInstance(record.ctor);
-        const entry: ToolEntry = {
-          tool,
-          source: record.options.source ?? 'builtin',
-          disclosure: record.options.disclosure,
-          owner: record,
-        };
-        this.tools.set(tool.name, entry);
-        this.contributionEntries.set(record, entry);
-        changed = true;
-      }
-    });
+    for (const record of records) {
+      if (this.contributionEntries.has(record)) continue;
+      if (!this.shouldActivate(record)) continue;
+      if (record.options.when !== undefined && !record.options.when(this.factoryContext)) continue;
+
+      const tool = record.options.create(this.factoryContext);
+      const entry: ToolEntry = {
+        tool,
+        source: record.options.source ?? 'builtin',
+        disclosure: record.options.disclosure,
+        owner: record,
+      };
+      this.tools.set(tool.name, entry);
+      this.contributionEntries.set(record, entry);
+      changed = true;
+    }
     if (changed) this.changeEmitter.fire();
   }
 

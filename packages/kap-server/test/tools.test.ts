@@ -6,11 +6,11 @@ import {
   IAgentLifecycleService,
   IFeatureManager,
   AgentTools,
-  agentContextOf,
   getLiveSessionById,
   ISessionToolPolicy,
   IModelCatalog,
   type ExecutableTool,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import { AgentToolProviderContribution } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolContribution';
 import {
@@ -122,10 +122,10 @@ describe('server-v2 /api/v1 tools + mcp', () => {
   async function ensureMainAgent(sessionId: string) {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) {
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      agent = session.accessor.get(IAgentLifecycleService).get('main')!;
     }
     return agent;
   }
@@ -162,14 +162,14 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       const agent = await ensureMainAgent(id);
       const agentTools = getLiveSessionById(server!.core.accessor, id)!.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentTools);
+        .resolve(agent, AgentTools);
       expect(agentTools).toBeDefined();
       const schema = { type: 'object', properties: { msg: { type: 'string' } } };
       server!.core.accessor.get(IFeatureManager).provideUnit({
         name: 'test-projected-tools',
-        apply: (fiber) =>
-          fiber.provide(AgentToolProviderContribution, {
-            agentId: agentContextOf(agent).agentId,
+        apply: (fiber) => {
+          void fiber.provide(AgentToolProviderContribution, {
+            agentId: agent.agentId,
             id: 'test-projected-tools',
             snapshot: () => [
               { tool: makeTool('Echo', schema), source: 'builtin' as const },
@@ -177,7 +177,8 @@ describe('server-v2 /api/v1 tools + mcp', () => {
               { tool: makeTool('mcp__myserver__search'), source: 'mcp' as const },
             ],
             onDidChange: () => ({ dispose(): void {} }),
-          }),
+          });
+        },
       });
 
       const { body } = await getJson<{ tools: ToolWire[] }>('/api/v1/tools');

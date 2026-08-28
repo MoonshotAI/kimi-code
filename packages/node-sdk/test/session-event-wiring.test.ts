@@ -12,13 +12,13 @@ import type { Event } from '@moonshot-ai/agent-core';
 import {
   IAgentLifecycleService,
   AgentProfile,
-  IAgentScopeContext,
   IEventBus,
   ISessionTokenCountingService,
   ISessionUsageService,
+  IAgentHostService,
   makeAgentScopeContext,
+  type AgentContext,
   type InteractionRuntime,
-  type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -55,7 +55,6 @@ class FakeAgentHandle {
   constructor(readonly id: string) {
     const scopeContext = makeAgentScopeContext({ agentId: id, agentScope: `agents/${id}` });
     this.context = scopeContext.agentContext;
-    this.services.set(IAgentScopeContext, scopeContext);
     this.services.set(IEventBus, this.bus);
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -73,17 +72,58 @@ function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
     onDidResolve: () => ({ dispose: () => {} }),
     listPending: () => [],
   } as unknown as InteractionRuntime;
+  const perAgentService = <T,>(agent: AgentContext, token: unknown): T | undefined =>
+    agents.find((a) => a.context === agent)?.accessor.get(token) as T | undefined;
   const lifecycle = {
     list: () => agents.map((agent) => agent.context),
     get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
-    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
-    resolve: () => interactions,
+    resolve: (agent: AgentContext, definition: unknown) => {
+      const inner = perAgentService<{ resolve(a: unknown, d: unknown): unknown }>(
+        agent,
+        IAgentLifecycleService,
+      );
+      return inner?.resolve(agent, definition) ?? interactions;
+    },
     onDidCreate: () => ({ dispose: () => {} }),
     onDidClose: () => ({ dispose: () => {} }),
   };
+  const hosts = {
+    _serviceBrand: undefined,
+    of: (agent: AgentContext) => {
+      const handle = agents.find((a) => a.context === agent);
+      if (handle === undefined) throw new Error(`fake host for ${agent.agentId} unavailable`);
+      return {
+        eventBus: handle.bus,
+        resolve: (token: unknown) => handle.accessor.get(token),
+      };
+    },
+    tryOf: () => undefined,
+    create: () => {
+      throw new Error('not implemented');
+    },
+    release: () => {},
+    hookViews: () => ({ dispose: () => {} }),
+  } as unknown as IAgentHostService;
   const accessor = {
     get: (token: unknown): unknown => {
       if (token === IAgentLifecycleService) return lifecycle;
+      if (token === IAgentHostService) return hosts;
+      if (token === ISessionUsageService) {
+        if (!agents.every((a) => a.accessor.get(ISessionUsageService) !== undefined)) return undefined;
+        return {
+          status: (agent: AgentContext) =>
+            perAgentService<{ status(): unknown }>(agent, ISessionUsageService)?.status(),
+        };
+      }
+      if (token === ISessionTokenCountingService) {
+        if (!agents.every((a) => a.accessor.get(ISessionTokenCountingService) !== undefined)) {
+          return undefined;
+        }
+        return {
+          statusSize: (agent: AgentContext) =>
+            perAgentService<{ statusSize(): number }>(agent, ISessionTokenCountingService)?.statusSize(),
+        };
+      }
       return undefined;
     },
   };

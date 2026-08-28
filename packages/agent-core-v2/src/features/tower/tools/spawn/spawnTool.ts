@@ -3,9 +3,11 @@ import { join } from 'node:path';
 
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentHostService } from '#/agent/host/agentHost';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import { IAgentTaskService } from '#/agent/task/task';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import type { IAgentTaskService } from '#/agent/task/task';
 import {
   GitError,
   MISSIONS_DIR,
@@ -18,20 +20,20 @@ import {
   type TowerMission,
   type TowerState,
 } from '#/features/tower/protocol/index';
-import { IAgentTowerService, TOWER_WORKER_PROFILE } from '#/features/tower/tower';
-import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
-import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { TOWER_WORKER_PROFILE, type IAgentTowerService } from '#/features/tower/tower';
+import type { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
+import type { IConfigService } from '#/app/config/config';
+import type { IFlagService } from '#/app/flag/flag';
+import type { IModelCatalog } from '#/kosong/model/catalog';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { MAIN_AGENT_ID, type IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentBinding,
@@ -39,7 +41,7 @@ import {
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
-import { ISessionSubagentService } from '#/session/subagent/subagent';
+import type { ISessionSubagentService } from '#/session/subagent/subagent';
 
 import { SubagentTask, type SubagentHandle } from '#/agent/tools/agent/subagent-task';
 
@@ -58,16 +60,19 @@ export class TowerSpawnTool implements ITowerSpawnTool {
   private readonly callerAgentId: string;
 
   constructor(
-    @IAgentTowerService private readonly tower: IAgentTowerService,
-    @ITowerRateLimitService private readonly rateLimit: ITowerRateLimitService,
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    private readonly tower: IAgentTowerService,
+    private readonly rateLimit: ITowerRateLimitService,
+    private readonly sessionContext: ISessionContext,
+    private readonly scopeContext: IAgentScopeContext,
+    private readonly agentLifecycle: IAgentLifecycleService,
+    private readonly hosts: IAgentHostService,
+    private readonly subagents: ISessionSubagentService,
+    private readonly tasks: IAgentTaskService,
+    private readonly config: IConfigService,
+    private readonly flags: IFlagService,
+    private readonly modelCatalog: IModelCatalog,
+    private readonly permissionModes: ISessionPermissionModeService,
+    private readonly tokenCounting?: ISessionTokenCountingService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
@@ -276,7 +281,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     controller: AbortController,
     binding: SubagentBinding | undefined,
   ): Promise<SubagentHandle> {
-    const requester = this.agentLifecycle.handleOf(this.callerAgentId);
+    const requester = this.agentLifecycle.get(this.callerAgentId);
     if (requester === undefined) {
       throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
     }
@@ -297,11 +302,15 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         ? error
         : wrapSubagentModelError(error, binding.model, this.profile.data().modelAlias);
     }
-    const created = this.agentLifecycle.handleOf(createdContext.agentId)!;
-    created.accessor.get(ISessionPermissionModeService).setMode(agentContextOf(created), 'auto');
+    this.permissionModes.setMode(createdContext, 'auto');
     const agentId = createdContext.agentId;
 
-    emitAgentRunSpawned(requester, agentId, {
+    const mirrorServices = {
+      agentLifecycle: this.agentLifecycle,
+      subagents: this.subagents,
+      tokenCounting: this.tokenCounting,
+    };
+    emitAgentRunSpawned(this.hosts, mirrorServices, requester, agentId, {
       profileName: TOWER_WORKER_PROFILE,
       parentToolCallId: toolCallId,
       description,
@@ -313,7 +322,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       { kind: 'prompt', prompt },
       { signal: controller.signal },
     );
-    const mirrored = mirrorAgentRun(requester, run, {
+    const mirrored = mirrorAgentRun(this.hosts, mirrorServices, requester, run, {
       profileName: TOWER_WORKER_PROFILE,
       prompt,
       signal: controller.signal,

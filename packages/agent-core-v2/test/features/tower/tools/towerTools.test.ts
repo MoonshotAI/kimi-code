@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
@@ -88,6 +88,21 @@ beforeEach(async () => {
   agentContexts.clear();
 
   disposables = new DisposableStore();
+  const agentScope: IAgentScopeContext = {
+    _serviceBrand: undefined,
+    get agentId() {
+      return currentAgentId;
+    },
+    get agentContext() {
+      let context = agentContexts.get(currentAgentId);
+      if (context === undefined) {
+        context = stubAgentContext(currentAgentId, 0);
+        agentContexts.set(currentAgentId, context);
+      }
+      return context;
+    },
+    scope: (subKey?: string) => subKey ?? '',
+  };
   ix = createServices(disposables, {
     additionalServices: (reg) => {
       reg.defineInstance(ISessionContext, {
@@ -101,21 +116,6 @@ beforeEach(async () => {
         cwd: repo,
         scope: (subKey?: string) =>
           subKey === undefined || subKey === '' ? 'sessions/test' : `sessions/test/${subKey}`,
-      });
-      reg.defineInstance(IAgentScopeContext, {
-        _serviceBrand: undefined,
-        get agentId() {
-          return currentAgentId;
-        },
-        get agentContext() {
-          let context = agentContexts.get(currentAgentId);
-          if (context === undefined) {
-            context = stubAgentContext(currentAgentId, 0);
-            agentContexts.set(currentAgentId, context);
-          }
-          return context;
-        },
-        scope: (subKey?: string) => subKey ?? '',
       });
       reg.defineInstance(IAgentTowerService, {
         _serviceBrand: undefined,
@@ -135,18 +135,18 @@ beforeEach(async () => {
       reg.definePartialInstance(ITowerRateLimitService, {
         snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
       });
-      reg.define(ITowerInitTool, TowerInitTool);
-      reg.define(ITowerPlanTool, TowerPlanTool);
-      reg.define(ITowerMergeTool, TowerMergeTool);
-      reg.define(ITowerTeardownTool, TowerTeardownTool);
-      reg.define(ITowerSendTool, TowerSendTool);
-      reg.define(ITowerInboxTool, TowerInboxTool);
-      reg.define(ITowerFindingTool, TowerFindingTool);
-      reg.define(ITowerReviewTool, TowerReviewTool);
-      reg.define(ITowerMissionTool, TowerMissionTool);
-      reg.define(ITowerStatusTool, TowerStatusTool);
     },
   });
+  ix.stub(ITowerInitTool, new TowerInitTool(ix.get(ISessionContext), ix.get(IAgentTowerService), ix.get(ISessionManager), agentScope));
+  ix.stub(ITowerPlanTool, new TowerPlanTool(ix.get(ISessionContext), ix.get(IAgentTowerService), agentScope));
+  ix.stub(ITowerMergeTool, new TowerMergeTool(ix.get(ISessionContext), agentScope));
+  ix.stub(ITowerTeardownTool, new TowerTeardownTool(ix.get(ISessionContext), ix.get(IAgentTowerService), ix.get(ISessionManager), agentScope));
+  ix.stub(ITowerSendTool, new TowerSendTool(ix.get(ISessionContext), agentScope));
+  ix.stub(ITowerInboxTool, new TowerInboxTool(ix.get(ISessionContext), agentScope));
+  ix.stub(ITowerFindingTool, new TowerFindingTool(ix.get(ISessionContext), agentScope));
+  ix.stub(ITowerReviewTool, new TowerReviewTool(ix.get(ISessionContext), agentScope));
+  ix.stub(ITowerMissionTool, new TowerMissionTool(ix.get(ISessionContext), agentScope));
+  ix.stub(ITowerStatusTool, new TowerStatusTool(ix.get(ISessionContext), agentScope, ix.get(ITowerRateLimitService)));
 });
 
 afterEach(async () => {

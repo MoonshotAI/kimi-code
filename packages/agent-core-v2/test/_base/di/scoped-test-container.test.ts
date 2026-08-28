@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createDecorator } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 interface IGreeter {
   greet(): string;
@@ -60,7 +60,7 @@ describe('scoped test container', () => {
   it('childOf builds deeper (Agent) scopes under a given parent', () => {
     const host = createScopedTestHost([stubPair(IGreeter, { greet: () => 'deep' })]);
     const session = host.child(LifecycleScope.Session, 's1');
-    const agent = host.childOf(session, LifecycleScope.Agent, 'main', [
+    const agent = host.childOf(session, 'agent', 'main', [
       stubPair(IGreeter, { greet: () => 'agent-local' }),
     ]);
 

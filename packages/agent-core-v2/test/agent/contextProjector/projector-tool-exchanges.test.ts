@@ -7,7 +7,6 @@ import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { Message } from '#/kosong/contract/message';
@@ -106,10 +105,6 @@ describe('projector tool-exchange normalization', () => {
     ix.set(ILogService, createCapturingLog(warnings));
     ix.set(ITelemetryService, recordingTelemetry(telemetryRecords));
     ix.set(IAgentStateService, new AgentStateService());
-    ix.set(
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
-    );
     ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
     projector = ix.get(IAgentContextProjectorService);
   });

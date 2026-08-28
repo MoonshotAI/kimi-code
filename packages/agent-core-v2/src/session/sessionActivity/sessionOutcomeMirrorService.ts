@@ -1,7 +1,7 @@
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IEventBus } from '#/app/event/eventBus';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
@@ -24,6 +24,7 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   constructor(
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) {
     super();
@@ -52,10 +53,9 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
 
   private attachMain(): void {
     if (this.mainSubscription !== undefined) return;
-    const bus = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IEventBus) as
-      | IEventBus
-      | undefined;
-    if (bus === undefined) return;
+    const main = this.agents.get(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    const bus = this.hosts.of(main).eventBus;
     const subscription = new DisposableStore();
     this.mainSubscription = subscription;
     subscription.add(

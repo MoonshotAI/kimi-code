@@ -3,7 +3,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import type {
   BeforeToolExecuteEvent,
@@ -12,7 +12,6 @@ import type {
 import type { ToolCall } from '#/kosong/contract/message';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import type { ToolAccesses, ToolFileAccessOperation } from '#/tool/toolContract';
 
 import { IStaleGuardService } from './staleGuard';
@@ -51,10 +50,10 @@ export class StaleGuardService extends Disposable implements IStaleGuardService 
 
   constructor(
     @IAgentStateService private readonly states: IAgentStateService,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    scopeContext: IAgentScopeContext,
   ) {
     super();
     this.states.contributeState(staleGuardKey);
@@ -76,10 +75,6 @@ export class StaleGuardService extends Disposable implements IStaleGuardService 
         void this.dispatcher.dispatch(new StaleGuardCleared({}));
       }),
     );
-  }
-
-  private get dispatcher(): IEventDispatcher {
-    return this.instantiation.invokeFunction((accessor) => accessor.get(IEventDispatcher));
   }
 
   recordedMtimeMs(path: string): number | undefined {

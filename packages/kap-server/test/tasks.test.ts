@@ -9,6 +9,7 @@ import {
   IModelCatalog,
   type AgentTask,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -126,12 +127,12 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
   async function mainAgentTasks(sessionId: string): Promise<IAgentTaskService> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) {
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      agent = session.accessor.get(IAgentLifecycleService).get('main')!;
     }
-    return agent.accessor.get(IAgentTaskService);
+    return session!.accessor.get(ISessionTaskService).of(agent);
   }
 
   async function flush(): Promise<void> {

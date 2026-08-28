@@ -1,6 +1,4 @@
-import { LifecycleScope } from '#/app/scopes';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import {
   IAgentTelemetryContextService,
   type AgentTelemetryContext,
@@ -23,10 +21,3 @@ export class AgentTelemetryContextService implements IAgentTelemetryContextServi
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentTelemetryContextService,
-  AgentTelemetryContextService,
-  ScopeActivation.OnScopeCreated,
-  'telemetry',
-);

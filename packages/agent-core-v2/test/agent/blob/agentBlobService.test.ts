@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ContentPart } from '#/kosong/contract/message';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { type ServiceIdentifier } from '#/_base/di/instantiation';
-import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import {
   BLOBREF_PROTOCOL,
@@ -11,11 +10,12 @@ import {
   MISSING_MEDIA_PLACEHOLDER,
 } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const LARGE = 'A'.repeat(5000);
 const SMALL = 'AQID';
@@ -57,11 +57,10 @@ describe('agent blob service (offload/load of inline media)', () => {
   });
 
   function createService(agentId: string, agentScope: string): IAgentBlobService {
-    const agent = host.child(LifecycleScope.Agent, agentId, [
-      stubPair(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })),
-      [IAgentBlobService as ServiceIdentifier<unknown>, new SyncDescriptor(AgentBlobServiceImpl)],
-    ]);
-    return agent.accessor.get(IAgentBlobService);
+    return new AgentBlobServiceImpl(
+      blobs,
+      makeAgentScopeContext({ agentId, agentScope }),
+    );
   }
 
   function service(): IAgentBlobService {

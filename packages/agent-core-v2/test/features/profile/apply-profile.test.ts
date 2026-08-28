@@ -476,6 +476,7 @@ function pluginStub(
 ): IPluginService {
   return {
     onDidReload: Event.None as IPluginService['onDidReload'],
+    onDidMutate: Event.None as IPluginService['onDidMutate'],
     hasLoadedSnapshot: () => loaded.value,
     pluginSkillRoots: async () => [],
     enabledSessionStarts: async () => [],

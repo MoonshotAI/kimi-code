@@ -2,7 +2,6 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -22,6 +21,7 @@ import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/tel
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const WORK_DIR = '/repo';
 

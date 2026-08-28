@@ -6,14 +6,15 @@ import { isCompactionSummaryMessage } from '#/features/contextMemory/compactionH
 import { ContextSpliced } from '#/features/contextMemory/contextEvents';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { LoopControlToken, type BeforeStepContext } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import type { BeforeStepContext } from '#/features/loop/internal/loop';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
-import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { wrapSystemReminder } from './systemReminder';
@@ -175,7 +176,7 @@ async function inject(runtime: AgentRuntimeContext<null>, isNewTurn: boolean): P
 
 const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: AgentRuntimeContext<null> } }) => {
   let compactionRearmPending = false;
-  const loop = input.runtime.get(LoopControlToken);
+  const loop = getLoopControl(input.runtime.agent);
   const takeCompactionRearm = (): boolean => {
     const pending = compactionRearmPending;
     compactionRearmPending = false;
@@ -198,7 +199,7 @@ const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: Ag
   } catch {
     hook = loop.hooks.onWillBeginStep.register('context-injector', reconcileAroundStep);
   }
-  const splice = input.runtime.get(IEventBus).subscribe(ContextSpliced, (event) => {
+  const splice = input.runtime.get(IAgentHostService).of(input.runtime.agent).eventBus.subscribe(ContextSpliced, (event) => {
     if (isCompactionSplice(event)) compactionRearmPending = true;
   });
   return () => {
@@ -260,7 +261,7 @@ export class ReminderRuntime {
   }
 
   async reconcileWhenIdle(variant: string): Promise<void> {
-    const loop = this.runtime.get(LoopControlToken);
+    const loop = getLoopControl(this.runtime.agent);
     const quiescence = loop.tryAcquireQuiescence();
     if (quiescence === undefined) return;
     try {

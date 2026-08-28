@@ -1,9 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import { isWithinWorkspace } from '#/tool/path-access';
-import { IGitService } from '#/app/git/git';
 import type { IGitService as GitService } from '#/app/git/git';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type {
   PermissionPolicy,
@@ -15,9 +13,9 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   readonly name = 'git-cwd-write-approve';
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
-    @IGitService private readonly git: GitService,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspace: WorkspaceContext,
+    private readonly git: GitService,
   ) {}
 
   async evaluate(

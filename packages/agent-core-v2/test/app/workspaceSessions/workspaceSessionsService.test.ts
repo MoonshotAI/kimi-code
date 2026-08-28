@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -19,6 +18,7 @@ import {
   RECENT_SESSIONS_LIMIT,
 } from '#/app/workspaceSessions/workspaceSessions';
 import { WorkspaceSessionsService } from '#/app/workspaceSessions/workspaceSessionsService';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 class FakeSessionIndex implements ISessionIndex {
   readonly _serviceBrand: undefined;

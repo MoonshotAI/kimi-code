@@ -10,10 +10,10 @@ export function activateReminderWhenReady(
 ): IDisposable {
   let active: IDisposable | undefined;
   const tryActivate = (): void => {
-    if (active !== undefined || lifecycle.handleOf(scope.agentId) === undefined) return;
+    if (active !== undefined || lifecycle.get(scope.agentId) === undefined) return;
     active = activate(lifecycle.resolve(scope.agentContext, AgentReminder));
   };
-  const created = lifecycle.onDidCreateScope(({ context }) => {
+  const created = lifecycle.onDidCreate((context) => {
     if (context === scope.agentContext) tryActivate();
   });
   tryActivate();

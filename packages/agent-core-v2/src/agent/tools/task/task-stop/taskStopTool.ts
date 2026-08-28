@@ -3,7 +3,8 @@ import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentTaskService } from '#/agent/task/task';
+import type { IAgentTaskService } from '#/agent/task/task';
+import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
@@ -14,7 +15,7 @@ export class TaskStopTool implements ITaskStopTool {
   readonly description = TASK_STOP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskStopInputSchema);
 
-  constructor(@IAgentTaskService private readonly tasks: IAgentTaskService) {}
+  constructor(private readonly tasks: IAgentTaskService) {}
 
   resolveExecution(args: TaskStopInput): ToolExecution {
     return {
@@ -61,7 +62,11 @@ export class TaskStopTool implements ITaskStopTool {
   }
 }
 
-registerAgentToolService(ITaskStopTool, TaskStopTool, { name: 'TaskStop', domain: 'agentTask' });
+registerAgentToolService({
+  name: 'TaskStop',
+  domain: 'agentTask',
+  create: (context) => new TaskStopTool(context.get(ISessionTaskService).of(context.agent)),
+});
 
 function terminalStopReason(reason: string | undefined): string {
   const trimmed = reason?.trim();

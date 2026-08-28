@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '#/features/contextMemory/loopEventFold';
-import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
+import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
@@ -17,6 +19,13 @@ describe('title excerpts over the real context memory', () => {
   afterEach(async () => {
     await ctx.dispose();
   });
+
+  function titlePromptSource(): IAgentTitlePromptSource {
+    return new AgentTitlePromptSourceService(
+      ctx.get(IAgentLifecycleService),
+      ctx.scopeContext,
+    );
+  }
 
   function appendLoopEvent(event: LoopRecordedEvent): void {
     void ctx.dispatcher.dispatch(new ContextAppendLoopEvent({ agentId: 'main', event }));
@@ -62,7 +71,7 @@ describe('title excerpts over the real context memory', () => {
     });
     appendLoopEvent({ type: 'step.end', uuid: 's2' });
 
-    const source = ctx.get(IAgentTitlePromptSource);
+    const source = titlePromptSource();
     await expect(source.firstTurnExcerpt()).resolves.toEqual({
       user: '帮我部署这个服务',
       assistant: '部署完成，服务在 8080 端口',
@@ -81,7 +90,7 @@ describe('title excerpts over the real context memory', () => {
       origin: { kind: 'user' },
     });
 
-    await expect(ctx.get(IAgentTitlePromptSource).firstTurnExcerpt()).resolves.toEqual({
+    await expect(titlePromptSource().firstTurnExcerpt()).resolves.toEqual({
       user: '刚发的问题',
       assistant: undefined,
     });
@@ -106,7 +115,7 @@ describe('title excerpts over the real context memory', () => {
       },
     });
 
-    const source = ctx.get(IAgentTitlePromptSource);
+    const source = titlePromptSource();
     await expect(source.firstTurnExcerpt()).resolves.toEqual({
       user: '检查这次改动的正确性',
       assistant: undefined,

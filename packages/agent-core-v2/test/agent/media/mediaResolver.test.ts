@@ -6,26 +6,28 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import {
-  ScopeActivation,
-  _clearScopedRegistryForTests,
-  registerScopedService,
-} from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
-import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { IConfigService } from '#/app/config/config';
+import { type AgentHost, IAgentHostService } from '#/agent/host/agentHost';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
+import { ISessionMediaService, SessionMediaService } from '#/agent/media/sessionMediaService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentStateService } from '#/agent/state/agentState';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart, Message, VideoURLPart } from '#/kosong/contract/message';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { Protocol } from '#/kosong/protocol/protocol';
 import { IBlobStore } from '#/persistence/interface/blobStore';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { registerStateServices } from '../../state/stubs';
 
@@ -753,40 +755,76 @@ describe('AgentMediaResolverService session-canonical display path', () => {
   });
 });
 
-describe('AgentMediaResolverService scoped registration', () => {
-  let host: ReturnType<typeof createScopedTestHost>;
+describe('SessionMediaService per-agent attach', () => {
+  it('materializes a working resolver for an agent', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const scopeContext = makeAgentScopeContext({
+      agentId: 'main',
+      agentScope: 'agents/main',
+      generation: 1,
+    });
+    const agentHost = {
+      scopeContext,
+      telemetry,
+      state: new AgentStateService(),
+      eventBus: { subscribe: () => ({ dispose: () => {} }) },
+      agentRuntime: {
+        onDidChange: Event.None,
+        isAvailable: () => false,
+        inspect: () => {
+          throw new Error('runtime unavailable');
+        },
+        acquire: () => {
+          throw new Error('runtime unavailable');
+        },
+      },
+    } as unknown as AgentHost;
+    const profile = {
+      modelCapabilities: () => ({} as ModelCapability),
+      model: () => '',
+    };
+    const ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IAgentHostService, {
+          _serviceBrand: undefined,
+          of: () => agentHost,
+          tryOf: () => agentHost,
+        } as unknown as IAgentHostService);
+        reg.defineInstance(IAgentLifecycleService, {
+          _serviceBrand: undefined,
+          onDidClose: Event.None,
+          onDidCreate: Event.None,
+          list: () => [],
+          resolve: () => profile,
+        } as unknown as IAgentLifecycleService);
+        reg.defineInstance(IModelCatalog, {
+          getRequester: () => {
+            throw new Error('no models');
+          },
+        } as unknown as IModelCatalog);
+        reg.defineInstance(ISessionWorkspaceContext, {
+          workDir: '/workspace',
+          additionalDirs: [],
+        } as unknown as ISessionWorkspaceContext);
+        reg.defineInstance(ISessionSkillCatalog, {
+          catalog: { getSkillRoots: () => [] },
+        } as unknown as ISessionSkillCatalog);
+        reg.defineInstance(IFileService, fileService(files));
+        reg.defineInstance(IBlobStore, blobStore());
+        reg.defineInstance(ISessionMediaStore, stubMediaStore());
+        reg.defineInstance(IConfigService, {
+          get: () => undefined,
+          onDidSectionChange: Event.None,
+        } as unknown as IConfigService);
+        reg.define(ISessionMediaService, SessionMediaService);
+      },
+    });
+    const media = ix.get(ISessionMediaService) as SessionMediaService;
+    disposables.add(media);
 
-  beforeEach(() => {
-    _clearScopedRegistryForTests();
-    registerScopedService(
-      LifecycleScope.Agent,
-      IAgentMediaResolverService,
-      AgentMediaResolverService,
-      ScopeActivation.OnScopeCreated,
-      'media',
-    );
-  });
+    media.attach(scopeContext.agentContext);
 
-  afterEach(() => {
-    host.dispose();
-  });
-
-  function agentScope(files: Map<string, { name: string; bytes: Buffer }>) {
-    host = createScopedTestHost([
-      stubPair(IFileService, fileService(files)),
-      stubPair(IBlobStore, blobStore()),
-      stubPair(ITelemetryService, telemetry),
-    ]);
-    return host.child(LifecycleScope.Agent, 'main', [
-      stubPair(IAgentStateService, new AgentStateService()),
-      stubPair(ISessionMediaStore, stubMediaStore()),
-    ]);
-  }
-
-  it('resolves the media resolver token to a working instance through the scope tree', async () => {
-    const agent = agentScope(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
-
-    const svc = agent.accessor.get(IAgentMediaResolverService);
+    const svc = media.resolverOf(scopeContext.agentContext);
     const out = await svc.resolve(
       [imageMessage(buildKimiFileUrl(FILE_ID))],
       requester({}),

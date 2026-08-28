@@ -1,13 +1,11 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { LifecycleScope } from '#/app/scopes';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
@@ -75,7 +73,7 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   constructor(
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
@@ -249,10 +247,3 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentShellCommandService,
-  AgentShellCommandService,
-  ScopeActivation.OnScopeCreated,
-  'shellCommand',
-);

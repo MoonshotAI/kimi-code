@@ -4,7 +4,6 @@ import {
   IAgentLifecycleService,
   ISessionIndex,
   ISessionMcpHandle,
-  agentContextOf,
   getLiveSessionById,
   Error2,
   type Scope,
@@ -67,7 +66,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
       }
       const agentTools = agent.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentTools);
+        .resolve(agent.context, AgentTools);
       const tools = agentTools
         .availableTools()
         .map((info) => toProtocolTool(info, agentTools.isActive(info.name, info.source)));

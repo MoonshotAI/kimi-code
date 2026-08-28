@@ -27,6 +27,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from './stubs';
 
@@ -83,9 +84,10 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string) {
   ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   const log = ix.get(IAppendLogStore);
-  registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
-  const dispatcher = registerTestEventDispatcher(ix);
-  const runtimes = attachTodoRuntime(ix, dispatcher);
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, logKey));
+  registerTestAgentWire(ix, agentScope, { log });
+  const dispatcher = registerTestEventDispatcher(ix, agentScope);
+  const runtimes = attachTodoRuntime(ix, dispatcher, agentScope.agentContext);
   store.add({ dispose: () => { void runtimes.close(); } });
   const agentState = ix.get(IAgentStateService);
   agentState.contributeState(compatCounterKey);

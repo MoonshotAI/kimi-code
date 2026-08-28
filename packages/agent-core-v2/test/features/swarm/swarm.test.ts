@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { type IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
-import { type IAgentScopeHandle } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -19,6 +17,7 @@ import type { ContextInjectionProvider, ContextInjectionResult } from '#/feature
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -38,7 +37,9 @@ import {
 } from '#/session/subagent/spawn';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
+import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
   BeforeExecuteDecision,
@@ -47,7 +48,8 @@ import type {
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
 import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -68,6 +70,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
@@ -77,10 +80,11 @@ import {
   type ToolExecutorEventStubs,
 } from '../toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const signal = new AbortController().signal;
 
-async function runInjectionBoundary(loop: LoopControlToken): Promise<void> {
+async function runInjectionBoundary(loop: LoopControl): Promise<void> {
   await loop.hooks.onWillBeginStep.run({ turnId: 0, step: 1, firstStepOfTurn: true, signal });
 }
 
@@ -229,21 +233,9 @@ function realSubagents(
       };
     },
   } as unknown as ProfileRuntime;
-  const callerHandle = {
-    id: 'main',
-    kind: LifecycleScope.Agent,
-    accessor: {
-      get: (serviceId: unknown) =>
-        serviceId === IAgentScopeContext
-          ? { agentContext: stubAgentContext('main', 1) }
-          : undefined,
-    },
-    dispose: () => {},
-  } as unknown as IAgentScopeHandle;
   const agentLifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
-    onDidCreateScope: Event.None,
     onWillClose: Event.None,
     onDidClose: Event.None,
     create: async (): Promise<never> => {
@@ -253,11 +245,10 @@ function realSubagents(
       throw new Error('AgentSwarmTool tests do not reach spawn');
     },
     get: (agentId: string) =>
-      agentId === callerHandle.id ? stubAgentContext(callerHandle.id, 1) : undefined,
-    handleOf: (agentId: string) => (agentId === callerHandle.id ? callerHandle : undefined),
+      agentId === 'main' ? caller : undefined,
     resolve: (_agent: unknown, definition: unknown) =>
       definition === AgentProfile ? caller : undefined,
-    list: () => [stubAgentContext(callerHandle.id, 1)],
+    list: () => [caller],
     remove: async () => {},
     broadcastPermissionMode: () => {},
   } as unknown as IAgentLifecycleService;
@@ -275,14 +266,32 @@ function realSubagents(
     },
   } as unknown as IModelCatalog;
   const sessionContext = { _serviceBrand: undefined, cwd: '/repo' } as unknown as ISessionContext;
+  const hosts = {
+    of: () => {
+      throw new Error('hosts not used in this test');
+    },
+  } as unknown as IAgentHostService;
   return new SessionSubagentService(
     agentLifecycle,
+    hosts,
     catalog,
     config,
     flags,
     modelCatalog,
     sessionContext,
     stubLog(),
+    {
+      of: () => {
+        throw new Error('userTools not used in this test');
+      },
+    } as unknown as ISessionUserToolService,
+    {
+      _serviceBrand: undefined,
+      mode: () => 'manual',
+      configured: () => true,
+      setMode: () => {},
+      setModeAndBroadcast: () => {},
+    } as unknown as ISessionPermissionModeService,
   );
 }
 
@@ -293,6 +302,7 @@ describe('AgentSwarmService', () => {
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
   let contextMemory: ContextMemoryRuntime;
+  let agentScope: IAgentScopeContext;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -309,7 +319,6 @@ describe('AgentSwarmService', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const loop = stubLoopWithHooks();
-    ix.stub(LoopControlToken, loop);
     ix.set(IAgentStateService, new AgentStateService());
     let provider: ContextInjectionProvider | undefined;
     const reminder = createReminderStub({
@@ -318,12 +327,14 @@ describe('AgentSwarmService', () => {
         return toDisposable(() => { provider = undefined; });
       },
     });
-    registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
+    agentScope = stubAgentScopeContext(testWireScope('wire', 'swarm-test'));
+    registerTestAgentWire(ix, agentScope, {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
     });
-    registerTestEventDispatcher(ix);
-    const runtimes = attachContextMemoryRuntime(ix, ix.get(IEventDispatcher));
+    registerLoopControl(agentScope.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
+    registerTestEventDispatcher(ix, agentScope);
+    const runtimes = attachContextMemoryRuntime(ix, ix.get(IEventDispatcher), agentScope.agentContext);
     disposables.add({ dispose: () => { void runtimes.close(); } });
     contextMemory = runtimes.resolve(AgentContextMemory);
     ix.stub(IAgentLifecycleService, lifecycleWithReminder(reminder, contextMemory));
@@ -376,7 +387,17 @@ describe('AgentSwarmService', () => {
     );
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
-    ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
+    ix.set(
+      IAgentSwarmService,
+      new AgentSwarmService(
+        ix.get(IEventDispatcher),
+        ix.get(IAgentLifecycleService),
+        ix.get(IEventBus),
+        ix.get(IAgentToolApprovalService),
+        agentScope,
+        ix.get(IAgentStateService),
+      ),
+    );
   });
   afterEach(() => disposables.dispose());
 
@@ -423,7 +444,7 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({
@@ -439,8 +460,8 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(LoopControlToken));
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     expect(context.get()).toHaveLength(1);
   });
@@ -450,9 +471,9 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
     swarm.exit();
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     expect(context.get()).toHaveLength(0);
   });
@@ -462,7 +483,7 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('manual');
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
     void context.append({
       role: 'user',
       content: [{ type: 'text', text: 'later prompt' }],
@@ -484,9 +505,9 @@ describe('AgentSwarmService', () => {
     const context = contextMemory;
 
     swarm.enter('tool');
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
     swarm.exit();
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     expect(context.get()).toHaveLength(0);
   });
@@ -504,7 +525,7 @@ describe('AgentSwarmService', () => {
       ],
     );
 
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     expect(swarm.isActive).toBe(true);
     expect(context.get()).toHaveLength(1);
@@ -524,7 +545,7 @@ describe('AgentSwarmService', () => {
       ],
     );
 
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     expect(swarm.isActive).toBe(false);
     expect(context.get()).toHaveLength(0);
@@ -549,7 +570,7 @@ describe('AgentSwarmService', () => {
       ],
     );
 
-    await runInjectionBoundary(ix.get(LoopControlToken));
+    await runInjectionBoundary(getLoopControl(agentScope.agentContext));
 
     expect(swarm.isActive).toBe(true);
     expect(context.get()).toHaveLength(1);
@@ -579,10 +600,11 @@ describe('AgentSwarmService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    registerTestAgentWire(ix2, testWireScope('wire', 'swarm-replay'), {
+    const replayScope = stubAgentScopeContext(testWireScope('wire', 'swarm-replay'));
+    registerTestAgentWire(ix2, replayScope, {
       log: ix2.get(IAppendLogStore),
     });
-    const fresh = registerTestEventDispatcher(ix2);
+    const fresh = registerTestEventDispatcher(ix2, replayScope);
     const freshState = ix2.get(IAgentStateService);
     freshState.contributeState(swarmKey);
     await restoreTestEventDispatcher(

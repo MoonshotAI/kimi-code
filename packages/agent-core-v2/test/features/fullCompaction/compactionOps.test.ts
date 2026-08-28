@@ -12,12 +12,14 @@ import {
   FullCompactionComplete,
 } from '#/features/fullCompaction/compactionOps';
 import { AgentFullCompaction, type FullCompactionStatus } from '#/features/fullCompaction/fullCompactionAgentRuntime';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
@@ -27,6 +29,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 
@@ -48,17 +51,25 @@ function buildHost(key: string): {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  ix.stub(LoopControlToken, {
+  ix.stub(IAgentHostService, {
     _serviceBrand: undefined,
-    hooks: createHooks(['onWillBeginStep', 'onDidFinishStep']),
-    registerLoopErrorHandler: () => toDisposable(() => {}),
-  } as unknown as LoopControlToken);
-  registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+    of: () => ({
+      eventBus: ix.get(IEventBus),
+      telemetry: { track2: () => {} },
+    }),
+  } as unknown as IAgentHostService);
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, key));
+  registerTestAgentWire(ix, agentScope, {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
-  const dispatcher = registerTestEventDispatcher(ix);
-  const runtimes = attachFullCompactionRuntime(ix, ix.get(IEventDispatcher));
+  registerLoopControl(agentScope.agentContext, {
+    _serviceBrand: undefined,
+    hooks: createHooks(['onWillBeginStep', 'onDidFinishStep']),
+    registerLoopErrorHandler: () => toDisposable(() => {}),
+  } as unknown as LoopControl, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
+  const dispatcher = registerTestEventDispatcher(ix, agentScope);
+  const runtimes = attachFullCompactionRuntime(ix, ix.get(IEventDispatcher), agentScope.agentContext);
   return {
     dispatcher,
     runtimes,

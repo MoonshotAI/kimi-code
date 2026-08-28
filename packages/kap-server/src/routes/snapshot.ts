@@ -5,15 +5,14 @@ import {
   IWorkspaceService,
   listSessionPendingInteractions,
   resumeSessionById,
-  type IAgentScopeHandle,
   type Scope,
-  agentContextOf,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { ensureMainAgent } from '../transport/mainAgent';
+import type { AgentScopeView } from '../transport/agentScopeView';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -149,12 +148,12 @@ async function assembleSnapshot(
   };
 }
 
-function readCurrentPromptId(main: IAgentScopeHandle | undefined): string | undefined {
+function readCurrentPromptId(main: AgentScopeView | undefined): string | undefined {
   if (main === undefined) return undefined;
   try {
     return main.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(main), AgentPrompt)
+      .resolve(main.context, AgentPrompt)
       .list().active?.id;
   } catch {
     return undefined;

@@ -1,7 +1,5 @@
 import { Service } from '#/_base/di/service';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { inputTotal } from '#/kosong/contract/usage';
 import { IModelCatalog } from '#/kosong/model/catalog';
@@ -15,7 +13,7 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
 
   constructor(
     @ISessionUsageService usage: ISessionUsageService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IModelCatalog private readonly models: IModelCatalog,
   ) {
@@ -50,10 +48,3 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentCacheProbeService,
-  AgentCacheProbeService,
-  ScopeActivation.OnScopeCreated,
-  'cacheProbe',
-);

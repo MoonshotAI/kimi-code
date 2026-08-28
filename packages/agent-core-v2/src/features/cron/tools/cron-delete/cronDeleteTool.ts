@@ -1,7 +1,7 @@
 import { type ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentCron, type CronRuntime } from '#/features/cron/cronAgentRuntime';
 
 import { CRON_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
@@ -20,8 +20,8 @@ export class CronDeleteTool implements ICronDeleteTool {
   );
 
   constructor(
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly manager: IAgentLifecycleService,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   private get cron(): CronRuntime {

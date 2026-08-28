@@ -26,6 +26,7 @@ import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
+import { stubAgentContext } from '../../../../agent/agentContext/stubs';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,
@@ -694,6 +695,8 @@ function stubToolPolicy(
   isToolActive: (name: string) => boolean = () => true,
 ): AgentToolFactoryContext {
   return {
+    agent: stubAgentContext('main', 0),
+    host: undefined as never,
     get: () => undefined as never,
     enabled: () => true,
     load: () => ({ toLoad: [], alreadyAvailable: [], unknown: [] }),

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { LifecycleScope } from '#/app/scopes';
 import {
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -18,6 +17,7 @@ import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
 import { stubSkill } from '../catalog/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 function dataSeed(initial: InMemorySkillCatalog): {
   readonly data: ISessionSkillCatalogData;

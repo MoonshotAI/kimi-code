@@ -1,5 +1,3 @@
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/features/contextMemory/types';
@@ -134,10 +132,3 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentContextProjectorService,
-  AgentContextProjectorService,
-  ScopeActivation.OnScopeCreated,
-  'contextProjector',
-);

@@ -9,7 +9,6 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
-import { LifecycleScope } from '#/app/scopes';
 import { SessionInitFeature } from '#/features/sessionInit/sessionInitFeature';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -21,8 +20,13 @@ import {
   registerFeature,
 } from '#/features/featureRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { ISessionAgentsMdReminderService } from '#/agent/agentsMdReminder/sessionAgentsMdReminderService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 describe('SessionInitFeature', () => {
   beforeEach(() => {
@@ -49,7 +53,11 @@ describe('SessionInitFeature', () => {
     const host = createScopedTestHost();
     const session = host.child(LifecycleScope.Session, 'session-1', [
       stubPair(IAgentLifecycleService, {} as IAgentLifecycleService),
+      stubPair(IAgentHostService, {} as IAgentHostService),
+      stubPair(ISessionAgentsMdReminderService, {} as ISessionAgentsMdReminderService),
       stubPair(ISessionSubagentService, {} as ISessionSubagentService),
+      stubPair(ISessionPermissionModeService, {} as ISessionPermissionModeService),
+      stubPair(ISessionTokenCountingService, {} as ISessionTokenCountingService),
       stubPair(IHostFileSystem, {} as IHostFileSystem),
       stubPair(IHostEnvironment, {} as IHostEnvironment),
       stubPair(IBootstrapService, {} as IBootstrapService),

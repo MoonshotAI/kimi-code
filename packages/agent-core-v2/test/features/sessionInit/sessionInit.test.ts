@@ -5,18 +5,15 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { UserCancellationError } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IEventBus } from '#/app/event/eventBus';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { ISessionAgentsMdReminderService } from '#/agent/agentsMdReminder/sessionAgentsMdReminderService';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
@@ -53,14 +50,19 @@ describe('SessionInitService', () => {
     });
     runCompletion = Promise.resolve({ summary: 'Explored and wrote AGENTS.md', usage: undefined });
 
-    const handles: Record<string, { id: string; accessor: { get: (id: unknown) => unknown } }> = {};
+    const mainContext = stubAgentContext('main', 1);
+    const childContext = stubAgentContext('agent-0', 1);
     const lifecycle = {
       _serviceBrand: undefined,
       hooks: {
         onWillStartAgentTask: { run: vi.fn(async () => {}) },
       },
       notifyAgentTaskStopped: vi.fn(),
-      handleOf: vi.fn((agentId: string) => handles[agentId]),
+      get: vi.fn((agentId: string) => {
+        if (agentId === 'main') return mainContext;
+        if (agentId === 'agent-0') return childContext;
+        return undefined;
+      }),
       resolve: vi.fn((agent: AgentContext, definition: unknown) => {
         if (definition === AgentReminder) return { notify: appendReminder };
         if (definition === AgentProfile) {
@@ -70,7 +72,7 @@ describe('SessionInitService', () => {
         }
         return undefined;
       }),
-      create: vi.fn(async () => stubAgentContext('agent-0', 1)),
+      create: vi.fn(async () => childContext),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
         turn: {},
@@ -87,49 +89,23 @@ describe('SessionInitService', () => {
     };
     const permissionMode = { mode: vi.fn(() => 'auto' as const), setMode: vi.fn() };
 
-    handles['main'] = {
-      id: 'main',
-      accessor: {
-        get: (id: unknown) => {
-          if (id === IAgentLifecycleService) return lifecycle;
-          if (id === ISessionSubagentService) return lifecycle;
-          if (id === IAgentScopeContext) {
-            return { agentContext: stubAgentContext('main', 1) };
-          }
-          if (id === ISessionPermissionModeService) return permissionMode;
-          if (id === IAgentAgentsMdReminderService) return { seedInjected };
-          if (id === IEventDispatcher) {
-            return {
-              flush,
-              dispatch: async (event: unknown) => {
-                eventBus.publish(event);
-              },
-            };
-          }
-          if (id === IEventBus) return eventBus;
-          if (id === ITelemetryService) return telemetry;
-          return undefined;
-        },
-      },
-    };
-    handles['agent-0'] = {
-      id: 'agent-0',
-      accessor: {
-        get: (id: unknown) => {
-          if (id === IAgentScopeContext) {
-            return {
-              agentId: 'agent-0',
-              agentContext: stubAgentContext('agent-0', 1),
-            };
-          }
-          if (id === ISessionPermissionModeService) return permissionMode;
-          return undefined;
-        },
-      },
-    };
-
     ix.stub(IAgentLifecycleService, lifecycle as unknown as IAgentLifecycleService);
     ix.stub(ISessionSubagentService, lifecycle as unknown as ISessionSubagentService);
+    ix.stub(IAgentHostService, {
+      of: () => ({
+        dispatcher: {
+          flush,
+          dispatch: async (event: unknown) => {
+            eventBus.publish(event);
+          },
+        },
+        telemetry,
+      }),
+    } as unknown as IAgentHostService);
+    ix.stub(ISessionPermissionModeService, permissionMode as unknown as ISessionPermissionModeService);
+    ix.stub(ISessionAgentsMdReminderService, {
+      of: () => ({ seedInjected }),
+    } as unknown as ISessionAgentsMdReminderService);
     ix.stub(IHostFileSystem, {
       _serviceBrand: undefined,
       stat: vi.fn(async (path: string): Promise<HostFileStat> => {
@@ -225,9 +201,9 @@ describe('SessionInitService', () => {
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
     const lifecycle = ix.get(IAgentLifecycleService) as unknown as {
-      handleOf: ReturnType<typeof vi.fn>;
+      get: ReturnType<typeof vi.fn>;
     };
-    lifecycle.handleOf.mockReturnValue(undefined);
+    lifecycle.get.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);

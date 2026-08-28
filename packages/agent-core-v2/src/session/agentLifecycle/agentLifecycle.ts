@@ -1,5 +1,4 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type {
@@ -9,11 +8,6 @@ import type {
 } from '#/agent/runtime/agentRuntime';
 import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import type { BindAgentInput } from '#/features/profile/profile';
-
-export interface AgentScopeCreatedEvent {
-  readonly context: AgentContext;
-  readonly handle: IAgentScopeHandle;
-}
 
 export const MAIN_AGENT_ID = 'main';
 
@@ -39,7 +33,6 @@ export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
 
   readonly onDidCreate: Event<AgentContext>;
-  readonly onDidCreateScope: Event<AgentScopeCreatedEvent>;
   readonly onWillClose: Event<AgentContext>;
   readonly onDidClose: Event<AgentContext>;
 
@@ -56,10 +49,6 @@ export interface IAgentLifecycleService {
   inspect(agent: AgentContext): AgentRuntimeSnapshot;
   broadcastPermissionMode(mode: PermissionMode): void;
   remove(agent: AgentContext): Promise<void>;
-
-  handleOf(agentId: string): IAgentScopeHandle | undefined;
-
-  adopt(handle: IAgentScopeHandle): AgentContext;
 
   attachRuntimes(agent: AgentContext): void;
 }

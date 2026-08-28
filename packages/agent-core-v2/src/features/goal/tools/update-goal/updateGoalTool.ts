@@ -1,10 +1,10 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
@@ -26,8 +26,8 @@ export class UpdateGoalTool implements IUpdateGoalTool {
   private readonly goal: GoalRuntime;
 
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    manager: IAgentLifecycleService,
+    private readonly scopeContext: IAgentScopeContext,
   ) {
     this.goal = manager.resolve(scopeContext.agentContext, AgentGoal);
   }

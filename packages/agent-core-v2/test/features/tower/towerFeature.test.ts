@@ -22,7 +22,6 @@ import { EXPERIMENTAL_SECTION, IFlagService } from '#/app/flag/flag';
 import { IFlagRegistry } from '#/app/flag/flagRegistry';
 import { FlagRegistryService } from '#/app/flag/flagRegistryService';
 import { FlagService, MASTER_ENV } from '#/app/flag/flagService';
-import { LifecycleScope } from '#/app/scopes';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
@@ -45,6 +44,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): CollectionView<T> {
   return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
@@ -77,8 +77,8 @@ describe('TowerFeature — experimental flag gating', () => {
     expect(manager.units().map((unit) => unit.name)).toEqual(['tower']);
     expect(manager.contributedServices()).toHaveLength(0);
     expect(collectionViewOf(host.app, AgentProfileContribution).items).toHaveLength(0);
-    const agent = host.child(LifecycleScope.Agent, 'agent-1');
-    expect(collectionViewOf(agent, AgentToolContribution).items).toHaveLength(0);
+    const session = host.child(LifecycleScope.Session, 'session-1');
+    expect(collectionViewOf(session, AgentToolContribution).items).toHaveLength(0);
     host.dispose();
   });
 
@@ -97,8 +97,8 @@ describe('TowerFeature — experimental flag gating', () => {
     const profiles = collectionViewOf(host.app, AgentProfileContribution).items;
     expect(profiles).toHaveLength(1);
     expect(profiles[0]!.sourceId).toBe('feature:tower');
-    const agent = host.child(LifecycleScope.Agent, 'agent-1');
-    const tools = collectionViewOf(agent, AgentToolContribution).items.map((record) =>
+    const session = host.child(LifecycleScope.Session, 'session-1');
+    const tools = collectionViewOf(session, AgentToolContribution).items.map((record) =>
       record.options.name,
     );
     expect(tools.toSorted()).toEqual(

@@ -2,12 +2,11 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentPlanService } from '#/features/plan/plan';
-import type { PlanData } from '#/features/plan/plan';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { IAgentPlanService, PlanData } from '#/features/plan/plan';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentPermissionMode, type PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import DESCRIPTION from './exit-plan-mode.md?raw';
 import {
@@ -30,10 +29,10 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
   private readonly permissionMode: PermissionModeRuntime;
 
   constructor(
-    @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @IAgentLifecycleService manager: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
+    private readonly planMode: IAgentPlanService,
+    manager: IAgentLifecycleService,
+    scopeContext: IAgentScopeContext,
+    private readonly telemetry: ITelemetryService,
   ) {
     this.permissionMode = manager.resolve(scopeContext.agentContext, AgentPermissionMode);
   }

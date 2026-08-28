@@ -20,7 +20,7 @@ export class FetchURLTool implements IFetchURLTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(FetchURLInputSchema);
 
-  constructor(@IWebFetchService private readonly webFetch: IWebFetchService) {}
+  constructor(private readonly webFetch: IWebFetchService) {}
 
   resolveExecution(args: FetchURLInput): ToolExecution {
     const preview = args.url.length > 50 ? `${args.url.slice(0, 50)}…` : args.url;
@@ -76,4 +76,8 @@ export class FetchURLTool implements IFetchURLTool {
   }
 }
 
-registerAgentToolService(IFetchURLTool, FetchURLTool, { name: 'FetchURL', domain: 'web' });
+registerAgentToolService({
+  name: 'FetchURL',
+  domain: 'web',
+  create: (context) => new FetchURLTool(context.get(IWebFetchService)),
+});

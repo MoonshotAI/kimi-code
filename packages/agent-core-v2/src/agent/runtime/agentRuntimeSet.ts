@@ -47,6 +47,7 @@ export class AgentRuntimeSet {
   constructor(
     private readonly agent: AgentContext,
     private readonly accessor: ServicesAccessor,
+    private readonly dispatcherSource: () => IEventDispatcher,
   ) {}
 
   apply(record: AgentRuntimeDefinitionRecord): void {
@@ -198,7 +199,7 @@ export class AgentRuntimeSet {
         return descriptor.durable.read(entry.actor!.getSnapshot());
       },
       getLogicState: <T>() => entry.actor!.getSnapshot().context as T,
-      dispatch: (event) => this.accessor.get(IEventDispatcher).dispatch(event),
+      dispatch: (event) => this.dispatcherSource().dispatch(event),
       send: (event) => { entry.actor!.send(event); },
       onDidChange: (listener) => {
         listeners.add(listener);

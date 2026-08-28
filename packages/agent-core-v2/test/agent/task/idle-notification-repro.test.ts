@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
-import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import {
   taskServices,
   createTestAgent,
@@ -21,6 +21,7 @@ import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
 } from './stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 function agentTask(
   completion: Promise<{ result: string }>,
@@ -41,13 +42,13 @@ describe('task notification → main agent (real Agent instance)', () => {
   describe('live notification delivery', () => {
     let ctx: TestAgentContext;
     let background: IAgentTaskService;
-    let loop: LoopControlToken;
+    let loop: LoopControl;
     let profile: ProfileRuntime;
 
     beforeEach(() => {
       ctx = createTestAgent();
       background = ctx.get(IAgentTaskService);
-      loop = ctx.get(LoopControlToken);
+      loop = getLoopControl(ctx.agentContext);
       profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: [] });
     });
@@ -224,15 +225,6 @@ describe('task notification → main agent (real Agent instance)', () => {
   describe('kill ordering vs child loop unwind', () => {
     type GenerateFn = typeof kosongGenerate;
 
-    function agentScopeHandle(ctx: TestAgentContext, id: string): IAgentScopeHandle {
-      return {
-        id,
-        kind: LifecycleScope.Agent,
-        accessor: { get: ctx.get.bind(ctx) },
-        dispose: () => {},
-      } as IAgentScopeHandle;
-    }
-
     it('stop settles killed + notifies only after the child loop goes idle', async () => {
       let generateStarted!: () => void;
       const inFlight = new Promise<void>((resolve) => {
@@ -266,12 +258,12 @@ describe('task notification → main agent (real Agent instance)', () => {
       const main = createTestAgent(taskServices());
       const child = createTestAgent({ generate: slowToCancelGenerate });
       try {
-        const childHandle = agentScopeHandle(child, 'agent-child');
-        const childLoop = child.get(LoopControlToken);
+        const childLoop = getLoopControl(child.agentContext);
 
         const controller = new AbortController();
         const run = await runAgentTurn(
-          childHandle,
+          { agentLifecycle: child.get(IAgentLifecycleService) },
+          child.agentContext,
           { kind: 'prompt', prompt: 'do background work' },
           { signal: controller.signal },
         );
@@ -321,7 +313,7 @@ describe('task notification → main agent (real Agent instance)', () => {
     let sessionDir: string;
     let ctx: TestAgentContext;
     let background: TaskServiceTestManager;
-    let loop: LoopControlToken;
+    let loop: LoopControl;
 
     beforeEach(async () => {
       sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-repro-'));
@@ -350,7 +342,7 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
       background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
-      loop = ctx.get(LoopControlToken);
+      loop = getLoopControl(ctx.agentContext);
       const profile = ctx.resolve(AgentProfile);
       profile.update({ activeToolNames: [] });
     });

@@ -34,7 +34,7 @@ import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher, stubAgentScopeContext } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -127,8 +127,9 @@ describe('v1 wire vocabulary', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
-    registerTestAgentWire(ix, SCOPE, { log });
-    dispatcher = registerTestEventDispatcher(ix);
+    const agentScope = stubAgentScopeContext(SCOPE);
+    registerTestAgentWire(ix, agentScope, { log });
+    dispatcher = registerTestEventDispatcher(ix, agentScope);
   });
 
   afterEach(() => disposables.dispose());
@@ -188,9 +189,10 @@ describe('v1 wire vocabulary', () => {
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
-    registerTestAgentWire(ix2, SCOPE, { log: log2 });
-    const fresh = registerTestEventDispatcher(ix2);
-    const runtimes = attachTodoRuntime(ix2, fresh);
+    const agentScope2 = stubAgentScopeContext(SCOPE);
+    registerTestAgentWire(ix2, agentScope2, { log: log2 });
+    const fresh = registerTestEventDispatcher(ix2, agentScope2);
+    const runtimes = attachTodoRuntime(ix2, fresh, agentScope2.agentContext);
     store.add({ dispose: () => { void runtimes.close(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
@@ -276,6 +278,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
+      'runtime.set_binding',
     ]);
     expect(persistence.records[0]).toMatchObject({
       type: 'metadata',

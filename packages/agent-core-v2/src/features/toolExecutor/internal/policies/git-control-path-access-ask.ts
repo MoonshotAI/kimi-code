@@ -1,8 +1,6 @@
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
-import { IGitService } from '#/app/git/git';
 import type { IGitService as GitService } from '#/app/git/git';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type {
   PermissionPolicy,
@@ -18,9 +16,9 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   readonly name = 'git-control-path-access-ask';
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
-    @IGitService private readonly git: GitService,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspace: WorkspaceContext,
+    private readonly git: GitService,
   ) {}
 
   async evaluate(

@@ -37,6 +37,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 
@@ -178,13 +179,14 @@ function buildHost(key: string): Host {
   ix.stub(IAgentBlobService, blob);
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(ISessionTokenCountingService, noopTokenCounting);
-  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, key));
+  const wire = registerTestAgentWire(ix, agentScope, {
     log: ix.get(IAppendLogStore),
     blob,
     eventBus: ix.get(IEventBus),
   });
-  const dispatcher = registerTestEventDispatcher(ix);
-  const runtimes = attachContextMemoryRuntime(ix, dispatcher);
+  const dispatcher = registerTestEventDispatcher(ix, agentScope);
+  const runtimes = attachContextMemoryRuntime(ix, dispatcher, agentScope.agentContext);
   disposables.add({ dispose: () => { void runtimes.close(); } });
   return {
     wire,
@@ -549,8 +551,8 @@ describe('AgentContextMemory (wire-backed)', () => {
       live.push({ start: event.start, deleteCount: event.deleteCount });
     }));
 
-    host.svc.append(userMessage('x'));
-    host.svc.append(userMessage('y'));
+    void host.svc.append(userMessage('x'));
+    void host.svc.append(userMessage('y'));
     expect(live).toHaveLength(2);
     await host.dispatcher.flush();
     const records = await readRecords(host.log);

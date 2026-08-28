@@ -8,7 +8,7 @@ import { IFileEditService } from '#/app/edit/fileEdit';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { Runtime } from '#/runtime/runtime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -28,10 +28,10 @@ export class EditTool implements IEditTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(EditInputSchema);
 
   constructor(
-    @IFileEditService private readonly editor: IFileEditService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    private readonly editor: IFileEditService,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspaceCtx: ISessionWorkspaceContext,
+    private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private workspaceConfig(runtime: Runtime): WorkspaceConfig {
@@ -112,8 +112,14 @@ export class EditTool implements IEditTool {
   }
 }
 
-registerAgentToolService(IEditTool, EditTool, {
+registerAgentToolService({
   name: 'Edit',
   domain: 'edit',
   requiredRuntimeCapabilities: ['fs'],
+  create: (context) => new EditTool(
+    context.get(IFileEditService),
+    context.host.agentRuntime,
+    context.get(ISessionWorkspaceContext),
+    context.get(ISessionSkillCatalog),
+  ),
 });

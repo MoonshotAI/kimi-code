@@ -3,11 +3,12 @@ import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentTaskService } from '#/agent/task/task';
 import type {
   AgentTaskInfo,
   AgentTaskOutputSnapshot,
+  IAgentTaskService,
 } from '#/agent/task/task';
+import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatPlainObject } from '#/agent/task/tools/format';
 import { ITaskOutputTool, TaskOutputInputSchema, type TaskOutputInput } from './task-output';
@@ -52,7 +53,7 @@ export class TaskOutputTool implements ITaskOutputTool {
   readonly description: string = TASK_OUTPUT_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskOutputInputSchema);
 
-  constructor(@IAgentTaskService private readonly tasks: IAgentTaskService) {}
+  constructor(private readonly tasks: IAgentTaskService) {}
 
   resolveExecution(args: TaskOutputInput): ToolExecution {
     return {
@@ -104,4 +105,8 @@ export class TaskOutputTool implements ITaskOutputTool {
   }
 }
 
-registerAgentToolService(ITaskOutputTool, TaskOutputTool, { name: 'TaskOutput', domain: 'agentTask' });
+registerAgentToolService({
+  name: 'TaskOutput',
+  domain: 'agentTask',
+  create: (context) => new TaskOutputTool(context.get(ISessionTaskService).of(context.agent)),
+});

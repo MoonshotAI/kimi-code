@@ -1,5 +1,3 @@
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 
 export interface IAgentScopeContext {
@@ -10,9 +8,6 @@ export interface IAgentScopeContext {
   readonly agentContext: AgentContext;
   scope(subKey?: string): string;
 }
-
-export const IAgentScopeContext: ServiceIdentifier<IAgentScopeContext> =
-  createDecorator<IAgentScopeContext>('agentScopeContext');
 
 export function makeAgentScopeContext(input: {
   readonly agentId: string;
@@ -36,16 +31,4 @@ export function makeAgentScopeContext(input: {
       return `${agentScope}/${subKey}`;
     },
   };
-}
-
-export function agentContextOfScope(scope: IAgentScopeContext): AgentContext {
-  return scope.agentContext;
-}
-
-export function agentContextOf(handle: IAgentScopeHandle): AgentContext {
-  return agentContextOfScope(handle.accessor.get(IAgentScopeContext));
-}
-
-export function tryAgentContextOf(handle: IAgentScopeHandle): AgentContext | undefined {
-  return handle.accessor.get(IAgentScopeContext)?.agentContext;
 }

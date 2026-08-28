@@ -4,9 +4,11 @@ import { createControlledPromise } from '@antfu/utils';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { AgentSkill, SkillRuntime } from '#/features/skill/skillAgentRuntime';
@@ -32,7 +34,7 @@ import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { Turn } from '#/features/loop/internal/loop';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from './catalog/stubs';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { registerTestAgentWireServices, stubAgentHostService } from '../../wire/stubs';
 import {
   createTestAgent,
   InMemoryWireRecordPersistence,
@@ -104,8 +106,6 @@ function skillLifecycle(prompted: ContextMessage[]): IAgentLifecycleService {
       }
       throw new Error(`unexpected runtime resolve: ${String(definition)}`);
     },
-    handleOf: () => ({}),
-    onDidCreateScope: () => ({ dispose: () => {} }),
   } as unknown as IAgentLifecycleService;
 }
 
@@ -147,10 +147,11 @@ describe('SkillRuntime', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLifecycleService, skillLifecycle(prompted));
-        reg.definePartialInstance(LoopControlToken, {
+        registerLoopControl(makeAgentScopeContext({ agentId: 'main', agentScope: '' }).agentContext, {
           status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
-        });
-        registerTestAgentWireServices(reg, 'wire/skill-test');
+        } as unknown as LoopControl, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
+        registerTestAgentWireServices(reg, 'wire/skill-test', makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.defineInstance(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), makeAgentScopeContext({ agentId: 'main', agentScope: '' })));
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(ISessionMetadata, {
           read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
@@ -158,7 +159,6 @@ describe('SkillRuntime', () => {
         });
         reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -226,10 +226,8 @@ describe('SkillTool', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLifecycleService, skillLifecycle(prompted));
-        reg.definePartialInstance(LoopControlToken, {
-          status: () => ({ state: 'idle', activeTurnId: undefined, pendingTurnIds: [], hasPendingRequests: false, activeTraceId: undefined }),
-        });
-        registerTestAgentWireServices(reg, 'wire/skill-test');
+        registerTestAgentWireServices(reg, 'wire/skill-test', makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.defineInstance(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), makeAgentScopeContext({ agentId: 'main', agentScope: '' })));
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(ISessionMetadata, {
           read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
@@ -237,7 +235,6 @@ describe('SkillTool', () => {
         });
         reg.definePartialInstance(IEventService, { publish: () => {} });
         reg.defineInstance(ISessionContext, stubSessionContext());
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -262,7 +259,7 @@ describe('SkillTool', () => {
     const tool = new SkillTool(
       ix.get(ISessionSkillCatalog),
       manager,
-      ix.get(IAgentScopeContext),
+      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
       stubSessionContext(),
     );
     return depth === undefined ? tool : tool.withInitialQueryDepth(depth);

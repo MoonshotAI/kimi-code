@@ -1,11 +1,12 @@
-import { IAgentTaskService } from '#/agent/task/task';
+import type { IAgentTaskService } from '#/agent/task/task';
+import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -90,12 +91,12 @@ export class BashTool implements IBashTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionContext private readonly ctx: ISessionContext,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly ctx: ISessionContext,
+    private readonly workspaceCtx: ISessionWorkspaceContext,
+    private readonly tasks: IAgentTaskService,
     private readonly tools: AgentToolFactoryContext,
-    @IConfigService private readonly config: IConfigService,
+    private readonly config: IConfigService,
   ) {}
 
   private allowBackground(): boolean {
@@ -412,15 +413,15 @@ export class BashTool implements IBashTool {
   }
 }
 
-registerAgentToolService(IBashTool, BashTool, {
+registerAgentToolService({
   name: 'Bash',
   domain: 'os/backends',
   requiredRuntimeCapabilities: ['process'],
   create: (context) => new BashTool(
-    context.get(IAgentRuntimeService),
+    context.host.agentRuntime,
     context.get(ISessionContext),
     context.get(ISessionWorkspaceContext),
-    context.get(IAgentTaskService),
+    context.get(ISessionTaskService).of(context.agent),
     context,
     context.get(IConfigService),
   ),

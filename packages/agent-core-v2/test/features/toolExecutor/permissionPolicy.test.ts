@@ -21,10 +21,9 @@ import {
   type PermissionPolicyEvaluation,
 } from '#/features/toolExecutor/internal/permissionPolicy';
 import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import type { PermissionRule } from '#/features/permissionRules/types';
 import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
@@ -58,10 +57,6 @@ describe('ToolExecutionPermissionPolicyChain', () => {
     workspace = workspaceStub('/workspace');
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(
-          IAgentScopeContext,
-          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
-        );
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
             if (definition === AgentPermissionRules) return stubPermissionRulesRuntime({
@@ -115,7 +110,13 @@ describe('ToolExecutionPermissionPolicyChain', () => {
   });
 
   function service(): ToolExecutionPermissionPolicyChain {
-    return new ToolExecutionPermissionPolicyChain(ix.get(IInstantiationService));
+    return new ToolExecutionPermissionPolicyChain(
+      ix.get(IAgentLifecycleService),
+      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+      ix.get(IAgentRuntimeService),
+      ix.get(ISessionWorkspaceContext),
+      ix.get(IGitService),
+    );
   }
 
   async function evaluate(
@@ -232,10 +233,6 @@ describe('ToolExecutionPermissionPolicyChain git cwd write approval', () => {
     workspace = workspaceStub(workspaceDir);
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(
-          IAgentScopeContext,
-          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
-        );
         reg.defineInstance(IAgentLifecycleService, {
           resolve: (_agent: unknown, definition: unknown) => {
             if (definition === AgentPermissionRules) return stubPermissionRulesRuntime({});
@@ -291,7 +288,13 @@ describe('ToolExecutionPermissionPolicyChain git cwd write approval', () => {
   async function evaluate(
     input: PolicyContextInput,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    const svc = new ToolExecutionPermissionPolicyChain(ix.get(IInstantiationService));
+    const svc = new ToolExecutionPermissionPolicyChain(
+      ix.get(IAgentLifecycleService),
+      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+      ix.get(IAgentRuntimeService),
+      ix.get(ISessionWorkspaceContext),
+      ix.get(IGitService),
+    );
     return svc.evaluate(policyContext(input));
   }
 

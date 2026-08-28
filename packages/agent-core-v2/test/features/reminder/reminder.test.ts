@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ContextApplyCompaction, ContextSpliced } from '#/features/contextMemory/contextEvents';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
@@ -47,7 +48,7 @@ describe('ReminderRuntime', () => {
   beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.resolve(AgentContextMemory);
-    loop = ctx.get(LoopControlToken) as StubLoop;
+    loop = getLoopControl(ctx.agentContext) as StubLoop;
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
     reminder = ctx.resolve(AgentReminder);
@@ -438,7 +439,7 @@ describe('ReminderRuntime', () => {
 
   it('installs effects only after restore and only once', async () => {
     const local = createTestAgent();
-    const localLoop = local.get(LoopControlToken) as StubLoop;
+    const localLoop = getLoopControl(local.agentContext) as StubLoop;
     const localReminder = local.resolve(AgentReminder);
     let calls = 0;
     localReminder.register('restore_test', () => {

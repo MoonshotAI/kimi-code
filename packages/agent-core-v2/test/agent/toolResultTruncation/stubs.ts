@@ -3,6 +3,7 @@ import {
   IAgentToolResultTruncationService,
   type IAgentToolResultTruncationService as ToolResultTruncationServiceStub,
 } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
 
 export function stubToolResultTruncationService(): ToolResultTruncationServiceStub {
   return {
@@ -12,5 +13,11 @@ export function stubToolResultTruncationService(): ToolResultTruncationServiceSt
 }
 
 export function registerToolResultTruncationServices(reg: ServiceRegistration): void {
-  reg.defineInstance(IAgentToolResultTruncationService, stubToolResultTruncationService());
+  const impl = stubToolResultTruncationService();
+  reg.defineInstance(IAgentToolResultTruncationService, impl);
+  reg.defineInstance(ISessionToolResultTruncationService, {
+    _serviceBrand: undefined,
+    attach: () => {},
+    of: () => impl,
+  } as ISessionToolResultTruncationService);
 }

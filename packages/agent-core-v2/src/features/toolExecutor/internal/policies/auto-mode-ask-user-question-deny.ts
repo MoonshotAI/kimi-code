@@ -1,18 +1,18 @@
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
 } from '#/features/toolExecutor/permissionTypes';
 import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 export class AutoModeAskUserQuestionDenyPermissionPolicyService implements PermissionPolicy {
   readonly name = 'auto-mode-ask-user-question-deny';
 
   constructor(
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly agentLifecycle: IAgentLifecycleService,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {

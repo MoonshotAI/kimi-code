@@ -17,6 +17,7 @@ import {
   attachContextMemoryRuntime,
   registerTestAgentWire,
   registerTestEventDispatcher,
+  stubAgentScopeContext,
 } from '../../wire/stubs';
 
 function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
@@ -58,18 +59,19 @@ describe('message history (AgentContextMemory)', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
-    registerTestAgentWire(ix, 'wire/message-history', { eventBus: ix.get(IEventBus) });
+    const agentScope = stubAgentScopeContext('wire/message-history');
+    registerTestAgentWire(ix, agentScope, { eventBus: ix.get(IEventBus) });
     ix.set(ISessionTokenCountingService, noopTokenCounting);
-    registerTestEventDispatcher(ix);
-    const runtimes = attachContextMemoryRuntime(ix, ix.get(IEventDispatcher));
+    registerTestEventDispatcher(ix, agentScope);
+    const runtimes = attachContextMemoryRuntime(ix, ix.get(IEventDispatcher), agentScope.agentContext);
     disposables.add({ dispose: () => { void runtimes.close(); } });
     ctx = runtimes.resolve(AgentContextMemory);
   });
   afterEach(() => disposables.dispose());
 
   it('round-trips user/assistant messages with their text content', () => {
-    ctx.append(textMessage('user', 'a'));
-    ctx.append(textMessage('assistant', 'b'));
+    void ctx.append(textMessage('user', 'a'));
+    void ctx.append(textMessage('assistant', 'b'));
 
     const history = ctx.get();
     expect(history.map((m) => m.role)).toEqual(['user', 'assistant']);
@@ -77,7 +79,7 @@ describe('message history (AgentContextMemory)', () => {
   });
 
   it('returns a defensive copy from getHistory', () => {
-    ctx.append(textMessage('user', 'keep'));
+    void ctx.append(textMessage('user', 'keep'));
 
     const view = ctx.get();
     expect(() => (view as ContextMessage[]).splice(0, view.length)).toThrow();
@@ -86,7 +88,7 @@ describe('message history (AgentContextMemory)', () => {
   });
 
   it('does not stamp local ids on appended messages (ids are not persisted)', () => {
-    ctx.append(textMessage('user', 'hello'));
+    void ctx.append(textMessage('user', 'hello'));
 
     const [message] = ctx.get();
     expect(message?.id).toBeUndefined();
@@ -97,7 +99,7 @@ describe('message history (AgentContextMemory)', () => {
       ...textMessage('user', 'keep'),
       id: 'msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B',
     };
-    ctx.append(existing);
+    void ctx.append(existing);
 
     const [message] = ctx.get();
     expect(message?.id).toBe('msg_01HXQM8K7Z3V9N2P5R6T8W0Y1B');

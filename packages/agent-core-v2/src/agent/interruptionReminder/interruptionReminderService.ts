@@ -1,12 +1,10 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
 import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
@@ -31,7 +29,7 @@ export class AgentInterruptionReminderService
   constructor(
     @IEventBus eventBus: IEventBus,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    scopeContext: IAgentScopeContext,
     @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
@@ -66,10 +64,3 @@ function lastComparableMessage(messages: readonly ContextMessage[]): ContextMess
   return undefined;
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentInterruptionReminderService,
-  AgentInterruptionReminderService,
-  ScopeActivation.OnScopeCreated,
-  'interruptionReminder',
-);

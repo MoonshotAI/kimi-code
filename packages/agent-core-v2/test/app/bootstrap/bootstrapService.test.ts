@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
@@ -13,6 +12,7 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { stubClientIdentity } from './stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 describe('BootstrapService (scoped)', () => {
   beforeEach(() => {

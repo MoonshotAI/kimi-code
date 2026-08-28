@@ -12,7 +12,7 @@ import {
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   ISessionQuestionService,
   type QuestionRequest,
@@ -24,6 +24,7 @@ import type {
 } from '#/agent/tools/ask-user-question/question-background-task';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
+import { stubAgentContext } from '../../../agent/agentContext/stubs';
 
 const signal = new AbortController().signal;
 const TASK_TOOLS = new Set(['TaskList', 'TaskOutput', 'TaskStop']);
@@ -94,7 +95,6 @@ function makeTool(
       reg.definePartialInstance(ISessionQuestionService, { request });
       reg.definePartialInstance(ITelemetryService, { track2: telemetryTrack });
       reg.definePartialInstance(IAgentTaskService, { registerTask, getTask });
-      reg.definePartialInstance(IAgentScopeContext, { agentId: 'main' });
     },
     strict: true,
   });
@@ -102,8 +102,10 @@ function makeTool(
     ix.get(ISessionQuestionService),
     ix.get(ITelemetryService),
     ix.get(IAgentTaskService),
-    ix.get(IAgentScopeContext),
+    { agentId: 'main' } as IAgentScopeContext,
     {
+      agent: stubAgentContext('main', 0),
+      host: undefined as never,
       get: (id) => ix.get(id),
       enabled: () => true,
       load: () => ({ toLoad: [], alreadyAvailable: [], unknown: [] }),

@@ -19,6 +19,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 
@@ -41,11 +42,12 @@ function buildHost(key: string): {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, key));
+  registerTestAgentWire(ix, agentScope, {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
-  const dispatcher = registerTestEventDispatcher(ix);
+  const dispatcher = registerTestEventDispatcher(ix, agentScope);
   const agentState = ix.get(IAgentStateService);
   agentState.contributeState(taskKey);
   return { dispatcher, agentState, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };

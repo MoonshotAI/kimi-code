@@ -8,6 +8,7 @@ import type {
   ToolCallTurnRepeatEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import type { ToolCallDupType, ToolDidExecuteHook } from '#/features/toolExecutor/toolExecutor';
@@ -151,7 +152,7 @@ export class ToolDedupePolicy {
   ) {}
 
   private get telemetry(): ITelemetryService {
-    return this.runtime.get(ITelemetryService);
+    return this.runtime.get(IAgentHostService).of(this.runtime.agent).telemetry;
   }
 
   readonly checkExecution: ToolExecutionVetoListener = (event) => {

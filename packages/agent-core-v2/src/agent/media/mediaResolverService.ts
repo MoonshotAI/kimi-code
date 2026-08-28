@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
-import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, Message } from '#/kosong/contract/message';
 import type { ModelRequester } from '#/kosong/model/modelRequester';
@@ -341,10 +339,3 @@ async function readStream(stream: NodeJS.ReadableStream, signal?: AbortSignal): 
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentMediaResolverService,
-  AgentMediaResolverService,
-  ScopeActivation.OnScopeCreated,
-  'media',
-);

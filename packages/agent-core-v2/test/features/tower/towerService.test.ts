@@ -13,11 +13,12 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { stubProfileRuntime } from '../../features/profile/stubs';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
   BeforeExecuteDecision,
@@ -32,6 +33,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import type { ServiceIdentifier } from '#/_base/di/instantiation';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
@@ -61,6 +64,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 
@@ -78,16 +82,36 @@ const signal = new AbortController().signal;
 
 let mainAgentContext: ReturnType<typeof makeAgentScopeContext>['agentContext'];
 
-function stubMainAgentScope(ix: TestInstantiationService): void {
+function stubMainAgentScope(ix: TestInstantiationService): IAgentScopeContext {
   const agentScope = makeAgentScopeContext({
     agentId: 'main',
     agentScope: testWireScope('wire', 'tower-test'),
     generation: 0,
   });
-  ix.stub(IAgentScopeContext, agentScope);
   mainAgentContext = agentScope.agentContext;
   const bus = ix.get(IEventBus) as ISessionEventBus;
   if (typeof bus.activateAgent === 'function') bus.activateAgent(agentScope.agentContext);
+  return agentScope;
+}
+
+function buildTowerService(
+  get: <T>(id: ServiceIdentifier<T>) => T,
+  dispatcher: IEventDispatcher,
+  scope: IAgentScopeContext,
+): IAgentTowerService {
+  return new AgentTowerService(
+    dispatcher,
+    get(IAgentStateService),
+    get(IAgentToolApprovalService),
+    scope,
+    get(ISessionContext),
+    get(IFlagService),
+    get(ISessionManager),
+    get(IFeatureManager),
+    get(IConfigService),
+    get(IAgentLifecycleService),
+    get(IEventBus),
+  );
 }
 
 function publishAsMain(ix: TestInstantiationService, event: Parameters<IEventBus['publish']>[0]): void {
@@ -137,6 +161,16 @@ describe('AgentTowerService', () => {
   let activeTools: string[] | undefined;
   let liveSessionIds: string[];
   let fireUnitsChanged: () => void = () => {};
+  let towerInstance: IAgentTowerService | undefined;
+  let towerScope: IAgentScopeContext;
+
+  function towerService(): IAgentTowerService {
+    return (towerInstance ??= buildTowerService(
+      (id) => ix.get(id),
+      ix.get(IEventDispatcher),
+      towerScope,
+    ));
+  }
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -191,9 +225,9 @@ describe('AgentTowerService', () => {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
     });
-    stubMainAgentScope(ix);
-    registerTestEventDispatcher(ix);
-    ix.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    towerInstance = undefined;
+    towerScope = stubMainAgentScope(ix);
+    registerTestEventDispatcher(ix, towerScope);
   });
   afterEach(() => disposables.dispose());
 
@@ -213,7 +247,7 @@ describe('AgentTowerService', () => {
   }
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix.get(IEventBus).subscribe((e) => {
@@ -236,7 +270,7 @@ describe('AgentTowerService', () => {
   });
 
   it('enter / exit are idempotent while already in that state', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix.get(IEventBus).subscribe((e) => {
@@ -256,7 +290,7 @@ describe('AgentTowerService', () => {
   });
 
   it('dispatch persists enter/exit records and replay rebuilds the flag (silent)', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -277,8 +311,8 @@ describe('AgentTowerService', () => {
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-replay'), {
       log: ix2.get(IAppendLogStore),
     });
-    stubMainAgentScope(ix2);
-    const dispatcher = registerTestEventDispatcher(ix2);
+    const agentScope = stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2, agentScope);
     ix2.get(IAgentStateService).contributeState(towerKey);
     await restoreTestEventDispatcher(
       dispatcher,
@@ -302,7 +336,8 @@ describe('AgentTowerService', () => {
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-legacy'), {
       log: ix2.get(IAppendLogStore),
     });
-    const dispatcher = registerTestEventDispatcher(ix2);
+    const legacyScope = stubAgentScopeContext(testWireScope('wire', 'tower-legacy'));
+    const dispatcher = registerTestEventDispatcher(ix2, legacyScope);
     ix2.get(IAgentStateService).contributeState(towerKey);
     await restoreTestEventDispatcher(
       dispatcher,
@@ -314,7 +349,7 @@ describe('AgentTowerService', () => {
   });
 
   it('leaves AskUserQuestion alone while tower mode is active (the tower may ask)', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const decision = await fire(hookContext([toolCall('AskUserQuestion', 'call_ask')]));
@@ -325,7 +360,7 @@ describe('AgentTowerService', () => {
   });
 
   it('abstains on AskUserQuestion while tower mode is inactive', async () => {
-    ix.get(IAgentTowerService);
+    towerService();
 
     const decision = await fire(hookContext([toolCall('AskUserQuestion', 'call_ask')]));
 
@@ -335,7 +370,7 @@ describe('AgentTowerService', () => {
   });
 
   it('vetoes TodoList while tower mode is active', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const decision = await fire(hookContext([toolCall('TodoList', 'call_todo')]));
@@ -351,7 +386,7 @@ describe('AgentTowerService', () => {
   });
 
   it('abstains on TodoList while tower mode is inactive', async () => {
-    ix.get(IAgentTowerService);
+    towerService();
 
     const decision = await fire(hookContext([toolCall('TodoList', 'call_todo')]));
 
@@ -361,7 +396,7 @@ describe('AgentTowerService', () => {
   });
 
   it('abstains on other tools while tower mode is active', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const decision = await fire(hookContext([toolCall('Bash', 'call_bash')]));
@@ -372,7 +407,7 @@ describe('AgentTowerService', () => {
   });
 
   it('denies tower tools while the tower flag is off, even with the mode active', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
     expect(tower.isActive).toBe(true);
     towerFlagOn = false;
@@ -391,7 +426,7 @@ describe('AgentTowerService', () => {
 
   it('enter() is a no-op while the tower flag is off', async () => {
     towerFlagOn = false;
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     const events: { readonly type: string }[] = [];
     disposables.add(
       ix.get(IEventBus).subscribe((e) => {
@@ -408,7 +443,7 @@ describe('AgentTowerService', () => {
   it('enter() is a no-op until the feature is assembled — a live flag flip needs a restart', async () => {
     _setTowerFeatureAssembledForTests(false);
     try {
-      const tower = ix.get(IAgentTowerService);
+      const tower = towerService();
 
       await tower.enter();
 
@@ -420,7 +455,7 @@ describe('AgentTowerService', () => {
   });
 
   it('publishes towerMode:false when the tower feature becomes unavailable while active', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
     expect(tower.isActive).toBe(true);
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
@@ -451,7 +486,7 @@ describe('AgentTowerService', () => {
         return { dispose: () => {} };
       },
     } as unknown as IConfigService);
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
     expect(tower.isActive).toBe(true);
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
@@ -487,7 +522,7 @@ describe('AgentTowerService', () => {
 
       liveSessionIds = ['session-original'];
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
-      const tower = ix.get(IAgentTowerService);
+      const tower = towerService();
 
       await tower.enter();
 
@@ -508,7 +543,7 @@ describe('AgentTowerService', () => {
       await new TowerStore(repo).init('session-original');
 
       ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-fork' } as unknown as ISessionContext);
-      const tower = ix.get(IAgentTowerService);
+      const tower = towerService();
 
       await tower.enter();
 
@@ -520,7 +555,7 @@ describe('AgentTowerService', () => {
   });
 
   it('does not veto TodoList while the tower flag is off, even with tower mode persisted active', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
     expect(tower.isActive).toBe(true);
     towerFlagOn = false;
@@ -534,7 +569,7 @@ describe('AgentTowerService', () => {
   });
 
   it('enter activates the tower tool set on the main agent; exit keeps it', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
 
     await tower.enter();
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
@@ -545,11 +580,8 @@ describe('AgentTowerService', () => {
   });
 
   it('enter is inert on a non-main agent', async () => {
-    ix.stub(
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: 'test-agent', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
-    );
-    const tower = ix.get(IAgentTowerService);
+    towerScope = makeAgentScopeContext({ agentId: 'test-agent', agentScope: testWireScope('wire', 'tower-test'), generation: 0 });
+    const tower = towerService();
 
     await tower.enter();
 
@@ -561,7 +593,7 @@ describe('AgentTowerService', () => {
   });
 
   it('restore re-applies the tower tool set and re-emits the status while active', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -606,9 +638,9 @@ describe('AgentTowerService', () => {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
     });
-    stubMainAgentScope(ix2);
-    const dispatcher = registerTestEventDispatcher(ix2);
-    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const agentScope = stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+    ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix2.get(IEventBus).subscribe((e) => {
@@ -631,7 +663,7 @@ describe('AgentTowerService', () => {
   });
 
   it('exit clears persisted tower state even while the tower flag is off', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
     expect(tower.isActive).toBe(true);
 
@@ -645,7 +677,7 @@ describe('AgentTowerService', () => {
   });
 
   it('reapplies the tower tool set when a profile change wipes the allow-list', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
     expect(addedTools).toEqual([...TOWER_MODE_TOOLS]);
 
@@ -667,7 +699,7 @@ describe('AgentTowerService', () => {
   });
 
   it('restore keeps the feature inert while the tower flag is off', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -709,9 +741,9 @@ describe('AgentTowerService', () => {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
     });
-    stubMainAgentScope(ix2);
-    const dispatcher = registerTestEventDispatcher(ix2);
-    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const agentScope = stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+    ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix2.get(IEventBus).subscribe((e) => {
@@ -735,7 +767,7 @@ describe('AgentTowerService', () => {
   });
 
   it('restore keeps a persisted enter record inert on a non-main agent', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -777,8 +809,9 @@ describe('AgentTowerService', () => {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
     });
-    const dispatcher = registerTestEventDispatcher(ix2);
-    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const nonMainScope = stubAgentScopeContext(testWireScope('wire', 'tower-restore-non-main'));
+    const dispatcher = registerTestEventDispatcher(ix2, nonMainScope);
+    ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, nonMainScope));
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix2.get(IEventBus).subscribe((e) => {
@@ -802,7 +835,7 @@ describe('AgentTowerService', () => {
   });
 
   it('exits a replayed tower mode when the store owner is another session (fork)', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -858,9 +891,9 @@ describe('AgentTowerService', () => {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
       });
-      stubMainAgentScope(ix2);
-      const dispatcher = registerTestEventDispatcher(ix2);
-      ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+      const agentScope = stubMainAgentScope(ix2);
+      const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+      ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
       const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
       disposables.add(
         ix2.get(IEventBus).subscribe((e) => {
@@ -887,7 +920,7 @@ describe('AgentTowerService', () => {
   });
 
   it('keeps a replayed tower mode when the store owner session is gone — adoption survives resume', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -943,9 +976,9 @@ describe('AgentTowerService', () => {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
       });
-      stubMainAgentScope(ix2);
-      const dispatcher = registerTestEventDispatcher(ix2);
-      ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+      const agentScope = stubMainAgentScope(ix2);
+      const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+      ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
       const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
       disposables.add(
         ix2.get(IEventBus).subscribe((e) => {
@@ -972,7 +1005,7 @@ describe('AgentTowerService', () => {
   });
 
   it('exits a replayed tower mode on a fork restored while the flag is off when the owner is live', async () => {
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -1028,9 +1061,9 @@ describe('AgentTowerService', () => {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
       });
-      stubMainAgentScope(ix2);
-      const dispatcher = registerTestEventDispatcher(ix2);
-      ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+      const agentScope = stubMainAgentScope(ix2);
+      const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+      ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
       const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
       disposables.add(
         ix2.get(IEventBus).subscribe((e) => {
@@ -1062,7 +1095,7 @@ describe('AgentTowerService', () => {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-original',
     } as unknown as ISessionContext);
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -1110,9 +1143,9 @@ describe('AgentTowerService', () => {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
     });
-    stubMainAgentScope(ix2);
-    const dispatcher = registerTestEventDispatcher(ix2);
-    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const agentScope = stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+    ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix2.get(IEventBus).subscribe((e) => {
@@ -1140,7 +1173,7 @@ describe('AgentTowerService', () => {
       cwd: '/nonexistent-tower-repo',
       sessionId: 'session-owner',
     } as unknown as ISessionContext);
-    const tower = ix.get(IAgentTowerService);
+    const tower = towerService();
     await tower.enter();
 
     const log = ix.get(IAppendLogStore);
@@ -1185,9 +1218,9 @@ describe('AgentTowerService', () => {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
     });
-    stubMainAgentScope(ix2);
-    const dispatcher = registerTestEventDispatcher(ix2);
-    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const agentScope = stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+    ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
     const events: { readonly type: string; readonly towerMode?: boolean }[] = [];
     disposables.add(
       ix2.get(IEventBus).subscribe((e) => {
@@ -1241,9 +1274,9 @@ describe('AgentTowerService', () => {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
     });
-    stubMainAgentScope(ix2);
-    const dispatcher = registerTestEventDispatcher(ix2);
-    ix2.set(IAgentTowerService, new SyncDescriptor(AgentTowerService));
+    const agentScope = stubMainAgentScope(ix2);
+    const dispatcher = registerTestEventDispatcher(ix2, agentScope);
+    ix2.set(IAgentTowerService, buildTowerService((id) => ix2.get(id), dispatcher, agentScope));
     ix2.get(IAgentTowerService);
 
     await restoreTestEventDispatcher(
@@ -1300,10 +1333,7 @@ describe('AgentTowerService', () => {
           }),
         )),
       );
-      ix.stub(
-        IAgentScopeContext,
-        makeAgentScopeContext({ agentId: WORKER_AGENT_ID, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
-      );
+      towerScope = makeAgentScopeContext({ agentId: WORKER_AGENT_ID, agentScope: testWireScope('wire', 'tower-test'), generation: 0 });
       ix.stub(ISessionContext, { cwd: repo } as unknown as ISessionContext);
     });
 
@@ -1312,7 +1342,7 @@ describe('AgentTowerService', () => {
     });
 
     it('allows a worker Write inside its own worktree', async () => {
-      ix.get(IAgentTowerService);
+      towerService();
 
       const decision = await fire(writeHookContext('Write', [`${worktree}/src/gemm.cpp`]));
 
@@ -1322,7 +1352,7 @@ describe('AgentTowerService', () => {
     });
 
     it('denies a worker Write outside its worktree', async () => {
-      ix.get(IAgentTowerService);
+      towerService();
 
       const decision = await fire(
         writeHookContext('Edit', [`${repo}/src/gemm.cpp`, `${repo}/.tower/worktrees/wt-2/x.ts`]),
@@ -1340,7 +1370,7 @@ describe('AgentTowerService', () => {
     });
 
     it('abstains on non-Write/Edit tools for a worker', async () => {
-      ix.get(IAgentTowerService);
+      towerService();
 
       const decision = await fire(hookContext([toolCall('Bash', 'call_bash')]));
 
@@ -1351,7 +1381,7 @@ describe('AgentTowerService', () => {
 
     it('guards worker writes even while the tower flag is off — isolation is identity-scoped', async () => {
       towerFlagOn = false;
-      ix.get(IAgentTowerService);
+      towerService();
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
 
@@ -1378,7 +1408,7 @@ describe('AgentTowerService', () => {
           }),
         )),
       );
-      ix.get(IAgentTowerService);
+      towerService();
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
 
@@ -1388,11 +1418,8 @@ describe('AgentTowerService', () => {
     });
 
     it('abstains when the worker has no roster entry', async () => {
-      ix.stub(
-        IAgentScopeContext,
-        makeAgentScopeContext({ agentId: 'agent-unregistered', agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
-      );
-      ix.get(IAgentTowerService);
+      towerScope = makeAgentScopeContext({ agentId: 'agent-unregistered', agentScope: testWireScope('wire', 'tower-test'), generation: 0 });
+      towerService();
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));
 
@@ -1404,7 +1431,7 @@ describe('AgentTowerService', () => {
 });
 
 async function injectDynamic(ctx: TestAgentContext): Promise<void> {
-  await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, false);
+  await runWillBeginStepHooks(getLoopControl(ctx.agentContext) as StubLoop, false);
 }
 
 function appendAssistantTurn(

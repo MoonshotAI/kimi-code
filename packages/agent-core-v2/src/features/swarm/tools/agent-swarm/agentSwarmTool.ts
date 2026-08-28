@@ -6,15 +6,15 @@ import {
 } from '#/tool/toolContract';
 import { Error2, ErrorCodes } from '#/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { ISessionSwarmService, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
+import type { IConfigService } from '#/app/config/config';
+import type { IFlagService } from '#/app/flag/flag';
+import type { ISessionSwarmService, SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { resolveSwarmTimeoutMs } from '#/features/swarm/configSection';
-import { ISessionSubagentService } from '#/session/subagent/subagent';
+import type { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
@@ -85,13 +85,13 @@ export class AgentSwarmTool implements IAgentSwarmTool {
   private readonly callerAgentId: string;
 
   constructor(
-    @ISessionSwarmService private readonly swarmService: ISessionSwarmService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
-    @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
-    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    private readonly swarmService: ISessionSwarmService,
+    private readonly scopeContext: IAgentScopeContext,
+    private readonly swarmMode: IAgentSwarmService,
+    private readonly config: IConfigService,
+    private readonly flags: IFlagService,
+    private readonly subagents: ISessionSubagentService,
+    private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }

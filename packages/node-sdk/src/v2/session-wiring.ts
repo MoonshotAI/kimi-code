@@ -33,10 +33,8 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/agent-core';
 import {
-  agentContextOf,
   AgentProfile,
   IAgentLifecycleService,
-  IEventBus,
   ISessionApprovalService,
   ISessionQuestionService,
   ISessionTokenCountingService,
@@ -46,12 +44,13 @@ import {
   onSessionInteractionDidChangePending,
   onSessionInteractionDidResolve,
   respondSessionInteraction,
+  type AgentContext,
   type Event2,
-  type IAgentScopeHandle,
   type IDisposable,
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
+import { IAgentHostService } from '@moonshot-ai/agent-core-v2';
 
 import { translateDomainEvent } from '#/v2/event-mapper';
 
@@ -125,16 +124,14 @@ export class SessionEventWiring {
     );
     this.disposables.push(
       manager.onDidCreate((context) => {
-        const handle = manager.handleOf(context.agentId);
-        if (handle !== undefined) this.attachAgent(handle);
+        this.attachAgent(context);
       }),
       manager.onDidClose((context) => {
         this.detachAgent(context.agentId);
       }),
     );
     for (const agent of manager.list()) {
-      const handle = manager.handleOf(agent.agentId);
-      if (handle !== undefined) this.attachAgent(handle);
+      this.attachAgent(agent);
     }
   }
 
@@ -150,15 +147,16 @@ export class SessionEventWiring {
     this.agentSubscriptions.clear();
   }
 
-  private attachAgent(agent: IAgentScopeHandle): void {
-    if (this.disposed || this.agentSubscriptions.has(agent.id)) return;
+  private attachAgent(agent: AgentContext): void {
+    if (this.disposed || this.agentSubscriptions.has(agent.agentId)) return;
     const sessionId = this.session.id;
-    const agentId = agent.id;
+    const agentId = agent.agentId;
+    const eventBus = this.session.accessor.get(IAgentHostService).of(agent).eventBus;
     this.agentSubscriptions.set(
       agentId,
-      agent.accessor.get(IEventBus).subscribe((event) => {
+      eventBus.subscribe((event) => {
         const enriched =
-          event.type === 'agent.status.updated' ? withStatusSnapshot(agent, event) : event;
+          event.type === 'agent.status.updated' ? withStatusSnapshot(this.session, agent, event) : event;
         const translated = translateDomainEvent(enriched, sessionId, agentId);
         if (translated !== undefined) this.sink.receiveEvent(translated);
       }),
@@ -280,26 +278,23 @@ export class SessionEventWiring {
  * two client-facing packages so the core engine stays free of v1
  * wire-compatibility concerns.
  */
-function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
-  const lifecycle = agent.accessor.get(IAgentLifecycleService) as
+function withStatusSnapshot(session: ISessionScopeHandle, agent: AgentContext, event: Event2<any>): Event2<any> {
+  const lifecycle = session.accessor.get(IAgentLifecycleService) as
     | IAgentLifecycleService
     | undefined;
-  const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
-  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+  const usageService = session.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
+  const tokenCounting = session.accessor.get(ISessionTokenCountingService) as
     | ISessionTokenCountingService
     | undefined;
   if (lifecycle === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
-  // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`ISessionTokenCountingService.statusSize`).
-  const context = agentContextOf(agent);
-  const profile = lifecycle.resolve(context, AgentProfile);
-  const contextTokens = tokenCounting.statusSize(context);
+  const profile = lifecycle.resolve(agent, AgentProfile);
+  const contextTokens = tokenCounting.statusSize(agent);
   const capabilities = profile.modelCapabilities();
   const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   return Object.assign({}, event, {
-    usage: usageService.status(context),
+    usage: usageService.status(agent),
     contextTokens,
     maxContextTokens,
     model: profile.model(),

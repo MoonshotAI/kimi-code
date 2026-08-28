@@ -1,4 +1,8 @@
-import type { IInstantiationService } from '#/_base/di/instantiation';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IGitService } from '#/app/git/git';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
 import type { PermissionPolicy, PermissionPolicyResult } from '#/features/toolExecutor/permissionTypes';
 import { AutoModeApprovePermissionPolicyService } from '#/features/toolExecutor/internal/policies/auto-mode-approve';
@@ -22,20 +26,26 @@ export interface PermissionPolicyEvaluation {
 export class ToolExecutionPermissionPolicyChain {
   private readonly policies: readonly PermissionPolicy[];
 
-  constructor(instantiation: IInstantiationService) {
+  constructor(
+    agentLifecycle: IAgentLifecycleService,
+    scopeContext: IAgentScopeContext,
+    agentRuntime: IAgentRuntimeService,
+    workspace: ISessionWorkspaceContext,
+    git: IGitService,
+  ) {
     this.policies = [
-      instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
-      instantiation.createInstance(UserConfiguredDenyPermissionPolicyService),
-      instantiation.createInstance(AutoModeApprovePermissionPolicyService),
-      instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
-      instantiation.createInstance(UserConfiguredAskPermissionPolicyService),
-      instantiation.createInstance(UserConfiguredAllowPermissionPolicyService),
-      instantiation.createInstance(SensitiveFileAccessAskPermissionPolicyService),
-      instantiation.createInstance(GitControlPathAccessAskPermissionPolicyService),
-      instantiation.createInstance(YoloModeApprovePermissionPolicyService),
-      instantiation.createInstance(DefaultToolApprovePermissionPolicyService),
-      instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService),
-      instantiation.createInstance(FallbackAskPermissionPolicyService),
+      new AutoModeAskUserQuestionDenyPermissionPolicyService(agentLifecycle, scopeContext),
+      new UserConfiguredDenyPermissionPolicyService(agentLifecycle, scopeContext),
+      new AutoModeApprovePermissionPolicyService(agentLifecycle, scopeContext),
+      new SessionApprovalHistoryPermissionPolicyService(agentLifecycle, scopeContext),
+      new UserConfiguredAskPermissionPolicyService(agentLifecycle, scopeContext),
+      new UserConfiguredAllowPermissionPolicyService(agentLifecycle, scopeContext),
+      new SensitiveFileAccessAskPermissionPolicyService(),
+      new GitControlPathAccessAskPermissionPolicyService(agentRuntime, workspace, git),
+      new YoloModeApprovePermissionPolicyService(agentLifecycle, scopeContext),
+      new DefaultToolApprovePermissionPolicyService(),
+      new GitCwdWriteApprovePermissionPolicyService(agentRuntime, workspace, git),
+      new FallbackAskPermissionPolicyService(),
     ];
   }
 

@@ -1,7 +1,5 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import {
   DEFAULT_MAX_RETRY_ATTEMPTS,
@@ -15,17 +13,12 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import { unwrapErrorCause } from '#/errors';
-import {
-  LoopControlToken,
-  type LoopErrorContext,
-} from '#/features/loop/internal/loop';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/features/loop/configSection';
+import type { LoopControl, LoopErrorContext } from '#/features/loop/internal/loop';
+import { LOOP_CONTROL_SECTION, type LoopControl as LoopControlConfig } from '#/features/loop/configSection';
 import { TurnStarted } from '#/features/loop/turnEvents';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentStateService } from '#/agent/state/agentState';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-
-import { IAgentStepRetryService } from './stepRetry';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentStateService } from '#/agent/state/agentState';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
 
 export interface TurnStepRetryingPayload {
   readonly agentId: string;
@@ -56,16 +49,14 @@ export const stepRetryFailedAttemptsKey = defineState<number>(
   () => 0,
 );
 
-export class AgentStepRetryService extends Disposable implements IAgentStepRetryService {
-  declare readonly _serviceBrand: undefined;
-
+export class AgentStepRetry extends Disposable {
   constructor(
-    @LoopControlToken private readonly loopService: LoopControlToken,
-    @IConfigService private readonly config: IConfigService,
-    @IEventBus private readonly eventBus: IEventBus,
-    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentStateService private readonly states: IAgentStateService,
+    private readonly loopService: LoopControl,
+    private readonly config: IConfigService,
+    private readonly eventBus: IEventBus,
+    private readonly dispatcher: IEventDispatcher,
+    private readonly scopeContext: IAgentScopeContext,
+    private readonly states: IAgentStateService,
   ) {
     super();
     this.states.contributeState(stepRetryLastFailedDriverIdKey);
@@ -118,7 +109,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     this.failedAttempts += 1;
 
     const maxAttempts = Math.max(
-      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep ??
+      this.config.get<LoopControlConfig>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep ??
         DEFAULT_MAX_RETRY_ATTEMPTS,
       1,
     );
@@ -150,11 +141,3 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     return true;
   }
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentStepRetryService,
-  AgentStepRetryService,
-  ScopeActivation.OnScopeCreated,
-  'stepRetry',
-);

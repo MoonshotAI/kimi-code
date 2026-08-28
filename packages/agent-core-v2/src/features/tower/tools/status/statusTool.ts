@@ -1,11 +1,11 @@
 import { branchExists, branchTip } from '#/features/tower/protocol/index';
 import type { TowerMission, TowerState, TowerStore } from '#/features/tower/protocol/index';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import {
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type {
   ITowerRateLimitService,
-  type TowerRateLimitSnapshot,
+  TowerRateLimitSnapshot,
 } from '#/features/tower/towerRateLimit';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
@@ -37,9 +37,9 @@ export class TowerStatusTool implements ITowerStatusTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerStatusToolInputSchema);
 
   constructor(
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @ITowerRateLimitService private readonly rateLimit: ITowerRateLimitService,
+    private readonly sessionContext: ISessionContext,
+    private readonly scopeContext: IAgentScopeContext,
+    private readonly rateLimit: ITowerRateLimitService,
   ) {}
 
   resolveExecution(_args: TowerStatusToolInput): ToolExecution {

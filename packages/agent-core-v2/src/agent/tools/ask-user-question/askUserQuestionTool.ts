@@ -2,10 +2,11 @@ import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
-import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentTaskService } from '#/agent/task/task';
+import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
   ExecutableToolContext,
@@ -50,10 +51,10 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
   readonly name = 'AskUserQuestion' as const;
 
   constructor(
-    @ISessionQuestionService private readonly question: ISessionQuestionService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly question: ISessionQuestionService,
+    private readonly telemetry: ITelemetryService,
+    private readonly tasks: IAgentTaskService,
+    private readonly scopeContext: IAgentScopeContext,
     private readonly tools: AgentToolFactoryContext,
   ) {}
 
@@ -211,14 +212,14 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
   }
 }
 
-registerAgentToolService(IAskUserQuestionTool, AskUserQuestionTool, {
+registerAgentToolService({
   name: 'AskUserQuestion',
   domain: 'questionTools',
   create: (context) => new AskUserQuestionTool(
     context.get(ISessionQuestionService),
-    context.get(ITelemetryService),
-    context.get(IAgentTaskService),
-    context.get(IAgentScopeContext),
+    context.host.telemetry,
+    context.get(ISessionTaskService).of(context.agent),
+    context.host.scopeContext,
     context,
   ),
 });

@@ -38,9 +38,9 @@ export function lifecycleWithFullCompaction(
       if (definition === AgentFullCompaction) return resolveFullCompaction();
       return inner?.resolve(agent as never, definition as never);
     },
-    handleOf: (agentId: string) => inner?.handleOf(agentId) ?? ({}),
-    onDidCreateScope: (listener: (event: { context: AgentContext }) => void) =>
-      inner?.onDidCreateScope(listener as never) ?? toDisposable(() => {}),
+    get: (agentId: unknown) => inner?.get(agentId as never),
+    onDidCreate: (listener: (event: unknown) => void) =>
+      inner?.onDidCreate?.(listener as never) ?? toDisposable(() => {}),
   } as unknown as IAgentLifecycleService;
 }
 

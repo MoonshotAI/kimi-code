@@ -1,27 +1,35 @@
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
+import { LifecycleScope } from '#/app/scopes';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import './configSection';
-import { IAgentPlanService } from './plan';
-import { AgentPlanService } from './planService';
-import { IEnterPlanModeTool } from './tools/enter-plan-mode/enter-plan-mode';
 import { EnterPlanModeTool } from './tools/enter-plan-mode/enterPlanModeTool';
-import { IExitPlanModeTool } from './tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from './tools/exit-plan-mode/exitPlanModeTool';
+import { ISessionPlanService, SessionPlanService } from './sessionPlanService';
 
 export class PlanFeature extends Feature {
   static override readonly name = 'plan';
 
   constructor() {
     super();
-    this.contributeAgentService(IAgentPlanService, AgentPlanService);
-    this.contributeTool(IEnterPlanModeTool, EnterPlanModeTool, {
+    this.contributeService(LifecycleScope.Session, ISessionPlanService, SessionPlanService);
+    this.contributeTool({
       name: 'EnterPlanMode',
       domain: 'plan',
+      create: (ctx) =>
+        new EnterPlanModeTool(ctx.get(ISessionPlanService).of(ctx.agent), ctx.host.telemetry),
     });
-    this.contributeTool(IExitPlanModeTool, ExitPlanModeTool, {
+    this.contributeTool({
       name: 'ExitPlanMode',
       domain: 'plan',
+      create: (ctx) =>
+        new ExitPlanModeTool(
+          ctx.get(ISessionPlanService).of(ctx.agent),
+          ctx.get(IAgentLifecycleService),
+          ctx.host.scopeContext,
+          ctx.host.telemetry,
+        ),
     });
   }
 }

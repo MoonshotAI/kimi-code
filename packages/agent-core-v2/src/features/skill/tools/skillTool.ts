@@ -5,10 +5,10 @@ import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
 import { AgentSkill, type SkillRuntime } from '#/features/skill/skillAgentRuntime';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
 import { isInlineSkillType } from '#/features/skill/catalog/types';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
@@ -35,10 +35,10 @@ export class SkillTool implements ISkillTool {
   private readonly skill: SkillRuntime;
 
   constructor(
-    @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
-    @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scope: IAgentScopeContext,
-    @ISessionContext private readonly sessionContext: ISessionContext,
+    private readonly catalog: ISessionSkillCatalog,
+    private readonly manager: IAgentLifecycleService,
+    private readonly scope: IAgentScopeContext,
+    private readonly sessionContext: ISessionContext,
   ) {
     this.skill = manager.resolve(scope.agentContext, AgentSkill);
   }

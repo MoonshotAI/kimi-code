@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
-import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
@@ -13,6 +12,7 @@ import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backen
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const COLLECTION = 'session';
 const SEP = String.fromCodePoint(0);

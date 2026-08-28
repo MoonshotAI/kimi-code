@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
+import { type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -16,12 +15,13 @@ import { ILogService } from '#/_base/log/log';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import type { PromptRuntime } from '#/features/prompt/prompt';
 import { stubPromptRuntime } from '../../features/prompt/stubs';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 function textOf(message: ContextMessage): string {
   return message.content
@@ -73,7 +73,6 @@ describe('RestGateway', () => {
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
       onDidCreate: () => ({ dispose: () => {} }),
-      onDidCreateScope: () => ({ dispose: () => {} }),
       onWillClose: () => ({ dispose: () => {} }),
       onDidClose: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(agentContext),
@@ -89,20 +88,9 @@ describe('RestGateway', () => {
       },
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
-      handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
-      adopt: () => agentContext,
       attachRuntimes: () => {},
     } as unknown as IAgentLifecycleService;
-    const agentHandle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: makeAccessor([
-        [LoopControlToken, turnService],
-        [IAgentLifecycleService, agents],
-        [IAgentScopeContext, { agentContext }],
-      ]),
-      dispose: () => {},
-    };
+    registerLoopControl(agentContext, turnService as unknown as LoopControl, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',
       kind: LifecycleScope.Session,

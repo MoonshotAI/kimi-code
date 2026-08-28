@@ -1,5 +1,5 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -204,9 +204,9 @@ export class ReadTool implements IReadTool {
   readonly description = READ_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    private readonly runtime: IAgentRuntimeService,
+    private readonly workspaceCtx: ISessionWorkspaceContext,
+    private readonly skillCatalog: ISessionSkillCatalog,
   ) {}
 
   private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
@@ -528,8 +528,13 @@ export class ReadTool implements IReadTool {
   }
 }
 
-registerAgentToolService(IReadTool, ReadTool, {
+registerAgentToolService({
   name: 'Read',
   domain: 'os/backends',
   requiredRuntimeCapabilities: ['fs'],
+  create: (context) => new ReadTool(
+    context.host.agentRuntime,
+    context.get(ISessionWorkspaceContext),
+    context.get(ISessionSkillCatalog),
+  ),
 });

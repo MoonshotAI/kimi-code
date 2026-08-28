@@ -13,13 +13,14 @@ import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAge
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
-import { ITowerSpawnTool, type TowerSpawnToolInput } from '#/features/tower/tools/spawn/spawn';
+import type { TowerSpawnToolInput } from '#/features/tower/tools/spawn/spawn';
 import { TowerSpawnTool } from '#/features/tower/tools/spawn/spawnTool';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -37,7 +38,9 @@ import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   ISessionSubagentService,
   type AgentRunHandle,
+  type AgentTaskHooks,
 } from '#/session/subagent/subagent';
+import { createHooks } from '#/hooks';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
@@ -80,6 +83,7 @@ describe('TowerSpawnTool', () => {
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
   let createdSetMode: Mock<(mode: PermissionMode) => void>;
+  let agentScope: IAgentScopeContext;
 
   async function git(cwd: string, ...args: string[]): Promise<void> {
     await execFileAsync('git', args, { cwd });
@@ -132,53 +136,39 @@ describe('TowerSpawnTool', () => {
       release,
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
-    ix.stub(IAgentScopeContext, {
+    agentScope = {
       agentId: 'main',
       agentContext: stubAgentContext('main', 1),
       scope: (subKey?: string) => subKey ?? '',
-    });
-    const createdHandle = {
-      id: 'agent-7',
-      accessor: {
-        get: (id: unknown) => {
-          if (id === (ISessionPermissionModeService as unknown)) {
-            return { setMode: createdSetMode };
-          }
-          if (id === (IAgentScopeContext as unknown)) {
-            return {
-              agentId: 'agent-7',
-              agentContext: stubAgentContext('agent-7', 1),
-            };
-          }
-          return undefined;
-        },
-      },
-    } as never;
+    } as IAgentScopeContext;
+    const mainContext = stubAgentContext('main', 1);
+    const createdContext = stubAgentContext('agent-7', 1);
+    const dispatcher = { dispatch: vi.fn(async () => {}) };
+    const telemetry = { track2: vi.fn() };
+    ix.stub(IAgentHostService, {
+      of: () => ({ dispatcher, telemetry }),
+    } as unknown as IAgentHostService);
+    ix.stub(ISessionPermissionModeService, {
+      setMode: createdSetMode,
+    } as unknown as ISessionPermissionModeService);
     const profile = {
       data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),
     } as unknown as ProfileRuntime;
-    const mainHandle = {
-      id: 'main',
-      accessor: {
-        get: (id: unknown) =>
-          id === (IEventBus as unknown)
-            ? ix.get(IEventBus)
-            : id === (IAgentLifecycleService as unknown)
-              ? { list: () => [], handleOf: () => undefined }
-              : undefined,
-      },
-    } as never;
     ix.stub(IAgentLifecycleService, {
       resolve: (agent: AgentContext, definition: unknown) =>
         definition === AgentProfile && agent.agentId === 'main' ? profile : undefined,
-      handleOf: (agentId: string) => {
-        if (agentId === 'main') return mainHandle;
-        if (agentId === 'agent-7') return createdHandle;
+      get: (agentId: string) => {
+        if (agentId === 'main') return mainContext;
+        if (agentId === 'agent-7') return createdContext;
         return undefined;
       },
       create: createAgent,
     } as unknown as IAgentLifecycleService);
-    ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
+    ix.stub(ISessionSubagentService, {
+      run: runAgent,
+      hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+      notifyAgentTaskStopped: () => {},
+    } as unknown as ISessionSubagentService);
     ix.stub(IAgentTaskService, { registerTask } as unknown as IAgentTaskService);
     ix.stub(IConfigService, {
       get: ((domain: string) =>
@@ -194,7 +184,6 @@ describe('TowerSpawnTool', () => {
     ix.stub(IModelCatalog, {
       get: (alias: string) => ({ id: alias, ...modelMeta[alias] }) as Model,
     } as unknown as IModelCatalog);
-    ix.set(ITowerSpawnTool, new SyncDescriptor(TowerSpawnTool));
   });
 
   afterEach(async () => {
@@ -202,8 +191,25 @@ describe('TowerSpawnTool', () => {
     await rm(repo, { recursive: true, force: true });
   });
 
+  function makeTool(): TowerSpawnTool {
+    return new TowerSpawnTool(
+      ix.get(IAgentTowerService),
+      ix.get(ITowerRateLimitService),
+      ix.get(ISessionContext),
+      agentScope,
+      ix.get(IAgentLifecycleService),
+      ix.get(IAgentHostService),
+      ix.get(ISessionSubagentService),
+      ix.get(IAgentTaskService),
+      ix.get(IConfigService),
+      ix.get(IFlagService),
+      ix.get(IModelCatalog),
+      ix.get(ISessionPermissionModeService),
+    );
+  }
+
   function execute(args: TowerSpawnToolInput): Promise<ExecutableToolResult> {
-    return executeTool(ix.get(ITowerSpawnTool), {
+    return executeTool(makeTool(), {
       args,
       turnId: 0,
       toolCallId: 'call_spawn',
@@ -230,7 +236,7 @@ describe('TowerSpawnTool', () => {
   });
 
   it('rejects non-main callers with the main-agent-only error before any work', async () => {
-    ix.stub(IAgentScopeContext, { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' });
+    agentScope = { agentId: 'agent-w1', scope: (subKey?: string) => subKey ?? '' } as IAgentScopeContext;
 
     const result = await execute(WORKER_ARGS);
 

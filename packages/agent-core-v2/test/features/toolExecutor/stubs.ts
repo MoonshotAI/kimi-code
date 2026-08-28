@@ -122,10 +122,10 @@ export function lifecycleWithToolExecutor(
       if (definition === AgentTools) return executor;
       return inner?.resolve(agent as never, definition as never);
     },
-    handleOf: (agentId: string) => inner?.handleOf(agentId) ?? ({}),
-    onDidCreateScope: (listener: (event: { context: AgentContext }) => void) => {
-      if (firedScopeContext !== undefined) listener({ context: firedScopeContext });
-      return inner?.onDidCreateScope(listener as never) ?? toDisposable(() => {});
+    get: (agentId: unknown) => inner?.get(agentId as never) ?? ({} as AgentContext),
+    onDidCreate: (listener: (event: AgentContext) => void) => {
+      if (firedScopeContext !== undefined) listener(firedScopeContext);
+      return inner?.onDidCreate?.(listener as never) ?? toDisposable(() => {});
     },
   } as unknown as IAgentLifecycleService;
 }

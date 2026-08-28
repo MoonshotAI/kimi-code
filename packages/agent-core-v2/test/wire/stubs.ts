@@ -1,15 +1,19 @@
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/test';
+import type { CollectionChange, CollectionView } from '#/_base/di/collection';
+import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
+import { EventStateContribution, type EventStateContributionRecord } from '#/state/stateContribution';
 import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
 import { AgentContextMemory, contextMemoryAgentRuntimeProvider } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
@@ -28,6 +32,8 @@ import {
   IWireService,
   type IWireService as AgentWire,
 } from '#/wire/wire';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import type { AgentHost } from '#/agent/host/agentHost';
 import { WireService } from '#/wire/wireService';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -61,6 +67,12 @@ const noopEventBus: IEventBus = {
   subscribe: () => toDisposable(() => {}),
 };
 
+const emptyEventStateView: CollectionView<EventStateContributionRecord> = {
+  items: [],
+  records: [],
+  onDidChange: Event.None as Event<CollectionChange<EventStateContributionRecord>>,
+};
+
 export function testWireScope(scope: string, journal: string): string {
   return `${scope}/${journal}`;
 }
@@ -71,50 +83,84 @@ export function stubAgentScopeContext(scope: string): AgentScopeContext {
 
 export function registerTestAgentWire(
   ix: TestInstantiationService,
-  scope: string,
+  scope: string | AgentScopeContext,
   dependencies: TestAgentWireDependencies = {},
 ): AgentWire {
-  const agentScope = stubAgentScopeContext(scope);
-  ix.stub(IAgentScopeContext, agentScope);
-  ix.set(IAppendLogStore, dependencies.log ?? noopLog);
-  ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
-  ix.set(IEventBus, dependencies.eventBus ?? noopEventBus);
-  ix.set(IWireService, new SyncDescriptor(WireService));
-  const eventBus = ix.get(IEventBus);
+  const agentScope = typeof scope === 'string' ? stubAgentScopeContext(scope) : scope;
+  const log = dependencies.log ?? noopLog;
+  const blob = dependencies.blob ?? noopBlob;
+  const eventBus = dependencies.eventBus ?? noopEventBus;
+  ix.set(IAppendLogStore, log);
+  ix.set(IAgentBlobService, blob);
+  ix.set(IEventBus, eventBus);
+  const wire = new WireService(agentScope, log, blob);
+  ix.set(IWireService, wire);
   if (typeof (eventBus as Partial<ISessionEventBus>).activateAgent === 'function') {
     (eventBus as ISessionEventBus).activateAgent(agentScope.agentContext);
   }
-  return ix.get(IWireService);
+  return wire;
 }
 
 export function registerTestAgentWireServices(
   registration: ServiceRegistration,
   scope = 'wire/test-agent',
+  agentScope: AgentScopeContext = stubAgentScopeContext(scope),
 ): void {
-  registration.defineInstance(IAgentScopeContext, stubAgentScopeContext(scope));
+  const wireScope = stubAgentScopeContext(scope);
+  class TestAgentWireService extends WireService {
+    constructor(
+      @IAppendLogStore log: IAppendLogStore,
+      @IAgentBlobService blob: IAgentBlobService,
+    ) {
+      super(wireScope, log, blob);
+    }
+  }
+  class TestAgentEventDispatcherService extends EventDispatcherService {
+    constructor(
+      @IWireService wire: IWireService,
+      @IEventBus eventBus: IEventBus,
+      @IAgentBlobService blob: IAgentBlobService,
+      @IAgentStateService agentState: IAgentStateService,
+      @EventStateContribution view: CollectionView<EventStateContributionRecord>,
+    ) {
+      super(wire, eventBus, agentScope, blob, agentState, view);
+    }
+  }
   registration.defineInstance(IAppendLogStore, noopLog);
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);
   registration.defineInstance(IAgentStateService, new AgentStateService());
-  registration.define(IWireService, WireService);
-  registration.define(IEventDispatcher, EventDispatcherService);
+  registration.define(IWireService, TestAgentWireService);
+  registration.define(IEventDispatcher, TestAgentEventDispatcherService);
 }
 
-export function registerTestEventDispatcher(ix: TestInstantiationService): IEventDispatcher {
-  const previous = ix.set(IAgentStateService, new AgentStateService());
+export function registerTestEventDispatcher(
+  ix: TestInstantiationService,
+  scopeContext: AgentScopeContext | undefined,
+): IEventDispatcher {
+  const createdState = new AgentStateService();
+  const previous = ix.set(IAgentStateService, createdState);
   if (previous !== undefined) {
     ix.set(IAgentStateService, previous as IAgentStateService);
   }
-  ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-  return ix.get(IEventDispatcher);
+  const dispatcher = new EventDispatcherService(
+    ix.get(IWireService),
+    ix.get(IEventBus),
+    scopeContext,
+    ix.get(IAgentBlobService),
+    ix.get(IAgentStateService),
+    emptyEventStateView,
+  );
+  ix.set(IEventDispatcher, dispatcher);
+  return dispatcher;
 }
 
 export function attachContextMemoryRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentContextMemory,
     provider: contextMemoryAgentRuntimeProvider,
@@ -128,9 +174,9 @@ export function attachContextMemoryRuntime(
 export function attachTodoRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentTodo,
     provider: todoAgentRuntimeProvider,
@@ -144,9 +190,9 @@ export function attachTodoRuntime(
 export function attachCronRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentCron,
     provider: cronAgentRuntimeProvider,
@@ -160,9 +206,9 @@ export function attachCronRuntime(
 export function attachGoalRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentGoal,
     provider: goalAgentRuntimeProvider,
@@ -176,9 +222,9 @@ export function attachGoalRuntime(
 export function attachInteractionRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentInteraction,
     provider: interactionAgentRuntimeProvider,
@@ -192,9 +238,9 @@ export function attachInteractionRuntime(
 export function attachFullCompactionRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentFullCompaction,
     provider: fullCompactionAgentRuntimeProvider,
@@ -208,9 +254,9 @@ export function attachFullCompactionRuntime(
 export function attachUsageRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentUsage,
     provider: usageAgentRuntimeProvider,
@@ -224,9 +270,9 @@ export function attachUsageRuntime(
 export function attachPermissionRulesRuntime(
   ix: TestInstantiationService,
   dispatcher: IEventDispatcher,
+  agent: AgentContext,
 ): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
+  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) }, () => dispatcher);
   runtimes.apply({
     definition: AgentPermissionRules,
     provider: permissionRulesAgentRuntimeProvider,
@@ -291,5 +337,52 @@ export function recordingWireLog(
     close: async () => {},
     acquire: () => toDisposable(() => {}),
     drainRetirements: () => Promise.resolve(),
+  };
+}
+
+export function registerTestAgentHost(
+  ix: TestInstantiationService,
+  scopeContext: AgentScopeContext,
+): AgentHost {
+  return ix.get(IAgentHostService).create({
+    scopeContext,
+    binding: { workspaceId: 'test-workspace', runtimeId: 'local' },
+  });
+}
+
+export function stubAgentHost(
+  get: <T>(id: never) => T,
+  scopeContext: AgentScopeContext,
+): AgentHost {
+  return {
+    scopeContext,
+    telemetry: get(ITelemetryService as never),
+    eventBus: get(IEventBus as never),
+    blob: get(IAgentBlobService as never),
+    wire: get(IWireService as never),
+    state: get(IAgentStateService as never),
+    dispatcher: get(IEventDispatcher as never),
+    telemetryContext: undefined as never,
+    runtimeBinding: undefined as never,
+    agentRuntime: undefined as never,
+    contextProjector: undefined as never,
+    dispose: async () => {},
+  };
+}
+
+export function stubAgentHostService(
+  get: <T>(id: never) => T,
+  scopeContext: AgentScopeContext,
+): IAgentHostService {
+  let host: AgentHost | undefined;
+  const of = (): AgentHost => (host ??= stubAgentHost(get, scopeContext));
+  return {
+    _serviceBrand: undefined,
+    create: () => {
+      throw new Error('stubAgentHostService.create is not implemented');
+    },
+    of,
+    tryOf: of,
+    release: () => {},
   };
 }

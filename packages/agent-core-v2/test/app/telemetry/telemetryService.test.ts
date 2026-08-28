@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
@@ -8,6 +7,7 @@ import {
 } from '#/_base/errors/unexpectedError';
 import { type ITelemetryAppender, type TelemetryProperties, ITelemetryService } from '#/app/telemetry/telemetry';
 import { TelemetryService } from '#/app/telemetry/telemetryService';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 class CapturingAppender implements ITelemetryAppender {
   readonly events: { event: string; properties?: TelemetryProperties }[] = [];

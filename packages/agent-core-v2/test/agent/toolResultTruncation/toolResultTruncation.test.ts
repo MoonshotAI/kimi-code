@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
@@ -26,15 +26,15 @@ describe('ToolResultTruncationService', () => {
     disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IBootstrapService, stubBootstrap(homeDir));
-    ix.stub(
-      IAgentScopeContext,
+    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    truncation = new ToolResultTruncationService(
+      ix.get(IBootstrapService),
       makeAgentScopeContext({
         agentId: 'main',
         agentScope: 'sessions/workspace/session/agents/main',
       }),
+      ix.get(IFileSystemStorageService),
     );
-    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
-    truncation = ix.createInstance(ToolResultTruncationService);
   });
 
   afterEach(async () => {

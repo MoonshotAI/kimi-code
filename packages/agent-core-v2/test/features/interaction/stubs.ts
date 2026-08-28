@@ -7,7 +7,8 @@ import type {
   RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -17,6 +18,8 @@ import {
   type InteractionRuntime,
 } from '#/features/interaction/interactionAgentRuntime';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+
+import { stubAgentHostService } from '../../wire/stubs';
 
 export interface InteractionManagerStub {
   readonly manager: IAgentLifecycleService;
@@ -38,7 +41,6 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
     const eventBus = disposables.add(new EventBusService());
     eventBus.activateAgent(context);
     const dispatched: { type: string }[] = [];
-    ix.stub(IAgentScopeContext, scope);
     ix.stub(IEventBus, eventBus);
     ix.stub(IEventDispatcher, {
       _serviceBrand: undefined,
@@ -47,7 +49,8 @@ export function stubInteractionManagerFor(agentIds: readonly string[]): Interact
         return Promise.resolve();
       },
     } as unknown as IEventDispatcher);
-    const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
+    ix.stub(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), scope));
+    const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) }, () => ix.get(IEventDispatcher));
     runtimes.apply({
       definition: AgentInteraction,
       provider: interactionAgentRuntimeProvider,

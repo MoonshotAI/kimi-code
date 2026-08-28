@@ -1,7 +1,7 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentPlanService } from '#/features/plan/plan';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { IAgentPlanService } from '#/features/plan/plan';
 
 import DESCRIPTION from './enter-plan-mode.md?raw';
 import {
@@ -17,8 +17,8 @@ export class EnterPlanModeTool implements IEnterPlanModeTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(EnterPlanModeInputSchema);
 
   constructor(
-    @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
+    private readonly planMode: IAgentPlanService,
+    private readonly telemetry: ITelemetryService,
   ) {}
 
   resolveExecution(_args: EnterPlanModeInput): ToolExecution {

@@ -8,11 +8,14 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import { IProviderService } from '#/kosong/provider/provider';
@@ -22,6 +25,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
+import { AgentTitlePromptSourceService } from './agentTitlePromptSourceService';
 import { AUTO_SESSION_TITLE_FLAG_ID } from './flag';
 import { ISessionTitleService, type SessionTitleSource } from './sessionTitle';
 
@@ -41,22 +45,51 @@ const MAX_TITLE_DIGEST_ASSISTANT = 200;
 
 const MAX_TITLE_DIGEST_INPUT_LENGTH = 3000;
 
-export class SessionTitleService implements ISessionTitleService {
+export class SessionTitleService extends Disposable implements ISessionTitleService {
   declare readonly _serviceBrand: undefined;
 
   private _shared: Promise<string | undefined> | undefined;
+  private readonly promptSources = new Map<string, IAgentTitlePromptSource>();
 
   constructor(
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentHostService private readonly hosts: IAgentHostService,
     @IEventService private readonly eventService: IEventService,
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IHostRequestHeaders private readonly hostHeaders: IHostRequestHeaders,
     @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
-  ) {}
+  ) {
+    super();
+    this._register(this.agentLifecycle.onDidCreate((agent) => this.ensurePromptSource(agent)));
+    this._register(this.agentLifecycle.onDidClose((agent) => this.discardPromptSource(agent)));
+    this._register(
+      toDisposable(() => {
+        for (const source of this.promptSources.values()) disposeSource(source);
+        this.promptSources.clear();
+      }),
+    );
+    for (const agent of this.agentLifecycle.list()) this.ensurePromptSource(agent);
+  }
+
+  private ensurePromptSource(agent: AgentContext): IAgentTitlePromptSource {
+    const existing = this.promptSources.get(agent.agentId);
+    if (existing !== undefined) return existing;
+    const host = this.hosts.of(agent);
+    const source = new AgentTitlePromptSourceService(this.agentLifecycle, host.scopeContext);
+    this.promptSources.set(agent.agentId, source);
+    return source;
+  }
+
+  private discardPromptSource(agent: AgentContext): void {
+    const source = this.promptSources.get(agent.agentId);
+    if (source === undefined) return;
+    this.promptSources.delete(agent.agentId);
+    disposeSource(source);
+  }
 
   async generateTitle(opts?: {
     force?: boolean;
@@ -83,9 +116,9 @@ export class SessionTitleService implements ISessionTitleService {
       if (current.titleKind === 'custom') return undefined;
       if (current.titleKind === 'generated') return undefined;
     }
-    const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return undefined;
-    const promptSource = main.accessor.get(IAgentTitlePromptSource);
+    const promptSource = this.ensurePromptSource(main);
     const input = await composeTitleInput(promptSource, source);
     if (input === undefined) return undefined;
     return this.generateAndApply(input, force);
@@ -219,6 +252,10 @@ function elideTitleDigestTurns(turns: readonly (readonly string[])[]): string | 
     budget -= cost;
   }
   return [...head, TITLE_DIGEST_ELISION_MARKER, ...tail].join('\n');
+}
+
+function disposeSource(source: IAgentTitlePromptSource): void {
+  (source as Partial<IDisposable>).dispose?.();
 }
 
 registerScopedService(

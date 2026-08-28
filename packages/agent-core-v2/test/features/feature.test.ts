@@ -20,7 +20,7 @@ import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfile
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
-import { LifecycleScope } from '#/app/scopes';
+type LifecycleScope = (typeof LifecycleScope)[keyof typeof LifecycleScope];
 import {
   AgentRuntimeContributionPoint,
   defineAgentRuntimeContract,
@@ -35,6 +35,7 @@ import {
   registerFeature,
 } from '#/features/featureRegistry';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 interface IGreeter {
   readonly _serviceBrand: undefined;
@@ -50,7 +51,6 @@ class GreeterService extends Service implements IGreeter {
 }
 
 interface ITestTool extends AgentTool {}
-const ITestTool = createDecorator<ITestTool>('test-feature-tool');
 
 class TestTool implements ITestTool {
   declare readonly _serviceBrand: undefined;
@@ -105,8 +105,8 @@ describe('Feature — built-in capability assembly (src/features)', () => {
       constructor() {
         super();
         this.contributeConfig('testFeatureSection', TestConfigSchema, { defaultValue: false });
-        this.contributeAgentService(IGreeter, GreeterService);
-        this.contributeTool(ITestTool, TestTool, { name: 'TestTool' });
+        this.contributeService('session' as never, IGreeter, GreeterService);
+        this.contributeTool({ name: 'TestTool', create: () => new TestTool() });
         this.contributeProfiles([{ name: 'test-profile' } as never]);
         this.onDispose(() => disposed.push('test-feature'));
       }
@@ -125,8 +125,8 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     expect(profileView.items).toHaveLength(1);
     expect(profileView.items[0]!.sourceId).toBe('feature:test-feature');
 
-    const agentOne = host.child(LifecycleScope.Agent, 'agent-1');
-    const agentTwo = host.child(LifecycleScope.Agent, 'agent-2');
+    const agentOne = host.child('session', 'agent-1');
+    const agentTwo = host.child('session', 'agent-2');
     expect(agentOne.accessor.get(IGreeter).greet()).toBe('hi');
     expect(agentTwo.accessor.get(IGreeter).greet()).toBe('hi');
     expect(agentOne.accessor.get(IGreeter)).not.toBe(agentTwo.accessor.get(IGreeter));
@@ -211,7 +211,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
 
       constructor() {
         super();
-        this.contributeAgentService(IGreeter, GreeterService);
+        this.contributeService('session' as never, IGreeter, GreeterService);
       }
     }
     class SecondFeature extends Feature {
@@ -219,25 +219,25 @@ describe('Feature — built-in capability assembly (src/features)', () => {
 
       constructor() {
         super();
-        this.contributeAgentService(IGreeter, GreeterService);
+        this.contributeService('session' as never, IGreeter, GreeterService);
       }
     }
     registerFeature(FirstFeature);
 
     const host = createScopedTestHost();
     const manager = host.app.accessor.get(IFeatureManager);
-    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    const agent = host.child('session', 'agent-1');
     const original = agent.accessor.get(IGreeter);
     expect(() => manager.provideUnit(SecondFeature)).toThrow(
-      /Service test-feature-greeter is already contributed at scope agent/,
+      /Service test-feature-greeter is already contributed at scope session/,
     );
     expect(manager.units().map((unit) => unit.name)).toEqual(['first-feature']);
     expect(
       manager
         .contributedServices()
-        .filter((entry) => entry.scope === LifecycleScope.Agent && entry.id === IGreeter),
+        .filter((entry) => entry.scope === ('session' as never) && entry.id === IGreeter),
     ).toHaveLength(1);
-    expect(collectionViewOf(host.app, ScopeUnits(LifecycleScope.Agent)).items).toHaveLength(1);
+    expect(collectionViewOf(host.app, ScopeUnits('session')).items).toHaveLength(1);
     expect(agent.accessor.get(IGreeter)).toBe(original);
 
     await manager.unprovideUnit('first-feature');
@@ -255,7 +255,7 @@ describe('Feature — built-in capability assembly (src/features)', () => {
 
       constructor() {
         super();
-        this.contributeAgentService(IGreeter, GreeterService);
+        this.contributeService('session' as never, IGreeter, GreeterService);
       }
     }
     registerFeature(SharedFeature);
@@ -264,8 +264,8 @@ describe('Feature — built-in capability assembly (src/features)', () => {
     const second = createScopedTestHost();
     const firstManager = first.app.accessor.get(IFeatureManager);
     const secondManager = second.app.accessor.get(IFeatureManager);
-    const firstAgent = first.child(LifecycleScope.Agent, 'agent-1');
-    const secondAgent = second.child(LifecycleScope.Agent, 'agent-1');
+    const firstAgent = first.child('session', 'agent-1');
+    const secondAgent = second.child('session', 'agent-1');
     expect(firstManager.contributedServices()).toHaveLength(1);
     expect(secondManager.contributedServices()).toHaveLength(1);
     expect(firstAgent.accessor.get(IGreeter)).not.toBe(secondAgent.accessor.get(IGreeter));
@@ -295,13 +295,13 @@ describe('Feature — built-in capability assembly (src/features)', () => {
 
       constructor() {
         super();
-        this.contribute(ScopeUnits(LifecycleScope.Agent), SoloAgentUnit);
+        this.contribute(ScopeUnits('session'), SoloAgentUnit);
       }
     }
     registerFeature(SoloFeature);
 
     const host = createScopedTestHost();
-    const agent = host.child(LifecycleScope.Agent, 'agent-1');
+    const agent = host.child('session', 'agent-1');
     expect(agent.accessor.get(IGreeter).greet()).toBe('hi');
     host.dispose();
   });

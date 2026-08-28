@@ -25,7 +25,6 @@ import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
 import { agentService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent as createTestAgent } from '../../harness';
-import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import {
   IModelOAuthTokens,
   AgentProfile,
@@ -36,7 +35,8 @@ import {
   type ResolvedAgentProfile,
   type ToolExecution,
 } from '#/index';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { AgentTodo } from '#/features/todo/todoAgentRuntime';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
@@ -342,7 +342,7 @@ describe('FullCompaction', () => {
     const task = await ctx.resolve(AgentFullCompaction).begin({ source: 'manual' });
     expect(task.status).toBe('running');
     await compactionStarted;
-    expect(ctx.get(LoopControlToken).tryAcquireQuiescence()).toBeUndefined();
+    expect(getLoopControl(ctx.agentContext).tryAcquireQuiescence()).toBeUndefined();
 
     release();
     const finished = new Promise<void>((resolve) => {
@@ -351,7 +351,7 @@ describe('FullCompaction', () => {
       });
     });
     await finished;
-    const lease = ctx.get(LoopControlToken).tryAcquireQuiescence();
+    const lease = getLoopControl(ctx.agentContext).tryAcquireQuiescence();
     expect(lease).toBeDefined();
     lease?.dispose();
     hook.dispose();
@@ -404,7 +404,7 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
     const approval = await ctx.takeApprovalRequest();
-    expect(ctx.get(LoopControlToken).status().activeTurnId).toBeDefined();
+    expect(getLoopControl(ctx.agentContext).status().activeTurnId).toBeDefined();
 
     await expect(ctx.rpc.beginCompaction({})).rejects.toMatchObject({
       code: 'compaction.unable',
@@ -419,7 +419,7 @@ describe('FullCompaction', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
     approval.respond({ decision: 'rejected', selectedLabel: 'reject' });
     await ctx.untilTurnEnd();
-    expect(ctx.get(LoopControlToken).status().activeTurnId).toBeUndefined();
+    expect(getLoopControl(ctx.agentContext).status().activeTurnId).toBeUndefined();
   });
 
   it('projects the compacted prefix before sending the summary request', async () => {
@@ -1766,7 +1766,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-    ctx.get(LoopControlToken).hooks.onDidFinishStep.register(
+    getLoopControl(ctx.agentContext).hooks.onDidFinishStep.register(
       'test-auto-compaction',
       async (_step, next) => {
         const task = await ctx.resolve(AgentFullCompaction).begin({ source: 'auto' });
@@ -2026,7 +2026,6 @@ describe('FullCompaction', () => {
   it('does not trigger auto compaction from a deferred loaded MCP schema', async () => {
     vi.stubEnv(MASTER_ENV, '1');
     const ctx = testAgent(
-      agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
       {
         initialConfig: {
           providers: {},
@@ -2075,7 +2074,8 @@ describe('FullCompaction', () => {
 
       expect(eventIndex(events, 'compaction.started')).toBe(-1);
       expect(ctx.llmCalls).toHaveLength(1);
-      expect(messageText(ctx.llmCalls[0]?.history.at(-1))).toBe('small prompt');
+      const texts = ctx.llmCalls[0]?.history.map(messageText) ?? [];
+      expect(texts.findLast((text) => !text.startsWith('<system-reminder>'))).toBe('small prompt');
     } finally {
       registration.dispose();
     }

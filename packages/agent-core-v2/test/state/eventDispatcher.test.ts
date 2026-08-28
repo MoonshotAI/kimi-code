@@ -19,17 +19,19 @@ import {
   defineAgentRuntimeProvider,
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { Event2, event2FromRecord } from '#/app/event/event2';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { CycleError, EventDispatcherService } from '#/state/eventDispatcherService';
+import { CycleError } from '#/state/eventDispatcherService';
 import { defineState } from '#/state/state';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
+
+import { registerTestEventDispatcher } from '../wire/stubs';
 
 const noopBlob: IAgentBlobService = {
   _serviceBrand: undefined,
@@ -165,8 +167,7 @@ beforeEach(() => {
   journal = [];
   ix.set(IWireService, stubWireJournal(journal));
   ix.set(IAgentStateService, new AgentStateService());
-  ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-  dispatcher = ix.get(IEventDispatcher);
+  dispatcher = registerTestEventDispatcher(ix, undefined);
   agentState = ix.get(IAgentStateService);
   agentState.contributeState(counterKey);
   agentState.contributeState(otherKey);
@@ -347,8 +348,7 @@ describe('EventDispatcherService', () => {
     const replayJournal = [...records];
     ix2.set(IWireService, stubWireJournal(replayJournal));
     ix2.set(IAgentStateService, new AgentStateService());
-    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const replayed = ix2.get(IEventDispatcher);
+    const replayed = registerTestEventDispatcher(ix2, undefined);
     const replayedState = ix2.get(IAgentStateService);
     replayedState.contributeState(checkpointedKey);
 
@@ -379,8 +379,7 @@ describe('EventDispatcherService', () => {
         ]),
       );
       ix2.set(IAgentStateService, new AgentStateService());
-      ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-      const replayed = ix2.get(IEventDispatcher);
+      const replayed = registerTestEventDispatcher(ix2, undefined);
       const replayedState = ix2.get(IAgentStateService);
       replayedState.contributeState(checkpointedKey);
 
@@ -506,10 +505,8 @@ describe('EventDispatcherService', () => {
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.set(IAgentBlobService, noopBlob);
     ix2.set(IWireService, stubWireJournal([]));
-    ix2.set(IAgentScopeContext, scope);
     ix2.set(IAgentStateService, new AgentStateService());
-    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const scoped = ix2.get(IEventDispatcher);
+    const scoped = registerTestEventDispatcher(ix2, scope);
 
     const undoCalls: number[] = [];
     const CustomUndoRuntime = defineAgentRuntimeContract<{ get(): string[] }>(
@@ -543,7 +540,7 @@ describe('EventDispatcherService', () => {
         createApi: (context) => ({ get: () => context.getState() }),
       },
     );
-    const runtimes = new AgentRuntimeSet(scope.agentContext, { get: (id) => ix2.get(id) });
+    const runtimes = new AgentRuntimeSet(scope.agentContext, { get: (id) => ix2.get(id) }, () => ix2.get(IEventDispatcher));
     runtimes.apply({ definition: CustomUndoRuntime, provider, generation: 1, active: true });
     runtimes.attachDurable(scoped);
     const runtime = runtimes.resolve(CustomUndoRuntime);

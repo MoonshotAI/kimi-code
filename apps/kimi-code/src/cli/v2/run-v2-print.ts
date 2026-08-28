@@ -26,7 +26,6 @@ import {
   ISessionPermissionModeService,
   AgentProfile,
   type ProfileRuntime,
-  IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
@@ -37,7 +36,6 @@ import {
   ITelemetryService,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
-  agentContextOf,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
@@ -51,13 +49,24 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   setClampedTimeout,
+  type AgentContext,
+  type AgentHost,
   type Event2,
-  type IAgentScopeHandle,
   type ISessionScopeHandle,
+  IAgentBlobService,
+  IAgentContextProjectorService,
+  IAgentHostService,
+  IAgentRuntimeBindingService,
+  IAgentRuntimeService,
+  IAgentStateService,
+  IAgentTelemetryContextService,
+  IEventDispatcher,
+  IWireService,
   type LoopRunResult,
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/features/loop/turnOps';
@@ -66,7 +75,8 @@ import type {
   ThinkingDelta,
   ToolCallDelta,
 } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/features/loop/internal/stepRetry';
+import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   ToolCallStarted,
@@ -262,9 +272,61 @@ export async function runV2Print(
   }
 }
 
+interface AgentScopeView {
+  readonly id: string;
+  readonly kind: 'agent';
+  readonly context: AgentContext;
+  readonly accessor: { get<T>(id: ServiceIdentifier<T>): T };
+  readonly dispose: () => void;
+}
+
+function agentHostMember(host: AgentHost, id: ServiceIdentifier<unknown>): unknown {
+  switch (id) {
+    case IAgentBlobService:
+      return host.blob;
+    case IWireService:
+      return host.wire;
+    case IAgentStateService:
+      return host.state;
+    case IEventBus:
+      return host.eventBus;
+    case IEventDispatcher:
+      return host.dispatcher;
+    case ITelemetryService:
+      return host.telemetry;
+    case IAgentTelemetryContextService:
+      return host.telemetryContext;
+    case IAgentRuntimeBindingService:
+      return host.runtimeBinding;
+    case IAgentRuntimeService:
+      return host.agentRuntime;
+    case IAgentContextProjectorService:
+      return host.contextProjector;
+    default:
+      return undefined;
+  }
+}
+
+function agentScopeView(session: ISessionScopeHandle, context: AgentContext): AgentScopeView {
+  return {
+    id: context.agentId,
+    kind: 'agent',
+    context,
+    accessor: {
+      get: <T,>(id: ServiceIdentifier<T>): T => {
+        const host = session.accessor.get(IAgentHostService).of(context);
+        const member = agentHostMember(host, id as ServiceIdentifier<unknown>);
+        if (member !== undefined) return member as T;
+        return session.accessor.get(id);
+      },
+    },
+    dispose: () => {},
+  };
+}
+
 interface ResolvedNativeSession {
   readonly session: ISessionScopeHandle;
-  readonly agent: IAgentScopeHandle;
+  readonly agent: AgentScopeView;
   readonly restorePermission: () => Promise<void>;
   readonly telemetryModel: string | undefined;
   readonly goalModel: string | undefined;
@@ -333,10 +395,10 @@ async function resolveNativeSession(
   };
 
   const forceAuto = (
-    agent: IAgentScopeHandle,
+    agent: AgentScopeView,
   ): { readonly restorePermission: () => Promise<void> } => {
     const permissionMode = agent.accessor.get(ISessionPermissionModeService);
-    const context = agentContextOf(agent);
+    const context = agent.context;
     const previous = permissionMode.mode(context);
     permissionMode.setMode(context, 'auto');
     return {
@@ -360,10 +422,10 @@ async function resolveNativeSession(
     }
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+    const agent = agentScopeView(session, agentContext);
     const profile = session.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentProfile);
+      .resolve(agentContext, AgentProfile);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.model();
     const { restorePermission } = forceAuto(agent);
@@ -382,10 +444,10 @@ async function resolveNativeSession(
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
-      const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+      const agent = agentScopeView(session, agentContext);
       const profile = session.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentProfile);
+        .resolve(agentContext, AgentProfile);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.model();
       const { restorePermission } = forceAuto(agent);
@@ -410,7 +472,7 @@ async function resolveNativeSession(
     },
   });
   const agentContext = await ensureMainAgent(session);
-  const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+  const agent = agentScopeView(session, agentContext);
   agent.accessor.get(ISessionPermissionModeService).setMode(agentContext, 'auto');
   return {
     session,
@@ -424,7 +486,7 @@ async function resolveNativeSession(
 async function runNativeTurn(
   app: Scope,
   session: ISessionScopeHandle,
-  agent: IAgentScopeHandle,
+  agent: AgentScopeView,
   prompt: string,
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
@@ -448,7 +510,7 @@ async function runNativeTurn(
   try {
     const handle = await agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentPrompt)
+      .resolve(agent.context, AgentPrompt)
       .enqueue({
       message: {
         role: 'user',
@@ -480,10 +542,10 @@ async function runNativeTurn(
       const taskConfig = resolveAgentTaskConfig(configService);
       const goalService = session.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentGoal);
+        .resolve(agent.context, AgentGoal);
       const cronService = session.accessor
         .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentCron);
+        .resolve(agent.context, AgentCron);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -528,7 +590,7 @@ async function runNativeTurn(
 async function runNativeGoal(
   app: Scope,
   session: ISessionScopeHandle,
-  agent: IAgentScopeHandle,
+  agent: AgentScopeView,
   goal: HeadlessGoalCreate,
   model: string | undefined,
   outputFormat: PromptOutputFormat,
@@ -538,7 +600,7 @@ async function runNativeGoal(
   requireConfiguredModel(model);
   const goalService = session.accessor
     .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentGoal);
+    .resolve(agent.context, AgentGoal);
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,
@@ -841,10 +903,9 @@ function formatTurnEndingFailure(ending: PrintTurnEnding): string {
 function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   let count = 0;
   const agentManager = session.accessor.get(IAgentLifecycleService);
+  const tasks = session.accessor.get(ISessionTaskService);
   for (const agent of agentManager.list()) {
-    const handle = agentManager.handleOf(agent.agentId);
-    if (handle === undefined) continue;
-    count += handle.accessor.get(IAgentTaskService).list(true).length;
+    count += tasks.of(agent).list(true).length;
   }
   return count;
 }
@@ -866,10 +927,9 @@ async function drainBackgroundTasks(
     const suppressions: Promise<void>[] = [];
     let activeCount = 0;
     const agentManager = session.accessor.get(IAgentLifecycleService);
+    const tasks = session.accessor.get(ISessionTaskService);
     for (const agent of agentManager.list()) {
-      const handle = agentManager.handleOf(agent.agentId);
-      if (handle === undefined) continue;
-      const taskService = handle.accessor.get(IAgentTaskService);
+      const taskService = tasks.of(agent);
       for (const task of taskService.list(true)) {
         activeCount++;
         if (seen.has(task.taskId)) continue;

@@ -24,7 +24,7 @@ export class WebSearchTool implements IWebSearchTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WebSearchInputSchema);
 
   constructor(
-    @IWebSearchProviderService private readonly providerService: IWebSearchProviderService,
+    private readonly providerService: IWebSearchProviderService,
   ) {}
 
   resolveExecution(args: WebSearchInput): ToolExecution {
@@ -111,8 +111,9 @@ function classifySearchError(error: unknown): string {
   return `Search failed: ${message}`;
 }
 
-registerAgentToolService(IWebSearchTool, WebSearchTool, {
+registerAgentToolService({
   name: 'WebSearch',
   domain: 'auth',
-  when: (accessor) => accessor.get(IWebSearchProviderService).hasWebSearchProvider(),
+  when: (ctx) => ctx.get(IWebSearchProviderService).hasWebSearchProvider(),
+  create: (context) => new WebSearchTool(context.get(IWebSearchProviderService)),
 });

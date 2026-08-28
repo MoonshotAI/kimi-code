@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fromCallback } from 'xstate';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -16,7 +13,7 @@ import {
 } from '#/agent/runtime/agentRuntime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
@@ -25,6 +22,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
+import { stubAgentHost, registerTestEventDispatcher } from '../../wire/stubs';
 import {
   AgentTodo,
   todoAgentRuntimeProvider,
@@ -33,11 +31,11 @@ import {
 import type { TodoItem } from '#/features/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
 import { stubWireJournal } from '../../wire/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const noopBlob: IAgentBlobService = {
   _serviceBrand: undefined,
@@ -115,7 +113,6 @@ function makeRuntimeAgent(
   const eventBus = new EventBusService();
   eventBus.activateAgent(context);
   const ix = new TestInstantiationService();
-  ix.set(IAgentScopeContext, scope);
   ix.set(IAgentBlobService, noopBlob);
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IEventBus, eventBus);
@@ -130,14 +127,8 @@ function makeRuntimeAgent(
       },
     })),
   );
-  ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-  const handle: IAgentScopeHandle = {
-    id: agentId,
-    kind: LifecycleScope.Agent,
-    accessor: ix,
-    dispose: () => { ix.dispose(); },
-  };
-  const managed = new ManagedAgent(context, handle, []);
+  registerTestEventDispatcher(ix, scope);
+  const managed = new ManagedAgent(context, stubAgentHost((id) => ix.get(id as never), scope), { get: (id) => ix.get(id) }, []);
   registry.track(managed);
   managed.attachDurableRuntimes();
   const dispatcher = ix.get(IEventDispatcher);
@@ -158,7 +149,7 @@ function makeRuntimeAgent(
     dispose: async () => {
       registry.untrack(managed);
       await managed.runtimeSet.close();
-      await handle.dispose();
+      await managed.host.dispose();
     },
   };
 }
@@ -194,7 +185,6 @@ describe('TodoAgentRuntime', () => {
     const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
     const ix = new TestInstantiationService();
     let reminders = 0;
-    ix.set(IAgentScopeContext, scope);
     ix.set(IAgentBlobService, noopBlob);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventBus, new EventBusService());
@@ -208,14 +198,8 @@ describe('TodoAgentRuntime', () => {
         },
       })),
     );
-    ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const handle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: ix,
-      dispose: () => { ix.dispose(); },
-    };
-    const managed = new ManagedAgent(scope.agentContext, handle, [todoRecord()]);
+    registerTestEventDispatcher(ix, scope);
+    const managed = new ManagedAgent(scope.agentContext, stubAgentHost((id) => ix.get(id as never), scope), { get: (id) => ix.get(id) }, [todoRecord()]);
     managed.attachDurableRuntimes();
 
     expect(reminders).toBe(0);
@@ -234,7 +218,7 @@ describe('TodoAgentRuntime', () => {
     expect(managed.runtimeSet.resolve(AgentTodo)).toBe(todo);
     expect(reminders).toBe(1);
     await managed.runtimeSet.close();
-    await handle.dispose();
+    await managed.host.dispose();
   });
 
   it('rejects resolve and lease tracking once the runtime set is closed', async () => {
@@ -381,19 +365,12 @@ describe('TodoAgentRuntime', () => {
     });
     const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
     const ix = new TestInstantiationService();
-    ix.set(IAgentScopeContext, scope);
     ix.set(IAgentBlobService, noopBlob);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventBus, new EventBusService());
     ix.set(IWireService, stubWireJournal([]));
-    ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const handle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: ix,
-      dispose: () => { ix.dispose(); },
-    };
-    const managed = new ManagedAgent(scope.agentContext, handle, []);
+    registerTestEventDispatcher(ix, scope);
+    const managed = new ManagedAgent(scope.agentContext, stubAgentHost((id) => ix.get(id as never), scope), { get: (id) => ix.get(id) }, []);
     registry.track(managed);
     managed.attachDurableRuntimes();
 
@@ -403,7 +380,7 @@ describe('TodoAgentRuntime', () => {
     expect(creates).toBe(1);
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized' });
     await managed.runtimeSet.close();
-    await handle.dispose();
+    await managed.host.dispose();
   });
 
   it('reports registered, materialized, retired, and definition generations', async () => {
@@ -431,19 +408,12 @@ describe('TodoAgentRuntime', () => {
   it('keeps registered status until a durable definition is attached', async () => {
     const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
     const ix = new TestInstantiationService();
-    ix.set(IAgentScopeContext, scope);
     ix.set(IAgentBlobService, noopBlob);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventBus, new EventBusService());
     ix.set(IWireService, stubWireJournal([]));
-    ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const handle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: ix,
-      dispose: () => { ix.dispose(); },
-    };
-    const managed = new ManagedAgent(scope.agentContext, handle, [todoRecord()]);
+    registerTestEventDispatcher(ix, scope);
+    const managed = new ManagedAgent(scope.agentContext, stubAgentHost((id) => ix.get(id as never), scope), { get: (id) => ix.get(id) }, [todoRecord()]);
 
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({
       id: 'todo',
@@ -453,7 +423,7 @@ describe('TodoAgentRuntime', () => {
     managed.attachDurableRuntimes();
     expect(managed.runtimeSet.inspect()[0]).toMatchObject({ status: 'materialized', state: [] });
     await managed.runtimeSet.close();
-    await handle.dispose();
+    await managed.host.dispose();
   });
 
   it('retains actor failure status and inspection diagnostics', async () => {
@@ -480,19 +450,12 @@ describe('TodoAgentRuntime', () => {
     });
     const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main', generation: 1 });
     const ix = new TestInstantiationService();
-    ix.set(IAgentScopeContext, scope);
     ix.set(IAgentBlobService, noopBlob);
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventBus, new EventBusService());
     ix.set(IWireService, stubWireJournal([]));
-    ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    const handle: IAgentScopeHandle = {
-      id: 'main',
-      kind: LifecycleScope.Agent,
-      accessor: ix,
-      dispose: () => { ix.dispose(); },
-    };
-    const managed = new ManagedAgent(scope.agentContext, handle, []);
+    registerTestEventDispatcher(ix, scope);
+    const managed = new ManagedAgent(scope.agentContext, stubAgentHost((id) => ix.get(id as never), scope), { get: (id) => ix.get(id) }, []);
     registry.track(managed);
     managed.attachDurableRuntimes();
     await nextTick();
@@ -504,7 +467,7 @@ describe('TodoAgentRuntime', () => {
       error: 'actor failed',
     });
     await managed.runtimeSet.close();
-    await handle.dispose();
+    await managed.host.dispose();
   });
 });
 

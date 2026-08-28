@@ -2,7 +2,6 @@ import type {
   AgentActivityState,
   ApprovalResponse,
   Event2,
-  IAgentScopeHandle,
   IDisposable,
   Interaction,
   InteractionKind,
@@ -11,6 +10,7 @@ import type {
   SessionActivityState,
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
+import type { AgentContext } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
   IEventBus,
@@ -53,6 +53,7 @@ import { toWireQuestion } from '../../../routes/questions';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
+import { syntheticAgentScope, type AgentScopeView } from '../../agentScopeView';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { SubagentRosterTracker } from './subagentRosterTracker';
@@ -781,18 +782,17 @@ export class SessionEventBroadcaster {
 
   private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
     const agents = session.accessor.get(IAgentLifecycleService);
-    const subscribeAgent = (handle: IAgentScopeHandle): void => {
-      if (state.agentDisposables.has(handle.id)) return;
-      state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
+    const subscribeAgent = (context: AgentContext): void => {
+      if (state.agentDisposables.has(context.agentId)) return;
+      const view = syntheticAgentScope(session, context);
+      state.agentDisposables.set(context.agentId, this.attachAgent(sessionId, view));
     };
     for (const agent of agents.list()) {
-      const handle = agents.handleOf(agent.agentId);
-      if (handle !== undefined) subscribeAgent(handle);
+      subscribeAgent(agent);
     }
     state.lifecycleDisposables.push(
       agents.onDidCreate((context) => {
-        const handle = agents.handleOf(context.agentId);
-        if (handle !== undefined) subscribeAgent(handle);
+        subscribeAgent(context);
         this.enqueueDurable(state, {
           type: 'agent.created',
           agentId: context.agentId,
@@ -815,7 +815,7 @@ export class SessionEventBroadcaster {
     );
   }
 
-  private attachAgent(sessionId: string, handle: IAgentScopeHandle): IDisposable {
+  private attachAgent(sessionId: string, handle: AgentScopeView): IDisposable {
     const eventBus = handle.accessor.get(IEventBus);
     let lastLegacyStatus: string | undefined;
     const emitLegacyStatus = (): void => {

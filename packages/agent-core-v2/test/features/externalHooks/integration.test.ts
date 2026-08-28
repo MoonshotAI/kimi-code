@@ -24,14 +24,15 @@ import {
 import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
 import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooksService';
 import {
-  IAgentScopeContext,
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
-import { LoopControlToken, type AfterStepContext } from '#/features/loop/internal/loop';
+import { type LoopControl, type AfterStepContext } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
 import { PromptQueued } from '#/features/prompt/promptEvents';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
@@ -226,22 +227,18 @@ function stubSessionLifecycle() {
 }
 
 function registerAgentEventBus(reg: ServiceRegistration): void {
-  reg.defineInstance(
-    IAgentScopeContext,
-    makeAgentScopeContext({
-      agentId: 'main',
-      agentScope: 'sessions/workspace-1/session-1/agents/main',
-      generation: 1,
-    }),
-  );
   reg.define(ISessionEventBus, EventBusService);
-  reg.define(IEventBus, AgentEventBusView);
 }
 
-function activateAgentEventBus(ix: TestInstantiationService): IEventBus {
-  const agent = ix.get(IAgentScopeContext).agentContext;
+function activateAgentEventBus(
+  ix: TestInstantiationService,
+  agentScope: ReturnType<typeof makeAgentScopeContext>,
+): IEventBus {
+  const agent = agentScope.agentContext;
   ix.get(ISessionEventBus).activateAgent(agent);
-  return ix.get(IEventBus);
+  const view = new AgentEventBusView(ix.get(ISessionEventBus), agentScope);
+  ix.set(IEventBus, view);
+  return view;
 }
 
 describe('IExternalHooksRunnerService integration', () => {
@@ -299,6 +296,11 @@ describe('IExternalHooksRunnerService integration', () => {
     try {
       const loop = stubLoopWithHooks();
       const context = stubContextMemory();
+      const agentScope = makeAgentScopeContext({
+        agentId: 'main',
+        agentScope: 'sessions/workspace-1/session-1/agents/main',
+        generation: 1,
+      });
       const stopInputs: unknown[] = [];
       const hookEngine = {
         trigger: async () => [],
@@ -326,14 +328,26 @@ describe('IExternalHooksRunnerService integration', () => {
             lifecycleWithPrompt(stubPromptRuntime(), lifecycleWithReminder(createReminderStub(), context)),
           ),
           ));
-          reg.defineInstance(LoopControlToken, loop);
           registerAgentEventBus(reg);
+          registerLoopControl(agentScope.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
           reg.definePartialInstance(IAgentTaskService, {});
         },
       });
-      activateAgentEventBus(ix);
+      activateAgentEventBus(ix, agentScope);
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
-      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.set(
+        IAgentExternalHooksService,
+        new AgentExternalHooksService(
+          ix.get(IExternalHooksRunnerService),
+          ix.get(IAgentLifecycleService),
+          ix.get(IEventBus),
+          ix.get(ISessionContext),
+          ix.get(ISessionMetadata),
+          ix.get(IAgentStateService),
+          agentScope,
+          ix.get(IEventDispatcher),
+        ),
+      );
       ix.get(IAgentExternalHooksService);
       const eventBus = ix.get(IEventBus);
 
@@ -415,6 +429,11 @@ describe('IExternalHooksRunnerService integration', () => {
         },
       };
 
+      const agentScope = makeAgentScopeContext({
+        agentId: 'main',
+        agentScope: 'sessions/workspace-1/session-1/agents/main',
+        generation: 1,
+      });
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
@@ -432,14 +451,26 @@ describe('IExternalHooksRunnerService integration', () => {
             lifecycleWithPrompt(stubPromptRuntime(), lifecycleWithReminder(createReminderStub(), stubContextMemory())),
           ),
           ));
-          reg.defineInstance(LoopControlToken, stubLoopWithHooks());
           registerAgentEventBus(reg);
+          registerLoopControl(agentScope.agentContext, stubLoopWithHooks(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
           reg.definePartialInstance(IAgentTaskService, {});
         },
       });
-      activateAgentEventBus(ix);
+      activateAgentEventBus(ix, agentScope);
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
-      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.set(
+        IAgentExternalHooksService,
+        new AgentExternalHooksService(
+          ix.get(IExternalHooksRunnerService),
+          ix.get(IAgentLifecycleService),
+          ix.get(IEventBus),
+          ix.get(ISessionContext),
+          ix.get(ISessionMetadata),
+          ix.get(IAgentStateService),
+          agentScope,
+          ix.get(IEventDispatcher),
+        ),
+      );
       ix.get(IAgentExternalHooksService);
       const eventBus = ix.get(IEventBus);
 
@@ -606,6 +637,11 @@ describe('IExternalHooksRunnerService integration', () => {
         resolveReady = resolve;
       });
 
+      const agentScope = makeAgentScopeContext({
+        agentId: 'main',
+        agentScope: 'sessions/workspace-1/session-1/agents/main',
+        generation: 1,
+      });
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
@@ -637,8 +673,8 @@ describe('IExternalHooksRunnerService integration', () => {
             lifecycleWithPrompt(stubPromptRuntime(), lifecycleWithReminder(createReminderStub(), context)),
           ),
           ));
-          reg.defineInstance(LoopControlToken, loop);
           registerAgentEventBus(reg);
+          registerLoopControl(agentScope.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
           reg.definePartialInstance(IAgentTaskService, {});
           reg.define(IHostProcessService, HostProcessService);
           reg.defineInstance(IEventDispatcher, {
@@ -648,9 +684,21 @@ describe('IExternalHooksRunnerService integration', () => {
           } as unknown as IEventDispatcher);
         },
       });
-      activateAgentEventBus(ix);
+      activateAgentEventBus(ix, agentScope);
       ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
-      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.set(
+        IAgentExternalHooksService,
+        new AgentExternalHooksService(
+          ix.get(IExternalHooksRunnerService),
+          ix.get(IAgentLifecycleService),
+          ix.get(IEventBus),
+          ix.get(ISessionContext),
+          ix.get(ISessionMetadata),
+          ix.get(IAgentStateService),
+          agentScope,
+          ix.get(IEventDispatcher),
+        ),
+      );
       ix.get(IAgentExternalHooksService);
 
       const afterStep = makeAfterStep(new AbortController().signal);
@@ -1154,6 +1202,11 @@ describe('IExternalHooksRunnerService integration', () => {
         },
       };
 
+      const agentScope = makeAgentScopeContext({
+        agentId: 'main',
+        agentScope: 'sessions/workspace-1/session-1/agents/main',
+        generation: 1,
+      });
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
@@ -1171,14 +1224,26 @@ describe('IExternalHooksRunnerService integration', () => {
             lifecycleWithPrompt(stubPromptRuntime(), lifecycleWithReminder(createReminderStub(), stubContextMemory())),
           ),
           ));
-          reg.defineInstance(LoopControlToken, stubLoopWithHooks());
           registerAgentEventBus(reg);
+          registerLoopControl(agentScope.agentContext, stubLoopWithHooks(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
           reg.definePartialInstance(IAgentTaskService, {});
         },
       });
-      activateAgentEventBus(ix);
+      activateAgentEventBus(ix, agentScope);
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
-      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.set(
+        IAgentExternalHooksService,
+        new AgentExternalHooksService(
+          ix.get(IExternalHooksRunnerService),
+          ix.get(IAgentLifecycleService),
+          ix.get(IEventBus),
+          ix.get(ISessionContext),
+          ix.get(ISessionMetadata),
+          ix.get(IAgentStateService),
+          agentScope,
+          ix.get(IEventDispatcher),
+        ),
+      );
       ix.get(IAgentExternalHooksService);
       const eventBus = ix.get(IEventBus);
       await flushMicrotasks();

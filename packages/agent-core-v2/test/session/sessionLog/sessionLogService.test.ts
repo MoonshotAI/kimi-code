@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
   _clearScopedRegistryForTests,
@@ -24,6 +23,7 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+const LifecycleScope = { App: 'app', Session: 'session' } as const;
 
 let homeDir: string;
 let sessionDir: string;
@@ -180,18 +180,32 @@ describe('ILogService cross-scope resolution', () => {
   it('resolves the single token to the nearest scope binding', () => {
     const host = buildHost();
     const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
-    const agent = host.childOf(session, LifecycleScope.Agent, 'main');
+    const otherSession = host.child(LifecycleScope.Session, 's2', testSessionSeed());
 
     const appLog = host.app.accessor.get(ILogService);
     const sessionLog = session.accessor.get(ILogService);
-    const agentLog = agent.accessor.get(ILogService);
+    const otherSessionLog = otherSession.accessor.get(ILogService);
 
     expect(appLog).toBeInstanceOf(AppLogService);
     expect(sessionLog).toBeInstanceOf(SessionLogService);
-    expect(agentLog).toBeInstanceOf(SessionLogService);
+    expect(otherSessionLog).toBeInstanceOf(SessionLogService);
 
     expect(appLog).not.toBe(sessionLog);
-    expect(agentLog).toBe(sessionLog);
+    expect(sessionLog).not.toBe(otherSessionLog);
+
+    host.dispose();
+  });
+
+  it('falls back to the app binding when the session tier registers none', () => {
+    _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
+    registerScopedService(LifecycleScope.App, ILogService, AppLogService, ScopeActivation.OnDemand, 'log');
+
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+
+    expect(session.accessor.get(ILogService)).toBeInstanceOf(AppLogService);
+    expect(session.accessor.get(ILogService)).toBe(host.app.accessor.get(ILogService));
 
     host.dispose();
   });

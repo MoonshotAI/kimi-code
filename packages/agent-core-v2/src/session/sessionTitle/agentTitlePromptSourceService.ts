@@ -1,5 +1,3 @@
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
@@ -7,7 +5,7 @@ import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
 } from '#/features/prompt/promptMetadataText';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -25,7 +23,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
 
   constructor(
     @IAgentLifecycleService private readonly manager: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
   ) {
     this.context = manager.resolve(scopeContext.agentContext, AgentContextMemory);
   }
@@ -129,10 +127,3 @@ function assistantTextFromContentParts(parts: readonly ContentPart[]): string | 
   return promptMetadataTextFromText(texts.join('\n'));
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentTitlePromptSource,
-  AgentTitlePromptSourceService,
-  ScopeActivation.OnDemand,
-  'sessionTitle',
-);

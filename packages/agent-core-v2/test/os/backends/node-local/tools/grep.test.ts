@@ -2,27 +2,19 @@ import { Readable, type Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Service } from '#/_base/di/service';
-import { createServices } from '#/_base/di/test';
 import type {
   ExecutableTool,
   ExecutableToolContext,
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { type ProfileData } from '#/features/profile/profile';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { stubProfileRuntime } from '../../../../features/profile/stubs';
 import {
   _clearAgentToolContributionsForTests,
   AgentToolContribution,
   getAgentToolContributions,
-  overrideAgentToolService,
+  registerAgentToolService,
 } from '#/agent/toolRegistry/toolContribution';
-import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
 import {
@@ -33,14 +25,9 @@ import {
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import { Event } from '#/_base/event';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   type GrepInput,
   GrepInputSchema,
-  IGrepTool,
 } from '#/agent/tools/os/grep/grep';
 import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -48,7 +35,6 @@ import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
-import { registerStateServices } from '../../../../state/stubs';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
   ensureRgPath: vi.fn(async () => ({ path: '/mock/rg', source: 'system-path' })),
@@ -314,81 +300,31 @@ afterEach(() => {
 });
 
 describe('GrepTool', () => {
-  it('registers contribution metadata through the production DI path', async () => {
+  it('registers contribution metadata through the production registration path', () => {
     const savedContributions = [...getAgentToolContributions()];
-    const disposables = new DisposableStore();
     try {
       _clearAgentToolContributionsForTests();
-      overrideAgentToolService(IGrepTool, ProductionGrepTool, {
+      const tool = new GrepTool(createFakeKaos(), workspace);
+      registerAgentToolService({
+        name: 'Grep',
+        source: 'user',
+        disclosure: 'deferred',
+        create: () => tool,
+      });
+
+      const contributions = getAgentToolContributions();
+      expect(contributions).toHaveLength(1);
+      expect(contributions[0]?.options).toMatchObject({
         name: 'Grep',
         source: 'user',
         disclosure: 'deferred',
       });
-
-      const ix = createServices(disposables, {
-        strict: true,
-        additionalServices: (reg) => {
-          const kaos = createFakeKaos();
-          registerStateServices(reg);
-          reg.defineInstance(IHostProcessService, createTestProcessService(kaos));
-          reg.defineInstance(IHostFileSystem, createTestFs(kaos));
-          const environment = createTestEnv(kaos);
-          const processService = createTestProcessService(kaos);
-          const fs = createTestFs(kaos);
-          reg.defineInstance(IHostEnvironment, environment);
-          const runtime = Object.assign(
-            new FakeRuntime(
-              { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
-              { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
-            ),
-            { process: processService, fs, environment },
-          );
-          reg.defineInstance(IAgentRuntimeService, {
-            _serviceBrand: undefined,
-            onDidChange: () => ({ dispose: () => {} }),
-            isAvailable: () => true,
-            inspect: () => runtime,
-            acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-          });
-          reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
-          reg.defineInstance(ITelemetryService, noopTelemetryService);
-          reg.defineInstance(ISessionSkillCatalog, {
-            _serviceBrand: undefined,
-            catalog: { getSkillRoots: () => [] },
-          } as unknown as ISessionSkillCatalog);
-          reg.defineInstance(
-            IAgentScopeContext,
-            makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
-          );
-          reg.define(IGrepTool, ProductionGrepTool);
-          reg.defineInstance(ISessionToolPolicyGate, {
-            _serviceBrand: undefined,
-            disabledTools: [],
-            onDidChange: Event.None as Event<void>,
-          } satisfies ISessionToolPolicyGate);
-          reg.definePartialInstance(IAgentLifecycleService, {
-            resolve: (() =>
-              stubProfileRuntime({
-                data: () => ({}) as unknown as ProfileData,
-              })) as IAgentLifecycleService['resolve'],
-          });
-          reg.definePartialInstance(IEventBus, {
-            subscribe: () => toDisposable(() => {}),
-          });
-        },
-      });
-
-      const tool = ix.createInstance(new SyncDescriptor(ProductionGrepTool)) as ProductionGrepTool;
-      const info = { source: 'user', disclosure: 'deferred' };
-
       expect(tool).toBeInstanceOf(ProductionGrepTool);
       expect(tool.name).toBe('Grep');
-      expect(info).toMatchObject({ source: 'user', disclosure: 'deferred' });
     } finally {
-      disposables.dispose();
       _clearAgentToolContributionsForTests();
       for (const contribution of savedContributions) {
-        overrideAgentToolService(contribution.id, contribution.ctor, contribution.options);
+        registerAgentToolService(contribution.options);
       }
     }
   });

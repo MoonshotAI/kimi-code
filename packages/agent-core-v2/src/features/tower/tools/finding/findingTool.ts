@@ -1,5 +1,5 @@
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
@@ -18,8 +18,8 @@ export class TowerFindingTool implements ITowerFindingTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerFindingToolInputSchema);
 
   constructor(
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly sessionContext: ISessionContext,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerFindingToolInput): ToolExecution {

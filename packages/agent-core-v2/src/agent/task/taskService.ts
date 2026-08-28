@@ -1,7 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import type { ContentPart } from '#/kosong/contract/message';
 
@@ -27,9 +25,9 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/features/contextMemory/types';
 import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
@@ -61,10 +59,7 @@ import {
 import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { taskKey, TaskNotified, TaskStarted, TaskTerminated, TaskWaitDelivered } from './taskOps';
-import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
-import '#/agent/tools/task/task-output/taskOutputTool';
-import '#/agent/tools/task/task-stop/taskStopTool';
-import '#/agent/tools/task/task-wait/taskWaitTool';
+import { formatTaskList } from '#/agent/task/tools/format';
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;
@@ -238,12 +233,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
     @ISessionContext session: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @LoopControlToken private readonly loop: LoopControlToken,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
@@ -1115,7 +1109,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     );
     this.pendingNotificationRequests.set(key, request);
     try {
-      const receipt = this.loop.enqueue(request);
+      const receipt = getLoopControl(this.scopeContext.agentContext).enqueue(request);
       void receipt.assigned
         .then(({ step }) => step.result)
         .then(
@@ -1459,10 +1453,3 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentTaskService,
-  AgentTaskService,
-  ScopeActivation.OnScopeCreated,
-  'task',
-);

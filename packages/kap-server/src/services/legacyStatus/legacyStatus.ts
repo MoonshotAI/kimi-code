@@ -1,5 +1,4 @@
 import {
-  agentContextOf,
   AgentProfile,
   type ProfileRuntime,
   IAgentLifecycleService,
@@ -7,9 +6,9 @@ import {
   ISessionUsageService,
   IModelCatalog,
   IModelService,
-  type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
+import type { AgentScopeView } from '../../transport/agentScopeView';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
 
@@ -83,7 +82,7 @@ export interface LegacyStatusSnapshot {
   readonly model: string;
 }
 
-export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
+export function readLegacyStatus(agent: AgentScopeView): LegacyStatusSnapshot | undefined {
   const usageService = agent.accessor.get(ISessionUsageService) as
     | ISessionUsageService
     | undefined;
@@ -94,7 +93,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
-  const context = agentContextOf(agent);
+  const context = agent.context;
   const usage = usageService.status(context);
   const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.modelCapabilities();
@@ -111,19 +110,19 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   };
 }
 
-function readProfile(agent: IAgentScopeHandle): ProfileRuntime | undefined {
+function readProfile(agent: AgentScopeView): ProfileRuntime | undefined {
   try {
     const lifecycle = agent.accessor.get(IAgentLifecycleService) as
       | IAgentLifecycleService
       | undefined;
     if (lifecycle === undefined) return undefined;
-    return lifecycle.resolve(agentContextOf(agent), AgentProfile);
+    return lifecycle.resolve(agent.context, AgentProfile);
   } catch {
     return undefined;
   }
 }
 
-function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
+function defaultModelContextTokens(agent: AgentScopeView): number | undefined {
   const models = agent.accessor.get(IModelService) as IModelService | undefined;
   const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
   const defaultModel = models?.getDefaultModel();

@@ -1,24 +1,21 @@
 import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { type ProfileData } from '#/features/profile/profile';
-import { LoopControlToken } from '#/features/loop/internal/loop';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
+import type { LoopControl } from '#/features/loop/internal/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
-import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import {
   IAgentLifecycleService,
   type CreateAgentOptions,
@@ -39,7 +36,6 @@ import {
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -55,6 +51,7 @@ import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask
 import { SessionSwarmService } from '#/features/swarm/session/sessionSwarmService';
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -871,7 +868,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let agents: Record<string, AgentMeta>;
-  let handles: Map<string, IAgentScopeHandle>;
+  let handles: Map<string, FakeAgentEntry>;
   let lifecycle: IAgentLifecycleService;
   let subagents: ISessionSubagentService;
   let spawnAgent: ReturnType<typeof vi.fn>;
@@ -888,8 +885,9 @@ describe('SessionSwarmService metadata compatibility', () => {
     subagents = subagentStub(handles, lifecycle, eventBus);
     spawnAgent = subagents.spawn as ReturnType<typeof vi.fn>;
     runAgent = subagents.run as ReturnType<typeof vi.fn>;
-    handles.set('main', agentHandle('main', lifecycle, eventBus));
+    handles.set('main', agentHandle('main', eventBus));
 
+    ix.stub(IAgentHostService, hostsStub(handles));
     ix.stub(IAgentLifecycleService, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
     ix.stub(ISessionMetadata, {
@@ -1010,7 +1008,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     agents['other-child'] = {
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
-    handles.set('other-child', agentHandle('other-child', lifecycle, eventBusStub()));
+    handles.set('other-child', agentHandle('other-child', eventBusStub()));
     const service = ix.get(ISessionSwarmService);
 
     await expect(
@@ -1032,7 +1030,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     agents['agent-existing'] = {
       labels: { parentAgentId: 'main' },
     };
-    const child = agentHandle('agent-existing', lifecycle, eventBus, {
+    const child = agentHandle('agent-existing', eventBus, {
       profileName: 'explore',
       modelAlias: 'stale-model',
     });
@@ -1046,7 +1044,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    expect((child.accessor.get(AgentProfile as never) as ProfileRuntime).data().modelAlias).toBe('stale-model');
+    expect(child.profile.data().modelAlias).toBe('stale-model');
     expect(eventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'subagent.spawned',
@@ -1119,8 +1117,8 @@ describe('SessionSwarmService metadata compatibility', () => {
       agents['agent-blocker'] = {
         labels: { parentAgentId: 'main' },
       };
-      handles.set('agent-retry', agentHandle('agent-retry', lifecycle, eventBus));
-      handles.set('agent-blocker', agentHandle('agent-blocker', lifecycle, eventBus));
+      handles.set('agent-retry', agentHandle('agent-retry', eventBus));
+      handles.set('agent-blocker', agentHandle('agent-blocker', eventBus));
       const rateLimited = createControlledPromise<{ summary: string }>();
       const blocker = createControlledPromise<{ summary: string }>();
       const published: Event2[] = [];
@@ -1176,18 +1174,12 @@ describe('SessionSwarmService metadata compatibility', () => {
     agents['agent-existing'] = {
       labels: { parentAgentId: 'main' },
     };
-    handles.set(
-      'agent-existing',
-      agentHandle('agent-existing', lifecycle, eventBus, {}, new Map([
-        [
-          LoopControlToken,
-          {
-            _serviceBrand: undefined,
-            status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),
-          },
-        ],
-      ])),
-    );
+    const existing = agentHandle('agent-existing', eventBus, {});
+    handles.set('agent-existing', existing);
+    registerLoopControl(existing.context, {
+      _serviceBrand: undefined,
+      status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),
+    } as unknown as LoopControl, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
     const service = ix.get(ISessionSwarmService);
 
     await expect(
@@ -1240,13 +1232,12 @@ function resumeSessionTask(agentId: string): SessionSwarmTask {
 }
 
 function lifecycleStub(
-  handles: Map<string, IAgentScopeHandle>,
+  handles: Map<string, FakeAgentEntry>,
   eventBus: IEventBus,
 ): IAgentLifecycleService {
   const lifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
-    onDidCreateScope: Event.None,
     onWillClose: Event.None,
     onDidClose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
@@ -1255,20 +1246,19 @@ function lifecycleStub(
         if (existing !== undefined) return stubAgentContext(opts.agentId, 1);
       }
       const id = opts.agentId ?? 'agent-new';
-      const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
+      const entry = agentHandle(id, eventBus, {
         profileName: opts.binding?.profile ?? 'coder',
         modelAlias: opts.binding?.model ?? 'kimi-test',
         thinkingLevel: opts.binding?.thinking ?? 'medium',
       });
-      handles.set(id, handle);
-      return stubAgentContext(id, 1);
+      handles.set(id, entry);
+      return entry.context;
     }),
     fork: vi.fn(),
-    get: (agentId: string) => (handles.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
-    handleOf: (agentId: string) => handles.get(agentId),
-    list: () => [...handles.keys()].map((agentId) => stubAgentContext(agentId, 1)),
+    get: (agentId: string) => handles.get(agentId)?.context,
+    list: () => [...handles.values()].map((entry) => entry.context),
     resolve: (agent: AgentContext, definition: unknown) =>
-      handles.get(agent.agentId)?.accessor.get(definition as never),
+      definition === AgentProfile ? handles.get(agent.agentId)?.profile : undefined,
     inspect: () => {
       throw new Error('unexpected inspect');
     },
@@ -1276,14 +1266,43 @@ function lifecycleStub(
       handles.delete(context.agentId);
     },
     broadcastPermissionMode: () => {},
-    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
     attachRuntimes: () => {},
   };
   return lifecycle as IAgentLifecycleService;
 }
 
+function hostsStub(handles: Map<string, FakeAgentEntry>): IAgentHostService {
+  return {
+    _serviceBrand: undefined,
+    of: (agent: AgentContext) => {
+      const entry = handles.get(agent.agentId);
+      if (entry === undefined) throw new Error(`fake host for ${agent.agentId} unavailable`);
+      return entry.host;
+    },
+    tryOf: (agent: AgentContext) => handles.get(agent.agentId)?.host,
+    create: () => {
+      throw new Error('not implemented');
+    },
+    release: () => {},
+  } as unknown as IAgentHostService;
+}
+
+interface FakeHostBundle {
+  readonly scopeContext: unknown;
+  readonly telemetry: unknown;
+  readonly eventBus: IEventBus;
+  readonly dispatcher: unknown;
+  readonly agentRuntime: unknown;
+}
+
+interface FakeAgentEntry {
+  readonly context: AgentContext;
+  readonly profile: ProfileRuntime;
+  readonly host: FakeHostBundle;
+}
+
 function subagentStub(
-  handles: Map<string, IAgentScopeHandle>,
+  handles: Map<string, FakeAgentEntry>,
   lifecycle: IAgentLifecycleService,
   eventBus: IEventBus,
 ): ISessionSubagentService {
@@ -1302,11 +1321,11 @@ function subagentStub(
       fork: input.fork === true,
     })),
     spawn: vi.fn(async (opts: SpawnSubagentOptions) => {
-      const handle = agentHandle('agent-new', lifecycle, eventBus, {
+      const entry = agentHandle('agent-new', eventBus, {
         profileName: opts.plan.profileName,
         modelAlias: opts.plan.model,
       });
-      handles.set('agent-new', handle);
+      handles.set('agent-new', entry);
       return {
         agentId: 'agent-new',
         profileName: opts.plan.profileName,
@@ -1320,11 +1339,9 @@ function subagentStub(
 
 function agentHandle(
   id: string,
-  lifecycle: IAgentLifecycleService,
   eventBus: IEventBus,
   data: Partial<ProfileData> = {},
-  services: ReadonlyMap<unknown, unknown> = new Map(),
-): IAgentScopeHandle {
+): FakeAgentEntry {
   const profile = profileService({
     modelAlias: 'kimi-test',
     modelCapabilities: {} as never,
@@ -1333,59 +1350,40 @@ function agentHandle(
     systemPrompt: '',
     ...data,
   });
-  const permissionMode = {
-    _serviceBrand: undefined,
-    mode: () => 'auto',
-    configured: () => true,
-    setMode: () => {},
-    setModeAndBroadcast: () => {},
-  } as unknown as ISessionPermissionModeService;
   const dispatcher = {
     _serviceBrand: undefined,
     dispatch: async (event: Event2) => {
       eventBus.publish(event);
     },
   } as unknown as IEventDispatcher;
+  const context = stubAgentContext(id, 1);
+  const scopeContext = {
+    _serviceBrand: undefined,
+    agentId: id,
+    agentContext: context,
+    scope: (subKey?: string) => subKey ?? '',
+  };
+  registerLoopControl(context, {
+    _serviceBrand: undefined,
+    status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+  } as unknown as LoopControl, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
   return {
-    id,
-    kind: LifecycleScope.Agent,
-    accessor: {
-      get: ((serviceId: unknown) => {
-        const service = services.get(serviceId);
-        if (service !== undefined) return service;
-        if (serviceId === AgentProfile) return profile;
-        if (serviceId === IAgentRuntimeBindingService) {
-          return {
-            _serviceBrand: undefined,
-            current: { workspaceId: 'w1', runtimeId: 'local' },
-            switch: () => {},
-            onDidChange: Event.None,
-          } as unknown as IAgentRuntimeBindingService;
-        }
-        if (serviceId === ISessionPermissionModeService) return permissionMode;
-        if (serviceId === LoopControlToken) {
-          return {
-            _serviceBrand: undefined,
-            status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
-          } as unknown as LoopControlToken;
-        }
-        if (serviceId === IAgentUserToolService) return userToolServiceStub();
-        if (serviceId === IAgentScopeContext) {
-          return {
-            _serviceBrand: undefined,
-            agentId: id,
-            agentContext: stubAgentContext(id, 1),
-            scope: (subKey?: string) => subKey ?? '',
-          };
-        }
-        if (serviceId === IEventBus) return eventBus;
-        if (serviceId === IEventDispatcher) return dispatcher;
-        if (serviceId === ITelemetryService) return noopTelemetryService;
-        if (serviceId === IAgentLifecycleService) return lifecycle;
-        return undefined;
-      }) as IAgentScopeHandle['accessor']['get'],
+    context,
+    profile,
+    host: {
+      scopeContext,
+      telemetry: noopTelemetryService,
+      eventBus,
+      dispatcher,
+      agentRuntime: {
+        _serviceBrand: undefined,
+        acquire: () => ({
+          runtime: undefined,
+          track: (resource: unknown) => resource,
+          dispose: () => {},
+        }),
+      },
     },
-    dispose: () => {},
   };
 }
 
@@ -1399,16 +1397,6 @@ function profileService(data: ProfileData): ProfileRuntime {
     republishStatus: () => {},
     effectiveThinkingLevel: () => current.thinkingLevel,
   } as unknown as ProfileRuntime;
-}
-
-function userToolServiceStub(): IAgentUserToolService {
-  return {
-    _serviceBrand: undefined,
-    list: () => [],
-    inheritUserTools: vi.fn<(parent: IAgentUserToolService) => void>(),
-    register: () => {},
-    unregister: () => {},
-  };
 }
 
 function eventBusStub(): IEventBus {

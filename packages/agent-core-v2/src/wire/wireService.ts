@@ -1,9 +1,7 @@
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { StorageError, StorageErrors } from '#/persistence/interface/storage';
@@ -35,7 +33,7 @@ export class WireService extends Service implements IWireService {
   private persistQueue: Promise<void> | undefined;
 
   constructor(
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    scopeContext: IAgentScopeContext,
     @IAppendLogStore private readonly log: IAppendLogStore,
     @IAgentBlobService private readonly blobService: IAgentBlobService,
   ) {
@@ -159,10 +157,3 @@ export class WireService extends Service implements IWireService {
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IWireService,
-  WireService,
-  ScopeActivation.OnScopeCreated,
-  'wire',
-);

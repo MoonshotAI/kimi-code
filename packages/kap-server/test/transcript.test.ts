@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   AgentContextMemory,
   IAgentLifecycleService,
-  agentContextOf,
   IWireService,
   IEventBus,
   ISessionQuestionService,
@@ -18,6 +17,7 @@ import {
   type ContextMessage,
   type Event2,
   type ScopeSeed,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -191,15 +191,15 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    if (session.accessor.get(IAgentLifecycleService).handleOf('main') === undefined) {
+    if (session.accessor.get(IAgentLifecycleService).get('main') === undefined) {
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     }
   }
 
   function mainAgentBus(sessionId: string): IEventBus {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    return agent!.accessor.get(IEventBus);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    return session!.accessor.get(IAgentHostService).of(agent!).eventBus;
   }
 
   async function seedMainAgentMessages(
@@ -207,9 +207,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     messages: readonly ContextMessage[],
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    void agent!.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent!), AgentContextMemory).append(...messages);
-    await agent!.accessor.get(IWireService).flush();
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    void session!.accessor.get(IAgentLifecycleService).resolve(agent!, AgentContextMemory).append(...messages);
+    await session!.accessor.get(IAgentHostService).of(agent!).wire.flush();
   }
 
   it('streams a live turn tree: deltas flush into full-text frames at step end', async () => {
@@ -444,13 +444,13 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
+    void session!.accessor.get(IAgentLifecycleService).resolve(sub, AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
         { role: 'assistant', content: [{ type: 'text', text: 'scanning' }], toolCalls: [] } as ContextMessage,
       );
-    await sub.accessor.get(IWireService).flush();
+    await session!.accessor.get(IAgentHostService).of(sub).wire.flush();
 
     await server!.close();
     server = undefined;
@@ -475,13 +475,13 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
+    void session!.accessor.get(IAgentLifecycleService).resolve(sub, AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
         { role: 'assistant', content: [{ type: 'text', text: 'scanning' }], toolCalls: [] } as ContextMessage,
       );
-    await sub.accessor.get(IWireService).flush();
+    await session!.accessor.get(IAgentHostService).of(sub).wire.flush();
 
     await server!.close();
     server = undefined;
@@ -490,7 +490,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(
       getLiveSessionById(server!.core.accessor, id)!
         .accessor.get(IAgentLifecycleService)
-        .handleOf('sub-1'),
+        .get('sub-1'),
     ).toBeUndefined();
 
     const { body } = await getJson<TranscriptContract>(
@@ -512,12 +512,12 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await session!.accessor
       .get(IAgentLifecycleService)
       .create({ agentId: 'sub-1', labels: { parentAgentId: 'main' } });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
+    void session!.accessor.get(IAgentLifecycleService).resolve(sub, AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
       );
-    await sub.accessor.get(IWireService).flush();
+    await session!.accessor.get(IAgentHostService).of(sub).wire.flush();
 
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
@@ -585,8 +585,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
+    void session!.accessor.get(IAgentLifecycleService).resolve(sub, AgentContextMemory)
       .append(
         { role: 'user', content: [{ type: 'text', text: 'scan' }], toolCalls: [] } as ContextMessage,
         {
@@ -595,7 +595,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
           toolCalls: [{ type: 'function', id: 'call_q', name: 'AskUserQuestion', arguments: '{}' }],
         } as ContextMessage,
       );
-    await sub.accessor.get(IWireService).flush();
+    await session!.accessor.get(IAgentHostService).of(sub).wire.flush();
 
     const questions = session!.accessor.get(ISessionQuestionService);
     const pending = questions.request(
@@ -731,11 +731,11 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
 
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
 
-    const subBus = sub.accessor.get(IEventBus);
+    const subBus = session!.accessor.get(IAgentHostService).of(sub).eventBus;
     subBus.publish(
       serverEvent({ type: 'turn.started', turnId: 0, origin: { kind: 'task', taskId: 'task-1' } }),
     );
@@ -921,10 +921,10 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await ensureMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
+    void session!.accessor.get(IAgentLifecycleService).resolve(sub, AgentContextMemory)
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
-    await sub.accessor.get(IWireService).flush();
+    await session!.accessor.get(IAgentHostService).of(sub).wire.flush();
 
     const bound = await getJson<UserMessagesContract>(`/api/v1/sessions/${id}/transcript/user-messages`);
     const boundByAgent = new Map(bound.body.data.agents.map((a) => [a.agent_id, a]));
@@ -975,10 +975,10 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     ]);
     const session = getLiveSessionById(server!.core.accessor, id);
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
-    const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
-    void sub.accessor.get(IAgentLifecycleService).resolve(agentContextOf(sub), AgentContextMemory)
+    const sub = session!.accessor.get(IAgentLifecycleService).get('sub-1')!;
+    void session!.accessor.get(IAgentLifecycleService).resolve(sub, AgentContextMemory)
       .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
-    await sub.accessor.get(IWireService).flush();
+    await session!.accessor.get(IAgentHostService).of(sub).wire.flush();
 
     await server!.close();
     server = undefined;
@@ -1261,8 +1261,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       selectedLabel: 'Revise',
       feedback: 'split it up',
     });
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
-    await agent!.accessor.get(IWireService).flush();
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main');
+    await session!.accessor.get(IAgentHostService).of(agent!).wire.flush();
 
     await server!.close();
     server = undefined;

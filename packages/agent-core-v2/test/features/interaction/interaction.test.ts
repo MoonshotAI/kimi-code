@@ -10,7 +10,8 @@ import {
   type RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IEventBus } from '#/app/event/eventBus';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -41,6 +42,8 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
+  stubAgentHostService,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 
@@ -72,10 +75,10 @@ function makeRuntimeAgent(agentId: string): RuntimeAgent {
       return Promise.resolve();
     },
   } as unknown as IEventDispatcher;
-  ix.stub(IAgentScopeContext, scope);
   ix.stub(IEventBus, eventBus);
   ix.stub(IEventDispatcher, dispatcher);
-  const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) });
+  ix.stub(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), scope));
+  const runtimes = new AgentRuntimeSet(context, { get: (id) => ix.get(id) }, () => ix.get(IEventDispatcher));
   runtimes.apply({
     definition: AgentInteraction,
     provider: interactionAgentRuntimeProvider,
@@ -429,10 +432,18 @@ describe('interaction ops (wire-backed)', () => {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix.stub(IAgentHostService, {
+      _serviceBrand: undefined,
+      of: () => ({
+        eventBus: ix.get(IEventBus),
+        telemetry: { track2: () => {} },
+      }),
+    } as unknown as IAgentHostService);
     log = ix.get(IAppendLogStore);
-    registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
-    dispatcher = registerTestEventDispatcher(ix);
-    runtimes = attachInteractionRuntime(ix, dispatcher);
+    const agentScope = stubAgentScopeContext(testWireScope(SCOPE, KEY));
+    registerTestAgentWire(ix, agentScope, { log });
+    dispatcher = registerTestEventDispatcher(ix, agentScope);
+    runtimes = attachInteractionRuntime(ix, dispatcher, agentScope.agentContext);
   });
   afterEach(() => disposables.dispose());
 
@@ -507,12 +518,20 @@ describe('interaction ops (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.stub(IAgentHostService, {
+      _serviceBrand: undefined,
+      of: () => ({
+        eventBus: ix2.get(IEventBus),
+        telemetry: { track2: () => {} },
+      }),
+    } as unknown as IAgentHostService);
     const log2 = ix2.get(IAppendLogStore);
-    registerTestAgentWire(ix2, testWireScope(SCOPE, 'interaction-replay'), {
+    const agentScope2 = stubAgentScopeContext(testWireScope(SCOPE, 'interaction-replay'));
+    registerTestAgentWire(ix2, agentScope2, {
       log: log2,
     });
-    const dispatcher2 = registerTestEventDispatcher(ix2);
-    const runtimes2 = attachInteractionRuntime(ix2, dispatcher2);
+    const dispatcher2 = registerTestEventDispatcher(ix2, agentScope2);
+    const runtimes2 = attachInteractionRuntime(ix2, dispatcher2, agentScope2.agentContext);
     await restoreTestEventDispatcher(dispatcher2, log2, testWireScope(SCOPE, 'interaction-replay'), records);
 
     const line = runtimes2.inspect().find((entry) => entry.id === 'interaction');

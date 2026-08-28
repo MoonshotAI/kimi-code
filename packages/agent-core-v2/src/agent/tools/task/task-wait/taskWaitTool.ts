@@ -8,13 +8,12 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentTaskService } from '#/agent/task/task';
-import type { AgentTaskInfo, AgentTaskOutputSnapshot } from '#/agent/task/task';
+import type { AgentTaskInfo, AgentTaskOutputSnapshot, IAgentTaskService } from '#/agent/task/task';
+import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { formatPlainObject } from '#/agent/task/tools/format';
-import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
+import { formatPlainObject, formatTaskList } from '#/agent/task/tools/format';
 import { IFlagService } from '#/app/flag/flag';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
 import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
@@ -118,9 +117,9 @@ export class WaitForTool implements IWaitForTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WaitForInputSchema);
 
   constructor(
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IFlagService private readonly flags: IFlagService,
+    private readonly tasks: IAgentTaskService,
+    private readonly telemetry: ITelemetryService,
+    private readonly flags: IFlagService,
   ) {}
 
   resolveExecution(args: WaitForInput): ToolExecution {
@@ -331,8 +330,13 @@ export class WaitForTool implements IWaitForTool {
   }
 }
 
-registerAgentToolService(IWaitForTool, WaitForTool, {
+registerAgentToolService({
   name: 'WaitFor',
   domain: 'agentTask',
-  when: (accessor) => accessor.get(IFlagService).enabled(WAIT_FOR_FLAG_ID),
+  when: (ctx) => ctx.get(IFlagService).enabled(WAIT_FOR_FLAG_ID),
+  create: (context) => new WaitForTool(
+    context.get(ISessionTaskService).of(context.agent),
+    context.host.telemetry,
+    context.get(IFlagService),
+  ),
 });

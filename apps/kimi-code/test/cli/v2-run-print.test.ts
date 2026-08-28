@@ -11,7 +11,6 @@ import {
   IAgentLifecycleService,
   ISessionPermissionModeService,
   AgentProfile,
-  IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -22,7 +21,6 @@ import {
   ISessionIndex,
   ISessionManager,
   ITelemetryService,
-  makeAgentScopeContext,
   type BootstrapInput,
   type Event2,
 } from '@moonshot-ai/agent-core-v2';
@@ -149,10 +147,6 @@ function makeFakeHarness() {
     ],
     
     [IAgentTaskService, { list: vi.fn(() => []) }],
-    [
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
-    ],
   ]);
   const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const cron = { getNextFireTime: vi.fn(() => null) };

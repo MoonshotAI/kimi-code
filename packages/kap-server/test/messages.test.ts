@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import {
   AgentContextMemory,
   IAgentLifecycleService,
-  agentContextOf,
   IWireService,
   getLiveSessionById,
   IModelCatalog,
   type ContextMessage,
   type ScopeSeed,
+  IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -125,14 +125,13 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   ): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) {
-      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     }
     if (messages.length > 0) {
-      void agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory).append(...messages);
-      await agent.accessor.get(IWireService).flush();
+      void session.accessor.get(IAgentLifecycleService).resolve(agent, AgentContextMemory).append(...messages);
+      await session.accessor.get(IAgentHostService).of(agent).wire.flush();
     }
   }
 
@@ -290,8 +289,8 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     const session = getLiveSessionById(server!.core.accessor, id);
     if (session === undefined) throw new Error(`session ${id} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const ctx = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentContextMemory);
+    const agent = session.accessor.get(IAgentLifecycleService).get('main')!;
+    const ctx = session.accessor.get(IAgentLifecycleService).resolve(agent, AgentContextMemory);
     void ctx.append(
       { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
       { role: 'assistant', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
@@ -303,7 +302,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       compactedCount: 3,
       tokensBefore: 100,
     });
-    await agent.accessor.get(IWireService).flush();
+    await session.accessor.get(IAgentHostService).of(agent!).wire.flush();
 
     const livePage = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     expect(livePage.body.data.items).toHaveLength(4);

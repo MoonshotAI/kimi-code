@@ -31,7 +31,8 @@ import { ProcessTask, type ProcessTaskInfo } from '#/agent/tools/os/bash/process
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import { IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { stubFlag } from '../../../app/flag/stubs';
@@ -1139,8 +1140,8 @@ describe('WaitForTool (harness)', () => {
     const loop = stubLoopWithHooks();
     const ctx = createTestAgent(
       telemetryServices(recordingTelemetry(records)),
-      agentService(LoopControlToken, loop),
     );
+    registerLoopControl(ctx.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
     try {
       const tasks = ctx.get(IAgentTaskService);
       const tool = ctx.resolve(AgentTools).resolve('WaitFor');

@@ -51,14 +51,14 @@ describe('Agent context', () => {
   it('stores prompt origins without leaking them to LLM projection', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'hello' }]);
     ctx.appendSystemReminder('Remember this.', { kind: 'injection', variant: 'host' });
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [],
         toolCalls: [{ type: 'function', id: 'call_origin', name: 'Run', arguments: '{}' }],
       },
     );
-    context.append(
+    void context.append(
       {
         role: 'tool',
         content: [{ type: 'text', text: 'tool output' }],
@@ -77,7 +77,7 @@ describe('Agent context', () => {
   });
 
   it('renders tool error and empty-output status as model-visible text', () => {
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [],
@@ -87,7 +87,7 @@ describe('Agent context', () => {
         ],
       },
     );
-    context.append(
+    void context.append(
       {
         role: 'tool',
         content: [
@@ -100,7 +100,7 @@ describe('Agent context', () => {
         toolCallId: 'call_error',
       },
     );
-    context.append(
+    void context.append(
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
@@ -229,7 +229,7 @@ describe('Agent context', () => {
 
   it('projects hook result messages into LLM projection', async () => {
     ctx.appendUserMessage([{ type: 'text', text: 'hooked input' }]);
-    context.append(
+    void context.append(
       {
         role: 'user',
         content: [
@@ -242,7 +242,7 @@ describe('Agent context', () => {
         origin: { kind: 'hook_result', event: 'UserPromptSubmit' },
       },
     );
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [
@@ -255,7 +255,7 @@ describe('Agent context', () => {
         origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true },
       },
     );
-    context.append(
+    void context.append(
       {
         role: 'user',
         content: [{ type: 'text', text: 'continue from stop hook' }],
@@ -301,7 +301,7 @@ describe('Agent context', () => {
 
   it('projects blocked UserPromptSubmit prompts into LLM projection', async () => {
     ctx.appendUserMessage([{ type: 'text', text: 'blocked prompt' }]);
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [
@@ -385,7 +385,7 @@ describe('Agent context', () => {
 
   it('defers system reminders until pending tool results are recorded and resumed', async () => {
     ctx.appendUserMessage([{ type: 'text', text: 'load a skill' }]);
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [],
@@ -395,7 +395,7 @@ describe('Agent context', () => {
         ],
       },
     );
-    context.append(
+    void context.append(
       {
         role: 'user',
         content: [{ type: 'text', text: '<system-reminder>\nskill body\n</system-reminder>' }],
@@ -418,7 +418,7 @@ describe('Agent context', () => {
       'user',
     ]);
 
-    context.append(
+    void context.append(
       {
         role: 'tool',
         content: [{ type: 'text', text: 'wrote file' }],
@@ -434,7 +434,7 @@ describe('Agent context', () => {
       'user',
     ]);
 
-    context.append(
+    void context.append(
       {
         role: 'tool',
         content: [{ type: 'text', text: 'skill loaded' }],
@@ -486,7 +486,7 @@ describe('Agent context', () => {
 
   it('keeps tool results pending when step usage covers only through the assistant message', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'lookup pending tokens' }]);
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [],
@@ -501,7 +501,7 @@ describe('Agent context', () => {
       inputOther: 1_280,
       output: 0,
     });
-    context.append(
+    void context.append(
       {
         role: 'tool',
         content: [{ type: 'text', text: 'large tool result '.repeat(50) }],
@@ -587,7 +587,7 @@ describe('Agent context', () => {
     ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
     expect(tokenCounting.get().measured).toBe(1_000);
 
-    context.clear();
+    void context.clear();
 
     expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
@@ -619,7 +619,7 @@ describe('Agent context', () => {
     ctx.appendTurnExchange('u1', 'first response');
     ctx.appendTurnExchange('u2', 'second response');
 
-    context.append(
+    void context.append(
       {
         role: 'user',
         content: [{ type: 'text', text: 'background task completed' }],
@@ -649,13 +649,13 @@ describe('Agent context', () => {
   it('removes injection messages inside the undone turn', async () => {
     ctx.appendUserTurn('earlier question');
     ctx.appendUserTurn('do the work');
-    context.append(
+    void context.append(
       userMessage('Plan mode is active', {
         kind: 'injection',
         variant: 'plan_mode',
       }),
     );
-    context.append(
+    void context.append(
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'work done' }],

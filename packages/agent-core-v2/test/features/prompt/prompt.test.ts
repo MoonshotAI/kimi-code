@@ -9,13 +9,15 @@ import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import type { ContentPart } from '#/kosong/contract/message';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { registerLoopControl } from '#/features/loop/internal/access';
 import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
 import type { PromptRuntime } from '#/features/prompt/prompt';
 import { PromptQueued, PromptSteered } from '#/features/prompt/promptEvents';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -26,7 +28,6 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { IFileService } from '#/app/file/fileService';
@@ -38,7 +39,7 @@ import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
 import { lifecycleWithFullCompaction, stubFullCompactionRuntime } from '../fullCompaction/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { SteerStepRequest } from '#/features/prompt/internal/promptStepRequests';
-import { stubWireJournal } from '../../wire/stubs';
+import { registerTestEventDispatcher, stubWireJournal } from '../../wire/stubs';
 
 function message(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
@@ -103,8 +104,7 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
         if (definition === AgentPrompt) return runtimes!.resolve(AgentPrompt);
         return lifecycleWithReminder(reminder, context).resolve(agent as never, definition as never);
       },
-      handleOf: () => ({}),
-      onDidCreateScope: () => ({ dispose: () => {} }),
+      get: () => undefined,
     } as unknown as IAgentLifecycleService,
     agentScope.agentContext,
   ),
@@ -112,12 +112,18 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
   const ix = createServices(disposables, {
     strict: true, additionalServices: (reg) => {
       registerStateServices(reg);
-      reg.defineInstance(LoopControlToken, loop);
       reg.defineInstance(IWireService, options.journal === undefined ? stubWire() : stubWireJournal(options.journal as WireRecord[]));
       reg.defineInstance(IAgentBlobService, noopBlob);
-      reg.define(IEventDispatcher, EventDispatcherService);
       reg.define(IEventBus, EventBusService);
       reg.defineInstance(IAgentLifecycleService, lifecycle);
+      reg.defineInstance(IAgentHostService, {
+        _serviceBrand: undefined,
+        of: () => ({
+          scopeContext: agentScope,
+          telemetry: { track2: () => {} },
+          dispatcher: ix.get(IEventDispatcher),
+        }),
+      } as unknown as IAgentHostService);
       reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
       reg.definePartialInstance(ISessionMetadata, {
         read: async () => ({ id: 'test-session', createdAt: 0, updatedAt: 0, archived: false }),
@@ -125,15 +131,14 @@ function harness(options: HarnessOptions = { pendingTurnResult: true }) {
       });
       reg.definePartialInstance(IEventService, { publish: () => {} });
       reg.definePartialInstance(ISessionContext, { sessionId: 'test-session' });
-      reg.defineInstance(IAgentScopeContext, agentScope);
+      registerLoopControl(agentScope.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
       reg.definePartialInstance(IFileService, { get: intake.get });
       reg.definePartialInstance(ISessionMediaStore, { materialize: intake.materialize });
     }
   });
-  (ix.get(IEventBus) as ISessionEventBus).activateAgent(
-    ix.get(IAgentScopeContext).agentContext,
-  );
-  runtimes = new AgentRuntimeSet(agentScope.agentContext, { get: (id) => ix.get(id) });
+  registerTestEventDispatcher(ix, agentScope);
+  (ix.get(IEventBus) as ISessionEventBus).activateAgent(agentScope.agentContext);
+  runtimes = new AgentRuntimeSet(agentScope.agentContext, { get: (id) => ix.get(id) }, () => ix.get(IEventDispatcher));
   runtimes.apply({
     definition: AgentPrompt,
     provider: promptAgentRuntimeProvider,

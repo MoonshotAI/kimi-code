@@ -1,7 +1,6 @@
 import {
   Error2,
   ErrorCodes,
-  IAgentLifecycleService,
   IAgentRuntimeBindingService,
   IAgentRuntimeService,
   ISessionContext,
@@ -17,6 +16,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { MAIN_AGENT_ID, ensureMainAgent } from './mainAgent';
+import { liveAgentScope } from './agentScopeView';
 
 export function workspaceSnapshots(core: Scope): WorkspaceInstancesSnapshot {
   return core.accessor.get(IWorkspaceInstanceManager).snapshot();
@@ -51,7 +51,7 @@ export async function agentRuntimeBindingSnapshot(
   }
   const agent = agentId === MAIN_AGENT_ID
     ? await ensureMainAgent(session)
-    : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+    : liveAgentScope(session, agentId);
   if (agent === undefined) {
     throw new Error2(
       ErrorCodes.AGENT_NOT_FOUND,

@@ -32,9 +32,9 @@ export function lifecycleWithUndo(
       if (definition === AgentUndo) return resolveUndo();
       return inner?.resolve(agent as never, definition as never);
     },
-    handleOf: (agentId: string) => inner?.handleOf(agentId) ?? ({}),
-    onDidCreateScope: (listener: (event: { context: AgentContext }) => void) =>
-      inner?.onDidCreateScope(listener as never) ?? toDisposable(() => {}),
+    get: (agentId: unknown) => inner?.get(agentId as never),
+    onDidCreate: (handler: (agent: AgentContext) => void) =>
+      inner?.onDidCreate(handler) ?? toDisposable(() => {}),
   } as unknown as IAgentLifecycleService;
 }
 

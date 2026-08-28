@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import {
   ISessionBtwService,
@@ -13,7 +12,7 @@ import {
 } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
 import type { ToolCall } from '#/kosong/contract/message';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -33,45 +32,21 @@ describe('SessionBtwService', () => {
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
     executorEvents = stubToolExecutorEvents();
 
-    const child = {
-      id: 'agent-btw-1',
-      accessor: {
-        get: (id: unknown) => {
-          if (id === IAgentToolApprovalService) return { formatDenyMessage };
-          return undefined;
-        },
-      },
-    };
-    const main = {
-      id: 'main',
-      accessor: {
-        get: (id: unknown) => {
-          if (id === IAgentScopeContext) {
-            return {
-              _serviceBrand: undefined,
-              agentId: 'main',
-              agentContext: stubAgentContext('main', 1),
-              scope: (subKey?: string) => subKey ?? '',
-            };
-          }
-          return undefined;
-        },
-      },
-    };
     fork = vi.fn(async () => stubAgentContext('agent-btw-1', 2));
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
+      get: (agentId: string) =>
+        agentId === MAIN_AGENT_ID ? stubAgentContext(MAIN_AGENT_ID, 1) : undefined,
       resolve: (_agent: unknown, definition: unknown) => {
         if (definition === AgentTools) return executorEvents.executor;
         return { notify: appendReminder };
       },
-      handleOf: (id: string) => {
-        if (id === 'main') return main;
-        if (id === 'agent-btw-1') return child;
-        return undefined;
-      },
     } as unknown as IAgentLifecycleService);
+    ix.stub(ISessionToolApprovalService, {
+      _serviceBrand: undefined,
+      of: () => ({ formatDenyMessage }),
+    } as unknown as ISessionToolApprovalService);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
   afterEach(() => disposables.dispose());

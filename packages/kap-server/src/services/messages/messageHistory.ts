@@ -2,20 +2,19 @@ import {
   AGENT_WIRE_RECORD_KEY,
   AgentContextMemory,
   IAgentBlobService,
+  IAgentHostService,
   IAgentLifecycleService,
-  IAgentScopeContext,
   IAppendLogStore,
   ISessionIndex,
   IWireService,
-  agentContextOf,
   createContextTranscriptReducer,
   resumeSessionById,
   type ContextMessage,
   type ContextTranscript,
-  type IAgentScopeHandle,
   type Scope,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
+import type { AgentScopeView } from '../../transport/agentScopeView';
 
 import { ensureMainAgent } from '../../transport/mainAgent';
 import type { Message, MessageRole } from '../../protocol/message';
@@ -118,14 +117,14 @@ async function loadMessages(core: Scope, sessionId: string): Promise<Message[]> 
 
 export async function loadMessageHistory(
   core: Scope,
-  agent: IAgentScopeHandle,
+  agent: AgentScopeView,
   sessionId: string,
   sessionCreatedAtMs: number,
 ): Promise<Message[]> {
   const transcript = await readTranscript(core, agent);
   const contextMessages = agent.accessor
     .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentContextMemory)
+    .resolve(agent.context, AgentContextMemory)
     .get();
   const merged = mergeLiveTail(transcript, contextMessages);
   const entries = await rehydrate(agent, merged.messages);
@@ -140,7 +139,7 @@ export async function loadMessageHistory(
 }
 
 async function rehydrate(
-  agent: IAgentScopeHandle,
+  agent: AgentScopeView,
   messages: readonly ContextMessage[],
 ): Promise<readonly ContextMessage[]> {
   const blobs = agent.accessor.get(IAgentBlobService);
@@ -158,9 +157,9 @@ async function rehydrate(
   return changed ? out : messages;
 }
 
-async function readTranscript(core: Scope, agent: IAgentScopeHandle): Promise<ContextTranscript> {
+async function readTranscript(core: Scope, agent: AgentScopeView): Promise<ContextTranscript> {
   await agent.accessor.get(IWireService).flush();
-  const scope = agent.accessor.get(IAgentScopeContext).scope();
+  const scope = agent.accessor.get(IAgentHostService).of(agent.context).scopeContext.scope();
   const reducer = createContextTranscriptReducer();
   for await (const record of core.accessor
     .get(IAppendLogStore)

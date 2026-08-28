@@ -27,12 +27,15 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ToolAccesses } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { registerTestAgentWireServices, stubAgentScopeContext } from '../../wire/stubs';
 import {
   lifecycleWithToolExecutor,
   stubToolExecutorEvents,
@@ -133,6 +136,7 @@ describe('AgentPlanService plan-guard listener', () => {
   let formatDenyMessage: Mock<(message: string) => string>;
   let mode: PermissionMode;
   let files: Map<string, string>;
+  let planInstance: IAgentPlanService | undefined;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -192,15 +196,27 @@ describe('AgentPlanService plan-guard listener', () => {
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentStateService, new AgentStateService());
-        reg.define(IAgentPlanService, AgentPlanService);
       },
     });
+    planInstance = undefined;
   });
 
   afterEach(() => disposables.dispose());
 
   function plan(): IAgentPlanService {
-    return ix.get(IAgentPlanService);
+    return (planInstance ??= new AgentPlanService(
+      ix.get(IHostFileSystem),
+      ix.get(IBlobStore),
+      ix.get(IAgentLifecycleService),
+      ix.get(IAgentTelemetryContextService),
+      ix.get(IEventBus),
+      ix.get(IEventDispatcher),
+      ix.get(ISessionContext),
+      stubAgentScopeContext('wire/test-agent'),
+      ix.get(IAgentToolApprovalService),
+      ix.get(ITelemetryService),
+      ix.get(IAgentStateService),
+    ));
   }
 
   async function enterPlan(): Promise<IAgentPlanService> {

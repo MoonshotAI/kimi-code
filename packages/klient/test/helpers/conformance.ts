@@ -15,6 +15,7 @@ import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
+import { IAgentHostService } from '@moonshot-ai/agent-core-v2/agent/host/agentHost';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
 import { PromptAccepted } from '@moonshot-ai/agent-core-v2/features/prompt/promptOps';
@@ -569,10 +570,8 @@ export function defineKlientConformance(
       const session = getLiveSessionById(target.app.accessor, created.id);
       if (session === undefined) throw new Error('conformance session was not materialized');
       await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      const main = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-      await main.accessor
-        .get(IEventDispatcher)
-        .dispatch(new PromptAccepted({ agentId: 'main', promptId: 'submission-1' }));
+      const main = session.accessor.get(IAgentLifecycleService).get('main')!;
+      await session.accessor.get(IAgentHostService).of(main).dispatcher.dispatch(new PromptAccepted({ agentId: 'main', promptId: 'submission-1' }));
       try {
         await expect(
           target.klient.session(created.id).agent('main').prompt({

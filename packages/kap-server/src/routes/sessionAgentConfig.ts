@@ -6,8 +6,7 @@ import {
   IAgentLifecycleService,
   IAgentPlanService,
   IAgentSwarmService,
-  IAgentTowerService,
-  agentContextOf,
+  ISessionTowerService,
   resumeSessionById,
   type WirePermissionMode,
   type Scope,
@@ -29,7 +28,7 @@ export async function applySessionAgentConfig(
 
   const profile = agent.accessor
     .get(IAgentLifecycleService)
-    .resolve(agentContextOf(agent), AgentProfile);
+    .resolve(agent.context, AgentProfile);
   if (agentConfig.model !== undefined && agentConfig.model !== '') {
     await profile.setModel(agentConfig.model);
   }
@@ -57,7 +56,7 @@ export async function applySessionAgentConfig(
     }
   }
   if (agentConfig.tower_mode !== undefined) {
-    const tower = agent.accessor.get(IAgentTowerService);
+    const tower = agent.accessor.get(ISessionTowerService).of(agent.context);
     if (agentConfig.tower_mode) {
       await tower.enter();
       if (!tower.isActive) {
@@ -73,11 +72,11 @@ export async function applySessionAgentConfig(
   if (agentConfig.goal_objective !== undefined) {
     await agent.accessor
       .get(IAgentLifecycleService)
-      .resolve(agentContextOf(agent), AgentGoal)
+      .resolve(agent.context, AgentGoal)
       .createGoal({ objective: agentConfig.goal_objective });
   }
   if (agentConfig.goal_control !== undefined) {
-    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentGoal);
+    const goal = agent.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentGoal);
     switch (agentConfig.goal_control) {
       case 'pause':
         await goal.pauseGoal({});

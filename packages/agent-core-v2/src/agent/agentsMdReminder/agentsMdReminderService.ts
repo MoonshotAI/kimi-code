@@ -1,8 +1,6 @@
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -26,7 +24,7 @@ import {
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
@@ -60,7 +58,7 @@ export class AgentAgentsMdReminderService
 
   constructor(
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -332,10 +330,3 @@ function changeReminderText(changes: readonly HostFsChange[]): string {
   );
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentAgentsMdReminderService,
-  AgentAgentsMdReminderService,
-  ScopeActivation.OnScopeCreated,
-  'agentsMdReminder',
-);

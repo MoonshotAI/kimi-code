@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import {
   AgentGoal,
-  agentContextOf,
   ErrorCodes,
   IAgentActivityView,
   IAgentLifecycleService,
@@ -137,9 +136,9 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const manager = session.accessor.get(IAgentLifecycleService);
-    const handle = manager.handleOf(agentId);
+    const handle = manager.get(agentId);
     if (handle === undefined) throw new Error(`agent ${agentId} not found`);
-    return manager.resolve(agentContextOf(handle), AgentGoal);
+    return manager.resolve(handle, AgentGoal);
   }
 
   it('describes all channels via GET /api/v1/debug/channels', async () => {

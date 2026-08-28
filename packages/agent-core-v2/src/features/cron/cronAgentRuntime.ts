@@ -22,6 +22,7 @@ import { renderCronFireXml } from '#/features/cron/internal/format';
 import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/features/cron/internal/jitter';
 import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { BugIndicatingError } from '#/errors';
 import type { ContentPart } from '#/kosong/contract/message';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -80,7 +81,7 @@ function clocksOf(runtime: AgentRuntimeContext<CronModelState>): ClockSources {
 }
 
 function telemetryOf(runtime: AgentRuntimeContext<CronModelState>): ITelemetryService {
-  return runtime.get(ITelemetryService);
+  return runtime.get(IAgentHostService).of(runtime.agent).telemetry;
 }
 
 function debugLog(runtime: AgentRuntimeContext<CronModelState>, message: string): void {

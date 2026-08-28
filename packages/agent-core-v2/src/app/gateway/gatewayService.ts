@@ -1,17 +1,13 @@
 import { LifecycleScope } from '#/app/scopes';
 
-import {
-  type IAgentScopeHandle,
-  ScopeActivation,
-  registerScopedService,
-} from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 
 import { IRestGateway, IWSGateway } from './gateway';
 
@@ -23,7 +19,7 @@ export class RestGateway implements IRestGateway {
     @ILogService private readonly log: ILogService,
   ) { }
 
-  private agent(sessionId: string, agentId: string): IAgentScopeHandle {
+  private agent(sessionId: string, agentId: string): AgentContext {
     const session = this.liveSession(sessionId);
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `unknown session '${sessionId}'`, {
@@ -31,7 +27,7 @@ export class RestGateway implements IRestGateway {
       });
     }
     const agents = session.accessor.get(IAgentLifecycleService);
-    const agent = agents.handleOf(agentId);
+    const agent = agents.get(agentId);
     if (agent === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `unknown agent '${agentId}'`, {
         details: { agentId, sessionId },
@@ -50,7 +46,8 @@ export class RestGateway implements IRestGateway {
     input: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
     const agent = this.agent(sessionId, agentId);
-    const handle = await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt).enqueue({
+    const session = this.liveSession(sessionId)!;
+    const handle = await session.accessor.get(IAgentLifecycleService).resolve(agent, AgentPrompt).enqueue({
       message: {
         role: 'user',
         content: [{ type: 'text', text: input }],
@@ -67,7 +64,7 @@ export class RestGateway implements IRestGateway {
     content: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
     const agent = this.agent(sessionId, agentId);
-    const service = agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentPrompt);
+    const service = this.liveSession(sessionId)!.accessor.get(IAgentLifecycleService).resolve(agent, AgentPrompt);
     const queued = await service.enqueue({ message: {
       role: 'user',
       content: [{ type: 'text', text: content }],
@@ -79,7 +76,7 @@ export class RestGateway implements IRestGateway {
     return turn === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
-    this.agent(sessionId, agentId).accessor.get(LoopControlToken).cancel(undefined, reason);
+    getLoopControl(this.agent(sessionId, agentId)).cancel(undefined, reason);
     return Promise.resolve();
   }
   getStatus(sessionId: string): Promise<unknown> {

@@ -1,6 +1,6 @@
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
@@ -15,8 +15,8 @@ export class TowerMergeTool implements ITowerMergeTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerMergeToolInputSchema);
 
   constructor(
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly sessionContext: ISessionContext,
+    private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerMergeToolInput): ToolExecution {

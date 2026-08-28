@@ -12,17 +12,17 @@ import { IConfigService } from '#/app/config/config';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { IPluginService } from '#/app/plugin/plugin';
-import { LifecycleScope } from '#/app/scopes';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
-import { IAgentExternalHooksService } from '#/features/externalHooks/agent/agentExternalHooks';
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import '#/features/externalHooks/externalHooksFeature';
+import { ISessionAgentExternalHooksService } from '#/features/externalHooks/session/sessionAgentExternalHooksService';
 import { ISessionExternalHooksService } from '#/features/externalHooks/session/sessionExternalHooks';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 function collectionViewOf<T>(scope: Scope, token: CollectionToken<T>): CollectionView<T> {
   return (scope.instantiation as InstantiationService).fiberHost.collectionView(token);
@@ -69,11 +69,10 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
     const sessionUnits = collectionViewOf(host.app, ScopeUnits(LifecycleScope.Session));
     expect(sessionUnits.items.map((item) => item.name)).toEqual([
       `externalHooks:${String(ISessionExternalHooksService)}`,
+      `externalHooks:${String(ISessionAgentExternalHooksService)}`,
     ]);
-    const agentUnits = collectionViewOf(host.app, ScopeUnits(LifecycleScope.Agent));
-    expect(agentUnits.items.map((item) => item.name)).toEqual([
-      `externalHooks:${String(IAgentExternalHooksService)}`,
-    ]);
+    const agentUnits = collectionViewOf(host.app, ScopeUnits('agent'));
+    expect(agentUnits.items.map((item) => item.name)).toEqual([]);
 
     await manager.unprovideUnit('externalHooks');
     await host.app.instantiation.cascade.whenIdle();

@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IEventBus } from '#/app/event/eventBus';
 import { Event } from '#/_base/event';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
 import { registerLoopControl, type LoopDurableState } from '#/features/loop/internal/access';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -86,7 +85,7 @@ function harness(
   let durableState: LoopDurableState = { nextTurnId: 1, cancelledTurnIds: [], lastEnded };
   const loop = {
     status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
-  } as unknown as LoopControlToken;
+  } as unknown as LoopControl;
   const tasks = { list: () => seedTasks } as unknown as IAgentTaskService;
   const restoreHooks: Array<() => Promise<void>> = [];
   const dispatcher = {
@@ -108,18 +107,17 @@ function harness(
   };
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IEventBus, bus as unknown as IEventBus);
-  ix.stub(LoopControlToken, loop);
   const agentContext = stubAgentContext('main', 1);
   registerLoopControl(agentContext, loop, () => durableState);
   ix.stub(IAgentTaskService, tasks);
   ix.stub(IEventDispatcher, dispatcher);
   ix.stub(IAgentStateService, new AgentStateService());
-  ix.stub(IAgentScopeContext, {
+  const agentScope: IAgentScopeContext = {
     _serviceBrand: undefined,
     agentId: 'main',
     agentContext,
     scope: (subKey?: string) => subKey ?? '',
-  });
+  };
   const fullCompaction: FullCompactionRuntime = {
     begin: () => Promise.resolve({ id: 'compaction-1', status: compactionStatus }),
     cancel: () => Promise.resolve(),
@@ -134,7 +132,17 @@ function harness(
       throw new Error(`unexpected runtime resolution: ${String(definition)}`);
     },
   } as unknown as IAgentLifecycleService);
-  ix.set(IAgentActivityView, new SyncDescriptor(AgentActivityView));
+  ix.set(
+    IAgentActivityView,
+    new AgentActivityView(
+      ix.get(IEventBus),
+      ix.get(IAgentTaskService),
+      ix.get(IAgentLifecycleService),
+      ix.get(IAgentStateService),
+      ix.get(IEventDispatcher),
+      agentScope,
+    ),
+  );
   const view = ix.get(IAgentActivityView);
   const updates = (): AgentActivityState[] =>
     bus.published

@@ -1,7 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import {
   setConfiguredMaxImageEdgePx,
@@ -38,10 +36,3 @@ export class ImageConfigBridge extends Disposable implements IImageConfigBridge 
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IImageConfigBridge,
-  ImageConfigBridge,
-  ScopeActivation.OnScopeCreated,
-  'media',
-);

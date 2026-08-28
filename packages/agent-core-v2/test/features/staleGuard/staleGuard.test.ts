@@ -9,12 +9,11 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
@@ -28,8 +27,7 @@ import { StaleGuardService } from '#/features/staleGuard/staleGuardService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { EventDispatcherService } from '#/state/eventDispatcherService';
-import { ToolAccesses, type ExecutableToolResult } from '#/tool/toolContract';
+import { registerTestEventDispatcher } from '../../wire/stubs';import { ToolAccesses, type ExecutableToolResult } from '#/tool/toolContract';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
@@ -171,15 +169,23 @@ describe('StaleGuardService', () => {
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.set(IAgentBlobService, noopBlob);
     ix.set(IWireService, stubWireJournal(journal));
-    ix.set(IAgentStateService, new AgentStateService());
-    ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
-    ix.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
     ix.set(IAgentLifecycleService, lifecycleWithToolExecutor(stubToolExecutor(captured)));
     ix.set(IAgentRuntimeService, stubRuntime());
-    ix.set(IStaleGuardService, new SyncDescriptor(StaleGuardService));
+    const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+    const dispatcher = registerTestEventDispatcher(ix, agentScope);
+    ix.set(
+      IStaleGuardService,
+      new StaleGuardService(
+        ix.get(IAgentStateService),
+        dispatcher,
+        ix.get(IAgentRuntimeService),
+        ix.get(IAgentLifecycleService),
+        agentScope,
+      ),
+    );
     return {
       freshness: ix.get(IStaleGuardService),
-      dispatcher: ix.get(IEventDispatcher),
+      dispatcher,
       hooks: captured,
     };
   }

@@ -9,7 +9,8 @@ import type { ModelRequester, ModelRequestTiming } from '#/kosong/model/modelReq
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContextMessage } from '#/features/contextMemory/types';
 import { AgentGoal } from '#/features/goal/goalAgentRuntime';
-import { LoopControlToken, type Turn } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
+import type { LoopControl, Turn } from '#/features/loop/internal/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import {
   AssistantDelta,
@@ -38,13 +39,13 @@ type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
 describe('Agent loop', () => {
   let ctx: TestAgentContext;
-  let loop: LoopControlToken;
+  let loop: LoopControl;
   let profile: ProfileRuntime;
 
   beforeEach(() => {
     ctx = createTestAgent();
     void ctx.restoreRuntimes();
-    loop = ctx.get(LoopControlToken);
+    loop = getLoopControl(ctx.agentContext);
     profile = ctx.resolve(AgentProfile);
   });
 
@@ -726,7 +727,7 @@ describe('Agent loop', () => {
     const queuedExtraStep = (await loop.enqueue(nextTurnMessage('queued-extra')).assigned).step;
     await started;
 
-    (loop as LoopControlToken & { dispose(): void }).dispose();
+    (loop as LoopControl & { dispose(): void }).dispose();
 
     await expect(active.result).resolves.toMatchObject({ type: 'cancelled' });
     await expect(queued.result).resolves.toMatchObject({ type: 'cancelled', steps: 0 });
@@ -835,7 +836,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      const localLoop = local.get(LoopControlToken);
+      const localLoop = getLoopControl(local.agentContext);
       const localProfile = local.resolve(AgentProfile);
       local.configure({
         modelCapabilities: {
@@ -904,7 +905,7 @@ describe('turn telemetry', () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
-      const localLoop = local.get(LoopControlToken);
+      const localLoop = getLoopControl(local.agentContext);
       local.resolve(AgentProfile).update({ activeToolNames: [] });
       localLoop.hooks.onDidFinishStep.register('test-continue-after-first-step', async (hookCtx, next) => {
         if (hookCtx.step === 1) {
@@ -980,7 +981,7 @@ describe('turn telemetry', () => {
       const records: TelemetryRecord[] = [];
       const local = createTestAgent({ telemetry: recordingTelemetry(records) });
       try {
-        const localLoop = local.get(LoopControlToken);
+        const localLoop = getLoopControl(local.agentContext);
         let stepStarted!: () => void;
         const started = new Promise<void>((resolve) => {
           stepStarted = resolve;
@@ -1017,11 +1018,11 @@ describe('turn telemetry', () => {
 
 describe('interruption reminder', () => {
   let ctx: TestAgentContext;
-  let loop: LoopControlToken;
+  let loop: LoopControl;
 
   beforeEach(() => {
     ctx = createTestAgent();
-    loop = ctx.get(LoopControlToken);
+    loop = getLoopControl(ctx.agentContext);
   });
 
   afterEach(async () => {
@@ -1347,7 +1348,7 @@ describe('interruption reminder', () => {
     applyPermissionMode(local, 'yolo');
     try {
       const slowToolStarted = registerAbortableWorkTool(local);
-      const localLoop = local.get(LoopControlToken);
+      const localLoop = getLoopControl(local.agentContext);
       local.mockNextResponse(
         { type: 'text', text: 'working' },
         { type: 'function', id: 'call-work-1', name: 'Work', arguments: '{}' },
@@ -1422,7 +1423,7 @@ describe('aborted step tool execution', () => {
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 60 } });
       ctx.get(IEventBus).publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
 
-      const loopService = ctx.get(LoopControlToken);
+      const loopService = getLoopControl(ctx.agentContext);
       loopService.enqueue(new ContinuationStepRequest());
       const controller = new AbortController();
       const resultPromise = loopService.run({
@@ -1471,7 +1472,7 @@ describe('aborted step tool execution', () => {
 
     try {
       const slowToolStarted = registerAbortableWorkTool(ctx);
-      const loopService = ctx.get(LoopControlToken);
+      const loopService = getLoopControl(ctx.agentContext);
       loopService.enqueue(new ContinuationStepRequest());
       const controller = new AbortController();
       const result = loopService.run({

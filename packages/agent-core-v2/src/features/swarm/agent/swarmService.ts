@@ -7,7 +7,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
 import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -25,7 +25,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IAgentLifecycleService manager: IAgentLifecycleService,
     @IEventBus eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();

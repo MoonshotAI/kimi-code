@@ -12,11 +12,11 @@ import { AgentIdentityService } from '#/app/agentIdentity/agentIdentityService';
 import { IDENTITY_SECTION } from '#/app/agentIdentity/configSection';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { LifecycleScope } from '#/app/scopes';
 import { _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { StubConfigService } from '../../kosong/stubs';
+const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const hosts: Array<{ dispose(): void }> = [];
 

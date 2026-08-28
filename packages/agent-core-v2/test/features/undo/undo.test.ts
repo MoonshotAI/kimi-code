@@ -2,11 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentUndo } from '#/features/undo/undoAgentRuntime';
 import { ContextApplyCompaction } from '#/features/contextMemory/contextEvents';
 import type { TaskOrigin } from '#/features/contextMemory/types';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { MessageStepRequest } from '#/features/loop/internal/stepRequest';
 import { AgentLoop } from '#/features/loop/loop';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -100,7 +99,7 @@ describe('UndoRuntime', () => {
 
   it('returns session.busy for an active turn without cancelling it', async () => {
     setup();
-    const loop = ctx.get(LoopControlToken);
+    const loop = getLoopControl(ctx.agentContext);
     let started!: () => void;
     let release!: () => void;
     const didStart = new Promise<void>((resolve) => {
@@ -253,7 +252,7 @@ describe('UndoRuntime', () => {
     setup();
     const undo = ctx.resolve(AgentUndo);
     const manager = ctx.get(IAgentLifecycleService);
-    const agent = ctx.get(IAgentScopeContext).agentContext;
+    const agent = ctx.scopeContext.agentContext;
     expect(manager.inspect(agent).contributions.find((entry) => entry.id === 'todo')).toMatchObject({
       id: 'todo',
       status: 'materialized',

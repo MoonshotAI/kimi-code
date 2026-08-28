@@ -1,16 +1,16 @@
 import { ScopeActivation } from '#/_base/di/instantiation';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
+import { LifecycleScope } from '#/app/scopes';
 
-import { IStaleGuardService } from './staleGuard';
-import { StaleGuardService } from './staleGuardService';
+import { ISessionStaleGuardService, SessionStaleGuardService } from './sessionStaleGuardService';
 
 export class StaleGuardFeature extends Feature {
   static override readonly name = 'staleGuard';
 
   constructor() {
     super();
-    this.contributeAgentService(IStaleGuardService, StaleGuardService, {
+    this.contributeService(LifecycleScope.Session, ISessionStaleGuardService, SessionStaleGuardService, {
       activation: ScopeActivation.OnScopeCreated,
     });
   }

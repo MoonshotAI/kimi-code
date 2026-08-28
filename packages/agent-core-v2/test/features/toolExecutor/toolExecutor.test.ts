@@ -30,7 +30,9 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { Event } from '#/_base/event';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
@@ -38,7 +40,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { registerTestAgentWireServices } from '../../wire/stubs';
+import { registerTestAgentWireServices, stubAgentHostService } from '../../wire/stubs';
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
@@ -77,13 +79,19 @@ beforeEach(() => {
   ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerStateServices(reg);
-      registerTestAgentWireServices(reg, 'wire/tool-executor');
-      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+      const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
+      registerTestAgentWireServices(reg, 'wire/tool-executor', agentScope);
+      reg.defineInstance(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), agentScope));
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
-      reg.defineInstance(IAgentToolResultTruncationService, {
+      reg.defineInstance(ISessionToolResultTruncationService, {
         _serviceBrand: undefined,
-        truncateForModel: (input) => truncateForModel(input),
-      });
+        attach: () => {},
+        of: () => ({
+          _serviceBrand: undefined,
+          truncateForModel: (input: Parameters<IAgentToolResultTruncationService['truncateForModel']>[0]) =>
+            truncateForModel(input),
+        }),
+      } as ISessionToolResultTruncationService);
       reg.defineInstance(IEventBus, {
         publish: (event: ProtocolEvent) => {
           if (event.type.startsWith('tool.')) {

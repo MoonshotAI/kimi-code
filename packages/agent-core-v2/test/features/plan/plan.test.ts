@@ -7,7 +7,8 @@ import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { LoopControlToken } from '#/features/loop/internal/loop';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl } from '#/features/loop/internal/access';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import {
@@ -15,7 +16,6 @@ import {
   type PermissionRulesRuntime,
 } from '#/features/permissionRules/permissionRulesAgentRuntime';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -159,7 +159,7 @@ describe('Plan service', () => {
 
   function expectedPlanPath(id: string): string {
     const session = ctx.get(ISessionContext);
-    const agent = ctx.get(IAgentScopeContext);
+    const agent = ctx.scopeContext;
     return join(session.sessionDir, 'agents', agent.agentId, 'plans', `${id}.md`);
   }
 
@@ -270,13 +270,13 @@ describe('Plan service', () => {
     }
 
     function revisionPath(id: string, version: number): string {
-      const agent = ctx.get(IAgentScopeContext);
+      const agent = ctx.scopeContext;
       return `${agent.scope()}/plan/${id}/v${version}.md`;
     }
 
     async function readRevisionBlob(id: string, version: number): Promise<string | undefined> {
       const blobs = ctx.get(IBlobStore);
-      const agent = ctx.get(IAgentScopeContext);
+      const agent = ctx.scopeContext;
       const data = await blobs.get(agent.scope(), `plan/${id}/v${version}.md`);
       return data === undefined ? undefined : Buffer.from(data).toString('utf8');
     }
@@ -919,7 +919,7 @@ describe('Plan service', () => {
   }
 
   async function injectDynamic(): Promise<void> {
-    await runWillBeginStepHooks(ctx.get(LoopControlToken) as StubLoop, false);
+    await runWillBeginStepHooks(getLoopControl(ctx.agentContext) as StubLoop, false);
   }
 });
 

@@ -1,7 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
 import { defineState } from '#/state/state';
-import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
@@ -11,6 +10,7 @@ import { CompactionCompleted } from '#/features/fullCompaction/fullCompactionEve
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolCatalog } from '#/features/toolExecutor/internal/catalog';
 import type { AgentToolsPolicy } from '#/features/toolExecutor/internal/toolPolicy';
@@ -48,18 +48,19 @@ export class AgentToolsSelection extends Disposable {
     super();
     this.manager = runtime.get(IAgentLifecycleService);
     this.flags = runtime.get(IFlagService);
-    this.states = runtime.get(IAgentStateService);
+    const host = runtime.get(IAgentHostService).of(runtime.agent);
+    this.states = host.state;
     this.context = this.manager.resolve(runtime.agent, AgentContextMemory);
     this.states.contributeState(toolSelectPendingLoadedKey);
     this._register(pipeline.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)));
     this._register(pipeline.registerMissingToolDescriber((name) => this.describeMissingTool(name)));
     this._register(
-      runtime.get(IEventBus).subscribe(CompactionCompleted, () => {
+      host.eventBus.subscribe(CompactionCompleted, () => {
         this.pendingLoaded.clear();
       }),
     );
     this._register(
-      runtime.get(IEventBus).subscribe(ContextSpliced, (splice) => {
+      host.eventBus.subscribe(ContextSpliced, (splice) => {
         if (splice.deleteCount === 0 || splice.messages.length > 0) return;
         this.dropPendingLoadedNotLanded();
       }),

@@ -14,8 +14,10 @@ import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
 import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
-import { LoopControlToken } from '#/features/loop/internal/loop';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { LoopControl } from '#/features/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { stubToolExecutorEvents } from '../toolExecutor/stubs';
 import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -31,6 +33,7 @@ import {
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher as restoreDispatcher,
+  stubAgentScopeContext,
   testWireScope,
 } from '../../wire/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -46,11 +49,11 @@ function hookSlot(): { register: () => { dispose: () => void } } {
   return { register: () => noopDisposable() };
 }
 
-function createLoopStub(): LoopControlToken {
+function createLoopStub(): LoopControl {
   return {
     _serviceBrand: undefined,
     hooks: { onWillBeginStep: hookSlot(), onDidFinishStep: hookSlot() },
-  } as unknown as LoopControlToken;
+  } as unknown as LoopControl;
 }
 
 function createTelemetryStub(): ITelemetryService {
@@ -104,15 +107,22 @@ function buildHost(key: string): GoalHost {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  ix.stub(LoopControlToken, createLoopStub());
   ix.stub(
     IAgentLifecycleService,
     lifecycleWithToolExecutor(stubToolExecutorEvents().executor, lifecycleWithReminder(createReminderStub())),
   );
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IConfigService, createConfigStub());
+  ix.stub(IAgentHostService, {
+    _serviceBrand: undefined,
+    of: () => ({
+      eventBus: ix.get(IEventBus),
+      telemetry: ix.get(ITelemetryService),
+    }),
+  } as unknown as IAgentHostService);
   ix.set(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
-  registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+  const wireScope = stubAgentScopeContext(testWireScope(SCOPE, key));
+  registerTestAgentWire(ix, wireScope, {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
@@ -122,10 +132,10 @@ function buildHost(key: string): GoalHost {
     agentContext: stubAgentContext('main', 1),
     scope: () => 'wire/agents/main',
   };
-  ix.stub(IAgentScopeContext, mainScopeContext);
+  registerLoopControl(mainScopeContext.agentContext, createLoopStub(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
   (ix.get(IEventBus) as ISessionEventBus).activateAgent(mainScopeContext.agentContext);
-  const dispatcher = registerTestEventDispatcher(ix);
-  const runtimes = attachGoalRuntime(ix, dispatcher);
+  const dispatcher = registerTestEventDispatcher(ix, mainScopeContext);
+  const runtimes = attachGoalRuntime(ix, dispatcher, mainScopeContext.agentContext);
   return {
     dispatcher,
     runtimes,

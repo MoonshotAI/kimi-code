@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -32,7 +30,7 @@ export class AgentPluginCommandService implements IAgentPluginCommandService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    private readonly scopeContext: IAgentScopeContext,
   ) { }
 
   private prompt(): PromptRuntime {
@@ -99,10 +97,3 @@ function promptMetadataTextFromPluginCommand(
   );
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentPluginCommandService,
-  AgentPluginCommandService,
-  ScopeActivation.OnScopeCreated,
-  'pluginCommand',
-);

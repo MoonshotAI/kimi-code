@@ -1,17 +1,15 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { AgentProfile } from '#/features/profile/profileAgentRuntime';
-import { agentContextOf, tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentHostService } from '#/agent/host/agentHost';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2 } from '#/app/event/event2';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { type AgentRunHandle, ISessionSubagentService } from './subagent';
 
@@ -91,25 +89,34 @@ export interface MirrorAgentRunOptions {
   readonly deferStarted?: boolean;
 }
 
+export interface AgentRunMirrorServices {
+  readonly agentLifecycle: IAgentLifecycleService;
+  readonly subagents?: ISessionSubagentService;
+  readonly tokenCounting?: ISessionTokenCountingService;
+}
+
 export function emitAgentRunSpawned(
-  requester: IAgentScopeHandle,
+  hosts: IAgentHostService,
+  services: AgentRunMirrorServices,
+  requester: AgentContext,
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
-  const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
-  const childHandle = agentLifecycle.handleOf(targetAgentId);
+  const host = hosts.of(requester);
+  const agentLifecycle = services.agentLifecycle;
+  const child = agentLifecycle.get(targetAgentId);
   const childProfile =
-    childHandle === undefined
+    child === undefined
       ? undefined
-      : agentLifecycle.resolve(agentContextOf(childHandle), AgentProfile);
-  void requester.accessor.get(IEventDispatcher)?.dispatch(
+      : agentLifecycle.resolve(child, AgentProfile);
+  void host.dispatcher.dispatch(
     new SubagentSpawned({
       subagentId: targetAgentId,
       subagentName: meta.profileName,
       parentToolCallId: meta.parentToolCallId ?? '',
       parentToolCallUuid: meta.parentToolCallUuid,
-      parentAgentId: requester.id,
-      callerAgentId: requester.id,
+      parentAgentId: requester.agentId,
+      callerAgentId: requester.agentId,
       description: meta.description,
       swarmIndex: meta.swarmIndex,
       runInBackground: meta.runInBackground ?? false,
@@ -124,28 +131,30 @@ export function emitAgentRunSpawned(
     run_in_background: meta.runInBackground ?? false,
     fork: meta.fork ?? false,
     agent_id: targetAgentId,
-    parent_agent_id: requester.id,
+    parent_agent_id: requester.agentId,
     parent_tool_call_id: meta.parentToolCallId ?? '',
     model: meta.model,
   };
-  requester.accessor.get(ITelemetryService)?.track2('subagent_created', telemetryEvent);
+  host.telemetry.track2('subagent_created', telemetryEvent);
 }
 
 export async function mirrorAgentRun(
-  requester: IAgentScopeHandle,
+  hosts: IAgentHostService,
+  services: AgentRunMirrorServices,
+  requester: AgentContext,
   run: AgentRunHandle,
   options: MirrorAgentRunOptions,
 ): Promise<{ summary: string; usage?: TokenUsage }> {
-  const dispatcher = requester.accessor.get(IEventDispatcher);
-  const subagents = requester.accessor.get(ISessionSubagentService);
-  const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
+  const bundle = hosts.of(requester);
+  const dispatcher = bundle.dispatcher;
+  const subagents = services.subagents;
+  void run.completion.catch(() => {});
   if (options.deferStarted !== true) {
-    void dispatcher?.dispatch(new SubagentStarted({ subagentId: run.agentId }));
+    void dispatcher.dispatch(new SubagentStarted({ subagentId: run.agentId }));
   }
   if (options.prompt !== undefined) {
     const cancelAndRethrow = (reason: unknown): never => {
       options.cancel?.(reason);
-      void run.completion.catch(() => {});
       throw reason;
     };
     try {
@@ -163,8 +172,8 @@ export async function mirrorAgentRun(
   }
   try {
     const result = await run.completion;
-    const contextTokens = childContextTokens(agentLifecycle, run.agentId);
-    void dispatcher?.dispatch(
+    const contextTokens = childContextTokens(services, run.agentId);
+    void dispatcher.dispatch(
       new SubagentCompleted({
         subagentId: run.agentId,
         resultSummary: result.summary,
@@ -179,7 +188,7 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
-      void dispatcher?.dispatch(
+      void dispatcher.dispatch(
         new SubagentFailed({
           subagentId: run.agentId,
           error: errorMessage(error),
@@ -201,12 +210,10 @@ function errorMessage(error: unknown): string {
 }
 
 function childContextTokens(
-  agentLifecycle: IAgentLifecycleService,
+  services: AgentRunMirrorServices,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.handleOf(agentId);
+  const child = services.agentLifecycle.get(agentId);
   if (child === undefined) return undefined;
-  const context = tryAgentContextOf(child);
-  if (context === undefined) return undefined;
-  return child.accessor.get(ISessionTokenCountingService)?.statusSize(context);
+  return services.tokenCounting?.statusSize(child);
 }

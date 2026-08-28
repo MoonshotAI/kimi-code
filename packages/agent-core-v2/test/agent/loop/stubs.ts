@@ -1,6 +1,6 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { LoopControlToken, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/features/loop/internal/loop';
+import type { LoopControl, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/features/loop/internal/loop';
 import type { StepRequest } from '#/features/loop/internal/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/features/loop/internal/stepRequestQueue';
 import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
@@ -11,7 +11,7 @@ import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
 export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean; readonly manualTurnResult?: boolean }
-export type StubLoop = LoopControlToken & {
+export type StubLoop = LoopControl & {
   readonly queue: StepRequestQueue;
   readonly launches: readonly number[];
   readonly cancels: readonly { readonly turnId?: number; readonly reason?: unknown }[];
@@ -32,7 +32,7 @@ function makeStep(turn: Turn, request: StepRequest, queue: StepRequestQueue, at:
   queue.enqueue(request, at);
   return { id: request.id, turnId: turn.id, state: 'queued', signal: new AbortController().signal, result: Promise.resolve({ type: 'completed' }), cancel: () => request.abort() };
 }
-function registry(): { handlers: LoopErrorHandler[]; register: LoopControlToken['registerLoopErrorHandler'] } {
+function registry(): { handlers: LoopErrorHandler[]; register: LoopControl['registerLoopErrorHandler'] } {
   const handlers: LoopErrorHandler[] = [];
   const remove = (id: string) => { const i = handlers.findIndex((h) => h.id === id); if (i >= 0) handlers.splice(i, 1); };
   const register = (handler: LoopErrorHandler, options: LoopErrorHandlerRegistrationOptions = {}) => {
@@ -44,7 +44,7 @@ function registry(): { handlers: LoopErrorHandler[]; register: LoopControlToken[
 }
 function materialize(request: StepRequest, context: { append(...messages: ContextMessage[]): void }): void { if (request.state !== 'pending') return; request.onWillMaterialize(); const messages = request.resolveContextMessages(); if (messages.length) context.append(...messages); request.markMaterialized(); }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as LoopControlToken['hooks'];
+  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as LoopControl['hooks'];
   const queue = new StepRequestQueue(); const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   let releaseActiveResult: ((result: TurnResult) => void) | undefined;
@@ -85,7 +85,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   return stub;
 }
 export async function runWillBeginStepHooks(
-  loop: LoopControlToken,
+  loop: LoopControl,
   firstStepOfTurn = false,
 ): Promise<void> {
   await loop.hooks.onWillBeginStep.run({

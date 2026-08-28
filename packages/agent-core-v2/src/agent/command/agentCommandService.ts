@@ -5,8 +5,6 @@ import {
   type ServiceIdentifier,
 } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2, ErrorCodes } from '#/errors';
 
 import { IAgentCommandService, type AgentCommandInfo } from './agentCommand';
@@ -57,10 +55,3 @@ export class AgentCommandService extends Service implements IAgentCommandService
   }
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentCommandService,
-  AgentCommandService,
-  ScopeActivation.OnDemand,
-  'command',
-);
