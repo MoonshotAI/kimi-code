@@ -1124,6 +1124,34 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker.marker).toBe('skill');
   });
 
+  it('still folds cron-origin steers into the running turn by content match', () => {
+    const cronContent = [{ type: 'text', text: 'cron tick' }];
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'working' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: cronContent,
+          toolCalls: [],
+          origin: { kind: 'cron_job', jobId: 'job1' } as { kind: string },
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }], toolCalls: [] },
+      ],
+      { steeredContents: new Map([[JSON.stringify(cronContent), 1]]) },
+    );
+
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn']);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps).toHaveLength(2);
+    expect(turn.steps[1]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'cron tick',
+    });
+  });
+
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

@@ -217,11 +217,17 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
+      const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
+      if (markerKey !== undefined) {
+        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
+        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
+        if (opening !== undefined) {
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        }
+        continue;
+      }
       const contentKey = JSON.stringify(message.content ?? []);
-      const steeredRemaining =
-        originKind === undefined || originKind === 'user'
-          ? (steeredContents.get(contentKey) ?? 0)
-          : 0;
+      const steeredRemaining = steeredContents.get(contentKey) ?? 0;
       if (steeredRemaining > 0) {
         steeredContents.set(contentKey, steeredRemaining - 1);
         const bundled = bundledSkillActivations(message);
@@ -240,15 +246,6 @@ export function groupMessagesIntoSnapshot(
           attachmentIds: opening.attachmentIds,
           steered: true,
         });
-        continue;
-      }
-      const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
-      if (markerKey !== undefined) {
-        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
-        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
-        if (opening !== undefined) {
-          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
-        }
         continue;
       }
       if (isTaskOrigin) {
