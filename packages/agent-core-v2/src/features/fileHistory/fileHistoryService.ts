@@ -179,25 +179,21 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       return;
     }
 
-    const entries: Record<string, FileBackupEntry> = {};
+    const entries: Record<string, FileBackupEntry> = Object.create(null) as Record<
+      string,
+      FileBackupEntry
+    >;
     for (const pathKey of state.tracked) {
       const latest = latestEntry(state.checkpoints, pathKey);
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
       const current = await this.readCurrent(pathKey);
-      if (current === 'unreadable') {
-        if (latest !== undefined) entries[pathKey] = latest;
-        continue;
-      }
+      if (current === 'unreadable') continue;
       if (current === 'missing') {
-        entries[pathKey] =
-          latest?.key === null ? latest : { key: null, version: nextVersion };
+        if (latest?.key !== null) entries[pathKey] = { key: null, version: nextVersion };
         continue;
       }
       const contentHash = sha256(current);
-      if (latest !== undefined && latest.contentHash === contentHash) {
-        entries[pathKey] = latest;
-        continue;
-      }
+      if (latest !== undefined && latest.contentHash === contentHash) continue;
       entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
     }
 
@@ -292,8 +288,8 @@ function entryAt(
   path: string,
 ): FileBackupEntry | undefined {
   for (let i = index; i >= 0; i -= 1) {
-    const entry = checkpoints[i]!.entries[path];
-    if (entry !== undefined) return entry;
+    const record = checkpoints[i]!.entries;
+    if (Object.hasOwn(record, path)) return record[path];
   }
   return undefined;
 }
@@ -311,7 +307,7 @@ function maxVersion(
 ): number {
   let max = 0;
   for (const checkpoint of checkpoints) {
-    const entry = checkpoint.entries[path];
+    const entry = Object.hasOwn(checkpoint.entries, path) ? checkpoint.entries[path] : undefined;
     if (entry !== undefined && entry.version > max) max = entry.version;
   }
   return max;
@@ -430,14 +426,23 @@ const LCS_CELL_BUDGET = 4_000_000;
 function lcsLength(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
   if (a.length * b.length > LCS_CELL_BUDGET) {
-    const remaining = new Map<string, number>();
-    for (const line of b) remaining.set(line, (remaining.get(line) ?? 0) + 1);
     let common = 0;
+    const positions = new Map<string, number[]>();
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      const line = b[j]!;
+      const list = positions.get(line);
+      if (list === undefined) positions.set(line, [j]);
+      else list.push(j);
+    }
+    let cursor = 0;
     for (const line of a) {
-      const left = remaining.get(line) ?? 0;
-      if (left > 0) {
+      const list = positions.get(line);
+      if (list === undefined) continue;
+      while (list.length > 0 && list[list.length - 1]! < cursor) list.pop();
+      const match = list.pop();
+      if (match !== undefined) {
         common += 1;
-        remaining.set(line, left - 1);
+        cursor = match + 1;
       }
     }
     return common;

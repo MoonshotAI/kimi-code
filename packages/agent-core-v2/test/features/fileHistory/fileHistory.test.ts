@@ -324,6 +324,15 @@ describe('AgentFileHistoryService', () => {
     expect(diff.deletions).toBe(901);
   });
 
+  it('keeps over-budget diff approximations order-aware on reordered files', () => {
+    const lines = Array.from({ length: 3000 }, (_, i) => `line-${String(i)}`);
+    const before = [...lines, 'tail-old'].join('\n');
+    const after = ['head-new', ...lines.toReversed()].join('\n');
+    const diff = countLineDiff(before, after);
+    expect(diff.additions).toBeGreaterThan(2000);
+    expect(diff.deletions).toBeGreaterThan(2000);
+  });
+
   it('stays inactive on subagents', async () => {
     const service = createService('sub-1');
     setFile('/ws/a.txt', 'content\n');

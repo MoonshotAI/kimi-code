@@ -67,6 +67,17 @@ export function checkpointPhaseOf(record: {
   return record.phase ?? 'start';
 }
 
+function cloneEntries(
+  entries: Readonly<Record<string, FileBackupEntry>>,
+): Record<string, FileBackupEntry> {
+  const clone: Record<string, FileBackupEntry> = Object.create(null) as Record<
+    string,
+    FileBackupEntry
+  >;
+  for (const [path, entry] of Object.entries(entries)) clone[path] = entry;
+  return clone;
+}
+
 export const fileHistoryKey = defineState(
   'fileHistory',
   (): FileHistoryState => ({ checkpoints: [], tracked: [] }),
@@ -74,14 +85,17 @@ export const fileHistoryKey = defineState(
   .replayable({ schema: z.custom<FileHistoryState>() })
   .on(FileHistoryCheckpointed, (s, e) => {
     const phase = checkpointPhaseOf(e);
+    const base = s.checkpoints.at(-1)?.entries;
+    const merged = cloneEntries(base ?? {});
+    for (const [path, entry] of Object.entries(e.entries)) merged[path] = { ...entry };
     const existing = s.checkpoints.find(
       (c) => c.turnId === e.turnId && checkpointPhaseOf(c) === phase,
     );
     if (existing !== undefined) {
-      existing.entries = { ...e.entries };
+      existing.entries = merged;
       return;
     }
-    s.checkpoints.push({ turnId: e.turnId, phase, entries: { ...e.entries } });
+    s.checkpoints.push({ turnId: e.turnId, phase, entries: merged });
     if (s.checkpoints.length > FILE_HISTORY_CHECKPOINT_CAP) {
       s.checkpoints.splice(0, s.checkpoints.length - FILE_HISTORY_CHECKPOINT_CAP);
     }
@@ -95,7 +109,7 @@ export const fileHistoryKey = defineState(
       s.checkpoints.push({ turnId: e.turnId, phase: 'start', entries: {} });
       checkpoint = s.checkpoints.at(-1);
     }
-    if (checkpoint !== undefined && checkpoint.entries[e.path] === undefined) {
+    if (checkpoint !== undefined && !Object.hasOwn(checkpoint.entries, e.path)) {
       checkpoint.entries[e.path] = { ...e.entry };
     }
   });
