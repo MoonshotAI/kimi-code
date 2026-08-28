@@ -11,6 +11,7 @@ import type {
 } from './fileHistory';
 
 export const FILE_HISTORY_CHECKPOINT_CAP = 400;
+export const FILE_HISTORY_RECORD_PREFIX = 'file_history.';
 
 const backupEntrySchema = z.object({
   key: z.string().nullable(),
