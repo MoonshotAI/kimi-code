@@ -114,6 +114,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     const endIndex = end === undefined ? -1 : state.checkpoints.indexOf(end);
 
     const changes: FileHistoryChange[] = [];
+    const lcsBudget = { remaining: LCS_AGGREGATE_CELL_BUDGET };
     for (const path of [...paths].toSorted()) {
       const before = entryAt(state.checkpoints, index, path);
       const after = end !== undefined ? entryAt(state.checkpoints, endIndex, path) : undefined;
@@ -156,7 +157,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         continue;
       }
       const beforeBytes = await this.entryBytes(before);
-      const change = diffChange(path, beforeBytes, afterBytes);
+      const change = diffChange(path, beforeBytes, afterBytes, lcsBudget);
       if (change !== undefined) changes.push(change);
     }
     return changes;
@@ -455,6 +456,7 @@ function diffChange(
   path: string,
   beforeBytes: Uint8Array | undefined,
   afterBytes: Uint8Array | undefined,
+  budget?: LcsCellBudget,
 ): FileHistoryChange | undefined {
   if (beforeBytes === undefined && afterBytes === undefined) return undefined;
   const before = beforeBytes === undefined ? undefined : decodeText(beforeBytes);
@@ -479,7 +481,7 @@ function diffChange(
       : { path, status: 'modified', additions: 0, deletions: 0, binary };
   }
   if (before === after) return undefined;
-  const counted = countLineDiff(before ?? '', after ?? '');
+  const counted = countLineDiff(before ?? '', after ?? '', budget);
   if (counted === undefined) {
     return { path, status: 'modified', additions: 0, deletions: 0, oversize: true };
   }
@@ -506,6 +508,7 @@ function countLines(content: string): number {
 export function countLineDiff(
   before: string,
   after: string,
+  budget?: LcsCellBudget,
 ): { additions: number; deletions: number } | undefined {
   const beforeLines = splitLines(before);
   const afterLines = splitLines(after);
@@ -531,7 +534,12 @@ export function countLineDiff(
 
   const oldSlice = beforeLines.slice(start, beforeEnd);
   const newSlice = afterLines.slice(start, afterEnd);
-  if (oldSlice.length * newSlice.length > LCS_CELL_BUDGET) return undefined;
+  const cells = oldSlice.length * newSlice.length;
+  if (cells > LCS_CELL_BUDGET) return undefined;
+  if (budget !== undefined) {
+    if (cells > budget.remaining) return undefined;
+    budget.remaining -= cells;
+  }
   const common = lcsLength(oldSlice, newSlice);
   return {
     additions: newSlice.length - common,
@@ -539,7 +547,12 @@ export function countLineDiff(
   };
 }
 
+interface LcsCellBudget {
+  remaining: number;
+}
+
 const LCS_CELL_BUDGET = 4_000_000;
+const LCS_AGGREGATE_CELL_BUDGET = 16_000_000;
 
 
 
