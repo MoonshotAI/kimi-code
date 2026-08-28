@@ -122,6 +122,10 @@ export interface AgentFacade {
   getFileContentAt(input: {
     turnId: number;
     path: string;
+    /** Which of the turn's two checkpoints to read (default 'start'): 'start'
+        is the file before the turn's edits, 'end' the file as the turn left
+        it. */
+    phase?: 'start' | 'end';
   }): Promise<FileHistoryContent | undefined>;
 }
 
@@ -205,10 +209,14 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
         readonly FileHistoryChange[]
       >,
     getFileContentAt: async (input) => {
-      const result = (await call(scope, 'agentFileHistoryService', 'contentAt', [
-        input.turnId,
-        input.path,
-      ])) as FileHistoryContent | null | undefined;
+      const args: unknown[] =
+        input.phase === undefined
+          ? [input.turnId, input.path]
+          : [input.turnId, input.path, input.phase];
+      const result = (await call(scope, 'agentFileHistoryService', 'contentAt', args)) as
+        | FileHistoryContent
+        | null
+        | undefined;
       return result ?? undefined;
     },
   };

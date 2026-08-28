@@ -107,7 +107,7 @@ export const agentFileHistoryContract = {
   enabled: { input: z.tuple([]), output: z.boolean() },
   changes: { input: z.tuple([z.number()]), output: z.array(fileHistoryChangeSchema) },
   contentAt: {
-    input: z.tuple([z.number(), z.string()]),
+    input: z.tuple([z.number(), z.string(), z.enum(['start', 'end']).optional()]),
     output: maybe(fileHistoryContentSchema),
   },
 } satisfies ServiceContract;

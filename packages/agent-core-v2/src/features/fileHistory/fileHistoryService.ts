@@ -10,6 +10,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { IBlobStore } from '#/persistence/interface/blobStore';
@@ -22,6 +23,7 @@ import {
   IAgentFileHistoryService,
   type FileBackupEntry,
   type FileHistoryChange,
+  type FileHistoryCheckpointPhase,
   type FileHistoryCheckpointRecord,
   type FileHistoryContent,
   type FileHistoryState,
@@ -30,6 +32,7 @@ import {
   FILE_HISTORY_CHECKPOINT_CAP,
   FileHistoryCheckpointed,
   FileHistoryTracked,
+  checkpointPhaseOf,
   fileHistoryKey,
 } from './fileHistoryOps';
 import { FILE_HISTORY_FLAG_ID } from './flag';
@@ -63,7 +66,13 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     this._register(
       eventBus.subscribe(TurnStarted, (event) => {
         if (event.agentId !== this.agentCtx.agentId || !this.enabled()) return;
-        void this.enqueue(() => this.checkpoint(event.turnId));
+        void this.enqueue(() => this.checkpoint(event.turnId, 'start'));
+      }),
+    );
+    this._register(
+      eventBus.subscribe(TurnEnded, (event) => {
+        if (event.agentId !== this.agentCtx.agentId || !this.enabled()) return;
+        void this.enqueue(() => this.checkpoint(event.turnId, 'end'));
       }),
     );
   }
@@ -84,7 +93,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     if (!this.enabled()) return [];
     await this.settled();
     const state = this.history();
-    const index = state.checkpoints.findIndex((c) => c.turnId === turnId);
+    const index = state.checkpoints.findIndex(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
+    );
     if (index < 0) return [];
     const next = state.checkpoints[index + 1];
 
@@ -111,11 +122,17 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return changes;
   }
 
-  async contentAt(turnId: number, path: string): Promise<FileHistoryContent | undefined> {
+  async contentAt(
+    turnId: number,
+    path: string,
+    phase: FileHistoryCheckpointPhase = 'start',
+  ): Promise<FileHistoryContent | undefined> {
     if (!this.enabled()) return undefined;
     await this.settled();
     const state = this.history();
-    const index = state.checkpoints.findIndex((c) => c.turnId === turnId);
+    const index = state.checkpoints.findIndex(
+      (c) => c.turnId === turnId && checkpointPhaseOf(c) === phase,
+    );
     if (index < 0) return undefined;
     const entry = entryAt(state.checkpoints, index, this.pathKey(path));
     if (entry === undefined) return undefined;
@@ -156,9 +173,11 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
   }
 
-  private async checkpoint(turnId: number): Promise<void> {
+  private async checkpoint(turnId: number, phase: FileHistoryCheckpointPhase): Promise<void> {
     const state = this.history();
-    if (state.checkpoints.some((c) => c.turnId === turnId)) return;
+    if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === phase)) {
+      return;
+    }
 
     const entries: Record<string, FileBackupEntry> = {};
     for (const pathKey of state.tracked) {
@@ -184,7 +203,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
     const evictable = evictableCheckpoints(state.checkpoints);
     await this.dispatcher.dispatch(
-      new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, entries }),
+      new FileHistoryCheckpointed({ agentId: this.agentCtx.agentId, turnId, phase, entries }),
     );
     await this.evictBlobs(evictable, this.history().checkpoints);
   }

@@ -224,6 +224,7 @@ interface FileHistoryCheckpointPayload {
   _name: 'file_history.checkpoint';
   agentId: string;
   turnId: number;
+  phase?: 'start' | 'end';
   entries: Record<string, object>;
 }
 

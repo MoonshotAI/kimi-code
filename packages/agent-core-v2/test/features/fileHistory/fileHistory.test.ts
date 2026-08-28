@@ -10,6 +10,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -151,6 +152,13 @@ describe('AgentFileHistoryService', () => {
     );
   }
 
+  function endTurn(turnId: number): void {
+    eventBus.publish(
+      new TurnEnded({ agentId: 'main', turnId, reason: 'completed' }),
+      scopeCtx.agentContext,
+    );
+  }
+
   async function blobText(key: string): Promise<string | undefined> {
     const bytes = await blobs.get(scopeCtx.scope(), key);
     return bytes === undefined ? undefined : decoder.decode(bytes);
@@ -264,6 +272,29 @@ describe('AgentFileHistoryService', () => {
     const state = service.history();
     expect(state.checkpoints).toEqual([]);
     expect(state.tracked).toEqual([]);
+  });
+
+  it('excludes user edits between turns via the end-of-turn checkpoint', async () => {
+    const service = createService();
+    setFile('/ws/a.txt', 'alpha\n');
+
+    startTurn(1);
+    await fireEdit(service, '/ws/a.txt', 1);
+    setFile('/ws/a.txt', 'alpha\nagent\n');
+    endTurn(1);
+    await service.settled();
+
+    setFile('/ws/a.txt', 'alpha\nagent\nuser\n');
+    startTurn(2);
+    endTurn(2);
+    await service.settled();
+
+    expect(await service.changes(1)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 0 },
+    ]);
+    expect(await service.changes(2)).toEqual([]);
+    expect((await service.contentAt(1, 'a.txt', 'end'))?.content).toBe('alpha\nagent\n');
+    expect((await service.contentAt(2, 'a.txt'))?.content).toBe('alpha\nagent\nuser\n');
   });
 
   it('guards reads once the flag is turned off after data was recorded', async () => {

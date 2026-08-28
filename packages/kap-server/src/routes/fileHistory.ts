@@ -89,7 +89,7 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
       }
       const agent = await ensureMainAgent(session);
       const history = agent.accessor.get(IAgentFileHistoryService);
-      const content = await history.contentAt(req.query.turn_id, req.query.path);
+      const content = await history.contentAt(req.query.turn_id, req.query.path, req.query.phase);
       reply.send(okEnvelope({ content: content ?? null }, req.id));
     },
   );

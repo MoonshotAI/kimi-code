@@ -1499,6 +1499,7 @@ export interface AgentStateSnapshot {
   'fileHistory': /* FileHistoryState — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {
     readonly checkpoints: readonly /* FileHistoryCheckpointRecord — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {
       readonly turnId: number;
+      readonly phase?: 'start' | 'end';
       readonly entries: Readonly<Record<string, /* FileBackupEntry — packages/agent-core-v2/src/features/fileHistory/fileHistory.ts */ {
         readonly key: string | null;
         readonly version: number;

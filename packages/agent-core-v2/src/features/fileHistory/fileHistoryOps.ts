@@ -4,9 +4,13 @@ import { z } from 'zod';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
-import type { FileBackupEntry, FileHistoryState } from './fileHistory';
+import type {
+  FileBackupEntry,
+  FileHistoryCheckpointPhase,
+  FileHistoryState,
+} from './fileHistory';
 
-export const FILE_HISTORY_CHECKPOINT_CAP = 200;
+export const FILE_HISTORY_CHECKPOINT_CAP = 400;
 
 const backupEntrySchema = z.object({
   key: z.string().nullable(),
@@ -38,6 +42,7 @@ export interface FileHistoryTracked {
 const fileHistoryCheckpointedSchema = z.object({
   agentId: z.string(),
   turnId: z.number(),
+  phase: z.enum(['start', 'end']).optional(),
   entries: z.record(z.string(), backupEntrySchema),
 });
 
@@ -52,7 +57,14 @@ export class FileHistoryCheckpointed extends AgentEvent2<
 export interface FileHistoryCheckpointed {
   readonly agentId: string;
   readonly turnId: number;
+  readonly phase?: FileHistoryCheckpointPhase;
   readonly entries: Readonly<Record<string, FileBackupEntry>>;
+}
+
+export function checkpointPhaseOf(record: {
+  readonly phase?: FileHistoryCheckpointPhase;
+}): FileHistoryCheckpointPhase {
+  return record.phase ?? 'start';
 }
 
 export const fileHistoryKey = defineState(
@@ -61,21 +73,26 @@ export const fileHistoryKey = defineState(
 )
   .replayable({ schema: z.custom<FileHistoryState>() })
   .on(FileHistoryCheckpointed, (s, e) => {
-    const existing = s.checkpoints.find((c) => c.turnId === e.turnId);
+    const phase = checkpointPhaseOf(e);
+    const existing = s.checkpoints.find(
+      (c) => c.turnId === e.turnId && checkpointPhaseOf(c) === phase,
+    );
     if (existing !== undefined) {
       existing.entries = { ...e.entries };
       return;
     }
-    s.checkpoints.push({ turnId: e.turnId, entries: { ...e.entries } });
+    s.checkpoints.push({ turnId: e.turnId, phase, entries: { ...e.entries } });
     if (s.checkpoints.length > FILE_HISTORY_CHECKPOINT_CAP) {
       s.checkpoints.splice(0, s.checkpoints.length - FILE_HISTORY_CHECKPOINT_CAP);
     }
   })
   .on(FileHistoryTracked, (s, e) => {
     if (!s.tracked.includes(e.path)) s.tracked.push(e.path);
-    let checkpoint = s.checkpoints.find((c) => c.turnId === e.turnId);
+    let checkpoint = s.checkpoints.find(
+      (c) => c.turnId === e.turnId && checkpointPhaseOf(c) === 'start',
+    );
     if (checkpoint === undefined) {
-      s.checkpoints.push({ turnId: e.turnId, entries: {} });
+      s.checkpoints.push({ turnId: e.turnId, phase: 'start', entries: {} });
       checkpoint = s.checkpoints.at(-1);
     }
     if (checkpoint !== undefined && checkpoint.entries[e.path] === undefined) {

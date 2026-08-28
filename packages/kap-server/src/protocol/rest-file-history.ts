@@ -8,6 +8,7 @@ export type FileHistoryChangesQuery = z.infer<typeof fileHistoryChangesQuerySche
 export const fileHistoryContentQuerySchema = z.object({
   turn_id: z.coerce.number().int().nonnegative(),
   path: z.string().min(1),
+  phase: z.enum(['start', 'end']).optional(),
 });
 export type FileHistoryContentQuery = z.infer<typeof fileHistoryContentQuerySchema>;
 

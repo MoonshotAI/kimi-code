@@ -7,8 +7,11 @@ export interface FileBackupEntry {
   readonly size?: number;
 }
 
+export type FileHistoryCheckpointPhase = 'start' | 'end';
+
 export interface FileHistoryCheckpointRecord {
   readonly turnId: number;
+  readonly phase?: FileHistoryCheckpointPhase;
   readonly entries: Readonly<Record<string, FileBackupEntry>>;
 }
 
@@ -40,7 +43,11 @@ export interface IAgentFileHistoryService {
   history(): FileHistoryState;
   settled(): Promise<void>;
   changes(turnId: number): Promise<FileHistoryChange[]>;
-  contentAt(turnId: number, path: string): Promise<FileHistoryContent | undefined>;
+  contentAt(
+    turnId: number,
+    path: string,
+    phase?: FileHistoryCheckpointPhase,
+  ): Promise<FileHistoryContent | undefined>;
 }
 
 export const IAgentFileHistoryService: ServiceIdentifier<IAgentFileHistoryService> =

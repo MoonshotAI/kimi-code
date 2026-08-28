@@ -1427,7 +1427,7 @@ describe('AgentTranscriptProjector', () => {
   });
 
   it('projects file_history events as markers with their manifest payloads', () => {
-    const projector = new AgentTranscriptProjector('main');
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(
