@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'pathe';
 import { Service } from '#/_base/di/service';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -11,7 +12,6 @@ import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -49,7 +49,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IFlagService private readonly flags: IFlagService,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
   ) {
@@ -81,6 +81,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   async changes(turnId: number): Promise<FileHistoryChange[]> {
+    if (!this.enabled()) return [];
     await this.settled();
     const state = this.history();
     const index = state.checkpoints.findIndex((c) => c.turnId === turnId);
@@ -111,6 +112,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   async contentAt(turnId: number, path: string): Promise<FileHistoryContent | undefined> {
+    if (!this.enabled()) return undefined;
     await this.settled();
     const state = this.history();
     const index = state.checkpoints.findIndex((c) => c.turnId === turnId);
@@ -229,18 +231,25 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private async readCurrent(pathKey: string): Promise<Uint8Array | 'missing' | 'unreadable'> {
     const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
-    let info;
+    const lease = this.runtime.acquire(['fs']);
     try {
-      info = await this.fs.stat(absolute);
-    } catch (error) {
-      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
-      return code === 'ENOENT' ? 'missing' : 'unreadable';
-    }
-    if (!info.isFile || info.size > FILE_HISTORY_MAX_FILE_BYTES) return 'unreadable';
-    try {
-      return await this.fs.readBytes(absolute);
-    } catch {
-      return 'unreadable';
+      const fs = lease.runtime.fs;
+      if (fs === undefined) return 'unreadable';
+      let info;
+      try {
+        info = await fs.stat(absolute);
+      } catch (error) {
+        const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
+        return code === 'ENOENT' ? 'missing' : 'unreadable';
+      }
+      if (!info.isFile || info.size > FILE_HISTORY_MAX_FILE_BYTES) return 'unreadable';
+      try {
+        return await fs.readBytes(absolute);
+      } catch {
+        return 'unreadable';
+      }
+    } finally {
+      lease.dispose();
     }
   }
 
@@ -402,8 +411,17 @@ const LCS_CELL_BUDGET = 4_000_000;
 function lcsLength(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
   if (a.length * b.length > LCS_CELL_BUDGET) {
-    const bSet = new Set(b);
-    return a.filter((line) => bSet.has(line)).length;
+    const remaining = new Map<string, number>();
+    for (const line of b) remaining.set(line, (remaining.get(line) ?? 0) + 1);
+    let common = 0;
+    for (const line of a) {
+      const left = remaining.get(line) ?? 0;
+      if (left > 0) {
+        common += 1;
+        remaining.set(line, left - 1);
+      }
+    }
+    return common;
   }
   let previous = new Uint32Array(b.length + 1);
   let current = new Uint32Array(b.length + 1);

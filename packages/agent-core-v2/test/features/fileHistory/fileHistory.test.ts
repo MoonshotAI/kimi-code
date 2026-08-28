@@ -15,9 +15,10 @@ import { IEventBus, type ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { IFlagService } from '#/app/flag/flag';
 import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
-import { AgentFileHistoryService } from '#/features/fileHistory/fileHistoryService';
+import { AgentFileHistoryService, countLineDiff } from '#/features/fileHistory/fileHistoryService';
 import { FILE_HISTORY_FLAG_ENV } from '#/features/fileHistory/flag';
 import type { ToolCall } from '#/kosong/contract/message';
+import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -79,6 +80,12 @@ describe('AgentFileHistoryService', () => {
     disposables.dispose();
   });
 
+  function stubRuntime(): IAgentRuntimeService {
+    return {
+      acquire: () => ({ runtime: { fs: hostFs() }, dispose: () => {} }),
+    } as unknown as IAgentRuntimeService;
+  }
+
   function hostFs(): IHostFileSystem {
     return createFakeHostFs({
       stat: async (path: string) => {
@@ -112,7 +119,7 @@ describe('AgentFileHistoryService', () => {
         eventBus,
         ix.get(IEventDispatcher),
         flags,
-        hostFs(),
+        stubRuntime(),
         blobs,
         workspace,
       ),
@@ -257,6 +264,33 @@ describe('AgentFileHistoryService', () => {
     const state = service.history();
     expect(state.checkpoints).toEqual([]);
     expect(state.tracked).toEqual([]);
+  });
+
+  it('guards reads once the flag is turned off after data was recorded', async () => {
+    const service = createService();
+    setFile('/ws/a.txt', 'content\n');
+
+    startTurn(1);
+    await fireEdit(service, '/ws/a.txt', 1);
+    setFile('/ws/a.txt', 'changed\n');
+    startTurn(2);
+    await service.settled();
+    expect(await service.changes(1)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect((await service.contentAt(1, 'a.txt'))?.content).toBe('content\n');
+
+    flagEnabled = false;
+    expect(await service.changes(1)).toEqual([]);
+    expect(await service.contentAt(1, 'a.txt')).toBeUndefined();
+  });
+
+  it('keeps over-budget diff approximations non-negative on repetitive files', () => {
+    const before = [...Array.from({ length: 3000 }, () => 'dup'), 'end-old'].join('\n');
+    const after = ['start-new', ...Array.from({ length: 2100 }, () => 'dup')].join('\n');
+    const diff = countLineDiff(before, after);
+    expect(diff.additions).toBe(1);
+    expect(diff.deletions).toBe(901);
   });
 
   it('stays inactive on subagents', async () => {
