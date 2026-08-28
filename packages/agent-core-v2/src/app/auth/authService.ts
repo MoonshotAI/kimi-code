@@ -331,7 +331,16 @@ export class OAuthService extends Disposable implements IOAuthService {
 
       await this.config.reload();
       const fresh = this.readUserConfigShape();
-      if (!isOAuthCatalogProvider(fresh.providers[KIMI_CODE_PROVIDER_NAME])) {
+      const freshProvider = fresh.providers[KIMI_CODE_PROVIDER_NAME];
+      if (!isOAuthCatalogProvider(freshProvider)) {
+        return { changed, unchanged, failed };
+      }
+      if (
+        freshProvider.baseUrl !== provider.baseUrl ||
+        freshProvider.oauth.storage !== provider.oauth.storage ||
+        freshProvider.oauth.key !== provider.oauth.key ||
+        freshProvider.oauth.oauthHost !== provider.oauth.oauthHost
+      ) {
         return { changed, unchanged, failed };
       }
 
@@ -660,7 +669,7 @@ export class AuthSummaryService implements IAuthSummaryService {
     }
 
     const model = effectiveModelConfig(configured as ModelRecord);
-    const providerId = model.providerId ?? model.provider;
+    const providerId = model.providerId ?? model.provider ?? this.providerService.getDefaultProvider();
     const provider = providerId === undefined ? undefined : this.providerService.get(providerId);
     const providerName = (providerId ?? providerNameFromFlatModel(model)) as string;
 

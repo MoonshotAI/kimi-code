@@ -981,6 +981,37 @@ describe('OAuthService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('aborts the refresh write when the managed provider was edited mid-fetch', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    const fetchMock = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = createService();
+
+    const pending = svc.refreshOAuthProviderModels();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    providers = {
+      ...providers,
+      [OAUTH_PROVIDER]: { ...providers[OAUTH_PROVIDER]!, baseUrl: 'https://api.changed.example.com' },
+    };
+    resolveFetch({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 'kimi-k2',
+            context_length: 131072,
+            supports_reasoning: true,
+            display_name: 'Kimi K2',
+          },
+        ],
+      }),
+    });
+
+    await expect(pending).resolves.toEqual({ changed: [], unchanged: [], failed: [] });
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(providers[OAUTH_PROVIDER]?.baseUrl).toBe('https://api.changed.example.com');
+  });
+
   it('rewrites a lost default model on refresh even when the catalog is unchanged', async () => {
     stubManagedModelsFetch();
     const svc = createService();
@@ -1482,12 +1513,14 @@ describe('AuthSummaryService', () => {
   let providers: Record<string, ProviderConfig>;
   let models: Record<string, ModelRecord>;
   let defaultModel: string | undefined;
+  let defaultProvider: string | undefined;
   let oauthStatus: ReturnType<typeof vi.fn>;
   let getCachedAccessToken: ReturnType<typeof vi.fn>;
   let reload: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    defaultProvider = undefined;
     providers = {
       [OAUTH_PROVIDER]: {
         type: 'kimi',
@@ -1518,7 +1551,7 @@ describe('AuthSummaryService', () => {
         reg.definePartialInstance(IProviderService, {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
-          getDefaultProvider: (() => undefined) as IProviderService['getDefaultProvider'],
+          getDefaultProvider: (() => defaultProvider) as IProviderService['getDefaultProvider'],
         });
         reg.definePartialInstance(IModelService, {
           get: ((id: string) => models[id]) as IModelService['get'],
@@ -1632,6 +1665,17 @@ describe('AuthSummaryService', () => {
 
   it('ensureReady accepts provider api keys', async () => {
     await expect(createSummary().ensureReady('openai')).resolves.toBeUndefined();
+    expect(getCachedAccessToken).not.toHaveBeenCalled();
+  });
+
+  it('ensureReady resolves a providerless model through the configured defaultProvider', async () => {
+    models = {
+      flat: { model: 'gpt-4.1', protocol: 'openai', maxContextSize: 128000 },
+    };
+    defaultModel = 'flat';
+    defaultProvider = NON_OAUTH_PROVIDER;
+
+    await expect(createSummary().ensureReady()).resolves.toBeUndefined();
     expect(getCachedAccessToken).not.toHaveBeenCalled();
   });
 
