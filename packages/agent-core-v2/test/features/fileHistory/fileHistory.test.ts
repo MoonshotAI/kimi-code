@@ -323,30 +323,30 @@ describe('AgentFileHistoryService', () => {
     expect(await service.contentAt(1, 'a.txt')).toBeUndefined();
   });
 
-  it('keeps over-budget diff approximations non-negative on repetitive files', () => {
+  it('reports an over-budget modified file as oversize with no counts', async () => {
+    const service = createService();
+    const bigA = Array.from({ length: 2500 }, (_, i) => `a-${String(i)}`).join('\n');
+    const bigB = Array.from({ length: 2500 }, (_, i) => `b-${String(i)}`).join('\n');
+    setFile('/ws/big.txt', bigA);
+
+    startTurn(1);
+    await fireEdit(service, '/ws/big.txt', 1);
+    setFile('/ws/big.txt', bigB);
+    startTurn(2);
+    await service.settled();
+
+    expect(await service.changes(1)).toEqual([
+      { path: 'big.txt', status: 'modified', additions: 0, deletions: 0, oversize: true },
+    ]);
+  });
+
+  it('declines to count over-budget file pairs instead of approximating', () => {
     const before = [...Array.from({ length: 3000 }, () => 'dup'), 'end-old'].join('\n');
     const after = ['start-new', ...Array.from({ length: 2100 }, () => 'dup')].join('\n');
-    const diff = countLineDiff(before, after);
-    expect(diff.additions).toBe(1);
-    expect(diff.deletions).toBe(901);
-  });
+    expect(countLineDiff(before, after)).toBeUndefined();
 
-  it('keeps over-budget diff approximations accurate on rotations', () => {
     const body = Array.from({ length: 3000 }, (_, i) => `line-${String(i)}`);
-    const before = ['moved', ...body].join('\n');
-    const after = [...body, 'moved'].join('\n');
-    const diff = countLineDiff(before, after);
-    expect(diff.additions).toBe(1);
-    expect(diff.deletions).toBe(1);
-  });
-
-  it('keeps over-budget diff approximations order-aware on reordered files', () => {
-    const lines = Array.from({ length: 3000 }, (_, i) => `line-${String(i)}`);
-    const before = [...lines, 'tail-old'].join('\n');
-    const after = ['head-new', ...lines.toReversed()].join('\n');
-    const diff = countLineDiff(before, after);
-    expect(diff.additions).toBeGreaterThan(2000);
-    expect(diff.deletions).toBeGreaterThan(2000);
+    expect(countLineDiff(['moved', ...body].join('\n'), [...body, 'moved'].join('\n'))).toBeUndefined();
   });
 
   it('stays inactive on subagents', async () => {

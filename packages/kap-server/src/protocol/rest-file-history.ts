@@ -18,6 +18,7 @@ export const fileHistoryChangeSchema = z.object({
   additions: z.number(),
   deletions: z.number(),
   binary: z.boolean().optional(),
+  oversize: z.boolean().optional(),
 });
 export type WireFileHistoryChange = z.infer<typeof fileHistoryChangeSchema>;
 

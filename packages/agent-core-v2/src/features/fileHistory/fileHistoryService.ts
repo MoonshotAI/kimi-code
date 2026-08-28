@@ -377,8 +377,11 @@ function diffChange(
       : { path, status: 'modified', additions: 0, deletions: 0, binary };
   }
   if (before === after) return undefined;
-  const { additions, deletions } = countLineDiff(before ?? '', after ?? '');
-  return { path, status: 'modified', additions, deletions };
+  const counted = countLineDiff(before ?? '', after ?? '');
+  if (counted === undefined) {
+    return { path, status: 'modified', additions: 0, deletions: 0, oversize: true };
+  }
+  return { path, status: 'modified', additions: counted.additions, deletions: counted.deletions };
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -401,7 +404,7 @@ function countLines(content: string): number {
 export function countLineDiff(
   before: string,
   after: string,
-): { additions: number; deletions: number } {
+): { additions: number; deletions: number } | undefined {
   const beforeLines = splitLines(before);
   const afterLines = splitLines(after);
 
@@ -426,6 +429,7 @@ export function countLineDiff(
 
   const oldSlice = beforeLines.slice(start, beforeEnd);
   const newSlice = afterLines.slice(start, afterEnd);
+  if (oldSlice.length * newSlice.length > LCS_CELL_BUDGET) return undefined;
   const common = lcsLength(oldSlice, newSlice);
   return {
     additions: newSlice.length - common,
@@ -435,64 +439,10 @@ export function countLineDiff(
 
 const LCS_CELL_BUDGET = 4_000_000;
 
-function greedyCommonLength(a: readonly string[], b: readonly string[]): number {
-  let common = 0;
-  const positions = new Map<string, number[]>();
-  for (let j = b.length - 1; j >= 0; j -= 1) {
-    const line = b[j]!;
-    const list = positions.get(line);
-    if (list === undefined) positions.set(line, [j]);
-    else list.push(j);
-  }
-  let cursor = 0;
-  for (const line of a) {
-    const list = positions.get(line);
-    if (list === undefined) continue;
-    while (list.length > 0 && list[list.length - 1]! < cursor) list.pop();
-    const match = list.pop();
-    if (match !== undefined) {
-      common += 1;
-      cursor = match + 1;
-    }
-  }
-  return common;
-}
-
-function uniqueAnchorCommonLength(a: readonly string[], b: readonly string[]): number {
-  const countIn = (lines: readonly string[]): Map<string, number> => {
-    const counts = new Map<string, number>();
-    for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
-    return counts;
-  };
-  const aCounts = countIn(a);
-  const bPosition = new Map<string, number>();
-  const bCounts = countIn(b);
-  for (let j = 0; j < b.length; j += 1) {
-    const line = b[j]!;
-    if (bCounts.get(line) === 1 && aCounts.get(line) === 1) bPosition.set(line, j);
-  }
-  const sequence: number[] = [];
-  for (const line of a) {
-    const j = bPosition.get(line);
-    if (j === undefined) continue;
-    let low = 0;
-    let high = sequence.length;
-    while (low < high) {
-      const mid = (low + high) >> 1;
-      if (sequence[mid]! < j) low = mid + 1;
-      else high = mid;
-    }
-    sequence[low] = j;
-  }
-  return sequence.length;
-}
 
 
 function lcsLength(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
-  if (a.length * b.length > LCS_CELL_BUDGET) {
-    return Math.max(greedyCommonLength(a, b), uniqueAnchorCommonLength(a, b));
-  }
   let previous = new Uint32Array(b.length + 1);
   let current = new Uint32Array(b.length + 1);
   for (let i = 1; i <= a.length; i += 1) {

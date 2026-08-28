@@ -238,6 +238,7 @@ export const fileHistoryChangeSchema = z.object({
   additions: z.number(),
   deletions: z.number(),
   binary: z.boolean().optional(),
+  oversize: z.boolean().optional(),
 });
 
 export const fileHistoryContentSchema = z.object({

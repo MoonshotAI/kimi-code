@@ -28,6 +28,7 @@ export interface FileHistoryChange {
   readonly additions: number;
   readonly deletions: number;
   readonly binary?: boolean;
+  readonly oversize?: boolean;
 }
 
 export interface FileHistoryContent {
