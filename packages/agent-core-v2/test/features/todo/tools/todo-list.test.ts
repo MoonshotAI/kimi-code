@@ -152,4 +152,43 @@ describe('TodoListTool', () => {
     expect(clearExecution.description).toBe('Clearing todo list');
     expect(updateExecution.description).toBe('Updating todo list');
   });
+
+  it('exposes a defensive todo-list display for query, update, and clear modes', () => {
+    const current: TodoItem[] = [{ title: 'existing', status: 'in_progress' }];
+    const { tool } = makeTool(current);
+    const next: TodoItem[] = [{ title: 'next', status: 'pending' }];
+
+    const readExecution = tool.resolveExecution({});
+    const updateExecution = tool.resolveExecution({ todos: next });
+    const clearExecution = tool.resolveExecution({ todos: [] });
+
+    if (
+      readExecution.isError === true ||
+      updateExecution.isError === true ||
+      clearExecution.isError === true
+    ) {
+      throw new TypeError('expected runnable executions');
+    }
+
+    expect(readExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'existing', status: 'in_progress' }],
+    });
+    expect(updateExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'next', status: 'pending' }],
+    });
+    expect(clearExecution.display).toEqual({ kind: 'todo_list', items: [] });
+
+    current[0] = { title: 'mutated current', status: 'done' };
+    next[0] = { title: 'mutated next', status: 'done' };
+    expect(readExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'existing', status: 'in_progress' }],
+    });
+    expect(updateExecution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'next', status: 'pending' }],
+    });
+  });
 });
