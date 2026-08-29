@@ -1,9 +1,3 @@
-/**
- * `ToolInputDisplay` — structured UI hint describing a tool call's input, so
- * approval panels and tool renderers can present it without re-deriving it
- * from raw arguments. Carried by `RunnableToolExecution.display`,
- * `ToolResult.display`, and the `tool.call.started` event.
- */
 export type ToolInputDisplay =
   | {
       kind: 'command';
@@ -75,9 +69,6 @@ export type ToolInputDisplay =
       kind: 'goal_start';
       objective: string;
       completionCriterion?: string | undefined;
-      // Current permission mode at approval time. The client uses it to pick the
-      // start menu (manual vs yolo); `auto` never reaches this display because it
-      // auto-approves the goal without a prompt.
       mode: 'manual' | 'yolo';
     }
   | {

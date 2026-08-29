@@ -187,6 +187,49 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
+  // Structured payloads (structuredContent per MCP spec, plus server metadata
+  // in _meta) carry machine-readable contracts such as browser-handoff URLs.
+  // Appended AFTER the media wrap so a media-only result keeps its
+  // <mcp_tool_result> attribution, and BEFORE the text budget so oversized
+  // payloads stay bounded. Literal closing tags inside the serialized
+  // payload are stripped so server data cannot fake an early end of the
+  // block. Protocol-reserved _meta keys are dropped first: those carry
+  // host/protocol plumbing, not model-facing data.
+  //
+  // content and structuredContent are alternatives — never both forwarded.
+  // content wins whenever it carries anything usable (a media block or
+  // non-whitespace text): there is no reliable signal that the structured
+  // payload is richer than what the server already rendered into content,
+  // so the only case structuredContent fills in is an empty content array.
+  // _meta has no such overlap and always passes through.
+  const hasUsableContent = converted.some((part) =>
+    part.type === 'text' ? part.text.trim().length > 0 : true,
+  );
+  const structuredExtras: Record<string, unknown> = {};
+  if (result.structuredContent !== undefined && !hasUsableContent) {
+    structuredExtras['structuredContent'] = result.structuredContent;
+  }
+  if (result._meta !== undefined) {
+    const meta = stripReservedMetaKeys(result._meta);
+    if (meta !== undefined) {
+      structuredExtras['_meta'] = meta;
+    }
+  }
+  if (Object.keys(structuredExtras).length > 0) {
+    try {
+      const serialized = JSON.stringify(structuredExtras).replaceAll(
+        '</mcp-result-extras>',
+        '',
+      );
+      wrapped.push({
+        type: 'text',
+        text: `\n<mcp-result-extras>\n${serialized}\n</mcp-result-extras>`,
+      });
+    } catch {
+      // Non-serialisable payloads are dropped rather than failing the call.
+    }
+  }
+
   // Text budget FIRST, on the tool's own text only: captions produced by the
   // compression step below ride the `note` side channel and never compete
   // with a chatty tool's text for the budget — an evicted or mid-string-
@@ -226,6 +269,45 @@ export async function mcpResultToExecutableOutput(
     note: compressed.captions.length > 0 ? compressed.captions.join('\n') : undefined,
     truncated: truncated ? true : undefined,
   };
+}
+
+/**
+ * Drop protocol-reserved `_meta` keys before the payload reaches the model.
+ *
+ * Per the MCP spec's `_meta` key-name rules, a key may carry a dot-separated
+ * label prefix terminated by `/`; a prefix is reserved for protocol use when
+ * a `modelcontextprotocol` or `mcp` label is followed by at least one more
+ * label (e.g. `modelcontextprotocol.io/…`, `tools.mcp.com/…` — but not a
+ * vendor namespace like `com.example.mcp/…`). Reserved entries carry
+ * host/protocol plumbing — progress and task wiring, UI component payloads —
+ * that servers do not address to the model, so forwarding them would leak
+ * side-channel data into the conversation. Unprefixed and vendor-prefixed
+ * keys pass through untouched: their semantics belong to the server, and the
+ * host cannot know which of them the model is meant to see.
+ *
+ * Returns `undefined` when nothing survives, so callers can omit the `_meta`
+ * section entirely.
+ */
+function stripReservedMetaKeys(
+  meta: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (!isReservedMetaKey(key)) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isReservedMetaKey(key: string): boolean {
+  const slash = key.indexOf('/');
+  if (slash <= 0) return false;
+  const labels = key.slice(0, slash).split('.');
+  return labels.some(
+    (label, i) =>
+      (label === 'modelcontextprotocol' || label === 'mcp') && i < labels.length - 1,
+  );
 }
 
 /**

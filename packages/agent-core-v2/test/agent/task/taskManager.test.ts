@@ -1,14 +1,10 @@
-/**
- * Covers: AgentTaskService.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { PassThrough, Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -21,6 +17,7 @@ import {
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
   createTestAgent,
@@ -71,7 +68,7 @@ function createAgentTaskService(options: {
 
 function registerProcess(
   manager: IAgentTaskService,
-  proc: IProcess,
+  proc: IHostProcess,
   command: string,
   description: string,
 ): string {
@@ -84,6 +81,7 @@ function agentTask(
   options: {
     readonly agentId?: string;
     readonly subagentType?: string;
+    readonly parentToolCallId?: string;
     readonly abortController?: AbortController;
     readonly timeoutMs?: number;
   } = {},
@@ -91,6 +89,7 @@ function agentTask(
   const handle: SubagentHandle = {
     agentId: options.agentId ?? 'agent-child',
     profileName: options.subagentType ?? 'coder',
+    parentToolCallId: options.parentToolCallId,
     completion,
   };
   const task = new SubagentTask(
@@ -142,36 +141,38 @@ async function waitForOutput(
   throw new Error(`Timed out waiting for output: ${expected}`);
 }
 
-
-function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 10000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
-function rejectedProcess(error: Error): IProcess {
+function rejectedProcess(error: Error): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
     pid: 99999,
     exitCode: null,
-    wait: vi.fn().mockRejectedValue(error) as IProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    wait: vi.fn().mockRejectedValue(error) as IHostProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
-function processWithStdoutError(message = 'stdout read failed'): IProcess {
+function processWithStdoutError(message = 'stdout read failed'): IHostProcess {
   const stdout = new PassThrough();
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout,
     stderr: Readable.from([]),
@@ -180,14 +181,14 @@ function processWithStdoutError(message = 'stdout read failed'): IProcess {
     wait: vi.fn(async () => {
       stdout.destroy(new Error(message));
       return 0;
-    }) as IProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    }) as IHostProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
 function processWithStdoutErrorBeforeWait(message = 'stdout read failed'): {
-  proc: IProcess;
+  proc: IHostProcess;
   failStdout: () => void;
   resolveWait: (exitCode: number) => void;
 } {
@@ -199,6 +200,7 @@ function processWithStdoutErrorBeforeWait(message = 'stdout read failed'): {
   });
   return {
     proc: {
+      _serviceBrand: undefined,
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
       stdout,
       stderr: Readable.from([]),
@@ -206,9 +208,9 @@ function processWithStdoutErrorBeforeWait(message = 'stdout read failed'): {
       get exitCode(): number | null {
         return currentExitCode;
       },
-      wait: vi.fn(() => waitPromise) as IProcess['wait'],
-      kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+      wait: vi.fn(() => waitPromise) as IHostProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
     },
     failStdout: () => {
       stdout.destroy(new Error(message));
@@ -221,7 +223,7 @@ function processWithStdoutErrorBeforeWait(message = 'stdout read failed'): {
 }
 
 function pendingProcess(exitOnKill = 143): {
-  proc: IProcess;
+  proc: IHostProcess;
   killSpy: ReturnType<typeof vi.fn>;
 } {
   let resolveWait: (n: number) => void = () => {};
@@ -234,7 +236,8 @@ function pendingProcess(exitOnKill = 143): {
     currentExitCode = exitOnKill;
     resolveWait(exitOnKill);
   });
-  const proc: IProcess = {
+  const proc: IHostProcess = {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
@@ -243,14 +246,14 @@ function pendingProcess(exitOnKill = 143): {
       return currentExitCode;
     },
     wait: () => waitPromise,
-    kill: killSpy as unknown as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    kill: killSpy as unknown as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
   return { proc, killSpy };
 }
 
 function streamingProcess(chunks: string[]): {
-  proc: IProcess;
+  proc: IHostProcess;
   killSpy: ReturnType<typeof vi.fn>;
 } {
   const stdout = Readable.from(chunks);
@@ -270,7 +273,8 @@ function streamingProcess(chunks: string[]): {
     stdout.destroy();
     resolveWait(currentExitCode);
   });
-  const proc: IProcess = {
+  const proc: IHostProcess = {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout,
     stderr,
@@ -279,14 +283,14 @@ function streamingProcess(chunks: string[]): {
       return currentExitCode;
     },
     wait: () => waitPromise,
-    kill: killSpy as unknown as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    kill: killSpy as unknown as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
   return { proc, killSpy };
 }
 
 function sigtermIgnoringProcess(chunks: string[]): {
-  proc: IProcess;
+  proc: IHostProcess;
   killSpy: ReturnType<typeof vi.fn>;
 } {
   const stdout = Readable.from(chunks);
@@ -306,7 +310,8 @@ function sigtermIgnoringProcess(chunks: string[]): {
     stdout.destroy();
     resolveWait(137);
   });
-  const proc: IProcess = {
+  const proc: IHostProcess = {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout,
     stderr,
@@ -315,14 +320,14 @@ function sigtermIgnoringProcess(chunks: string[]): {
       return currentExitCode;
     },
     wait: () => waitPromise,
-    kill: killSpy as unknown as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    kill: killSpy as unknown as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
   return { proc, killSpy };
 }
 
 function manuallyResolvedProcess(): {
-  proc: IProcess;
+  proc: IHostProcess;
   killSpy: ReturnType<typeof vi.fn>;
   resolve: (exitCode: number) => void;
 } {
@@ -332,7 +337,8 @@ function manuallyResolvedProcess(): {
   });
   let currentExitCode: number | null = null;
   const killSpy = vi.fn().mockResolvedValue(undefined);
-  const proc: IProcess = {
+  const proc: IHostProcess = {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
@@ -341,8 +347,8 @@ function manuallyResolvedProcess(): {
       return currentExitCode;
     },
     wait: () => waitPromise,
-    kill: killSpy as unknown as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    kill: killSpy as unknown as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
   return {
     proc,
@@ -356,11 +362,12 @@ function manuallyResolvedProcess(): {
 }
 
 function processWithVisibleExitCodeBeforeWait(exitCode = 143): {
-  proc: IProcess;
+  proc: IHostProcess;
   markExited: () => void;
 } {
   let currentExitCode: number | null = null;
-  const proc: IProcess = {
+  const proc: IHostProcess = {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
@@ -369,8 +376,8 @@ function processWithVisibleExitCodeBeforeWait(exitCode = 143): {
       return currentExitCode;
     },
     wait: () => new Promise<number>(() => {}),
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
   return {
     proc,
@@ -409,6 +416,7 @@ describe('AgentTaskService', () => {
       agentTask(new Promise(() => {}), 'investigate bug', {
         agentId: 'agent-child',
         subagentType: 'coder',
+        parentToolCallId: 'call-parent-1',
       }),
     );
 
@@ -419,6 +427,7 @@ describe('AgentTaskService', () => {
       description: 'investigate bug',
       agentId: 'agent-child',
       subagentType: 'coder',
+      parentToolCallId: 'call-parent-1',
       status: 'running',
     });
   });
@@ -481,6 +490,30 @@ describe('AgentTaskService', () => {
     });
   });
 
+  it('keeps a detached process task running when the register-time signal aborts', async () => {
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = pendingProcess();
+    const controller = new AbortController();
+    const taskId = manager.registerTask(
+      new ProcessTask(proc, 'sleep 10', 'foreground process'),
+      {
+        detached: false,
+        signal: controller.signal,
+      },
+    );
+
+    const waiting = manager.waitForForegroundRelease(taskId);
+    expect(manager.detach(taskId)).toMatchObject({ detached: true });
+    controller.abort();
+
+    await expect(waiting).resolves.toBe('detached');
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(manager.getTask(taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+    });
+  });
+
   it('forwards foreground signal abort reasons to agent task controllers', async () => {
     const { manager } = createAgentTaskService();
     const foregroundController = new AbortController();
@@ -510,6 +543,30 @@ describe('AgentTaskService', () => {
       stopReason: 'Aborted by the user',
     });
     expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
+  });
+
+  it('does not forward register-time signal aborts to a detached agent task', async () => {
+    const { manager } = createAgentTaskService();
+    const foregroundController = new AbortController();
+    const subagentController = new AbortController();
+    const taskId = manager.registerTask(
+      agentTask(new Promise(() => {}), 'foreground agent', {
+        abortController: subagentController,
+      }),
+      {
+        detached: false,
+        signal: foregroundController.signal,
+      },
+    );
+
+    expect(manager.detach(taskId)).toMatchObject({ detached: true });
+    foregroundController.abort(userCancellationReason());
+
+    expect(subagentController.signal.aborted).toBe(false);
+    expect(manager.getTask(taskId)).toMatchObject({
+      status: 'running',
+      detached: true,
+    });
   });
 
   it('does not count foreground tasks against the detached task limit', () => {
@@ -795,7 +852,7 @@ describe('AgentTaskService', () => {
     const proc = {
       ...immediateProcess(0, 'hello'),
       dispose,
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     const taskId = registerProcess(manager, proc, 'echo hello', 'test echo');
 
     await waitForTerminal(manager, taskId);
@@ -897,7 +954,7 @@ describe('AgentTaskService', () => {
     const disposableProc = {
       ...proc,
       dispose,
-    } as unknown as IProcess;
+    } as unknown as IHostProcess;
     const taskId = registerProcess(manager, disposableProc, 'sleep 60', 'kill test');
 
     await manager.stop(taskId, 'user requested');
@@ -938,7 +995,7 @@ describe('AgentTaskService', () => {
   });
 
   function sigtermOnlyKillProcess(pid: number): {
-    proc: IProcess;
+    proc: IHostProcess;
     killSpy: ReturnType<typeof vi.fn>;
   } {
     const stdout = new PassThrough();
@@ -954,7 +1011,8 @@ describe('AgentTaskService', () => {
       stdout.destroy();
       resolveWait(137);
     });
-    const proc: IProcess = {
+    const proc: IHostProcess = {
+      _serviceBrand: undefined,
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
       stdout,
       stderr: Readable.from([]),
@@ -963,8 +1021,8 @@ describe('AgentTaskService', () => {
         return currentExitCode;
       },
       wait: () => waitPromise,
-      kill: killSpy as unknown as IProcess['kill'],
-      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+      kill: killSpy as unknown as IHostProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
     };
     return { proc, killSpy };
   }
@@ -1276,11 +1334,12 @@ describe('AgentTaskService', () => {
   it('getTask on an unknown id does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-'));
     try {
-      const { manager, persistence } = createAgentTaskService({ sessionDir });
+      const { ctx, manager, persistence } = createAgentTaskService({ sessionDir });
 
       expect(manager.getTask('bash-bogusss0')).toBeUndefined();
 
       expect(await persistence!.listTasks()).toEqual([]);
+      await ctx.get(ISessionMetadata).ready;
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }
@@ -1294,7 +1353,8 @@ describe('AgentTaskService', () => {
       ['-e', "process.stdout.write('bg-ok\\n')"],
       { stdio: 'pipe' },
     );
-    const proc: IProcess = {
+    const proc: IHostProcess = {
+      _serviceBrand: undefined,
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
       stdout: child.stdout,
       stderr: child.stderr,
@@ -1310,12 +1370,12 @@ describe('AgentTaskService', () => {
       }),
       kill: vi.fn(async (signal?: NodeJS.Signals) => {
         child.kill(signal ?? 'SIGTERM');
-      }) as unknown as IProcess['kill'],
+      }) as unknown as IHostProcess['kill'],
       dispose: vi.fn(async () => {
         child.stdin?.destroy();
         child.stdout?.destroy();
         child.stderr?.destroy();
-      }) as IProcess['dispose'],
+      }) as IHostProcess['dispose'],
     };
 
     const taskId = registerProcess(manager, proc, 'node -e <stdout bg-ok>', 'real worker');

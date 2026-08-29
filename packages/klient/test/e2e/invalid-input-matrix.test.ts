@@ -34,6 +34,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+
+import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 
@@ -295,7 +297,7 @@ const sockets = new Set<import('node:net').Socket>();
 beforeAll(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'klient-matrix-home-'));
   workRoot = await mkdtemp(join(tmpdir(), 'klient-matrix-work-'));
-  ({ app } = bootstrap({ homeDir }, [
+  ({ app } = bootstrap({ homeDir, clientIdentity: TEST_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]));
   klient = createMemoryKlient({ scope: app });
@@ -474,7 +476,17 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
   const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
-  return body!.messages!;
+  return body!.messages!.filter((message) => !isDateReminderMessage(message));
+}
+
+const DATE_REMINDER_MARKERS = [
+  'The current date is restated in a reminder whenever it changes',
+  'Rely on this reminder over any earlier date statement',
+];
+
+function isDateReminderMessage(message: Record<string, unknown>): boolean {
+  const serialized = JSON.stringify(message);
+  return DATE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
 }
 
 // ---------------------------------------------------------------------------
@@ -682,6 +694,47 @@ describe('image blocks with invalid data', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Daemon file references (kimi-file://): engine-side resolution before the
+// provider wire.
+// ---------------------------------------------------------------------------
+
+describe('daemon file references (kimi-file://)', () => {
+  it('a kimi-file image reference reaches the provider as a data URL, never verbatim', async () => {
+    // Regression for the duplicated resolver-token shadowing: the legacy
+    // video-only resolver won the shared DI token on the production import
+    // order, so image kimi-file refs leaked to the provider unchanged and
+    // gateways rejected the unknown scheme with a 400 ("unsupported image
+    // url"), which the media-strip fallback then mistook for a bad image.
+    const cases = [
+      { label: 'kimifile-image-openai', model: M_OPENAI_VISION, reply: OK_OPENAI },
+      { label: 'kimifile-image-kimi', model: M_KIMI, reply: OK_OPENAI },
+    ] as const;
+    for (const { label, model, reply } of cases) {
+      const meta = await klient.global.files.save({
+        data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
+        filename: 'pasted-image.png',
+        mimeType: 'image/png',
+        expiresInSec: 3600,
+      });
+      const ctx = await newCase(model, label);
+      resetMock(queueScript(reply));
+      await promptAndWait(ctx, [
+        { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
+        { type: 'text', text: 'what is this?' },
+      ]);
+      expect(requests, label).toHaveLength(1);
+      expect(JSON.stringify(requests[0]?.json), label).not.toContain('kimi-file://');
+      const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
+      const imagePart = content.find(
+        (part) => (part as { type?: string }).type === 'image_url',
+      ) as { image_url?: { url?: string } } | undefined;
+      expect(imagePart?.image_url?.url ?? '', label).toMatch(/^data:image\/png;base64,/);
+      expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
+    }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
 // Video blocks: URL pass-through, upload capability, illegal video data.
 // ---------------------------------------------------------------------------
 
@@ -839,7 +892,7 @@ describe('video blocks', () => {
     // "Unsupported media type for base64 video" does NOT match the
     // image-format non-retryable patterns, so stepRetry claims it. Cap the
     // retries at 2 attempts (1 re-run, ~500ms backoff) for the suite's sake.
-    await klient.global.config.set({ domain: 'loopControl', patch: { maxRetriesPerStep: 2 } });
+    await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 2 } });
     try {
       const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
       resetMock(queueScript(OK_ANTHROPIC));
@@ -869,7 +922,7 @@ describe('video blocks', () => {
       expect(ctx.eventNames()).toEqual(['turn.started', 'turn.ended', 'error', 'prompt.completed']);
       expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('failed');
     } finally {
-      await klient.global.config.set({ domain: 'loopControl', patch: { maxRetriesPerStep: 10 } });
+      await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 10 } });
     }
   }, 30_000);
 });
@@ -990,7 +1043,7 @@ describe('tool exchange structure', () => {
     }
   }, 60_000);
 
-  it('after an abort, consecutive user messages are merged into one on the wire (projector fallback)', async () => {
+  it('after a user abort, an interruption reminder separates the next user message on the wire', async () => {
     const ctx = await newCase(M_OPENAI, 'abort-merge');
     resetMock((_req, callIndex) => (callIndex === 0 ? { kind: 'hang' } : OK_OPENAI));
 
@@ -1004,11 +1057,14 @@ describe('tool exchange structure', () => {
 
     expect(requests).toHaveLength(2);
     const userMessages = openAiMessages(1).filter((message) => message['role'] === 'user');
-    // The projector folds consecutive origin=user messages into one
-    // (\n\n-joined) instead of sending two same-role messages in a row.
-    expect(userMessages).toHaveLength(1);
+    // A deliberate user cancel injects an interruption reminder between the
+    // aborted turn's prompt and the next user message, so the two prompts no
+    // longer merge into one wire message.
+    expect(userMessages).toHaveLength(3);
     expect(String(userMessages[0]?.['content'])).toContain('first message');
-    expect(String(userMessages[0]?.['content'])).toContain('second message');
+    expect(String(userMessages[1]?.['content'])).toContain('<system-reminder>');
+    expect(String(userMessages[1]?.['content'])).toContain('interrupted by the user');
+    expect(String(userMessages[2]?.['content'])).toContain('second message');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 });

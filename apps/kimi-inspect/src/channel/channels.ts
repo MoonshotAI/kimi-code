@@ -14,9 +14,9 @@
 
 import { createDecorator } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 
+import type { ServiceProxy } from './channel';
 import { DEBUG_RPC_BASE, type InspectClient } from './client';
 import { RPCError } from './errors';
-import type { ServiceProxy } from './channel';
 
 /** Wire scope kinds reported by the channels endpoint (`app` ≡ the core route). */
 export type ChannelScope = 'app' | 'session' | 'agent';
@@ -103,7 +103,7 @@ export interface ServiceTarget {
  * identifiers by name, so re-creating the decorator resolves to the same token
  * the server channel registry created — the name is the wire channel, which is
  * all the proxy uses. Returns `undefined` when the target scope needs a
- * session/agent id that isn't available.
+ * workspace/session/agent id that isn't available.
  */
 export function serviceByName<T extends object>(
   client: InspectClient,

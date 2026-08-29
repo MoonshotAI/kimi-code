@@ -1,9 +1,6 @@
-/**
- * `auth` domain tests — covers the `OAuthService` device-code orchestration,
- * its dependency on the `provider` domain, and the managed OAuth provider
- * model refresh, using a fake `IOAuthToolkit` so no real network or token
- * storage is exercised.
- */
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
@@ -30,19 +27,20 @@ import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
-import { type DomainEvent, IEventService } from '#/app/event/event';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { ILogService } from '#/_base/log/log';
-import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 
-// Side-effect registration: the OAuth-catalog verdict
-// (`isOAuthCatalogProvider`) answers through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
+import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
 const OAUTH_PROVIDER = 'managed:kimi-code';
 const NON_OAUTH_PROVIDER = 'openai-main';
@@ -73,12 +71,22 @@ const ENV_SCOPED_REF = {
   oauthHost: 'https://env-auth.example.com',
 } as const;
 
+const OVERSEAS_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({
+    oauthHost: 'https://auth.kimi.ai',
+    baseUrl: 'https://api.kimi.ai/coding/v1',
+  }),
+  oauthHost: 'https://auth.kimi.ai',
+} as const;
+
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
   readonly logout: ReturnType<typeof vi.fn>;
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
   readonly getManagedUsage: ReturnType<typeof vi.fn>;
+  readonly getManagedUserInfo: ReturnType<typeof vi.fn>;
 }
 
 describe('OAuthService', () => {
@@ -90,10 +98,10 @@ describe('OAuthService', () => {
   let defaultModel: string | undefined;
   let thinking: { enabled?: boolean; effort?: string } | undefined;
   let toolkit: FakeToolkit;
-  let providerSet: ReturnType<typeof vi.fn>;
+  let providerSet: ReturnType<typeof vi.fn<(name: string, config: ProviderConfig) => Promise<void>>>;
   let configSet: ReturnType<typeof vi.fn>;
-  let configReplace: ReturnType<typeof vi.fn>;
-  let events: DomainEvent[];
+  let configReplace: ReturnType<typeof vi.fn<(domain: string, value: unknown) => Promise<void>>>;
+  let events: Event2[];
   let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
 
   beforeEach(() => {
@@ -155,6 +163,7 @@ describe('OAuthService', () => {
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
       getManagedUsage: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
+      getManagedUserInfo: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
     };
     ix = createServices(disposables, {
       base: [registerBootstrapServices, registerTelemetryServices],
@@ -186,7 +195,7 @@ describe('OAuthService', () => {
           error: vi.fn(),
         });
         reg.definePartialInstance(IEventService, {
-          publish: (event: DomainEvent) => events.push(event),
+          publish: (event: Event2) => events.push(event),
           subscribe: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(IOAuthToolkit, toolkit as unknown as IOAuthToolkit);
@@ -224,6 +233,62 @@ describe('OAuthService', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
+  }
+
+  const managedK2Alias: ModelRecord = {
+    provider: OAUTH_PROVIDER,
+    model: 'kimi-k2',
+    maxContextSize: 131072,
+    capabilities: ['thinking', 'tool_use'],
+    displayName: 'Kimi K2',
+  };
+
+  const managedK25Alias: ModelRecord = {
+    provider: OAUTH_PROVIDER,
+    model: 'kimi-k2.5',
+    maxContextSize: 262144,
+    capabilities: ['thinking', 'tool_use'],
+    displayName: 'Kimi K2.5',
+  };
+
+  function stubGatedManagedModelsFetch(): {
+    fetchMock: ReturnType<typeof vi.fn>;
+    releaseFetch: () => void;
+  } {
+    let releaseFetch!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'kimi-k2',
+              context_length: 131072,
+              supports_reasoning: true,
+              display_name: 'Kimi K2',
+            },
+            {
+              id: 'kimi-k2.5',
+              context_length: 262144,
+              supports_reasoning: true,
+              display_name: 'Kimi K2.5',
+            },
+            {
+              id: 'kimi-k3',
+              context_length: 1048576,
+              supports_reasoning: true,
+              display_name: 'Kimi K3',
+            },
+          ],
+        }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { fetchMock, releaseFetch };
   }
 
   it('startLogin resolves a device-code flow and flips to authenticated on success', async () => {
@@ -355,6 +420,113 @@ describe('OAuthService', () => {
         oauth: ENV_SCOPED_REF,
       }),
     );
+  });
+
+  it('startLogin with region global resolves the global login environment', async () => {
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: OVERSEAS_SCOPED_REF,
+        baseUrl: 'https://api.kimi.ai/coding/v1',
+        oauthHost: 'https://auth.kimi.ai',
+      }),
+    );
+    await flush();
+    expect(providerSet).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        type: 'kimi',
+        baseUrl: 'https://api.kimi.ai/coding/v1',
+        oauth: OVERSEAS_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('startLogin with a region still honors env endpoint overrides', async () => {
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthHost: 'https://env-auth.example.com',
+        baseUrl: 'https://api.example.com',
+      }),
+    );
+  });
+
+  it('getRegion resolves cn by default and global from the persisted login host', () => {
+    vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
+    const svc = createService();
+    expect(svc.getRegion()).toBe('mainland-cn');
+
+    providers[OAUTH_PROVIDER] = {
+      type: 'kimi',
+      oauth: { storage: 'file', key: OVERSEAS_SCOPED_REF.key, oauthHost: 'https://auth.kimi.ai' },
+    };
+    expect(svc.getRegion()).toBe('global');
+  });
+
+  it('getRegion reads the install marker from the bootstrapped home unless KIMI_CODE_REGION_MARKER=off', async () => {
+    const home = ix.get(IBootstrapService).homeDir;
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = { type: 'kimi' };
+      expect(createService().getRegion()).toBe('global');
+
+      vi.stubEnv('KIMI_CODE_REGION_MARKER', 'off');
+      expect(createService().getRegion()).toBe('mainland-cn');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('getRegion reads the marker from the bootstrapped home, not KIMI_CODE_HOME', async () => {
+    const bootstrapHome = ix.get(IBootstrapService).homeDir;
+    const envHome = await mkdtemp(join(tmpdir(), 'kimi-v2-auth-envhome-'));
+    try {
+      await mkdir(bootstrapHome, { recursive: true });
+      await writeFile(join(bootstrapHome, 'region'), 'global\n', 'utf-8');
+      vi.stubEnv('KIMI_CODE_HOME', envHome);
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = { type: 'kimi' };
+      expect(createService().getRegion()).toBe('global');
+    } finally {
+      await rm(bootstrapHome, { recursive: true, force: true });
+      await rm(envHome, { recursive: true, force: true });
+    }
+  });
+
+  it('getRegion resolves cn from the default-slot oauth ref despite an global marker', async () => {
+    const home = ix.get(IBootstrapService).homeDir;
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
+      vi.stubEnv('KIMI_CODE_OAUTH_HOST', '');
+      providers[OAUTH_PROVIDER] = {
+        type: 'kimi',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      };
+      expect(createService().getRegion()).toBe('mainland-cn');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('resolves the runtime credential slot to the env environment after an env-scoped login', async () => {
@@ -545,6 +717,50 @@ describe('OAuthService', () => {
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
   });
 
+  it('reports pending until provisioning finishes after the grant settles', async () => {
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    let resolveProvision!: () => void;
+    providerSet.mockImplementation((name: string, config: ProviderConfig) => {
+      providers = { ...providers, [name]: config };
+      return new Promise<void>((resolve) => {
+        resolveProvision = resolve;
+      });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    await vi.waitFor(() => {
+      expect(providerSet).toHaveBeenCalled();
+    });
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    resolveProvision();
+    await vi.waitFor(() => {
+      expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated');
+    });
+  });
+
+  it('keeps the login authenticated when its own provisioning fires a provider change', async () => {
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    providerSet.mockImplementation((name: string, config: ProviderConfig) => {
+      providers = { ...providers, [name]: config };
+      providerChangedEmitter.fire({ added: [], removed: [], changed: [name] });
+      return Promise.resolve();
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+  });
+
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {
     let capturedSignal: AbortSignal | undefined;
     toolkit.login.mockImplementation((_provider, options) => {
@@ -693,6 +909,30 @@ describe('OAuthService', () => {
     });
   });
 
+  it('getManagedUserInfo resolves the managed runtime auth and delegates to the toolkit', async () => {
+    const userInfo = {
+      kind: 'ok' as const,
+      userInfo: {
+        userId: 'u_1',
+        nickname: 'moonwalker',
+        status: 'USER_STATUS_NORMAL',
+        region: 'REGION_CN',
+        userLevel: 30,
+        userLevelName: 'Vivace',
+        domain: 1,
+        domainName: 'DOMAIN_EXAMPLE',
+      },
+    };
+    toolkit.getManagedUserInfo.mockResolvedValue(userInfo);
+    const svc = createService();
+
+    await expect(svc.getManagedUserInfo(OAUTH_PROVIDER)).resolves.toBe(userInfo);
+    expect(toolkit.getManagedUserInfo).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      oauthRef: EXAMPLE_COM_SCOPED_REF,
+      baseUrl: 'https://api.example.com',
+    });
+  });
+
   it('refreshOAuthProviderModels returns an empty result when no Kimi Code provider is configured', async () => {
     providers = { [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' } };
     const svc = createService();
@@ -747,10 +987,10 @@ describe('OAuthService', () => {
     expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
     expect(configReplace).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
-      {
+      expect.objectContaining({
         type: 'event.model_catalog.changed',
         payload: result,
-      },
+      }),
     ]);
   });
 
@@ -784,6 +1024,171 @@ describe('OAuthService', () => {
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('aborts the refresh write when the managed provider was edited mid-fetch', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    const fetchMock = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = createService();
+
+    const pending = svc.refreshOAuthProviderModels();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    providers = {
+      ...providers,
+      [OAUTH_PROVIDER]: { ...providers[OAUTH_PROVIDER]!, baseUrl: 'https://api.changed.example.com' },
+    };
+    resolveFetch({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 'kimi-k2',
+            context_length: 131072,
+            supports_reasoning: true,
+            display_name: 'Kimi K2',
+          },
+        ],
+      }),
+    });
+
+    await expect(pending).resolves.toEqual({ changed: [], unchanged: [], failed: [] });
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(providers[OAUTH_PROVIDER]?.baseUrl).toBe('https://api.changed.example.com');
+  });
+
+  it('rewrites a lost default model on refresh even when the catalog is unchanged', async () => {
+    stubManagedModelsFetch();
+    const svc = createService();
+
+    const first = await svc.refreshOAuthProviderModels();
+    expect(first.changed).toHaveLength(1);
+    expect(defaultModel).toBe('kimi-code/kimi-k2');
+
+    configReplace.mockClear();
+    events.length = 0;
+    defaultModel = undefined;
+
+    const second = await svc.refreshOAuthProviderModels();
+
+    expect(second.failed).toEqual([]);
+    expect(second.unchanged).toEqual([]);
+    expect(second.changed).toEqual([
+      {
+        provider_id: OAUTH_PROVIDER,
+        provider_name: 'Kimi Code',
+        added: 0,
+        removed: 0,
+      },
+    ]);
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(defaultModel).toBe('kimi-code/kimi-k2');
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'event.model_catalog.changed',
+        payload: second,
+      }),
+    ]);
+  });
+
+  it('reports unchanged on refresh when the catalog and the default model are both intact', async () => {
+    stubManagedModelsFetch();
+    const svc = createService();
+
+    await svc.refreshOAuthProviderModels();
+    expect(defaultModel).toBe('kimi-code/kimi-k2');
+
+    configReplace.mockClear();
+    events.length = 0;
+
+    const second = await svc.refreshOAuthProviderModels();
+
+    expect(second).toEqual({ changed: [], unchanged: [OAUTH_PROVIDER], failed: [] });
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it('keeps the default model the user selects while a refresh is in flight', async () => {
+    const { fetchMock, releaseFetch } = stubGatedManagedModelsFetch();
+    models = {
+      'kimi-code/kimi-k2': managedK2Alias,
+      'kimi-code/kimi-k2.5': managedK25Alias,
+    };
+    defaultModel = 'kimi-code/kimi-k2';
+    const svc = createService();
+
+    const refresh = svc.refreshOAuthProviderModels();
+    await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalled(); });
+    await configReplace('defaultModel', 'kimi-code/kimi-k2.5');
+    releaseFetch();
+    const result = await refresh;
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      {
+        provider_id: OAUTH_PROVIDER,
+        provider_name: 'Kimi Code',
+        added: 1,
+        removed: 0,
+      },
+    ]);
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2.5');
+    expect(defaultModel).toBe('kimi-code/kimi-k2.5');
+  });
+
+  it('writes back the refreshed catalog and default when the user does not intervene mid-flight', async () => {
+    const { fetchMock, releaseFetch } = stubGatedManagedModelsFetch();
+    models = {
+      'kimi-code/kimi-k2': managedK2Alias,
+      'kimi-code/kimi-k2.5': managedK25Alias,
+    };
+    defaultModel = 'kimi-code/kimi-k2';
+    const svc = createService();
+
+    const refresh = svc.refreshOAuthProviderModels();
+    await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalled(); });
+    releaseFetch();
+    const result = await refresh;
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      {
+        provider_id: OAUTH_PROVIDER,
+        provider_name: 'Kimi Code',
+        added: 1,
+        removed: 0,
+      },
+    ]);
+    expect(configReplace).toHaveBeenCalledWith(
+      'models',
+      expect.objectContaining({
+        'kimi-code/kimi-k3': expect.objectContaining({ model: 'kimi-k3' }),
+      }),
+    );
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(defaultModel).toBe('kimi-code/kimi-k2');
+  });
+
+  it('keeps the thinking selection the user makes while a refresh is in flight', async () => {
+    const { fetchMock, releaseFetch } = stubGatedManagedModelsFetch();
+    models = {
+      'kimi-code/kimi-k2': managedK2Alias,
+      'kimi-code/kimi-k2.5': managedK25Alias,
+    };
+    defaultModel = 'kimi-code/kimi-k2';
+    thinking = { enabled: true };
+    const svc = createService();
+
+    const refresh = svc.refreshOAuthProviderModels();
+    await vi.waitFor(() => { expect(fetchMock).toHaveBeenCalled(); });
+    await configReplace('thinking', { enabled: false });
+    releaseFetch();
+    const result = await refresh;
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toHaveLength(1);
+    expect(configReplace).toHaveBeenCalledWith('thinking', { enabled: false });
+    expect(thinking).toEqual({ enabled: false });
+  });
 });
 
 describe('WebSearchProviderService', () => {
@@ -809,11 +1214,16 @@ describe('WebSearchProviderService', () => {
           resolveTokenProvider:
             resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
         });
-        reg.definePartialInstance(IHostRequestHeaders, {
-          headers: {
-            'User-Agent': 'kimi-code-cli/test',
-            'X-Msh-Device-Id': 'device-test',
-          },
+        const hostHeaders = {
+          'User-Agent': 'kimi-code-cli/test',
+          'X-Msh-Device-Id': 'device-test',
+        };
+        reg.defineInstance(
+          IAgentIdentity,
+          stubAgentIdentity({ hostRequestHeaders: hostHeaders }),
+        );
+        reg.definePartialInstance(IBootstrapService, {
+          args: { requestHeaders: hostHeaders },
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) =>
@@ -997,6 +1407,48 @@ describe('WebSearchProviderService', () => {
     expect(createService().getWebSearchProvider()).toBeUndefined();
     expect(resolveTokenProvider).not.toHaveBeenCalled();
   });
+
+  it('answers presence without touching a not-yet-frozen identity', () => {
+    const notFrozen: IAgentIdentity = {
+      _serviceBrand: undefined,
+      resolved: () => new Promise(() => undefined),
+      current: () => {
+        throw new Error('identity read before freeze');
+      },
+    };
+    servicesConfig = {
+      moonshotSearch: { baseUrl: 'https://search.example.com/search', apiKey: 'k' },
+    };
+    const svc = new WebSearchProviderService(
+      { get: ((name: string) => providers[name]) as IProviderService['get'] } as IProviderService,
+      {
+        resolveTokenProvider:
+          resolveTokenProvider as unknown as IOAuthService['resolveTokenProvider'],
+      } as IOAuthService,
+      { args: { requestHeaders: {} } } as unknown as IBootstrapService,
+      {
+        get: ((domain: string) =>
+          domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
+      } as IConfigService,
+      notFrozen,
+    );
+
+    expect(svc.hasWebSearchProvider()).toBe(true);
+    expect(() => svc.getWebSearchProvider()).toThrow(/before freeze/);
+
+    servicesConfig = undefined;
+    providers = {};
+    expect(svc.hasWebSearchProvider()).toBe(false);
+
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    expect(svc.hasWebSearchProvider()).toBe(true);
+  });
 });
 
 describe('services config section', () => {
@@ -1105,12 +1557,14 @@ describe('AuthSummaryService', () => {
   let providers: Record<string, ProviderConfig>;
   let models: Record<string, ModelRecord>;
   let defaultModel: string | undefined;
+  let defaultProvider: string | undefined;
   let oauthStatus: ReturnType<typeof vi.fn>;
   let getCachedAccessToken: ReturnType<typeof vi.fn>;
   let reload: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    defaultProvider = undefined;
     providers = {
       [OAUTH_PROVIDER]: {
         type: 'kimi',
@@ -1141,6 +1595,7 @@ describe('AuthSummaryService', () => {
         reg.definePartialInstance(IProviderService, {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
+          getDefaultProvider: (() => defaultProvider) as IProviderService['getDefaultProvider'],
         });
         reg.definePartialInstance(IModelService, {
           get: ((id: string) => models[id]) as IModelService['get'],
@@ -1257,6 +1712,17 @@ describe('AuthSummaryService', () => {
     expect(getCachedAccessToken).not.toHaveBeenCalled();
   });
 
+  it('ensureReady resolves a providerless model through the configured defaultProvider', async () => {
+    models = {
+      flat: { model: 'gpt-4.1', protocol: 'openai', maxContextSize: 128000 },
+    };
+    defaultModel = 'flat';
+    defaultProvider = NON_OAUTH_PROVIDER;
+
+    await expect(createSummary().ensureReady()).resolves.toBeUndefined();
+    expect(getCachedAccessToken).not.toHaveBeenCalled();
+  });
+
   it('ensureReady accepts cached oauth tokens', async () => {
     getCachedAccessToken.mockResolvedValue('access-token');
     await expect(createSummary().ensureReady('kimi')).resolves.toBeUndefined();
@@ -1271,27 +1737,30 @@ describe('AuthLegacyService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
+  let models: Record<string, ModelRecord>;
   let defaultModel: string | undefined;
   let oauthStatus: ReturnType<typeof vi.fn>;
+  let configReady: Promise<void>;
+  let configReload: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     providers = {};
+    models = {};
     defaultModel = undefined;
     oauthStatus = vi.fn();
+    configReady = Promise.resolve();
+    configReload = vi.fn().mockResolvedValue(undefined);
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IProviderService, {
-          list: (() => providers) as IProviderService['list'],
-        });
-        reg.definePartialInstance(IModelService, {
-          ready: Promise.resolve(),
-          getDefaultModel: (() => defaultModel) as IModelService['getDefaultModel'],
-        });
         reg.definePartialInstance(IConfigService, {
-          ready: Promise.resolve(),
-          get: ((domain: string) =>
-            domain === 'defaultModel' ? defaultModel : undefined) as IConfigService['get'],
+          ready: configReady,
+          getAll: (() => ({
+            providers,
+            models,
+            defaultModel,
+          })) as IConfigService['getAll'],
+          reload: configReload as unknown as IConfigService['reload'],
         });
         reg.definePartialInstance(IOAuthService, {
           status: oauthStatus as unknown as IOAuthService['status'],
@@ -1308,9 +1777,8 @@ describe('AuthLegacyService', () => {
 
   it('returns an empty snapshot when no providers are configured', async () => {
     await expect(createService().get()).resolves.toEqual({
-      ready: false,
+      models_ready: false,
       providers_count: 0,
-      default_model: null,
       managed_provider: null,
     });
     expect(oauthStatus).not.toHaveBeenCalled();
@@ -1326,22 +1794,53 @@ describe('AuthLegacyService', () => {
     expect(summary.providers_count).toBe(2);
   });
 
-  it('reflects the configured default model', async () => {
+  it('reports models_ready when the default model resolves to a configured provider', async () => {
     providers = { [NON_OAUTH_PROVIDER]: { type: 'kimi', apiKey: 'sk-test' } };
+    models = { k2: { provider: NON_OAUTH_PROVIDER, model: 'kimi-k2', maxContextSize: 128000 } };
     defaultModel = 'k2';
     const summary = await createService().get();
-    expect(summary.default_model).toBe('k2');
+    expect(summary.models_ready).toBe(true);
     expect(summary.managed_provider).toBeNull();
-    expect(summary.ready).toBe(true);
   });
 
-  it('is not ready when a provider exists but no default model is set', async () => {
+  it('is not models_ready when a provider exists but no default model is set', async () => {
     providers = { [NON_OAUTH_PROVIDER]: { type: 'kimi', apiKey: 'sk-test' } };
+    models = { k2: { provider: NON_OAUTH_PROVIDER, model: 'kimi-k2' } };
     const summary = await createService().get();
     expect(summary.providers_count).toBe(1);
-    expect(summary.default_model).toBeNull();
+    expect(summary.models_ready).toBe(false);
     expect(summary.managed_provider).toBeNull();
-    expect(summary.ready).toBe(false);
+  });
+
+  it('is not models_ready when the default model dangles', async () => {
+    providers = { [NON_OAUTH_PROVIDER]: { type: 'kimi', apiKey: 'sk-test' } };
+    models = { k2: { provider: NON_OAUTH_PROVIDER, model: 'kimi-k2' } };
+    defaultModel = 'gone';
+    const summary = await createService().get();
+    expect(summary.models_ready).toBe(false);
+  });
+
+  it('is not models_ready when the default model points at a missing provider', async () => {
+    providers = { [NON_OAUTH_PROVIDER]: { type: 'kimi', apiKey: 'sk-test' } };
+    models = { k2: { provider: 'ghost', model: 'kimi-k2' } };
+    defaultModel = 'k2';
+    const summary = await createService().get();
+    expect(summary.models_ready).toBe(false);
+  });
+
+  it('reports models_ready for a providerless flat default model', async () => {
+    models = {
+      flat: {
+        baseUrl: 'https://api.example.test/v1',
+        model: 'gpt',
+        protocol: 'openai',
+        maxContextSize: 128000,
+        apiKey: 'sk-x',
+      },
+    };
+    defaultModel = 'flat';
+    const summary = await createService().get();
+    expect(summary.models_ready).toBe(true);
   });
 
   it('surfaces managed_provider.unauthenticated when configured without a cached token', async () => {
@@ -1354,13 +1853,14 @@ describe('AuthLegacyService', () => {
       name: OAUTH_PROVIDER,
       status: 'unauthenticated',
     });
-    expect(summary.ready).toBe(false);
+    expect(summary.models_ready).toBe(false);
   });
 
   it('surfaces managed_provider.authenticated when a cached token exists', async () => {
     providers = {
       [OAUTH_PROVIDER]: { type: 'kimi', oauth: { storage: 'file', key: 'oauth/kimi-code' } },
     };
+    models = { k2: { provider: OAUTH_PROVIDER, model: 'kimi-k2', maxContextSize: 128000 } };
     defaultModel = 'k2';
     oauthStatus.mockResolvedValue({ loggedIn: true, provider: OAUTH_PROVIDER });
     const summary = await createService().get();
@@ -1368,7 +1868,7 @@ describe('AuthLegacyService', () => {
       name: OAUTH_PROVIDER,
       status: 'authenticated',
     });
-    expect(summary.ready).toBe(true);
+    expect(summary.models_ready).toBe(true);
   });
 
   it('treats a throwing oauth status as unauthenticated', async () => {
@@ -1379,5 +1879,41 @@ describe('AuthLegacyService', () => {
     await expect(createService().get()).resolves.toMatchObject({
       managed_provider: { name: OAUTH_PROVIDER, status: 'unauthenticated' },
     });
+  });
+
+  it('waits for config readiness before reading the snapshot', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const svc = new AuthLegacyService(
+      {
+        ready: gate,
+        getAll: () => ({ providers, models, defaultModel }),
+      } as unknown as IConfigService,
+      { status: oauthStatus } as unknown as IOAuthService,
+    );
+    const pending = svc.get();
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+    providers = { [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' } };
+    models = { k2: { provider: NON_OAUTH_PROVIDER, model: 'kimi-k2', maxContextSize: 128000 } };
+    defaultModel = 'k2';
+    release();
+    await expect(pending).resolves.toMatchObject({ models_ready: true });
+  });
+
+  it('re-reads the snapshot on every call without forcing a reload', async () => {
+    providers = { [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' } };
+    const svc = createService();
+    await expect(svc.get()).resolves.toMatchObject({ models_ready: false });
+    models = { k2: { provider: NON_OAUTH_PROVIDER, model: 'kimi-k2', maxContextSize: 128000 } };
+    defaultModel = 'k2';
+    await expect(svc.get()).resolves.toMatchObject({ models_ready: true });
+    expect(configReload).not.toHaveBeenCalled();
   });
 });

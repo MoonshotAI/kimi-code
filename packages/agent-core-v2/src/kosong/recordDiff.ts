@@ -1,13 +1,3 @@
-/**
- * kosong internal — record-level diffing for the provider/model registries.
- *
- * `diffRecords` computes the added/removed/changed keys between two snapshots
- * of a record-shaped registry state, `deepEqual` is the value comparison it
- * uses. Pure functions; the registries use them to keep change events quiet
- * when a write lands an equal value (which is also what makes the
- * persistence bridge's two-way sync terminate).
- */
-
 export interface RecordDiff {
   readonly added: readonly string[];
   readonly removed: readonly string[];

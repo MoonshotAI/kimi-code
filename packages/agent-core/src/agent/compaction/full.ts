@@ -547,9 +547,13 @@ export class FullCompaction {
             retryCount = 0;
             continue;
           }
+          // A filtered response is not a size problem: shrinking the input
+          // cannot get a safety-filtered request through, so exclude it here
+          // and let it fall through to the retryability check, which fails it
+          // fast instead of burning the shrink budget.
           const shouldShrinkAfterEmptyOrTruncated =
             error instanceof CompactionTruncatedError ||
-            error instanceof APIEmptyResponseError;
+            (error instanceof APIEmptyResponseError && error.finishReason !== 'filtered');
           if (shouldShrinkAfterEmptyOrTruncated && historyForModel.length > 1) {
             // Each empty/truncated summary drops the oldest message and retries,
             // but without its own bound this would issue ~one request per message

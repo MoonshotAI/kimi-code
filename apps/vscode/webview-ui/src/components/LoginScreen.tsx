@@ -70,6 +70,11 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
   };
 
   const handleSubscribe = () => {
+    // TODO(region-split): derive this from the region profile's siteBase
+    // (`https://www.kimi.ai/code` for overseas logins). The webview cannot
+    // resolve the region itself — @moonshot-ai/kimi-code-oauth is not a
+    // webview dependency and its region resolver is Node-only — so the
+    // extension host needs to hand the site URL over the bridge first.
     window.open("https://www.kimi.com/code", "_blank");
     setShowSubscribeDialog(false);
   };
@@ -89,7 +94,7 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 text-blue-500">
               <IconLoader2 className="size-5 animate-spin" />
-              <span className="text-sm font-medium">Waiting for authorization...</span>
+              <span className="text-sm font-medium">Waiting for authentication...</span>
             </div>
             <p className="text-xs leading-5 text-muted-foreground text-left">A browser window should open automatically. Complete the sign-in process there.</p>
           </div>

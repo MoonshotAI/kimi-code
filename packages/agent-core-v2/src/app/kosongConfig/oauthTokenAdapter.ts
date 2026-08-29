@@ -1,12 +1,6 @@
-/**
- * `kosongConfig` domain (L3) — `IModelOAuthTokens` implementation.
- *
- * Delegates kosong's OAuth token port to `IOAuthService` and owns the
- * `auth.login_required` error contract (the code is registered by
- * `app/auth/errors`): kosong's model catalog only sees the port.
- */
+import { LifecycleScope } from '#/app/scopes';
 
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
 import { IOAuthService } from '#/app/auth/auth';

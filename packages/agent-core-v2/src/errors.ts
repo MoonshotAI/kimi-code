@@ -1,25 +1,19 @@
-/**
- * Error facade — aggregates every domain's error contribution into the unified
- * `ErrorCodes` const and re-exports the error primitives.
- *
- * Importing this module registers every domain's codes (each domain self-
- * registers on import). Throw sites and cross-domain consumers should import
- * from here: `import { ErrorCodes, Error2 } from '#/errors'`.
- */
-
 import { CoreErrors } from '#/_base/errors/codes';
 import { AgentLifecycleErrors } from '#/session/agentLifecycle/errors';
 import { AuthErrors } from '#/app/auth/errors';
 import { TaskErrors } from '#/agent/task/errors';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import { ConfigErrors } from '#/app/config/errors';
+import { CapabilityErrors } from '#/app/capability/errors';
+import { CronErrors } from '#/features/cron/errors';
+import { DebugErrors } from '#/debug/errors';
+import { EventErrors } from '#/app/event/errors';
 import { FileErrors } from '#/app/file/fileService';
-import { FsErrors } from '#/session/sessionFs/errors';
+import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 import { FullCompactionErrors } from '#/agent/fullCompaction/errors';
-import { GoalErrors } from '#/agent/goal/errors';
+import { GoalErrors } from '#/features/goal/errors';
 import { LoopErrors } from '#/agent/loop/errors';
-import { McpErrors } from '#/agent/mcp/errors';
-import { MessageLegacyErrors } from '#/app/messageLegacy/errors';
+import { McpErrors } from '#/mcpCore/errors';
 import { ModelCatalogErrors } from '#/kosong/model/errors';
 import { OsFsErrors } from '#/os/interface/hostFsErrors';
 import { OsProcessErrors } from '#/os/interface/hostProcess';
@@ -29,10 +23,12 @@ import { PromptErrors } from '#/agent/prompt/errors';
 import { ModelsDevImportErrors } from '#/app/kosongConfig/errors';
 import { SessionExportErrors } from '#/app/sessionExport/errors';
 import { SessionErrors } from '#/session/errors';
-import { SkillErrors } from '#/app/skillCatalog/errors';
+import { SkillErrors } from '#/features/skill/catalog/errors';
+import { StateErrors } from '#/state/errors';
 import { StorageErrors } from '#/persistence/interface/storage';
 import { TerminalErrors } from '#/os/interface/terminalErrors';
 import { UsageErrors } from '#/agent/usage/errors';
+import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
 import { WorkspaceErrors } from '#/app/workspace/errors';
 
@@ -46,13 +42,15 @@ export { AuthErrors } from '#/app/auth/errors';
 export { TaskErrors } from '#/agent/task/errors';
 export { ProtocolErrors } from '#/kosong/protocol/errors';
 export { ConfigErrors } from '#/app/config/errors';
+export { CapabilityErrors } from '#/app/capability/errors';
+export { CronErrors } from '#/features/cron/errors';
+export { DebugErrors } from '#/debug/errors';
 export { FileErrors } from '#/app/file/fileService';
-export { FsErrors } from '#/session/sessionFs/errors';
+export { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 export { FullCompactionErrors } from '#/agent/fullCompaction/errors';
-export { GoalErrors } from '#/agent/goal/errors';
+export { GoalErrors } from '#/features/goal/errors';
 export { LoopErrors } from '#/agent/loop/errors';
-export { McpErrors } from '#/agent/mcp/errors';
-export { MessageLegacyErrors } from '#/app/messageLegacy/errors';
+export { McpErrors } from '#/mcpCore/errors';
 export { ModelCatalogErrors } from '#/kosong/model/errors';
 export { OsFsErrors } from '#/os/interface/hostFsErrors';
 export { OsProcessErrors } from '#/os/interface/hostProcess';
@@ -62,12 +60,15 @@ export { PromptErrors } from '#/agent/prompt/errors';
 export { ModelsDevImportErrors } from '#/app/kosongConfig/errors';
 export { SessionExportErrors } from '#/app/sessionExport/errors';
 export { SessionErrors } from '#/session/errors';
-export { SkillErrors } from '#/app/skillCatalog/errors';
+export { SkillErrors } from '#/features/skill/catalog/errors';
 export { StorageErrors } from '#/persistence/interface/storage';
 export { TerminalErrors } from '#/os/interface/terminalErrors';
 export { UsageErrors } from '#/agent/usage/errors';
+export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
 export { WorkspaceErrors } from '#/app/workspace/errors';
+export { EventErrors } from '#/app/event/errors';
+export { StateErrors } from '#/state/errors';
 
 export const ErrorCodes = {
   ...CoreErrors.codes,
@@ -76,13 +77,15 @@ export const ErrorCodes = {
   ...TaskErrors.codes,
   ...ProtocolErrors.codes,
   ...ConfigErrors.codes,
+  ...CapabilityErrors.codes,
+  ...CronErrors.codes,
+  ...DebugErrors.codes,
   ...FileErrors.codes,
   ...FsErrors.codes,
   ...FullCompactionErrors.codes,
   ...GoalErrors.codes,
   ...LoopErrors.codes,
   ...McpErrors.codes,
-  ...MessageLegacyErrors.codes,
   ...ModelCatalogErrors.codes,
   ...OsFsErrors.codes,
   ...OsProcessErrors.codes,
@@ -96,14 +99,11 @@ export const ErrorCodes = {
   ...StorageErrors.codes,
   ...TerminalErrors.codes,
   ...UsageErrors.codes,
+  ...WebErrors.codes,
   ...WireErrors.codes,
   ...WorkspaceErrors.codes,
+  ...EventErrors.codes,
+  ...StateErrors.codes,
 } as const;
 
-/**
- * The closed union of every error code a Kimi domain may throw — derived from
- * the `ErrorCodes` aggregate rather than declared centrally, so each domain's
- * `errors.ts` is the single source of truth: adding or renaming a code is a
- * domain-local change with no central list to keep in sync.
- */
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

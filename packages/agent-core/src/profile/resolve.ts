@@ -1,5 +1,11 @@
 import { renderPrompt } from '../utils/render-prompt';
+import {
+  ADDITIONAL_DIRS_SECTION_PROSE,
+  SKILLS_SECTION_PROSE,
+  WINDOWS_NOTES,
+} from './prompt-sections';
 import type {
+  AgentModelPreference,
   RawAgentProfile,
   RawSubagentProfile,
   ResolvedAgentProfile,
@@ -15,6 +21,7 @@ interface MergedAgentProfile {
   readonly tools: string[];
   readonly whenToUse?: string | undefined;
   readonly subagents?: Record<string, RawSubagentProfile> | undefined;
+  readonly modelPreference?: AgentModelPreference;
 }
 
 /**
@@ -100,6 +107,7 @@ function resolveMergedProfile(
     tools: profile.tools !== undefined ? [...profile.tools] : [...(parent?.tools ?? [])],
     whenToUse: profile.whenToUse ?? parent?.whenToUse,
     subagents: cloneSubagents(profile.subagents),
+    modelPreference: profile.modelPreference ?? parent?.modelPreference,
   };
 
   cache.set(profile.name, merged);
@@ -113,6 +121,7 @@ function toResolvedProfile(merged: MergedAgentProfile): ResolvedAgentProfile {
     systemPrompt: createSystemPromptRenderer(merged),
     tools: [...merged.tools],
     whenToUse: merged.whenToUse,
+    modelPreference: merged.modelPreference,
   };
 }
 
@@ -160,7 +169,13 @@ function buildTemplateVars(
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_SKILLS: tools.includes('Skill') ? skills : '',
+    KIMI_PLUGIN_SECTIONS: context.pluginSections ?? '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
+    // Shared prose sections (single source: profile/prompt-sections.ts) so the
+    // builtin template and the agent-file renderer can never drift apart.
+    KIMI_WINDOWS_NOTES: WINDOWS_NOTES,
+    KIMI_ADDITIONAL_DIRS_SECTION_PROSE: ADDITIONAL_DIRS_SECTION_PROSE,
+    KIMI_SKILLS_SECTION_PROSE: SKILLS_SECTION_PROSE,
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',
   };

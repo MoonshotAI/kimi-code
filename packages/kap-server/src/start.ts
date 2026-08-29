@@ -1,28 +1,36 @@
-/**
- * Server bootstrap — wires `@moonshot-ai/agent-core-v2` (DI × Scope engine) into
- * a Fastify HTTP server that speaks the same `/api/v1` interface as the v1
- * server.
- *
- * Composition root: `bootstrap()` builds the Core `Scope`; route handlers resolve
- * Core-scoped services through `core.accessor.get(IXxx)`.
- */
-
 import {
   bootstrap,
-  hostIdentitySeed,
-  hostRequestHeadersSeed,
+  drainQueryStoreDisposals,
+  drainSessionMetadataWrites,
+  drainSessionIndexMirror,
+  drainLogCloses,
+  ConfigWarning,
+  CapabilityChanged,
+  IAppendLogStore,
   IConfigService,
+  IEventService,
+  IMcpOAuthService,
+  IOAuthService,
   IProviderDiscoveryService,
+  ISessionIndex,
+  ISessionIndexMirror,
+  ICapabilityService,
+  IPluginService,
   IWorkspaceService,
+  PluginChanged,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
-  skillCatalogRuntimeOptionsSeed,
-  type HostIdentityOverrides,
+  type ConfigDiagnostic,
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  createKimiDefaultHeaders,
+  kimiRegionProfile,
+  type KimiHostIdentity,
+} from '@moonshot-ai/kimi-code-oauth';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -32,6 +40,7 @@ import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
+import { registerApiV2Routes } from './routes/registerApiV2Routes';
 import { registerWebAssetRoutes } from './routes/webAssets';
 import {
   createServerLogger,
@@ -49,6 +58,7 @@ import {
 } from './transport/ws/connectionRegistry';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
+import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { getServerVersion } from './version';
@@ -62,7 +72,6 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
-import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -70,6 +79,7 @@ import {
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
+import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
   createAuthTokenService,
@@ -79,16 +89,20 @@ import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
+import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
+
+export interface ServerHostIdentity extends KimiHostIdentity {
+  readonly displayName?: string;
+  readonly replyStyleGuide?: string;
+}
+
 export interface ServerStartOptions {
   readonly host?: string;
   readonly port?: number;
   readonly homeDir?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly pluginMarketplaceUrl?: string;
   readonly configPath?: string;
-  /**
-   * Override the instance-registry directory — used in tests that need the
-   * registry OUTSIDE `homeDir` (e.g. folder-picker fixtures browsing the home
-   * dir). Defaults to `<homeDir>/server/instances`.
-   */
   readonly instancesDir?: string;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
@@ -99,53 +113,15 @@ export interface ServerStartOptions {
   readonly disableHostCheck?: boolean;
   readonly insecureNoTls?: boolean;
   readonly allowRemoteShutdown?: boolean;
-  readonly allowRemoteTerminals?: boolean;
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
-  /**
-   * Optional *additional* credential accepted on the RPC surface (debug REST +
-   * WebSocket) alongside the persistent bearer token. Never required and never
-   * the only gate: the persistent token always protects the RPC surface. Leave
-   * unset unless a second, distinct RPC credential is genuinely needed.
-   */
+  readonly webTitle?: string;
   readonly rpcToken?: string;
-  /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
   readonly seeds?: ScopeSeed;
-  /**
-   * Host product identity injected into the base system prompt: `productName`
-   * fills the `${product_name}` slot, `replyStyleGuide` replaces the
-   * `${reply_style_guide}` block. Applied to every agent the server hosts — for
-   * embedding hosts (e.g. a desktop app), not per-session use. Defaults render
-   * the CLI text.
-   */
-  readonly hostIdentity?: HostIdentityOverrides;
-  /**
-   * Explicit skill directories for this process (v1's SDK `skillDirs`): when
-   * non-empty, default user / project skill discovery is skipped and these
-   * directories serve as the user skill source for every session. Applied to
-   * all sessions the server hosts — for embedding hosts, not per-session use.
-   */
+  readonly hostIdentity: ServerHostIdentity;
   readonly skillDirs?: readonly string[];
-  /**
-   * Directory of the built Kimi web UI (`dist-web`). When set, `GET /` and the
-   * `/*` SPA fallback serve these assets (auth-exempt, matching v1). Omit to run
-   * the API server without the web UI.
-   */
   readonly webAssetsDir?: string;
-  /**
-   * Host product version, reported as `server_version` (GET /api/v1/meta), in
-   * the OpenAPI document, session exports, the lock / instance registry, and
-   * the default User-Agent. Defaults to kap-server's own package version;
-   * embedding hosts (the CLI) should pass their own version.
-   */
-  readonly version?: string;
-  /**
-   * Opt-in cloud telemetry for the engine's `ITelemetryService` events: when
-   * true, a `CloudAppender` is attached at startup (still gated by the config
-   * `telemetry` toggle) and flushed on close. Defaults to false so tests and
-   * embedding hosts that wire their own telemetry never post to the real
-   * endpoint unintentionally; the CLI's `kimi web` host passes true.
-   */
+  readonly serverVersion?: string;
   readonly telemetry?: boolean;
 }
 
@@ -162,17 +138,11 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
-export async function startServer(opts: ServerStartOptions = {}): Promise<RunningServer> {
+export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
-  // Instance discovery: every server registers itself under
-  // `<home>/server/instances/<serverId>.json`, so multiple servers can share
-  // one homeDir and consumers (the CLI's `server ps/kill`, `kimi web`, dev
-  // tooling) can discover the live instances. Port conflicts between siblings
-  // are resolved by the `port + 1` retry below. The registration is released
-  // on close and on any boot refusal below.
-  const hostVersion = opts.version ?? getServerVersion();
+  const serverVersion = opts.serverVersion ?? getServerVersion();
   const registry = createInstanceRegistry({
     instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
   });
@@ -181,7 +151,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     host,
     port,
     startedAt: Date.now(),
-    hostVersion,
+    serverVersion,
   });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
@@ -191,17 +161,28 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     );
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
-  const enableTerminals = exposureClass === 'loopback' || opts.allowRemoteTerminals === true;
+  const enableTerminals = exposureClass === 'loopback';
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
+  const onUnhandledRejection = (reason: unknown): void => {
+    logger.error(
+      { err: reason instanceof Error ? reason : new Error(String(reason)) },
+      'unhandledRejection',
+    );
+  };
+  const onUncaughtException = (err: unknown): void => {
+    logger.fatal(
+      { err: err instanceof Error ? err : new Error(String(err)) },
+      'uncaughtException',
+    );
+    process.exit(1);
+  };
   const authFailureLimiter =
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
   const guiStore = new GuiStoreService(homeDir, logger);
   let authTokenService: IAuthTokenService;
-  // Whether a password credential is configured (only meaningful for the real,
-  // non-injected auth impl). Drives the token-only warning on a public bind.
   let passwordConfigured = false;
   if (opts.authTokenService !== undefined) {
     authTokenService = opts.authTokenService;
@@ -211,37 +192,24 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     passwordConfigured = passwordHash !== undefined;
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
-  // Unified credential: the persistent token (or password) protects every
-  // route; the optional `rpcToken` is accepted as an additional credential
-  // for the RPC surface. The same validator backs the HTTP auth hook,
-  // the WS upgrade handler, and the post-connect handshakes so one credential
-  // gates all surfaces and upgrade / handshake can never disagree.
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
-  // `ILogOptions` (logSeed) is required by the Session-scoped log writer; any
-  // route that creates a session (e.g. POST /sessions) would otherwise fail to
-  // instantiate the Session scope. Resolve it from env + homeDir like the CLI.
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
-  // rooted at `homeDir`, so the Store facades above it (append-log, atomic
-  // document, blob) — and in turn session metadata, wire records, blobs, and
-  // the session index — all persist to disk.
-  const { app: core } = bootstrap({ homeDir, configPath, clientVersion: hostVersion }, [
-    ...logSeed(logging),
-    // Default host identity so outbound requests (model, WebSearch, registry
-    // refresh) carry a product User-Agent even when the embedding host did not
-    // seed its own headers. Hosts like the CLI pass full Kimi identity headers
-    // through `opts.seeds`, which override this entry (last seed wins).
-    ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
-    ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
-    ...hostIdentitySeed(opts.hostIdentity),
-    ...(opts.seeds ?? []),
-  ]);
+  const { app: core } = bootstrap(
+    {
+      homeDir,
+      configPath,
+      env: opts.env,
+      clientIdentity: opts.hostIdentity,
+      args: {
+        requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
+        skillDirs: opts.skillDirs,
+        displayName: opts.hostIdentity.displayName,
+        replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+      },
+    },
+    [...logSeed(logging), ...(opts.seeds ?? [])],
+  );
 
-  // Attach the cloud telemetry appender BEFORE any session is created:
-  // `session_started` / `session_load_failed` fire inside create()/resume(), so
-  // an appender wired later would drop them to the null appender. Opt-in via
-  // `opts.telemetry` (off by default so tests never post to the real endpoint);
-  // best-effort — telemetry must never block server boot.
   let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {
     try {
@@ -272,11 +240,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     logger,
   );
 
-  // Sync the workspace catalog from the legacy session index once at startup,
-  // so sessions created by the v1 TUI surface as workspaces on the very first
-  // /workspaces request. Awaited so the write completes before the server
-  // starts accepting traffic (and before embedding hosts tear the homeDir
-  // down); best-effort: a failure re-surfaces on first access.
   try {
     await core.accessor.get(IWorkspaceService).list();
   } catch (error) {
@@ -286,17 +249,22 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     );
   }
 
+  try {
+    await core.accessor.get(ISessionIndex).prepare();
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'session index prepare failed; falling back to on-demand reads',
+    );
+  }
+
   const app = Fastify({
     loggerInstance: logger,
-    // Fastify's default access log records `res.statusCode`, but every
-    // kap-server response is HTTP 200 by design — the outcome lives in the
-    // envelope `code`. `registerRequestLogging` emits our own line instead.
     disableRequestLogging: true,
     genReqId: (req) => resolveRequestId(req.headers),
   }) as unknown as FastifyInstance;
+  app.server.requestTimeout = 0;
   registerRequestLogging(app);
-  // Validation is performed by the route-level Zod preHandlers (defineRoute),
-  // not by Fastify's AJV layer — keep both compilers as pass-throughs.
   app.setValidatorCompiler(() => () => true);
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
   installErrorHandler(app);
@@ -314,12 +282,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
     );
   } else {
-    // `--dangerous-bypass-auth`: the operator explicitly disabled the
-    // bearer-token gate on every REST and WebSocket route. Warn loudly —
-    // especially on a non-loopback bind, where this grants unauthenticated
-    // remote session / filesystem / shell access to anyone who can reach the
-    // port. The `/api/v1/meta` payload advertises the state so the web UI can
-    // connect without a token.
     logger.warn(
       { host, exposureClass },
       'DANGEROUS: bearer-token auth is DISABLED (--dangerous-bypass-auth) — every REST and WebSocket route accepts unauthenticated requests',
@@ -330,10 +292,13 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   }
 
   const close = async (): Promise<void> => {
+    configChangedPublisher.close();
     await app.close();
+    configWarningSubscription.dispose();
+    pluginChangeSubscription.dispose();
+    capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    // Telemetry is best-effort and must never prevent core or instance cleanup.
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -343,14 +308,31 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       );
     }
     try {
+      await drainSessionMetadataWrites();
+      await core.accessor.get(ISessionIndexMirror).drain();
+      await core.accessor.get(IMcpOAuthService).shutdown();
+      fsWatchBridge.dispose();
+      const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();
+      await appendLogStore.drainRetirements();
+      await drainSessionIndexMirror();
+      await drainGlobalSearchDisposals();
+      await drainQueryStoreDisposals();
+      await drainSessionMetadataWrites();
+      await drainLogCloses();
     } finally {
-      await registration.release();
+      try {
+        await registration.release();
+      } finally {
+        process.off('unhandledRejection', onUnhandledRejection);
+        process.off('uncaughtException', onUncaughtException);
+      }
     }
   };
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
+  core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
@@ -359,15 +341,40 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
-  const snapshotReader = new SnapshotReader({
-    homeDir,
-    core,
-    broadcaster,
-    logger,
-    config: loadSnapshotConfig(),
-  });
+  const configService = core.accessor.get(IConfigService);
+  const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
+    const warnings: ConfigWarningItem[] = diagnostics
+      .filter((diagnostic) => diagnostic.severity === 'warning')
+      .map((diagnostic) =>
+        diagnostic.domain === undefined
+          ? { message: diagnostic.message }
+          : { domain: diagnostic.domain, message: diagnostic.message },
+      );
+    core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
+  };
+  const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
+  const configChangedPublisher = startConfigChangedPublisher(core);
 
-  const serverVersion = hostVersion;
+  const pluginService = core.accessor.get(IPluginService);
+  const pluginChangeSubscription = pluginService.onDidReload(() => {
+    core.accessor.get(IEventService).publish(new PluginChanged({ payload: {} }));
+  });
+  const capabilityService = core.accessor.get(ICapabilityService);
+  const capabilityInstallSubscription = capabilityService.onDidChangeInstall((change) => {
+    core.accessor.get(IEventService).publish(
+      new CapabilityChanged({
+        payload: { capability_id: change.id, install: change.install },
+      }),
+    );
+  });
+  void configService.ready
+    .then(() => {
+      if (configService.diagnostics().some((diagnostic) => diagnostic.severity === 'warning')) {
+        publishConfigWarnings(configService.diagnostics());
+      }
+    })
+    .catch(() => {
+    });
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
@@ -385,8 +392,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
           { name: 'models', description: 'Configured model aliases' },
           { name: 'providers', description: 'Configured providers' },
           { name: 'sessions', description: 'Session lifecycle' },
+          { name: 'v2-sessions', description: 'Domain-grouped session list query (API v2)' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
+          { name: 'search', description: 'Global message search' },
           { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'approvals', description: 'Approval resolution' },
@@ -407,25 +416,36 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     });
   }
 
-  // `@fastify/swagger` collects route schemas via an `onRoute` hook, so it must
-  // be registered before any routes it should document.
   await registerOpenApi();
 
   await registerApiV1Routes(app, core, {
     serverVersion,
+    hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
     enableTerminals,
     guiStore,
+    pluginMarketplaceUrl: (() => {
+      const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
+      if (configured !== undefined) return () => configured;
+      return () =>
+        `${kimiRegionProfile(core.accessor.get(IOAuthService).getRegion()).cdnBase}/plugins/marketplace.json`;
+    })(),
+    pluginMarketplaceIsDefault:
+      opts.pluginMarketplaceUrl === undefined &&
+      (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
+        process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     onShutdown: () => {
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
-    snapshotReader,
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
+    webTitle: opts.webTitle,
   });
+
+  await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
     validateCredential,
@@ -447,11 +467,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       return;
     }
 
-    // Host / Origin checks (mirror the HTTP `onRequest` hooks). The raw
-    // `upgrade` event bypasses Fastify's hooks, so enforce them explicitly
-    // here — and BEFORE token validation, matching v1's wsGatewayService.
-    // Origin is present-only: a missing Origin is treated as a non-browser
-    // client and allowed.
     if (!hostCheck.isAllowed(req.headers.host)) {
       logger.warn(
         { remoteAddress: req.socket.remoteAddress, path: url, reason: 'host_not_allowed' },
@@ -476,8 +491,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
       const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
-      // Require a valid credential at the upgrade: a token-less (or invalid)
-      // upgrade is rejected with 401 for `/api/v1/ws`.
       let ok = false;
       if (candidate !== null) {
         try {
@@ -526,9 +539,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   });
 
   app.get('/asyncapi.json', async (_req, reply) => {
-    // Reflect the bound host, never the caller-supplied `Host` header (Host
-    // reflection is an information-leak / SSRF-adjacent hole once the server is
-    // reachable beyond localhost). Gated by the global auth hook (meta doc).
     return reply
       .type('application/json')
       .send(createAsyncApiDocument({ version: serverVersion, serverHost: host }));
@@ -539,23 +549,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     return reply.type('application/json').send(openApiDocument);
   });
 
-  // Web UI static assets (mirrors v1). Registered LAST so the `/*` SPA fallback
-  // only catches paths not already handled by `/api/*`, `/openapi.json`, or
-  // `/asyncapi.json`. The global auth hook already bypasses non-`/api` paths, so
-  // the page loads without a token; API calls carry it.
   if (opts.webAssetsDir !== undefined) {
     await registerWebAssetRoutes(app, opts.webAssetsDir);
   }
 
-  // Bind with port+1 retry on EADDRINUSE (mirrors v1). Port 0 (ephemeral) is
-  // never retried.
-  //
-  // There is no single-instance lock: a busy port may be a sibling kimi
-  // instance sharing this homeDir (each registers itself under
-  // `<home>/server/instances/`), and the `port + 1` walk is exactly how the
-  // second instance yields to 58628 (and so on) — the retry doubles as the
-  // multi-instance coexistence mechanism. A busy port held by a third-party
-  // listener gets the same treatment, matching the v1 policy.
   try {
     await listenWithPortRetry({
       listen: (h, p) => app.listen({ host: h, port: p }),
@@ -564,22 +561,15 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       logger,
     });
   } catch (error) {
-    // Listen failed even after the port walk (or for a non-EADDRINUSE reason).
-    // Tear down what boot already assembled so a failed start does not leak the
-    // instance registration, the Core scope, or the refresh scheduler.
     try {
       await close();
     } catch {
-      // best-effort cleanup; the original listen error is what matters
     }
     throw error;
   }
 
   const address = app.server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-  // Advertise the actually-bound port (e.g. ephemeral when `port: 0`, or the
-  // `port + 1` retry winner) so a status/kill lookup against the instance
-  // registry finds the real listener.
   await registration.update({ port: boundPort });
 
   void modelCatalogRefreshScheduler.start().catch((error) => {
@@ -589,48 +579,25 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     );
   });
 
+  process.on('unhandledRejection', onUnhandledRejection);
+  process.on('uncaughtException', onUncaughtException);
+
   return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
 }
 
-/**
- * Maximum consecutive `EADDRINUSE` retries when the requested port is busy.
- * Caps the `port + 1` walk so a permanently-saturated range cannot loop
- * forever; 100 matches the v1 server's `PORT_RETRY_LIMIT` and the daemon
- * spawner's own scan window.
- */
 export const PORT_RETRY_LIMIT = 100;
 
 export interface ListenWithPortRetryOptions {
-  /**
-   * Bind attempt — typically `app.listen`. Called with `(host, port)` and
-   * resolves with the bound address string on success, or rejects with an
-   * `EADDRINUSE` `ErrnoException` when the port is held.
-   */
   readonly listen: (host: string, port: number) => Promise<string>;
   readonly host: string;
   readonly port: number;
   readonly logger: ServerLogger;
-  /** Override the retry cap — used by tests to keep the walk short. */
   readonly maxRetries?: number;
 }
 
-/**
- * Bind the listener, retrying on `port + 1` when the port is held.
- *
- * Why this is the right layer: there is no single-instance lock — every
- * kap-server registers itself under `<home>/server/instances/` instead, so a
- * busy port may be a sibling kimi instance. The `port + 1` walk then serves
- * as the multi-instance coexistence mechanism (the second instance lands on
- * the next free port), and a third-party listener gets the same "port busy ⇒
- * +1" policy as v1.
- *
- * Port `0` (OS-assigned ephemeral) is never retried: the kernel already picks a
- * free port, so `EADDRINUSE` cannot arise from a specific-port conflict.
- */
 export async function listenWithPortRetry(
   opts: ListenWithPortRetryOptions,
 ): Promise<{ address: string; port: number }> {
-  // Ephemeral bind: the OS chooses a free port, so there is nothing to retry.
   if (opts.port === 0) {
     const address = await opts.listen(opts.host, 0);
     return { address, port: 0 };

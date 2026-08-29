@@ -13,6 +13,8 @@ export interface SelectItem {
 	value: string;
 	label: string;
 	description?: string;
+	/** Provider-specific metadata (e.g. autocomplete item markers), passed through unchanged. */
+	data?: Record<string, unknown>;
 }
 
 export interface SelectListTheme {

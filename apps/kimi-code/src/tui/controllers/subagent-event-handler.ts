@@ -9,6 +9,7 @@ import {
   agentSwarmDescriptionFromArgs,
   agentSwarmGridHeightForTerminalRows,
 } from '../components/messages/agent-swarm-progress';
+import { modelDisplayName } from '../components/dialogs/model-selector';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 import type {
   BackgroundAgentMetadata,
@@ -21,6 +22,7 @@ import { argsRecord, serializeToolResultOutput } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SessionEventHost } from './session-event-handler';
+import { SubagentActivityStore } from './subagent-activity-store';
 
 export interface SubagentInfo {
   readonly parentToolCallId: string;
@@ -55,6 +57,8 @@ export class SubAgentEventHandler {
   readonly subagentInfo: Map<string, SubagentInfo> = new Map();
   private readonly agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
+  /** Bounded per-agent activity fold feeding the background-agent detail view. */
+  readonly activityStore = new SubagentActivityStore();
 
   constructor(
     private readonly host: SessionEventHost,
@@ -64,6 +68,7 @@ export class SubAgentEventHandler {
   resetRuntimeState(): void {
     this.subagentInfo.clear();
     this.backgroundAgentMetadata.clear();
+    this.activityStore.clear();
     this.clearAgentSwarmProgress();
   }
 
@@ -73,6 +78,11 @@ export class SubAgentEventHandler {
     const childAgentId = event.agentId;
     if (childAgentId === MAIN_AGENT_ID) return false;
     if (this.host.btwPanelController.routeEvent(event)) return true;
+
+    // Tee every child-agent event into the activity store before the routing
+    // below swallows events whose parent card is gone (Ctrl+B) or never
+    // existed (run_in_background) — that data is the background detail view.
+    this.activityStore.applyEvent(event);
 
     const info = this.subagentInfo.get(childAgentId);
     if (info === undefined || info.parentToolCallId.length === 0) return true;
@@ -109,10 +119,16 @@ export class SubAgentEventHandler {
       });
     } else if (
       event.type === 'tool.progress' &&
-      (event.update.kind === 'stdout' || event.update.kind === 'stderr') &&
+      (event.update.kind === 'stdout' ||
+        event.update.kind === 'stderr' ||
+        event.update.kind === 'status') &&
       event.update.text !== undefined
     ) {
-      toolCall.appendSubToolLiveOutput(`${childAgentId}:${event.toolCallId}`, event.update.text);
+      toolCall.appendSubToolLiveOutput(
+        `${childAgentId}:${event.toolCallId}`,
+        event.update.text,
+        { replace: event.update.replace === true },
+      );
     } else if (event.type === 'tool.result') {
       toolCall.finishSubToolCall({
         tool_call_id: `${childAgentId}:${event.toolCallId}`,
@@ -125,6 +141,14 @@ export class SubAgentEventHandler {
       toolCall.updateSubagentMetrics({
         contextTokens: event.contextTokens,
         usage: totalUsage,
+        // The bound model alias rides every child status update (emitted right
+        // after spawn); surface it on the subagent card. `modelDisplayName`
+        // falls back to the alias itself when the entry is unknown.
+        modelDisplay:
+          event.model === undefined
+            ? undefined
+            : modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
+        effortDisplay: this.subagentEffortDisplay(event.thinkingEffort),
       });
     }
     return true;
@@ -273,6 +297,8 @@ export class SubAgentEventHandler {
   private handleSubagentCompleted(
     event: SubagentLifecycleEventOf<'subagent.completed'>,
   ): void {
+    this.activityStore.markCompleted(event.subagentId, event.resultSummary);
+    this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
       const taskId = this.findAgentTaskId(
@@ -302,6 +328,8 @@ export class SubAgentEventHandler {
   private handleSubagentFailed(
     event: SubagentLifecycleEventOf<'subagent.failed'>,
   ): void {
+    this.activityStore.markFailed(event.subagentId, event.error);
+    this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
       const taskId = this.findAgentTaskId(
@@ -357,6 +385,28 @@ export class SubAgentEventHandler {
     return match;
   }
 
+  /** A subagent that never became a background task (foreground-only) can
+   *  never appear in /tasks, so its activity record is dropped at terminal
+   *  state — otherwise records would pile up for the rest of the session. */
+  private pruneForegroundOnlyRecord(subagentId: string): void {
+    // A spawn-time background agent keeps its record even when the
+    // background.task.started sync has not landed yet (short-lived agents).
+    if (this.backgroundAgentMetadata.has(subagentId)) return;
+    for (const info of this.deps.backgroundTasks.values()) {
+      if (info.kind === 'agent' && info.agentId === subagentId) return;
+    }
+    this.activityStore.drop(subagentId);
+  }
+
+  /** Drop every foreground-only record. Called when the main turn ends: any
+   *  foreground subagent of the turn is over at that point, and an aborted
+   *  one emits no `subagent.completed`/`subagent.failed` to prune it. */
+  dropForegroundOnlyActivityRecords(): void {
+    for (const agentId of this.activityStore.agentIds()) {
+      this.pruneForegroundOnlyRecord(agentId);
+    }
+  }
+
   private buildBackgroundAgentMetadata(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): BackgroundAgentMetadata {
@@ -367,6 +417,8 @@ export class SubAgentEventHandler {
       parentToolCallId: event.parentToolCallId,
       agentName: event.subagentName,
       description: typeof description === 'string' ? description : undefined,
+      model: this.spawnedModelDisplay(event),
+      effort: this.subagentEffortDisplay(event.thinkingEffort),
     };
   }
 
@@ -397,16 +449,32 @@ export class SubAgentEventHandler {
       runInBackground: event.runInBackground,
       swarmIndex: event.swarmIndex,
     });
+    this.activityStore.ensureRecord({
+      agentId: event.subagentId,
+      agentName: event.subagentName,
+      description: event.description,
+      parentToolCallId: event.parentToolCallId,
+      model: this.spawnedModelDisplay(event),
+      effort: this.subagentEffortDisplay(event.thinkingEffort),
+    });
   }
 
   private handleForegroundSubagentSpawned(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): void {
+    // The spawned event carries the display-normalized bound alias (newer
+    // cores) — show it at spawn instead of waiting for the child's first
+    // status frame. The `agent.status.updated` channel below stays as the
+    // in-run update/fallback path.
+    const modelDisplay = this.spawnedModelDisplay(event);
+    const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
     if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
       progress.registerSubagent({
         agentId: event.subagentId,
         swarmIndex: event.swarmIndex,
       });
+      if (modelDisplay !== undefined) progress.setModelDisplay(modelDisplay);
+      if (effortDisplay !== undefined) progress.setEffortDisplay(effortDisplay);
     })) {
       return;
     }
@@ -419,6 +487,26 @@ export class SubAgentEventHandler {
       agentName: event.subagentName,
       runInBackground: event.runInBackground,
     });
+    if (modelDisplay !== undefined || effortDisplay !== undefined) {
+      tc.updateSubagentMetrics({ modelDisplay, effortDisplay });
+    }
+  }
+
+  /** Map the spawned event's bound alias to a display name via the loaded
+   *  model catalog; falls back to the alias itself for unknown entries. */
+  private spawnedModelDisplay(
+    event: SubagentLifecycleEventOf<'subagent.spawned'>,
+  ): string | undefined {
+    if (event.model === undefined) return undefined;
+    return modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]);
+  }
+
+  /** Concrete effort levels are always shown; the boolean states carry no
+   *  level information — 'off' (no thinking) and 'on' (generic thinking) are
+   *  both hidden. */
+  private subagentEffortDisplay(effort: string | undefined): string | undefined {
+    if (effort === undefined || effort === 'off' || effort === 'on') return undefined;
+    return effort;
   }
 
   private handleForegroundSubagentStarted(
@@ -502,6 +590,16 @@ export class SubAgentEventHandler {
       progress.appendModelDelta({ agentId: subagentId, delta: event.delta });
     } else if (event.type === 'tool.call.started') {
       progress.recordToolCall({ agentId: subagentId, toolCallId: event.toolCallId });
+    } else if (event.type === 'agent.status.updated' && event.model !== undefined) {
+      // The bound model alias rides every child status update (emitted right
+      // after spawn). Swarm members share one binding, so the panel shows it
+      // once in the header instead of per cell. `modelDisplayName` falls back
+      // to the alias itself when the entry is unknown.
+      progress.setModelDisplay(
+        modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
+      );
+      const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
+      if (effortDisplay !== undefined) progress.setEffortDisplay(effortDisplay);
     }
   }
 
@@ -568,8 +666,11 @@ export class SubAgentEventHandler {
     }
 
     const width = Math.floor(terminalColumns);
+    const dock = state.dockContainer;
+    // Fullscreen: the root children are empty (layout root holds a ScrollView +
+    // dock); the chrome below the transcript is the dock's children instead.
     const rowsAfterSwarm = renderedRowsAfterChild(
-      state.ui.children,
+      dock !== undefined ? [state.transcriptContainer, ...dock.children] : state.ui.children,
       state.transcriptContainer,
       width,
     );

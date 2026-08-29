@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   FileTokenStorage,
+  KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   OAuthConnectionError,
@@ -345,6 +346,140 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
     ]);
   });
 
+  it('logs in against the global region hosts when region is global', async () => {
+    const baseUrl = 'https://api.kimi.ai/coding/v1';
+    const oauthHost = 'https://auth.kimi.ai';
+    const oauthKey = resolveKimiCodeOAuthKey({ oauthHost, baseUrl });
+    const storageName = resolveKimiTokenStorageName({ oauthKey });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save(storageName, {
+      ...freshToken(),
+      accessToken: 'expired-global-access-token',
+      refreshToken: 'global-refresh-token',
+      expiresAt: 1,
+    });
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      const url = fetchInputUrl(input);
+      if (url === `${oauthHost}/api/oauth/token`) {
+        if (typeof init?.body !== 'string') throw new TypeError('expected form body');
+        const body = new URLSearchParams(init.body);
+        expect(body.get('grant_type')).toBe('refresh_token');
+        expect(body.get('refresh_token')).toBe('global-refresh-token');
+        return new Response(
+          JSON.stringify({
+            access_token: 'rotated-global-access-token',
+            refresh_token: 'rotated-global-refresh-token',
+            expires_in: 3600,
+            scope: '',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url === `${baseUrl}/models`) {
+        expect(new Headers(init?.headers).get('authorization')).toBe(
+          'Bearer rotated-global-access-token',
+        );
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-for-coding', context_length: 262144, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.login(undefined, { region: 'global' })).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+      defaultModel: 'kimi-code/kimi-for-coding',
+    });
+    const config = await harness.getConfig({ reload: true });
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      baseUrl,
+      oauth: { storage: 'file', key: oauthKey, oauthHost },
+    });
+    // The default (cn) credential slot must stay untouched.
+    expect(
+      await new FileTokenStorage(join(homeDir, 'credentials')).load(
+        resolveKimiTokenStorageName({ oauthKey: KIMI_CODE_OAUTH_KEY }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('logs back into the mainland-cn region over a persisted global login', async () => {
+    const globalBaseUrl = 'https://api.kimi.ai/coding/v1';
+    const globalOauthHost = 'https://auth.kimi.ai';
+    const globalKey = resolveKimiCodeOAuthKey({
+      oauthHost: globalOauthHost,
+      baseUrl: globalBaseUrl,
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${globalBaseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "${globalKey}", oauth_host = "${globalOauthHost}" }
+`,
+    );
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    const defaultStorageName = resolveKimiTokenStorageName({ oauthKey: KIMI_CODE_OAUTH_KEY });
+    await storage.save(defaultStorageName, {
+      ...freshToken(),
+      accessToken: 'expired-cn-access-token',
+      refreshToken: 'cn-refresh-token',
+      expiresAt: 1,
+    });
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      const url = fetchInputUrl(input);
+      if (url === 'https://auth.kimi.com/api/oauth/token') {
+        if (typeof init?.body !== 'string') throw new TypeError('expected form body');
+        const body = new URLSearchParams(init.body);
+        expect(body.get('refresh_token')).toBe('cn-refresh-token');
+        return new Response(
+          JSON.stringify({
+            access_token: 'rotated-cn-access-token',
+            refresh_token: 'rotated-cn-refresh-token',
+            expires_in: 3600,
+            scope: '',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url === 'https://api.kimi.com/coding/v1/models') {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-for-coding', context_length: 262144, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.login(undefined, { region: 'mainland-cn' })).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+    });
+    const config = await harness.getConfig({ reload: true });
+    const provider = config.providers[KIMI_CODE_PROVIDER_NAME];
+    expect(provider?.oauth?.key).toBe(KIMI_CODE_OAUTH_KEY);
+    // Back on the default hosts, the persisted oauth ref carries no host trace.
+    expect(provider?.oauth?.oauthHost).toBeUndefined();
+    expect(fetchMock.mock.calls.map((call) => fetchInputUrl(call[0]))).toEqual([
+      'https://auth.kimi.com/api/oauth/token',
+      'https://api.kimi.com/coding/v1/models',
+    ]);
+  });
+
   it('recomputes legacy managed OAuth refs during login for non-default base URLs', async () => {
     const baseUrl = 'https://api.example.test/coding/v1';
     const oauthKey = resolveKimiCodeOAuthKey({ baseUrl });
@@ -665,7 +800,7 @@ max_context_size = 262144
 
     expect(result).toMatchObject({
       kind: 'ok',
-      summary: { label: 'Weekly limit', used: 1, limit: 10 },
+      summary: { name: 'Weekly limit', used: 1, limit: 10 },
     });
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const headers = new Headers((init.headers ?? {}) as Record<string, string>);
@@ -714,7 +849,7 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
 
     await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
-      summary: { label: 'Dev limit', used: 2, limit: 10 },
+      summary: { name: 'Dev limit', used: 2, limit: 10 },
     });
     await expect(
       harness.auth.submitFeedback({
@@ -798,7 +933,7 @@ oauth = { storage = "file", key = "${configuredOauthKey}", oauth_host = "https:/
     ).resolves.toBe('env-access-token');
     await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
-      summary: { label: 'Env limit', used: 3, limit: 10 },
+      summary: { name: 'Env limit', used: 3, limit: 10 },
     });
     await expect(
       harness.auth.submitFeedback({

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -38,6 +39,7 @@ describe('server-v2 /api/v1/workspaces', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -186,7 +188,6 @@ describe('server-v2 /api/v1/workspaces', () => {
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
     expect(created.body.data.session_count).toBe(0);
 
-    // Create a session bound to this workspace via cwd.
     const session = await postJson<{ id: string }>('/api/v1/sessions', { metadata: { cwd: root } });
     expect(session.body.code).toBe(0);
 
@@ -196,8 +197,6 @@ describe('server-v2 /api/v1/workspaces', () => {
   });
 
   it('sums session_count across legacy split buckets of one root', async () => {
-    // Legacy pre-fold data: one physical directory registered under two
-    // spelling variants, with sessions bucketed per minted id.
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedId = encodeWorkDirKey(typedRoot);
@@ -237,10 +236,8 @@ describe('server-v2 /api/v1/workspaces', () => {
       );
     };
     await seedBucket(typedId, 's-typed', {});
-    // Archived sessions count too (the wire counts every persisted session).
     await seedBucket(lowerId, 's-lower', { archived: true, updatedAt: 2 });
 
-    // The catalog dedupes to one workspace whose count covers both buckets.
     const { body } = await getJson<ListWire>('/api/v1/workspaces');
     expect(body.code).toBe(0);
     expect(body.data.items).toHaveLength(1);

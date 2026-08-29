@@ -1,5 +1,21 @@
 # @moonshot-ai/agent-core
 
+## 0.15.8
+
+### Patch Changes
+
+- Updated dependencies [[`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629), [`4a93f70`](https://github.com/MoonshotAI/kimi-code/commit/4a93f70aa2cf5f70a88b4f8eeb2e409aab2c8f59)]:
+  - @moonshot-ai/kimi-code-oauth@0.4.0
+
+## 0.15.7
+
+### Patch Changes
+
+- [#2382](https://github.com/MoonshotAI/kimi-code/pull/2382) [`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa) Thanks [@liruifengv](https://github.com/liruifengv)! - Thread the host identity through the managed auth facades so OAuth token refreshes from inside the core carry the `X-Msh-*` device headers.
+
+- Updated dependencies [[`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa)]:
+  - @moonshot-ai/kimi-code-oauth@0.3.0
+
 ## 0.15.6
 
 ### Patch Changes

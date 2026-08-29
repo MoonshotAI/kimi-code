@@ -26,6 +26,13 @@ const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'off', description: 'Turn swarm mode off' },
 ];
 
+const TOWER_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'status', description: 'Report tower status' },
+  { value: 'teardown', description: 'Tear down the tower' },
+  { value: 'on', description: 'Turn tower mode on' },
+  { value: 'off', description: 'Turn tower mode off' },
+];
+
 const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'list', description: 'Show configured additional workspace directories' },
 ];
@@ -47,6 +54,11 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/tower` command (subcommands). */
+export function towerArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(TOWER_ARG_COMPLETIONS, argumentPrefix);
 }
 
 /** Argument autocompletion for the `/add-dir` command. */
@@ -178,11 +190,33 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'tower',
+    aliases: [],
+    description: 'Report tower status, toggle tower mode, or set the tower objective',
+    priority: 100,
+    argumentHint: '[status|teardown|on|off] | <objective>',
+    completeArgs: towerArgumentCompletions,
+    // Every form stays available while busy: objectives steer into the
+    // running coordinator turn (see sendMessage in kimi-tui.ts), so /tower
+    // commands never wait for the previous one to finish.
+    availability: 'always',
+    experimentalFlag: 'tower',
+    requiresEngineV2: true,
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',
     priority: 100,
     availability: 'always',
+  },
+  {
+    name: 'secondary-model',
+    aliases: ['subagent-model'],
+    description: 'Configure the secondary model for subagents',
+    priority: 90,
+    availability: 'always',
+    experimentalFlag: 'secondary-model',
   },
   {
     name: 'effort',
@@ -307,7 +341,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'fork',
     aliases: [],
-    description: 'Fork the current session',
+    description: 'Fork the current session into a copy without switching to it',
     priority: 80,
   },
   {
@@ -334,7 +368,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'feedback',
-    aliases: [],
+    aliases: ['bug'],
     description: 'Send feedback to make Kimi Code better',
     priority: 60,
     availability: 'always',
@@ -396,6 +430,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Open the current session in the Web UI by starting a new server',
     priority: 40,
     availability: 'always',
+  },
+  {
+    name: 'remote-control',
+    aliases: ['rc'],
+    description: 'Open the current session through Kimi Remote Control (experimental)',
+    priority: 40,
+    availability: 'always',
+    experimentalFlag: 'remote-control',
   },
   {
     name: 'exit',

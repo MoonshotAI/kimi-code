@@ -27,6 +27,8 @@
  *     Body: FsSearchRequest   { query, limit?, include_globs?, exclude_globs?,
  *                               follow_gitignore? }
  *     Response data: FsSearchResponse  { items, truncated }
+ *     An empty query lists the workspace root's top-level entries (dirs
+ *     first) instead of fuzzy-matching.
  *     Errors: 40401, 41303, 41304
  *
  *   POST /v1/sessions/{sid}/fs:grep
@@ -70,6 +72,7 @@ import {
   fsGitStatusSchema,
   fsGrepFileHitSchema,
   fsSearchHitSchema,
+  fsSuggestItemSchema,
 } from '../fs';
 
 export const fsListSortSchema = z.enum([
@@ -221,7 +224,10 @@ export const fsStatManyResponseSchema = z.object({
 export type FsStatManyResponse = z.infer<typeof fsStatManyResponseSchema>;
 
 export const fsSearchRequestSchema = z.object({
-  query: z.string().min(1),
+  // An empty query is allowed: the server then lists the workspace root's
+  // top-level entries (dirs first) instead of fuzzy-matching — the starting
+  // set for @-mention style file pickers.
+  query: z.string(),
   limit: z.number().int().min(1).max(200).default(50),
   include_globs: z.array(z.string()).optional(),
   exclude_globs: z.array(z.string()).optional(),
@@ -234,6 +240,28 @@ export const fsSearchResponseSchema = z.object({
   truncated: z.boolean(),
 });
 export type FsSearchResponse = z.infer<typeof fsSearchResponseSchema>;
+
+export const fsSuggestRequestSchema = z.object({
+  query: z.string(),
+  limit: z.number().int().min(1).max(200).default(50),
+  follow_gitignore: z.boolean().default(true),
+  show_hidden: z.boolean().default(false),
+  include_globs: z.array(z.string()).optional(),
+  exclude_globs: z.array(z.string()).optional(),
+});
+export type FsSuggestRequest = z.infer<typeof fsSuggestRequestSchema>;
+
+export const fsRootSuggestRequestSchema = fsSuggestRequestSchema.extend({
+  roots: z.array(z.string().min(1)).min(1).max(32),
+  runtime_id: z.string().min(1).optional(),
+});
+export type FsRootSuggestRequest = z.infer<typeof fsRootSuggestRequestSchema>;
+
+export const fsSuggestResponseSchema = z.object({
+  items: z.array(fsSuggestItemSchema),
+  truncated: z.boolean(),
+});
+export type FsSuggestResponse = z.infer<typeof fsSuggestResponseSchema>;
 
 export const fsGrepRequestSchema = z.object({
   pattern: z.string().min(1),

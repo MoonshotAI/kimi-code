@@ -1,32 +1,6 @@
-/**
- * `kosong/provider` domain (L2) — OpenAI Chat Completions wire base.
- *
- * The base that actually speaks the Chat Completions wire format — and the
- * vendor host with the widest hook surface. It knows NOTHING about vendors:
- * every vendor deviation arrives as a composed `OpenAIChatCompletionsHooks`
- * set baked into `options.hooks` at construction. The hook consumption style
- * is uniform — "hook first, `undefined` falls back to the base default".
- *
- * Per-turn intent assembly (`_resolveRequestKwargs`) applies overlays in the
- * fixed contract order: cacheKey → sampling → thinking → maxCompletionTokens.
- * The context-window clamp on the completion budget (floor 1) runs BEFORE any
- * hook and cannot be skipped; the 128k ceiling clamp can be taken over by the
- * `withMaxCompletionTokens` hook.
- *
- * Two load-bearing behaviors:
- *
- *  - When `hooks.withThinking` EXISTS, the history-scanning auto-enable of
- *    `reasoning_effort` (issue #1616) is disabled entirely — once a trait
- *    takes over thinking encoding the base must not interfere.
- *  - When `hooks.convertMessage` EXISTS ("trait mode"), the base's
- *    tool-result `extract_text` fallback and tool-declaration-only skip are
- *    handed over to the trait wholesale: every history message is
- *    base-converted, post-processed by the hook, and dropped on `null`.
- */
-
 import OpenAI from 'openai';
 
-import { parseTraceId } from '#/kosong/contract/errors';
+import { parseTraceId, type ChatProviderError } from '#/kosong/contract/errors';
 import type {
   ContentPart,
   Message,
@@ -80,12 +54,6 @@ import {
 } from '../request-auth';
 import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
 
-// Inbound: scan the known reasoning field names in priority order; first
-// string value wins. Outbound: echo the dialect the endpoint actually spoke
-// (detected by ReasoningKeyDialect), defaulting to `reasoning_content`. Both
-// arms can be pinned by an explicit key — operator config (`reasoning_key`)
-// or a trait's `reasoningKey` declaration.
-
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 
 export const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
@@ -93,15 +61,9 @@ export const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   maxLength: 64,
 };
 
-/**
- * The base-internal hook set: same surface as the L1 trait's per-request
- * hooks but with the `TraitContext` already bound away by the compositor.
- * Construction-time declarations (endpoint/headers/provides/capability) never
- * enter this set. A hook returning `undefined` always means "keep the base
- * default".
- */
 export interface OpenAIChatCompletionsHooks {
   convertTool?: (tool: Tool) => Record<string, unknown> | undefined;
+  convertError?: (error: unknown) => ChatProviderError | undefined;
   convertMessage?: (
     message: Message,
     converted: Record<string, unknown>,
@@ -157,7 +119,7 @@ export interface OpenAILegacyGenerationKwargs {
 
 interface OpenAIMessage {
   role: string;
-  content?: string | OpenAIContentPart[] | undefined;
+  content?: string | OpenAIContentPart[] | null | undefined;
   tool_calls?: OpenAIToolCallOut[] | undefined;
   tool_call_id?: string | undefined;
   name?: string | undefined;
@@ -237,8 +199,6 @@ function convertMessage(
 
   if (message.role === 'tool') {
     const hasNonTextPart = message.content.some((p) => p.type !== 'text' && p.type !== 'think');
-    // The forced extract_text fallback for media-bearing tool results is part
-    // of the base's non-trait behavior; in trait mode the trait owns shaping.
     const effectiveConversion: ToolMessageConversion =
       allowToolResultExtraction && hasNonTextPart ? 'extract_text' : toolMessageConversion;
 
@@ -281,8 +241,19 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
-  // Round-trip thinking under the dialect the endpoint actually spoke
-  // (detected from inbound responses; defaults to `reasoning_content`).
+  if (
+    message.role === 'assistant' &&
+    hasReasoningPart &&
+    result.content === undefined &&
+    result.tool_calls === undefined
+  ) {
+    result.content = '';
+  }
+
+  if (message.role === 'assistant' && result.content === undefined) {
+    result.content = null;
+  }
+
   if (hasReasoningPart || (preserveThinking && message.role === 'assistant')) {
     result[reasoningKey] = reasoningContent;
   }
@@ -377,6 +348,9 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     private readonly _extractUsageHook?:
       | ((chunk: Record<string, unknown>) => Record<string, unknown> | null | undefined)
       | undefined,
+    private readonly _convertErrorHook?:
+      | ((error: unknown) => ChatProviderError | undefined)
+      | undefined,
   ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(
@@ -422,8 +396,6 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
   }
 
   private _captureUsage(raw: Record<string, unknown>, fallback: unknown): void {
-    // The hook locates the usage payload first; `undefined` defers to the
-    // base default location, `null` asserts the chunk carries no usage.
     const hooked = this._extractUsageHook?.(raw);
     const rawUsage = hooked !== undefined ? hooked : fallback;
     if (rawUsage !== null && rawUsage !== undefined) {
@@ -442,8 +414,6 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     const message = response.choices[0]?.message;
     if (!message) return;
 
-    // Reasoning content: honor the explicit key when set, otherwise scan the
-    // de facto field set and remember the dialect for outbound echo.
     const reasoning = reasoningKeyDialect.observe(message);
     if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
@@ -493,8 +463,6 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         const delta = choice.delta;
 
-        // Reasoning content: honor the explicit key when set, otherwise scan
-        // the de facto field set and remember the dialect for outbound echo.
         const reasoning = reasoningKeyDialect.observe(delta);
         if (reasoning !== undefined) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
@@ -511,7 +479,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         }
       }
     } catch (error: unknown) {
-      throw convertOpenAIError(error);
+      throw convertOpenAIError(error, this._convertErrorHook);
     }
   }
 }
@@ -534,11 +502,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private readonly _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private readonly _hooks: OpenAIChatCompletionsHooks | undefined;
 
-  /**
-   * Bound only when the composed hook set declares `uploadVideo` — declaring
-   * the hook IS the capability declaration, so a base without the hook has no
-   * upload facility at all.
-   */
   readonly uploadVideo?: (
     input: string | VideoUploadInput,
     options?: GenerateOptions,
@@ -553,9 +516,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._hooks = options.hooks;
     const normalizedReasoningKey = options.reasoningKey?.trim();
-    // An explicit key — operator config or a trait declaration — pins the
-    // dialect and disables detection; with neither, the dialect is learned
-    // from inbound responses (defaulting to `reasoning_content`).
     this._reasoningKeyDialect = new ReasoningKeyDialect(
       normalizedReasoningKey !== undefined && normalizedReasoningKey.length > 0
         ? normalizedReasoningKey
@@ -599,11 +559,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   ): Promise<StreamedMessage> {
     const { kwargs, reasoningEffort } = this._resolveRequestKwargs(history, options);
 
-    // preserveThinking decides whether assistant messages force-replay their
-    // reasoning field; the hook reads the already-seeded kwargs (e.g. the
-    // thinking config a withThinking hook just encoded).
     const preserveThinking = this._hooks?.preserveThinking?.(kwargs) ?? false;
-    // Outbound reasoning field: the dialect the endpoint actually spoke.
     const reasoningKey = this._reasoningKeyDialect.outboundKey();
 
     const messages: Record<string, unknown>[] = [];
@@ -616,8 +572,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     const convertMessageHook = this._hooks?.convertMessage;
     if (convertMessageHook !== undefined) {
-      // Trait mode: the tool-declaration-only skip and the tool-result media
-      // extraction are handed over to the trait wholesale.
       for (const msg of normalizedHistory) {
         const converted = convertMessage(msg, reasoningKey, null, preserveThinking, false);
         const shaped = convertMessageHook(msg, converted);
@@ -662,15 +616,12 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       createParams['reasoning_effort'] = reasoningEffort;
     }
 
-    // buildParams is the last hook to run before the request is sent.
     const builtParams = this._hooks?.buildParams?.(createParams);
     const finalParams = builtParams ?? createParams;
 
     try {
       const client = this._createClient(options?.auth);
       options?.onRequestSent?.();
-      // `withResponse()` resolves as soon as the response headers arrive
-      // (before the stream body), so the trace id is available mid-stream.
       const { data, response } = await client.chat.completions
         .create(
           finalParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
@@ -685,17 +636,13 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         this._reasoningKeyDialect,
         parseTraceId(response.headers),
         this._hooks?.extractUsage,
+        this._hooks?.convertError,
       );
     } catch (error: unknown) {
-      throw convertOpenAIError(error);
+      throw convertOpenAIError(error, this._hooks?.convertError);
     }
   }
 
-  /**
-   * Per-turn intent → request kwargs, in the fixed contract overlay order:
-   * cacheKey → sampling → thinking → maxCompletionTokens. Each intent consults
-   * its hook first and falls back to the base encoding on `undefined`.
-   */
   private _resolveRequestKwargs(
     history: readonly Message[],
     options: GenerateOptions | undefined,
@@ -734,8 +681,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
           ? undefined
           : explicitThinkingEffort;
 
-    // issue #1616 history scan — disabled entirely when a withThinking hook
-    // exists: once a trait takes over thinking, the base must not interfere.
     if (
       reasoningEffort === undefined &&
       explicitThinkingEffort !== 'off' &&
@@ -752,7 +697,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     if (options?.maxCompletionTokens !== undefined) {
       let cap = options.maxCompletionTokens;
-      // Window clamp first — it cannot be skipped by any hook.
       if (
         options.usedContextTokens !== undefined &&
         options.maxContextTokens !== undefined &&
@@ -765,7 +709,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       if (hooked !== undefined) {
         kwargs = { ...kwargs, ...hooked };
       } else {
-        // The ceiling clamp can be taken over by the hook.
         const capped = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
         kwargs = { ...kwargs, ...completionTokenKwargs(this._model, Math.max(1, capped)) };
       }
@@ -773,7 +716,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete kwargs[key];
       }
     }
@@ -794,6 +736,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     const clientOpts: Record<string, unknown> = {
       apiKey,
       baseURL: this._baseUrl,
+      maxRetries: 0,
     };
     const defaultHeaders = mergeRequestHeaders(this._defaultHeaders, auth?.headers);
     if (defaultHeaders !== undefined) {
@@ -805,11 +748,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Base capability catalog — the final fallback of capability resolution.
-// `undefined` means the base knows nothing about the model.
-// ---------------------------------------------------------------------------
 
 export function getOpenAILegacyModelCapability(modelName: string) {
   const normalized = modelName.toLowerCase();

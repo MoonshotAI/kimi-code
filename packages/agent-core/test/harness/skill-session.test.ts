@@ -15,6 +15,7 @@ import {
   type SDKAPI,
   type TelemetryClient,
 } from '../../src';
+import { __resetRootLoggerForTest } from '../../src/logging/logger';
 import {
   recordingContextTelemetry,
   type TelemetryContextRecord,
@@ -38,7 +39,8 @@ describe('HarnessAPI session skills', () => {
   });
 
   afterEach(async () => {
-    await rm(tmp, { recursive: true, force: true });
+    await __resetRootLoggerForTest();
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     vi.unstubAllEnvs();
   });
 

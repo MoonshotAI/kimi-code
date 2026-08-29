@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { McpServerConfig } from '../config/schema';
+import type { AgentFileRoot } from '../profile/agentfile/types';
 import { discoverSkills, type SkillRoot } from '../skill';
 import type { HookDef } from '../session/hooks';
 import { loadPluginCommand } from './commands';
@@ -13,10 +14,12 @@ import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import { resolveInstallSource } from './source';
 import {
   type EnabledPluginSessionStart,
+  type EnabledPluginSystemPrompt,
   type PluginCapabilityState,
   type PluginCommandDef,
   type PluginGithubMetadata,
   type PluginInfo,
+  type PluginMcpServerEntry,
   type PluginMcpServerInfo,
   type PluginRecord,
   type PluginSource,
@@ -209,7 +212,19 @@ export class PluginManager {
           path: dir,
           source: 'extra',
           plugin: { id: record.id, instructions: record.skillInstructions },
+          scanMode: record.manifest.rootSkillFallback ? 'root-skill-only' : undefined,
         });
+      }
+    }
+    return roots;
+  }
+
+  pluginAgentRoots(): readonly AgentFileRoot[] {
+    const roots: AgentFileRoot[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      for (const dir of record.manifest.agents ?? []) {
+        roots.push({ path: dir, source: 'plugin' });
       }
     }
     return roots;
@@ -226,17 +241,58 @@ export class PluginManager {
     return out;
   }
 
+  enabledSystemPrompts(): readonly EnabledPluginSystemPrompt[] {
+    const out: EnabledPluginSystemPrompt[] = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.state !== 'ok') continue;
+      const content = record.manifest?.systemPrompt;
+      if (content === undefined) continue;
+      out.push({ pluginId: record.id, content });
+    }
+    return out;
+  }
+
   enabledMcpServers(): Record<string, McpServerConfig> {
     const out: Record<string, McpServerConfig> = {};
+    for (const entry of this.mcpServerEntries()) {
+      if (entry.config.enabled === false) continue;
+      out[entry.name] = withMcpServerEnabled(entry.config, true);
+    }
+    return out;
+  }
+
+  /**
+   * Every MCP server declared by a healthy plugin manifest, with the final
+   * effective config the engine would run: the `plugin-<id>:` runtime rename,
+   * the plugin environment / cwd constraints, the folded enabled flag (plugin
+   * disabled or per-server override → `enabled: false`), and — when the caller
+   * passes `managedEnv` — the host-managed Kimi env for stdio servers. This is
+   * the single contributor surface the MCP registry and live-session sync read;
+   * config ownership stays in the manifest, so entries are read-only for the
+   * management plane.
+   */
+  mcpServerEntries(options?: {
+    readonly managedEnv?: Record<string, string>;
+  }): readonly PluginMcpServerEntry[] {
+    const out: PluginMcpServerEntry[] = [];
     for (const record of this.records.values()) {
-      if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
+      if (record.state !== 'ok' || record.manifest === undefined) continue;
       for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
-        if (!isMcpServerEnabled(record, name, config)) continue;
-        out[pluginMcpRuntimeName(record.id, name)] = withPluginMcpRuntime(
-          withMcpServerEnabled(config, true),
+        const enabled = record.enabled && isMcpServerEnabled(record, name, config);
+        let effective = withPluginMcpRuntime(
+          withMcpServerEnabled(config, enabled),
           record.root,
           this.kimiHomeDir,
         );
+        if (options?.managedEnv !== undefined && effective.transport === 'stdio') {
+          effective = { ...effective, env: { ...effective.env, ...options.managedEnv } };
+        }
+        out.push({
+          name: pluginMcpRuntimeName(record.id, name),
+          config: effective,
+          pluginId: record.id,
+          serverName: name,
+        });
       }
     }
     return out;
@@ -413,6 +469,7 @@ async function countDiscoveredPluginSkills(
     path: dir,
     source: 'extra',
     plugin: { id: pluginId, instructions: manifest?.skillInstructions },
+    scanMode: manifest?.rootSkillFallback ? 'root-skill-only' : undefined,
   }) satisfies SkillRoot);
   if (roots.length === 0) return 0;
   const skills = await discoverSkills({ roots });

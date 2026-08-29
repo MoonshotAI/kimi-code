@@ -14,6 +14,7 @@ import {
   stripPort,
 } from '../src/middleware/hostnames';
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
 describe('stripPort', () => {
   it('strips the port from a hostname', () => {
@@ -50,7 +51,7 @@ describe('isAllowedHost (default allow set)', () => {
     });
   }
 
-  const deny = ['evil.com', 'evil.com:80', '127.0.0.1.evil.com'];
+  const deny = ['evil.example.test', 'evil.example.test:80', '127.0.0.1.evil.example.test'];
 
   for (const host of deny) {
     it(`denies ${host}`, () => {
@@ -97,13 +98,16 @@ describe('isAllowedHost (extra)', () => {
 
 describe('isAllowedHost (disable)', () => {
   it('allows everything when disabled', () => {
-    expect(isAllowedHost('evil.com', { disable: true })).toBe(true);
+    expect(isAllowedHost('evil.example.test', { disable: true })).toBe(true);
   });
 });
 
 describe('parseAllowedHosts', () => {
   it('splits, trims, and drops empties', () => {
-    expect(parseAllowedHosts({ KIMI_CODE_ALLOWED_HOSTS: ' a, .b.com, ' })).toEqual(['a', '.b.com']);
+    expect(parseAllowedHosts({ KIMI_CODE_ALLOWED_HOSTS: ' a, .b.example.com, ' })).toEqual([
+      'a',
+      '.b.example.com',
+    ]);
   });
 
   it('returns [] when unset', () => {
@@ -139,13 +143,13 @@ describe('createHostCheck (onRequest hook)', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/probe',
-      headers: { host: 'evil.com' },
+      headers: { host: 'evil.example.test' },
     });
     expect(res.statusCode).toBe(403);
     const body = res.json() as Record<string, unknown>;
     expect(body['code']).toBe(40301);
     expect(body['msg']).toBe(
-      "Invalid Host header: evil.com; allow this host with KIMI_CODE_ALLOWED_HOSTS=evil.com or 'kimi web --allowed-host evil.com'.",
+      "Invalid Host header: evil.example.test; allow this host with KIMI_CODE_ALLOWED_HOSTS=evil.example.test or 'kimi web --allowed-host evil.example.test'.",
     );
     expect(body['data']).toBeNull();
     expect(typeof body['request_id']).toBe('string');
@@ -187,6 +191,7 @@ describe('startServer allowedHosts — env + option merge', () => {
     process.env[ENV_KEY] = 'env-only.example.com';
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-host-merge-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -194,9 +199,6 @@ describe('startServer allowedHosts — env + option merge', () => {
       allowedHosts: ['opt-only.example.com'],
     });
     const token = server.authTokenService.getToken();
-    // `fetch` won't override the Host header (forbidden per the Fetch spec), so
-    // drive the request through Fastify's inject, which honors `headers.host`
-    // and still runs the global onRequest Host/auth hooks.
     const probe = async (host: string): Promise<number> => {
       const res = await (server as RunningServer).app.inject({
         method: 'GET',
@@ -206,11 +208,8 @@ describe('startServer allowedHosts — env + option merge', () => {
       return res.statusCode;
     };
 
-    // The env allowlist must still be honored even when the option is passed…
     expect(await probe('env-only.example.com')).toBe(200);
-    // …and the option entry must be honored too.
     expect(await probe('opt-only.example.com')).toBe(200);
-    // Sanity: an unrelated host is still rejected.
     expect(await probe('evil.example.com')).toBe(403);
   });
 });

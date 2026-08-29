@@ -2,17 +2,22 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme, lightColors } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
+import { setMarkdownRenderLatex } from '../utils/markdown-options';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
-  const tuiConfig = await loadTuiConfig();
+  const tuiConfig = await loadTuiConfig(undefined, (message) =>
+    host.showStatus(message, 'warning'),
+  );
   await applyReloadedTuiConfig(host, tuiConfig);
   host.showStatus('TUI config reloaded.', 'success');
 }
 
 export async function handleReloadCommand(host: SlashCommandHost): Promise<void> {
-  const tuiConfig = await loadTuiConfig();
+  const tuiConfig = await loadTuiConfig(undefined, (message) =>
+    host.showStatus(message, 'warning'),
+  );
   const session = host.session;
 
   if (session !== undefined) {
@@ -22,11 +27,24 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
 
   const config = await host.harness.getConfig({ reload: true });
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
+  const sessionlessV2 = session === undefined && host.engineV2;
+  if (sessionlessV2) {
+    // Session-less v2: rebuild the workspace-level dynamic commands too, so
+    // skill/plugin changes apply before the first session exists.
+    await host.refreshSkillCommands();
+    await host.refreshPluginCommands();
+  }
   host.refreshSlashCommandAutocomplete();
   applyRuntimeConfig(host, config);
   await applyReloadedTuiConfig(host, tuiConfig);
 
   if (session === undefined) {
+    // Still session-less on the v2 engine: refresh the lazy defaults too, so
+    // defaults edited externally (config.toml, a newly added default model)
+    // reach the first lazy-created session instead of staying stale.
+    if (sessionlessV2) {
+      await host.hydrateLazyConfigDefaults();
+    }
     host.showStatus(
       'Runtime and TUI config reloaded; no active session.',
       'success',
@@ -38,6 +56,10 @@ export async function applyReloadedTuiConfig(
   host: SlashCommandHost,
   config: TuiConfig,
 ): Promise<void> {
+  // Set the LaTeX toggle before applyTheme: theme application invalidates the
+  // transcript components, which rebuild their Markdown children and copy the
+  // options at construction — so the new value must be live by then.
+  setMarkdownRenderLatex(config.renderLatex ?? true);
   const resolved = config.theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
@@ -46,8 +68,11 @@ export async function applyReloadedTuiConfig(
   host.setAppState({
     editorCommand: config.editorCommand,
     disablePasteBurst: config.disablePasteBurst,
+    renderLatex: config.renderLatex,
+    cacheExpiryHint: config.cacheExpiryHint,
     notifications: config.notifications,
     upgrade: config.upgrade,
+    statusLine: config.statusLine,
   });
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }

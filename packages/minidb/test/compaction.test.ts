@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
+import { waitFor } from './helpers.js';
 
 async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'minidb-compact-'));
@@ -70,9 +71,37 @@ test('auto-compaction triggers when the WAL crosses the threshold', async () => 
       compactThresholdBytes: 1024, // 1 KiB
     });
     for (let i = 0; i < 200; i++) await db.set(`k${i}`, `v${i}`.padEnd(50, 'x'));
-    // Allow the background compaction to finish.
+    // Allow the background compaction to finish (stage 6: it is queued on
+    // the maintenance scheduler, so poll rather than reading db.compacting
+    // synchronously).
+    await waitFor(() => db.stats.compactions >= 1, 'auto-compaction to complete');
+    assert.equal(db.size, 200);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('open-time compaction runs in the background — open() returns with the full dataset', async () => {
+  const dir = await tmpDir();
+  try {
+    // Grow the WAL well past the threshold without any compaction.
+    let db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', autoCompact: false });
+    for (let i = 0; i < 200; i++) await db.set(`k${i}`, `v${i}`.padEnd(50, 'x'));
+    await db.close();
+
+    // Reopen with a 1 KiB threshold: the WAL far exceeds it, so compaction
+    // fires — but open() must NOT block on the rewrite. The recovered store
+    // is already complete and consistent the moment open() resolves.
+    db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no', compactThresholdBytes: 1024 });
+    assert.equal(db.size, 200);
+    for (let i = 0; i < 200; i++) assert.equal(db.get(`k${i}`), `v${i}`.padEnd(50, 'x'));
+
+    // The background compaction finishes on its own and shrinks the WAL
+    // (stage 6: queued on the maintenance scheduler — poll for completion).
+    await waitFor(() => db.stats.compactions >= 1, 'open-time background compaction');
     if (db.compacting) await db._compactDone;
-    assert.ok(db.stats.compactions >= 1, 'at least one auto-compaction ran');
+    assert.ok((await fs.stat(path.join(dir, 'db.wal'))).size < 1024, 'WAL shrank');
     assert.equal(db.size, 200);
     await db.close();
   } finally {
@@ -170,6 +199,42 @@ test('compaction with no concurrent writes produces an empty WAL tail', async ()
     assert.equal(db.get('k0'), 'v0');
     assert.equal(db.get('k299'), 'v299');
     await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('disk-mode compaction with continuous writes stays consistent for sync and async readers', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open<Record<string, unknown>>({
+      dir,
+      valueCodec: 'json',
+      valueMode: 'disk',
+      compactThresholdBytes: 16 * 1024,
+      fsyncPolicy: 'no',
+    });
+    // Seed past the threshold, then compact while writes continue: the
+    // stage-6 grouped async snapshot reads must produce the same snapshot a
+    // synchronous reader would.
+    for (let i = 0; i < 300; i++) await db.set(`k${i}`, { n: i, text: `bulk ${i} ${'x'.repeat(40)}` });
+    const compactP = db.compact();
+    for (let i = 300; i < 380; i++) await db.set(`k${i}`, { n: i, text: `tail ${i}` });
+    await compactP;
+    assert.equal(db.size, 380);
+    for (let i = 0; i < 380; i += 13) {
+      assert.deepEqual(await db.getAsync(`k${i}`), db.get(`k${i}`));
+    }
+    await db.close();
+
+    // A read-only reader recovers the rotated pair and agrees.
+    const ro = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json', valueMode: 'disk', readOnly: true });
+    assert.equal(ro.size, 380);
+    for (let i = 0; i < 380; i += 17) {
+      assert.deepEqual(await ro.getAsync(`k${i}`), ro.get(`k${i}`));
+      assert.equal(ro.get(`k${i}`)!.n, i);
+    }
+    await ro.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

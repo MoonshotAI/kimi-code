@@ -5,7 +5,9 @@ import { pathToFileURL } from 'node:url';
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { detectInstallSource } from '#/cli/update/source';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
+import { quoteShellArg } from '#/utils/shell-quote';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
@@ -29,10 +31,16 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
     return;
   }
 
-  const session = host.session;
+  let session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
+    if (!host.engineV2) {
+      host.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+    // Setting a title needs a live session; lazy-create it on first use (the
+    // bare read-only form above works session-less).
+    session = await host.ensureSession();
+    if (session === undefined) return;
   }
 
   const newTitle = title.slice(0, 200);
@@ -55,27 +63,56 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
   }
 
   const sourceTitle = forkSourceTitle(host, session);
-  let forked: Session;
   try {
-    forked = await host.harness.forkSession({
+    const forked = await host.harness.forkSession({
       id: session.id,
       title: `Fork: ${sourceTitle}`,
     });
-  } catch (error) {
-    const msg = formatErrorMessage(error);
-    host.showError(`Failed to fork session: ${msg}`);
-    return;
-  }
-
-  try {
-    await host.switchToSession(
-      forked,
-      `Session forked (${forked.id}). To return to the original session: kimi -r ${session.id}`,
+    const forkId = forked.id;
+    try {
+      await forked.close();
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      host.showError(`Session forked (${forkId}), but failed to release its runtime: ${msg}`);
+      return;
+    }
+    // Stay in the source session: switching to the fork would close the
+    // source, killing its in-flight turn and background tasks. The fork is
+    // an independent copy the user can switch to explicitly via /sessions,
+    // or enter from a new CLI process with the printed resume command.
+    const command = forkResumeCommand(host.state.appState.workDir, forkId);
+    let clipboardNote: string;
+    try {
+      const method = await copyTextToClipboard(command);
+      // OSC 52 delivery is fire-and-forget: terminals without OSC 52 support
+      // silently drop the sequence, so only native delivery may claim success
+      // (same wording convention as /copy).
+      clipboardNote =
+        method === 'native'
+          ? 'Command copied to clipboard'
+          : 'Command copied via terminal escape sequence (unverified)';
+    } catch {
+      clipboardNote = 'Failed to copy command to clipboard';
+    }
+    host.showStatus(
+      `Session forked (${forkId}). Still in the original session; switch to the fork via /sessions.\n` +
+        `  To enter the fork in a new process, run: ${command}\n` +
+        `  ${clipboardNote}`,
     );
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to switch to forked session: ${msg}`);
+    host.showError(`Failed to fork session: ${msg}`);
   }
+}
+
+function forkResumeCommand(workDir: string, forkId: string): string {
+  const dir = quoteShellArg(workDir);
+  // cmd.exe's `cd` only updates the given drive's remembered directory — a
+  // terminal on a different drive stays put, and the resume then runs in the
+  // wrong working directory. `pushd` switches drive + directory in both
+  // cmd.exe and PowerShell (`cd /d` would break PowerShell).
+  const changeDir = process.platform === 'win32' ? `pushd ${dir}` : `cd ${dir}`;
+  return `${changeDir} && kimi --resume ${quoteShellArg(forkId)}`;
 }
 
 function forkSourceTitle(host: SlashCommandHost, session: Session): string {

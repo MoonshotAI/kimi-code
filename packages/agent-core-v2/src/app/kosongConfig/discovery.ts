@@ -1,22 +1,8 @@
-/**
- * `kosongConfig` domain (L3) — `IProviderDiscoveryService`: remote model
- * discovery and config sync.
- *
- * Refreshes the `[models.*]` / `[providers.*]` configuration from what each
- * provider actually serves (managed OAuth catalogs, open platforms, custom
- * registries) through the shared `@moonshot-ai/kimi-code-oauth` orchestrator,
- * applies the result to kosong's in-memory registries (the persistence
- * bridge writes it back to config), and publishes
- * `event.model_catalog.changed` on change. This is a WRITE path (external
- * world → kosong → config), deliberately separate from the read-only
- * `IModelCatalog` materialization/query surface. The OAuth-only
- * managed-provider refresh additionally lives in `auth`
- * (`IOAuthService.refreshOAuthProviderModels`).
- */
-
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { Event2 } from '#/app/event/event2';
 
 export const providerRefreshChangeSchema = z.object({
   provider_id: z.string().min(1),
@@ -42,6 +28,15 @@ export type RefreshProviderModelsResponse = z.infer<
 >;
 
 export type RefreshProviderModelsScope = 'all' | 'oauth';
+
+export class ModelCatalogChanged extends Event2<{
+  readonly payload: RefreshProviderModelsResponse;
+}> {
+  static override readonly type = 'event.model_catalog.changed';
+}
+export interface ModelCatalogChanged {
+  readonly payload: RefreshProviderModelsResponse;
+}
 
 export interface RefreshProviderModelsOptions {
   readonly scope?: RefreshProviderModelsScope;

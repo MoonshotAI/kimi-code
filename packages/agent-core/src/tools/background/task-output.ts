@@ -42,33 +42,14 @@ const PAGING_HINT_LINES = 300;
 
 export const TaskOutputInputSchema = z.object({
   task_id: z.string().describe('The background task ID to inspect.'),
-  block: z
-    .boolean()
-    .default(false)
-    .describe(
-      'Whether to wait for the task to finish before returning. Discouraged — background tasks notify automatically on completion; use only when the user explicitly asked you to wait.',
-    )
-    .optional(),
-  timeout: z
-    .number()
-    .int()
-    .min(0)
-    .max(3600)
-    .default(30)
-    .describe('Maximum number of seconds to wait when block=true.')
-    .optional(),
 });
 
 export type TaskOutputInput = z.Infer<typeof TaskOutputInputSchema>;
 
 // ── Implementation ───────────────────────────────────────────────────
 
-function retrievalStatus(
-  status: BackgroundTaskStatus,
-  block: boolean | undefined,
-): 'success' | 'timeout' | 'not_ready' {
-  if (isBackgroundTaskTerminal(status)) return 'success';
-  return block ? 'timeout' : 'not_ready';
+function retrievalStatus(status: BackgroundTaskStatus): 'success' | 'not_ready' {
+  return isBackgroundTaskTerminal(status) ? 'success' : 'not_ready';
 }
 
 function terminalReason(info: BackgroundTaskInfo): 'timed_out' | 'stopped' | 'failed' | undefined {
@@ -113,16 +94,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   }
 
   private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
-    const info = this.manager.getTask(args.task_id);
-    if (!info) {
-      return { isError: true, output: `Task not found: ${args.task_id}` };
-    }
-
-    if (args.block && !isBackgroundTaskTerminal(info.status)) {
-      await this.manager.wait(args.task_id, (args.timeout ?? 30) * 1000);
-    }
-
-    // Re-fetch after potential wait.
     const current = this.manager.getTask(args.task_id);
     if (!current) {
       return { isError: true, output: `Task not found: ${args.task_id}` };
@@ -135,7 +106,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
 
     const lines = [
       formatPlainObject({
-        retrievalStatus: retrievalStatus(current.status, args.block),
+        retrievalStatus: retrievalStatus(current.status),
         ...current,
         outputPath: output.outputPath,
         terminalReason: terminalReason(current),
@@ -146,11 +117,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
         fullOutputTool:
           output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
         fullOutputHint: fullOutputHint(output),
-        // Nudge at the exact point of misuse: a blocking wait that timed out.
-        nextStep:
-          args.block === true && !isBackgroundTaskTerminal(current.status)
-            ? 'The task is still running after waiting. Do not block on it again — continue with other work or hand back to the user; you will be notified automatically when it completes.'
-            : undefined,
       }),
       '',
     ];

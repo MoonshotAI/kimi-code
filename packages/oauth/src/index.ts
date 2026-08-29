@@ -1,6 +1,7 @@
 export {
   DeviceCodeExpiredError,
   DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
   OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
@@ -36,10 +37,22 @@ export {
   KIMI_CODE_PLATFORM,
   parseKimiCodeCustomHeaders,
   readKimiDeviceId,
+  replaceUserAgentProduct,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 
 export { KIMI_CODE_FLOW_CONFIG } from './constants';
+
+export {
+  KIMI_REGION_MARKER_FILENAME,
+  KIMI_REGION_PROFILES,
+  kimiCdnContentUrl,
+  kimiRegionLoginHosts,
+  kimiRegionProfile,
+  kimiRegionSchema,
+  resolveKimiRegion,
+} from './region';
+export type { KimiRegion, KimiRegionProfile, ResolveKimiRegionOptions } from './region';
 
 export {
   applyManagedApiKeyProviderModels,
@@ -78,9 +91,24 @@ export type {
 } from './managed-kimi-code';
 
 export {
+  fetchManagedUserInfo,
+  kimiCodeUserInfoUrl,
+  managedUserInfoPhoneSchema,
+  managedUserInfoResultSchema,
+  managedUserInfoSchema,
+  parseManagedUserInfoPayload,
+} from './managed-userinfo';
+export type {
+  FetchManagedUserInfoError,
+  FetchManagedUserInfoResult,
+  ManagedUserInfo,
+  ManagedUserInfoPhone,
+  ManagedUserInfoResult,
+} from './managed-userinfo';
+
+export {
   fetchManagedUsage,
   formatDuration,
-  formatResetTime,
   isManagedKimiCode,
   isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
@@ -92,7 +120,15 @@ export type {
   FetchManagedUsageResult,
   ParsedManagedUsage,
   UsageRow,
+  UsageWindow,
 } from './managed-usage';
+
+export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
+export type {
+  FetchChatTitleError,
+  FetchChatTitleOk,
+  FetchChatTitleResult,
+} from './managed-tools';
 
 export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
 export type {
@@ -153,6 +189,7 @@ export type {
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   AuthProviderStatus,
   AuthStatus,
@@ -172,3 +209,6 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+
+export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
+export { OAuthTokenTransaction } from './oauth-token-transaction';

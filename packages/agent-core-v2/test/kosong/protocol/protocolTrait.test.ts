@@ -1,21 +1,13 @@
-/**
- * `kosong/protocol` trait surface — the sixteen-hook declaration shape and
- * the `traitDefaultHeaders` aggregation helper.
- *
- * Locks the trait contract: every hook is optional and takes `TraitContext`
- * as its last parameter, and header aggregation runs in trait order with
- * later declarers winning per key (the mechanism that lets config
- * `defaultHeaders`, appended as the trailing synthetic trait, always win).
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {
+  traitConvertError,
   traitDefaultHeaders,
   type ProtocolTrait,
   type ResolvedTrait,
   type TraitContext,
 } from '#/kosong/protocol/protocolTrait';
+import { ChatProviderError } from '#/kosong/contract/errors';
 import type { ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 
 const config: ProtocolAdapterConfig = { protocol: 'openai', modelName: 'test-model' };
@@ -26,12 +18,13 @@ function resolved(trait: ProtocolTrait): ResolvedTrait {
 }
 
 describe('ProtocolTrait', () => {
-  it('declares exactly the sixteen optional hooks', () => {
+  it('declares exactly the seventeen optional hooks', () => {
     const fullTrait: ProtocolTrait = {
       provides: () => undefined,
       endpoint: () => undefined,
       defaultHeaders: () => undefined,
       convertTool: () => undefined,
+      convertError: () => undefined,
       convertMessage: (_message, converted) => converted,
       mergeHistory: () => undefined,
       buildParams: () => undefined,
@@ -49,6 +42,7 @@ describe('ProtocolTrait', () => {
       'buildParams',
       'cacheKey',
       'capability',
+      'convertError',
       'convertMessage',
       'convertTool',
       'defaultHeaders',
@@ -105,5 +99,33 @@ describe('traitDefaultHeaders', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).toBe(entry.context);
     expect(seen[0]?.providerId).toBe('vendor-x');
+  });
+});
+
+describe('traitConvertError', () => {
+  it('returns undefined when nothing declares the hook', () => {
+    expect(traitConvertError([])).toBeUndefined();
+    expect(traitConvertError([resolved({})])).toBeUndefined();
+  });
+
+  it('binds the last declarer with its context', () => {
+    const seen: TraitContext[] = [];
+    const first: ProtocolTrait = { convertError: () => new ChatProviderError('first') };
+    const second: ProtocolTrait = {
+      convertError: (_error, ctx) => {
+        seen.push(ctx);
+        return new ChatProviderError('second');
+      },
+    };
+    const entry = resolved(second);
+    const bound = traitConvertError([resolved(first), entry]);
+    expect(bound!(new Error('raw'))?.message).toBe('second');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(entry.context);
+  });
+
+  it('propagates undefined so bases keep their classification', () => {
+    const bound = traitConvertError([resolved({ convertError: () => undefined })]);
+    expect(bound!(new Error('raw'))).toBeUndefined();
   });
 });

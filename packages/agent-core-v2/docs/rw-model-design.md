@@ -65,7 +65,7 @@
 - W3 Session 域借 main agent 的 wire 写（todo/cron），main 缺失时**静默丢写**
   （`sessionTodoService.ts:99-100`），且要 `as never` 绕过类型。
 - W4 fork 直接在 appendLogStore 层改写 wire log，绕过全部写模型
-  （`sessionLifecycleService.ts:303-337`）。
+  （`sessionLifecycleService.ts` 的 `fork` / `copyAgentWire`）。
 - W5 restore 期 append 在 wireRecord 层被静默吞掉（`wireRecordService.ts:81`），
   但 recordService 仍然 foldViews、仍然跑 facet——"进内存不进磁盘"完全隐式。
 
@@ -88,7 +88,9 @@
 - V3 resume 期 signal 靠 `emitLive` 隐式压制（skill/swarm）——"这个 signal 发不发
   得出去"取决于调用时相位，调用点看不出来。
 - V4 `IEventService` payload 无类型、事件名裸字符串、同一事件两处发布者。
-- V5 `prompt.submitted` 协议里存在但无人发；`AsyncEmitter/handleVetos` 是死代码。
+- V5 `prompt.submitted` 曾长期只存在于协议而无人发，现已由 `AgentPromptService`
+  在提交时发出（排队/运行以 `status` 区分，启动时再发 `prompt.started`）；
+  `AsyncEmitter/handleVetos` 是死代码。
 
 **回环与相位**
 - L1 订阅者回写链真实存在且无统一约束：turn.onEnded→goal 续跑→再 launch turn；
@@ -98,7 +100,7 @@
   onChange 处理器若 append 会无检测地重入。
 - L3 restore 正确性依赖三重隐式契约：DI 构造顺序 + hook 注册顺序 +
   "resumer 先于 hooks"；`doResume` 需手动预热 contextMemory
-  （`sessionLifecycleService.ts:158-162`）。
+  （现 `sessionLifecycleService.ts` 的 `doResume` / `materializeSession`）。
 - L4 相位规则（restoring / postRestoring / live）在 append/signal/push/hook
   四条通道上各不相同，没有一处集中定义。
 
@@ -211,8 +213,8 @@ replaying ──(日志折叠完)──▶ ready ──(首个 live commit)─�
 各写一次**，且违规是响声（throw）不是静默。
 
 > 今天"resume 里合法地想写"的场景（goal 的 fork reminder 每次 restore 重新
-> 生成）改由 **context injector**（已存在的 `IAgentContextInjectorService`）或
-> ready 相位的一次性 Effect 承担——派生内容本来就不该伪装成回放副作用。
+> 生成）改由 **AgentReminder** Runtime 的 `register` provider 或 ready 相位的
+> 一次性 Effect 承担——派生内容本来就不该伪装成回放副作用。
 > `postRestoring` 窗口取消：task 磁盘对账、cron 启动等归入 ready 时刻的
 > 一次性 Effect。
 

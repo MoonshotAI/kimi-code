@@ -1,22 +1,12 @@
-/**
- * `auth` domain (cross-cutting) — app-scope OAuth + auth summary contracts.
- *
- * Defines the public contracts of authentication: the `AuthStatus` model, the
- * `IOAuthService` used to drive device-code login / logout / flow inspection,
- * to resolve a per-provider `BearerTokenProvider`, and to refresh a managed
- * OAuth provider's server-side model configuration, the `IOAuthToolkit`
- * device-code client that `IOAuthService` delegates the OAuth protocol to, and
- * the `IAuthSummaryService` used to summarize auth state and provide the
- * prompt auth-readiness gate. App-scoped — shared across the application.
- */
-
 import type {
+  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,
   KimiOAuthLogoutResult,
   KimiOAuthTokenRef,
+  KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
@@ -37,18 +27,24 @@ export interface AuthStatus {
   readonly provider?: string;
 }
 
+export interface OAuthLoginOptions {
+  readonly region?: KimiRegion;
+}
+
 export interface IOAuthService {
   readonly _serviceBrand: undefined;
 
-  startLogin(provider?: string): Promise<OAuthFlowStart>;
+  startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   getFlow(provider?: string): OAuthFlowSnapshot | undefined;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
   status(provider?: string): Promise<AuthStatus>;
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
   getManagedUsage(provider?: string): Promise<AuthManagedUsageResult>;
+  getManagedUserInfo(provider?: string): Promise<AuthManagedUserInfoResult>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
+  getRegion(): KimiRegion;
 }
 
 export const IOAuthService: ServiceIdentifier<IOAuthService> =
@@ -68,6 +64,10 @@ export interface IOAuthToolkit {
     providerName?: string,
     options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
   ): Promise<AuthManagedUsageResult>;
+  getManagedUserInfo(
+    providerName?: string,
+    options?: { readonly oauthRef?: KimiOAuthTokenRef; readonly baseUrl?: string },
+  ): Promise<AuthManagedUserInfoResult>;
 }
 
 export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =

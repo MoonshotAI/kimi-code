@@ -1,3 +1,4 @@
+import { classifyKimiQuotaError } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { KimiConfig, ModelAlias } from '../../src/config';
@@ -1113,7 +1114,7 @@ describe('google base URL forwarding', () => {
           gemini: {
             type: 'google-genai',
             apiKey: 'g-key',
-            baseUrl: 'https://qianxun.example/v1beta',
+            baseUrl: 'https://genai-gateway.example/v1beta',
           },
         },
         models: {
@@ -1125,7 +1126,7 @@ describe('google base URL forwarding', () => {
     expect(resolved.provider).toMatchObject({
       type: 'google-genai',
       model: 'gemini-2.5-pro',
-      baseUrl: 'https://qianxun.example/v1beta',
+      baseUrl: 'https://genai-gateway.example/v1beta',
     });
   });
 
@@ -1160,7 +1161,7 @@ describe('google base URL forwarding', () => {
           vertex: {
             type: 'vertexai',
             apiKey: 'v-key',
-            baseUrl: 'https://qianxun.example/vertex',
+            baseUrl: 'https://genai-gateway.example/vertex',
           },
         },
         models: {
@@ -1172,7 +1173,7 @@ describe('google base URL forwarding', () => {
     expect(resolved.provider).toMatchObject({
       type: 'vertexai',
       model: 'gemini-1.5-pro',
-      baseUrl: 'https://qianxun.example/vertex',
+      baseUrl: 'https://genai-gateway.example/vertex',
     });
   });
 
@@ -1257,6 +1258,11 @@ describe('per-model protocol routing', () => {
       model: 'kimi-for-coding',
       baseUrl: 'https://api.example',
     });
+    // Kimi over the Anthropic transport keeps its vendor error classifier —
+    // a Moonshot quota 429 must fail fast on this route too.
+    expect(
+      (resolved.provider as { convertError?: (error: unknown) => unknown }).convertError,
+    ).toBe(classifyKimiQuotaError);
   });
 
   it('keeps a model without protocol on the provider wire type and leaves the REST base intact', () => {
@@ -1295,6 +1301,10 @@ describe('per-model protocol routing', () => {
       model: 'claude-sonnet-4-5',
       baseUrl: 'https://api.anthropic.example/v1',
     });
+    // A plain anthropic provider carries no Kimi vendor classifier.
+    expect(
+      (resolved.provider as { convertError?: (error: unknown) => unknown }).convertError,
+    ).toBeUndefined();
   });
 });
 

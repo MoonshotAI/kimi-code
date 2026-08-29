@@ -1,3 +1,9 @@
+/**
+ * Scenario: Agent builtin-tool behavior and the tool contract exposed to the LLM.
+ * Responsibilities: active-tool policy, tool execution, and observable descriptions/schemas.
+ * Wiring: real Agent and ToolManager with only process/model/subagent boundaries stubbed.
+ * Run: cd packages/agent-core && ../../node_modules/.bin/vitest run test/agent/tool.test.ts
+ */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -125,6 +131,7 @@ describe('Agent tools', () => {
         completion,
       }),
       resume: vi.fn(),
+      delegatableSubagents: vi.fn(() => ({})),
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({ subagentHost });
     ctx.configure({ tools: ['Agent'] });
@@ -259,8 +266,149 @@ describe('Agent tools', () => {
     expect(managedBash!.description).toContain('run_in_background=true');
   });
 
+  it('disables Bash background mode when an active task management tool is denied', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.tools.setActiveTools(
+      ['Bash', 'TaskList', 'TaskOutput', 'TaskStop'],
+      ['TaskOutput'],
+    );
+
+    const bash = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Bash');
+    expect(bash).toBeDefined();
+    expect(bash!.description).toContain('Background execution is disabled for this agent.');
+    await expect(
+      executeTool(bash!, {
+        turnId: '0',
+        toolCallId: 'call_bash',
+        args: { command: 'sleep 10', run_in_background: true, description: 'watch' },
+        signal,
+      }),
+    ).resolves.toMatchObject({
+      isError: true,
+      output:
+        'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
+    });
+  });
+
+  it('disables Agent background mode when an active task management tool is denied', async () => {
+    const subagentHost = {
+      delegatableSubagents: vi.fn(() => ({})),
+      spawn: vi.fn(),
+    } as unknown as SessionSubagentHost;
+    const ctx = testAgent({ subagentHost });
+    ctx.configure();
+    ctx.agent.tools.setActiveTools(
+      ['Agent', 'TaskList', 'TaskOutput', 'TaskStop'],
+      ['TaskStop'],
+    );
+
+    const agent = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent');
+    expect(agent).toBeDefined();
+    expect(agent!.description).toContain('Background agent execution is disabled for this agent.');
+    await expect(
+      executeTool(agent!, {
+        turnId: '0',
+        toolCallId: 'call_agent',
+        args: {
+          prompt: 'Investigate deeply',
+          description: 'Investigate deeply',
+          subagent_type: 'coder',
+          run_in_background: true,
+        },
+        signal,
+      }),
+    ).resolves.toMatchObject({
+      isError: true,
+      output:
+        'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+    });
+    expect(subagentHost.spawn).not.toHaveBeenCalled();
+  });
+
+  it('rechecks AskUserQuestion background mode after the task policy changes', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.tools.setActiveTools([
+      'AskUserQuestion',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+    ]);
+
+    const retainedTool = ctx.agent.tools.loopTools.find(
+      (tool) => tool.name === 'AskUserQuestion',
+    );
+    expect(retainedTool).toBeDefined();
+    expect(retainedTool!.parameters).toHaveProperty('properties.background');
+    expect(retainedTool!.description).toContain('background=true');
+
+    const registerTask = vi.spyOn(ctx.agent.background, 'registerTask');
+    ctx.agent.tools.setActiveTools(['AskUserQuestion', 'TaskList', 'TaskOutput']);
+
+    expect(retainedTool!.parameters).not.toHaveProperty('properties.background');
+    expect(retainedTool!.description.toLowerCase()).not.toContain('background');
+    await expect(
+      executeTool(retainedTool!, {
+        turnId: '0',
+        toolCallId: 'call_question',
+        args: {
+          background: true,
+          questions: [
+            {
+              question: 'Which database?',
+              header: 'Storage',
+              options: [
+                { label: 'Postgres', description: 'Relational storage' },
+                { label: 'SQLite', description: 'Embedded storage' },
+              ],
+              multi_select: false,
+            },
+          ],
+        },
+        signal,
+      }),
+    ).resolves.toEqual({
+      isError: true,
+      output:
+        'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
+    });
+    expect(registerTask).not.toHaveBeenCalled();
+  });
+
+  it('removes denied exact tool names from the active set', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.tools.setActiveTools(['Read', 'Bash', 'Grep'], ['Bash']);
+
+    const names = ctx.agent.tools.loopTools.map((tool) => tool.name);
+    expect(names).not.toContain('Bash');
+    expect(names).toContain('Read');
+    expect(names).toContain('Grep');
+    expect(ctx.agent.tools.data().find((info) => info.name === 'Bash')?.active).toBe(false);
+  });
+
+  it('applies a profile disallowedTools denylist through useProfile', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.useProfile({
+      name: 'restricted',
+      systemPrompt: () => 'sys',
+      tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep'],
+      disallowedTools: ['Write', 'Edit'],
+    });
+
+    const names = ctx.agent.tools.loopTools.map((tool) => tool.name);
+    expect(names).toContain('Read');
+    expect(names).toContain('Bash');
+    expect(names).not.toContain('Write');
+    expect(names).not.toContain('Edit');
+  });
+
   it('exposes AgentSwarm when a subagent host is available', () => {
-    const subagentHost = {} as unknown as SessionSubagentHost;
+    const subagentHost = {
+      delegatableSubagents: vi.fn(() => ({})),
+    } as unknown as SessionSubagentHost;
 
     const ctx = testAgent({
       subagentHost,
@@ -271,11 +419,57 @@ describe('Agent tools', () => {
     expect(ctx.agent.tools.loopTools.some((tool) => tool.name === 'AgentSwarm')).toBe(true);
   });
 
+  it('shows the model preference for a subagent type when the experiment is enabled', () => {
+    const subagentHost = {
+      delegatableSubagents: vi.fn(() => ({
+        coder: {
+          name: 'coder',
+          description: 'General coding.',
+          systemPrompt: () => 'coder prompt',
+          tools: ['Read'],
+          modelPreference: 'primary' as const,
+        },
+      })),
+    } as unknown as SessionSubagentHost;
+    const ctx = testAgent({
+      subagentHost,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'secondary-model': true }),
+    });
+    ctx.configure({ tools: ['Agent'] });
+
+    const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
+
+    expect(description).toContain('- coder: General coding.\n  Model preference: primary');
+  });
+
+  it('hides model preferences when the experiment is disabled', () => {
+    const subagentHost = {
+      delegatableSubagents: vi.fn(() => ({
+        coder: {
+          name: 'coder',
+          description: 'General coding.',
+          systemPrompt: () => 'coder prompt',
+          tools: ['Read'],
+          modelPreference: 'primary' as const,
+        },
+      })),
+    } as unknown as SessionSubagentHost;
+    const ctx = testAgent({
+      subagentHost,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
+    });
+    ctx.configure({ tools: ['Agent'] });
+
+    const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
+
+    expect(description).not.toContain('Model preference:');
+  });
+
   it('self-heals the builtin tool table when the provider becomes resolvable after construction', () => {
     // The ProviderManager reads this live config; it starts with no model or
     // provider, so hasProvider is false at Agent construction and
     // initializeBuiltinTools() is skipped — the state the asynchronous
-    // free-tokens / OAuth model registration produces.
+    // OAuth / managed model registration produces.
     const liveConfig: KimiConfig = { providers: {}, models: {} };
     const ctx = testAgent({
       providerManager: new ProviderManager({ config: () => liveConfig }),

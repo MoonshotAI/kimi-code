@@ -10,6 +10,7 @@
 import { createConnection, type Socket } from 'node:net';
 
 import type {
+  CallOptions,
   EventSourceRef,
   IDisposable,
   KlientChannel,
@@ -45,9 +46,10 @@ interface PendingStream {
   error(err: Error): void;
 }
 
-function scopeKindOf(scope: ScopeRef): 'core' | 'session' | 'agent' {
+function scopeKindOf(scope: ScopeRef): 'core' | 'workspace' | 'session' | 'agent' {
   if (scope.agentId !== undefined) return 'agent';
   if (scope.sessionId !== undefined) return 'session';
+  if (scope.workspaceId !== undefined) return 'workspace';
   return 'core';
 }
 
@@ -99,17 +101,24 @@ export class IpcChannel implements KlientChannel {
     });
   }
 
-  async call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown> {
+  async call(
+    scope: ScopeRef,
+    service: string,
+    method: string,
+    args: unknown[],
+    options?: CallOptions,
+  ): Promise<unknown> {
     await this.ready;
     if (this.closed) throw new Error('ipc closed');
+    const timeoutMs = options?.timeoutMs ?? this.callTimeoutMs;
     const id = this.nextId();
     const promise = new Promise<unknown>((resolve, reject) => {
       const timer =
-        this.callTimeoutMs > 0
+        timeoutMs > 0
           ? setTimeout(() => {
               this.pending.delete(id);
-              reject(new RPCError(50001, `call timed out after ${this.callTimeoutMs}ms`));
-            }, this.callTimeoutMs)
+              reject(new RPCError(50001, `call timed out after ${timeoutMs}ms`));
+            }, timeoutMs)
           : undefined;
       this.pending.set(id, { resolve, reject, timer });
     });
@@ -122,6 +131,7 @@ export class IpcChannel implements KlientChannel {
       // NDJSON is JSON: trailing optional args would cross as `null` and
       // defeat the host's default parameters — trim them.
       arg: trimTrailingUndefined(args),
+      workspaceId: scope.workspaceId,
       sessionId: scope.sessionId,
       agentId: scope.agentId,
     });
@@ -207,6 +217,7 @@ export class IpcChannel implements KlientChannel {
               service,
               method,
               arg: trimTrailingUndefined(args),
+              workspaceId: scope.workspaceId,
               sessionId: scope.sessionId,
               agentId: scope.agentId,
             });
@@ -261,6 +272,7 @@ export class IpcChannel implements KlientChannel {
       type: 'listen',
       id,
       scope: scopeKindOf(scope),
+      workspaceId: scope.workspaceId,
       sessionId: scope.sessionId,
       agentId: scope.agentId,
     };

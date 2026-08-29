@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
 
+import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import {
   IInstantiationService,
@@ -210,6 +214,64 @@ describe('InstantiationService.createChild', () => {
     expect(events).toEqual(['disposed']);
   });
 
+  it('repeated disposeAsync returns the in-flight teardown promise', async () => {
+    const events: string[] = [];
+    let releaseGate!: () => void;
+    const ix = new InstantiationService(new ServiceCollection());
+    ix.anchorKernelEntry(() => {
+      events.push('finalizer');
+    }, 'finalizer');
+    ix.anchorKernelEntry(() => {
+      events.push('gate-entered');
+      return new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+    }, 'gate');
+
+    const first = ix.disposeAsync();
+    const second = ix.disposeAsync();
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['gate-entered']);
+    expect(secondSettled).toBe(false);
+    releaseGate();
+    await Promise.all([first, second]);
+    expect(events).toEqual(['gate-entered', 'finalizer']);
+  });
+
+  it('disposeAsync awaits asynchronous child container teardown', async () => {
+    const events: string[] = [];
+    let releaseChildGate!: () => void;
+    const parent = new InstantiationService(new ServiceCollection());
+    const child = parent.createChild(new ServiceCollection()) as InstantiationService;
+    child.anchorKernelEntry(() => {
+      events.push('child-finalizer');
+    }, 'child-finalizer');
+    child.anchorKernelEntry(() => {
+      events.push('child-gate-entered');
+      return new Promise<void>((resolve) => {
+        releaseChildGate = resolve;
+      });
+    }, 'child-gate');
+    parent.anchorKernelEntry(() => {
+      events.push('parent-finalizer');
+    }, 'parent-finalizer');
+
+    let settled = false;
+    const disposal = parent.disposeAsync().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['child-gate-entered', 'parent-finalizer']);
+    expect(settled).toBe(false);
+    releaseChildGate();
+    await disposal;
+    expect(events).toEqual(['child-gate-entered', 'parent-finalizer', 'child-finalizer']);
+  });
+
   it('parent dispose propagates to children', () => {
     const events: string[] = [];
     interface IParentSvc {
@@ -351,7 +413,7 @@ describe('InstantiationService.createChild', () => {
 });
 
 describe('Disposable base class', () => {
-  it('insertion order on dispose', () => {
+  it('reverse registration order on dispose (ledger teardown)', () => {
     const events: string[] = [];
     class Child implements IDisposable {
       constructor(public readonly label: string) {}
@@ -369,7 +431,7 @@ describe('Disposable base class', () => {
     }
     const o = new Owner();
     o.dispose();
-    expect(events).toEqual(['disposed first', 'disposed second', 'disposed third']);
+    expect(events).toEqual(['disposed third', 'disposed second', 'disposed first']);
   });
 
   it('idempotent dispose on the base class', () => {
@@ -409,8 +471,15 @@ describe('Disposable base class', () => {
     expect(events).toEqual(['disposed']);
   });
 
-  it('continues teardown and rethrows if one child throws', () => {
+  it('continues teardown and reports if one child throws (rollback is uninterruptible)', () => {
     const events: string[] = [];
+    const reported: unknown[] = [];
+    setUnexpectedErrorHandler((err) => {
+      reported.push(err);
+    });
+    afterEach(() => {
+      resetUnexpectedErrorHandler();
+    });
     class GoodChild implements IDisposable {
       dispose(): void {
         events.push('good');
@@ -436,7 +505,9 @@ describe('Disposable base class', () => {
       }
     }
     const o = new Owner();
-    expect(() => { o.dispose(); }).toThrow('boom');
-    expect(events).toEqual(['good', 'bad-attempted', 'tail']);
+    expect(() => { o.dispose(); }).not.toThrow();
+    expect(events).toEqual(['tail', 'bad-attempted', 'good']);
+    expect(reported).toHaveLength(1);
+    expect((reported[0] as Error).message).toContain('boom');
   });
 });

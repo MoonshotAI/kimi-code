@@ -13,14 +13,14 @@
  * log — was removed server-side, so there is no live push to render.
  */
 
+import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
 import { serviceByName } from '../channel';
 import { useConnection } from '../connection';
 import { type AnyService } from '../panels';
+import { fetchAgentRuntimeBinding } from '../snapshots/api';
 import { fetchTranscriptPlan, type TranscriptPlanInfo } from '../transcript/api';
 import { ActionButton, Badge, ErrorLine } from '../ui';
 import { ScopePanels } from './ServicePanels';
@@ -40,7 +40,11 @@ export function Inspector({
 
   const meta = useQuery({
     queryKey: ['sessionMeta', sessionId],
-    queryFn: () => klient.session(sessionId as string).service(ISessionMetadata).read(),
+    queryFn: () =>
+      klient
+        .session(sessionId as string)
+        .service(ISessionMetadata)
+        .read(),
     enabled: sessionId !== null && ready,
   });
 
@@ -54,6 +58,12 @@ export function Inspector({
 
   // Keep the selected agent valid as the registry changes.
   const effectiveAgent = agentIds.includes(agentId) ? agentId : agentIds[0]!;
+  const runtimeBinding = useQuery({
+    queryKey: ['agent-runtime-binding', klient.baseUrl, sessionId, effectiveAgent],
+    queryFn: () => fetchAgentRuntimeBinding(klient, sessionId as string, effectiveAgent),
+    enabled: sessionId !== null && ready,
+    refetchInterval: 1_000,
+  });
   useEffect(() => {
     if (effectiveAgent !== agentId) onAgentChange(effectiveAgent);
   }, [effectiveAgent, agentId, onAgentChange]);
@@ -76,11 +86,13 @@ export function Inspector({
   // session that isn't selected/ready.
   const proxyFor = useMemo(() => {
     return (name: string): AnyService | null => {
-      return serviceByName<AnyService>(klient, name, {
-        scope: 'agent',
-        sessionId: sessionId !== null && ready ? sessionId : undefined,
-        agentId: effectiveAgent,
-      }) ?? null;
+      return (
+        serviceByName<AnyService>(klient, name, {
+          scope: 'agent',
+          sessionId: sessionId !== null && ready ? sessionId : undefined,
+          agentId: effectiveAgent,
+        }) ?? null
+      );
     };
   }, [klient, sessionId, effectiveAgent, ready]);
 
@@ -107,11 +119,15 @@ export function Inspector({
           </select>
           {stoppedAgents.has(effectiveAgent) ? (
             <div className="mt-1 text-[10px] text-neutral-600">
-              this agent is not materialized in the running server (e.g. created before a
-              restart) — calls will fail; its persisted records remain on disk
+              this agent is not materialized in the running server (e.g. created before a restart) —
+              calls will fail; its persisted records remain on disk
             </div>
           ) : null}
-          {meta.isError ? <div className="mt-1"><ErrorLine error={meta.error} /></div> : null}
+          {meta.isError ? (
+            <div className="mt-1">
+              <ErrorLine error={meta.error} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -122,6 +138,29 @@ export function Inspector({
           </div>
         ) : (
           <>
+            <div className="mb-3 rounded border border-neutral-800 bg-neutral-950/40 p-2 text-[11px]">
+              <div className="mb-1 flex items-center gap-2 font-semibold uppercase tracking-wider text-neutral-500">
+                Runtime binding
+                {runtimeBinding.data !== undefined ? (
+                  <Badge tone={runtimeBinding.data.available ? 'green' : 'red'}>
+                    {runtimeBinding.data.available ? 'available' : 'unavailable'}
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-1 font-mono">
+                <span className="text-neutral-600">workspace</span>
+                <span className="break-all text-neutral-300">{runtimeBinding.data?.binding.workspaceId ?? 'loading…'}</span>
+                <span className="text-neutral-600">runtime</span>
+                <span className="break-all text-neutral-300">{runtimeBinding.data?.binding.runtimeId ?? 'loading…'}</span>
+                <span className="text-neutral-600">generation</span>
+                <span className="break-all text-neutral-300">{runtimeBinding.data?.runtime?.generation ?? 'unavailable'}</span>
+                <span className="text-neutral-600">status</span>
+                <span className="text-neutral-300">{runtimeBinding.data?.runtime?.status ?? 'unavailable'}</span>
+                <span className="text-neutral-600">capabilities</span>
+                <span className="text-neutral-300">{runtimeBinding.data?.runtime?.capabilities.join(', ') ?? 'none'}</span>
+              </div>
+              {runtimeBinding.isError ? <ErrorLine error={runtimeBinding.error} /> : null}
+            </div>
             <PlanCard sessionId={sessionId} agentId={effectiveAgent} />
             <ScopePanels
               scope="agent"
@@ -222,7 +261,9 @@ function PlanEntryView({ entry }: { entry: TranscriptPlanInfo }) {
   return (
     <div className="mt-2">
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        <span className="font-mono text-[10px] text-neutral-400 select-all">{entry.toolCallId}</span>
+        <span className="font-mono text-[10px] text-neutral-400 select-all">
+          {entry.toolCallId}
+        </span>
         <Badge tone="neutral">{entry.source}</Badge>
         {review !== undefined ? (
           <Badge

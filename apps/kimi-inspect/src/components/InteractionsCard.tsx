@@ -4,35 +4,46 @@
  * `/api/v2/ws`, so the card refreshes only when Load is clicked.
  */
 
+import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
+import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { useState } from 'react';
 
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-
 import { useConnection } from '../connection';
-import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
+import { ActionButton, Badge, ErrorLine, JsonView } from '../ui';
 
 interface PendingInteraction {
   readonly id: string;
-  /** Known kinds: 'approval' | 'question' | 'user_tool'; other kinds may appear. */
+  /** Known kinds: 'approval' | 'question'. */
   readonly kind: string;
   readonly payload: Record<string, unknown>;
-  readonly createdAt: number;
 }
 
 export function InteractionsCard({ sessionId }: { sessionId: string }) {
   const { klient } = useConnection();
   const [pending, setPending] = useState<readonly PendingInteraction[]>([]);
   const [error, setError] = useState<unknown>(null);
-  const interaction = klient.session(sessionId).service(ISessionInteractionService);
   const approval = klient.session(sessionId).service(ISessionApprovalService);
   const question = klient.session(sessionId).service(ISessionQuestionService);
 
   const reload = async () => {
     try {
       setError(null);
-      setPending((await interaction.listPending()) as readonly PendingInteraction[]);
+      const [approvals, questions] = await Promise.all([
+        approval.listPending() as Promise<readonly { id: string }[]>,
+        question.listPending() as Promise<readonly { id: string }[]>,
+      ]);
+      setPending([
+        ...approvals.map((p) => ({
+          id: p.id,
+          kind: 'approval',
+          payload: p as unknown as Record<string, unknown>,
+        })),
+        ...questions.map((p) => ({
+          id: p.id,
+          kind: 'question',
+          payload: p as unknown as Record<string, unknown>,
+        })),
+      ]);
     } catch (error) {
       setError(error);
     }
@@ -72,18 +83,24 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
         <ActionButton onClick={() => void reload()}>Load</ActionButton>
       </div>
       <div className="px-3 py-2">
-        {error !== null ? <div className="mb-2"><ErrorLine error={error} /></div> : null}
+        {error !== null ? (
+          <div className="mb-2">
+            <ErrorLine error={error} />
+          </div>
+        ) : null}
         {pending.length === 0 ? (
           <div className="text-[11px] text-neutral-600 italic">
             nothing pending (click Load to check)
           </div>
         ) : (
           pending.map((item) => (
-            <div key={item.id} className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2">
+            <div
+              key={item.id}
+              className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2"
+            >
               <div className="mb-1 flex items-center gap-2">
                 <Badge tone="amber">{item.kind}</Badge>
                 <span className="font-mono text-[10px] text-neutral-500">{item.id}</span>
-                <span className="text-[10px] text-neutral-600">{relTime(item.createdAt)}</span>
               </div>
               {item.kind === 'approval' ? (
                 <>
@@ -95,8 +112,12 @@ export function InteractionsCard({ sessionId }: { sessionId: string }) {
                   </div>
                   <JsonView data={item.payload['display'] ?? item.payload} />
                   <div className="mt-2 flex gap-1.5">
-                    <ActionButton onClick={() => void decide(item.id, 'approved')}>Approve</ActionButton>
-                    <ActionButton danger onClick={() => void decide(item.id, 'rejected')}>Reject</ActionButton>
+                    <ActionButton onClick={() => void decide(item.id, 'approved')}>
+                      Approve
+                    </ActionButton>
+                    <ActionButton danger onClick={() => void decide(item.id, 'rejected')}>
+                      Reject
+                    </ActionButton>
                   </div>
                 </>
               ) : item.kind === 'question' ? (
@@ -166,11 +187,7 @@ function QuestionView({
  * numbers/booleans are stringified, anything else (or missing) falls back —
  * never "[object Object]".
  */
-function payloadField(
-  payload: Record<string, unknown>,
-  key: string,
-  fallback: string,
-): string {
+function payloadField(payload: Record<string, unknown>, key: string, fallback: string): string {
   const value = payload[key];
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);

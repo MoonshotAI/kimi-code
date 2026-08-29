@@ -52,6 +52,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import { EXAMPLE_CLIENT_IDENTITY } from './identity.js';
+
 import type { AddressInfo } from 'node:net';
 
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
@@ -515,7 +518,7 @@ async function step2UseLoadedTool(
 async function probeLiveKimiProviders(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part B: live select_tools flow on real kimi providers (${homeDir}) ===`);
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {
@@ -623,7 +626,7 @@ function describeWireBody(raw: Buffer): string[] {
 async function probeTappedContext(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part C: tapped wire context (${homeDir}) ===`);
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {

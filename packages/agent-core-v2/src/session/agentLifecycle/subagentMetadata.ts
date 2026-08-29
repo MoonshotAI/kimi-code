@@ -1,11 +1,3 @@
-/**
- * `agentLifecycle` domain (L6) — persisted subagent relationship labels.
- *
- * Provides the label helpers used by caller-owned agent-run wrappers (`Agent`
- * and `AgentSwarm`) to record and read the requester → subagent relationship
- * without making the flat lifecycle registry interpret parentage itself.
- */
-
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export function subagentLabels(

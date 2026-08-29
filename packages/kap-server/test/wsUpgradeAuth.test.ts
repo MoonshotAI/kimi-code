@@ -1,14 +1,3 @@
-/**
- * WebSocket upgrade-time auth (port of v1 `ws-auth.e2e.test.ts`).
- *
- * `/api/v1/ws` requires a valid bearer credential at the
- * HTTP `upgrade` (matching v1's wsGatewayService): a token-less or invalid
- * upgrade is rejected with 401 before the socket completes the handshake. The
- * credential is the persistent bearer token (or, when configured, the
- * `rpcToken`); it may ride on the `Authorization` header or the
- * `kimi-code.bearer.<token>` subprotocol.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { fixedTokenAuth } from './helpers/fixedAuth';
 
 const TOKEN = 'test-token';
@@ -33,7 +23,6 @@ interface ConnectOptions {
   readonly headers?: Record<string, string>;
 }
 
-/** Resolve when the socket opens and the server's first frame arrives. */
 function openConn(url: string, opts?: ConnectOptions): Promise<{ ws: WebSocket; firstFrame: unknown }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, opts?.protocols, { headers: opts?.headers });
@@ -48,7 +37,6 @@ function openConn(url: string, opts?: ConnectOptions): Promise<{ ws: WebSocket; 
   });
 }
 
-/** Resolve when the upgrade is rejected (error or close without ever opening). */
 function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, opts?.protocols, { headers: opts?.headers });
@@ -58,7 +46,6 @@ function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
       try {
         ws.terminate();
       } catch {
-        // ignore
       }
       if (err !== undefined) reject(err);
       else resolve();
@@ -82,6 +69,7 @@ describe('WS upgrade auth', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-upgrade-auth-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -96,7 +84,6 @@ describe('WS upgrade auth', () => {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
     if (server !== undefined) {

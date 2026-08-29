@@ -67,8 +67,8 @@ Term mapping (Chinese <-> English, and proper noun handling):
 | Chinese | English | Proper noun (zh) | Proper noun (en) |
 | --- | --- | --- | --- |
 | Agent | agent | yes | no |
-| 主 Agent | main agent | yes (Agent) | no |
-| 子 Agent | subagent | yes (Agent) | no |
+| main agent | main agent | no | no |
+| subagent | subagent | no | no |
 | Shell | shell | yes | no |
 | Plan 模式 | Plan mode | yes | yes (Plan mode) |
 | YOLO 模式 | YOLO mode | yes | yes (YOLO mode) |

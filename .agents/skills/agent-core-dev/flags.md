@@ -6,12 +6,12 @@ Gate not-yet-public features behind `IFlagService.enabled(id)`, per the reposito
 
 ## Layout
 
-- `src/flag/flagRegistry.ts` — `IFlagRegistry` token + `FlagDefinitionInput` / `FlagId` / `FlagSurface` types + `registerFlagDefinition` / `getContributedFlags` (import-time contribution queue).
-- `src/flag/flagRegistryService.ts` — `FlagRegistryService` impl; in-memory catalog seeded from import-time contributions; App scope.
-- `src/flag/flag.ts` — `IFlagService` token + resolver types (`ExperimentalFlagMap`, `ExperimentalFlagConfig`, `ExperimentalFlagSource`, `ExperimentalFeatureState`) + `ExperimentalConfigSchema` / `ExperimentalConfig` (zod).
-- `src/flag/flagService.ts` — `FlagService` impl + `MASTER_ENV` (`KIMI_CODE_EXPERIMENTAL_FLAG`) + `EXPERIMENTAL_SECTION` (`experimental`); reads definitions from `IFlagRegistry`; self-registers at App scope.
-- `src/flag/index.ts` — **removed (no barrel)**; `src/index.ts` imports the `flag` leafs precisely instead (e.g. `import './flag/flagService'`).
-- `src/<domain>/flag.ts` — each domain that owns a flag declares it here and calls `registerFlagDefinition` at the module top level (e.g. `src/agent/toolSelect/flag.ts` or `src/agent/faultInjection/flag.ts`). The directory already names the domain, so the file is just `flag.ts`.
+- `src/app/flag/flagRegistry.ts` — `IFlagRegistry` token + `FlagDefinitionInput` / `FlagId` / `FlagSurface` types + `registerFlagDefinition` / `getContributedFlags` (import-time contribution queue).
+- `src/app/flag/flagRegistryService.ts` — `FlagRegistryService` impl; in-memory catalog seeded from import-time contributions; App scope.
+- `src/app/flag/flag.ts` — `IFlagService` token + resolver types (`ExperimentalFlagMap`, `ExperimentalFlagConfig`, `ExperimentalFlagSource`, `ExperimentalFeatureState`) + `EXPERIMENTAL_SECTION` (`experimental`) / `ExperimentalConfigSchema` (zod) + the module-level `registerConfigSection(EXPERIMENTAL_SECTION, …)` call that owns the section.
+- `src/app/flag/flagService.ts` — `FlagService` impl + `MASTER_ENV` (`KIMI_CODE_EXPERIMENTAL_FLAG`); reads definitions from `IFlagRegistry` and overrides from `IConfigService`; self-registers at App scope.
+- `src/app/flag/index.ts` — **removed (no barrel)**; `src/index.ts` imports the `flag` leafs precisely instead (e.g. `import './app/flag/flagService'`).
+- `src/<domain>/flag.ts` — each domain that owns a flag declares it here and calls `registerFlagDefinition` at the module top level (e.g. `src/agent/toolSelect/flag.ts`). The directory already names the domain, so the file is just `flag.ts`.
 
 ## Public surface
 
@@ -33,9 +33,9 @@ Highest wins; env is read live on every call (nothing cached):
 
 ## Config integration
 
-- `FlagService` registers the `[experimental]` section into `IConfigRegistry` at construction (`registerSection('experimental', ExperimentalConfigSchema)`) and reads overrides from `IConfigService`.
+- The flag domain owns the `[experimental]` section: `src/app/flag/flag.ts` registers it at module load via `registerConfigSection(EXPERIMENTAL_SECTION, ExperimentalConfigSchema, { fromToml, toToml })` (import = register, drained by `ConfigRegistry` at construction); `FlagService` reads overrides from `IConfigService`.
 - It subscribes `IConfigService.onDidChange` and refreshes overrides whenever the `experimental` domain changes, so config edits apply live.
-- `IConfigRegistry.registerSection` throws if a domain is registered twice — `experimental` is owned exclusively by `FlagService`.
+- `ConfigRegistry.registerSection` throws if a domain is registered twice — `experimental` is owned exclusively by the flag domain.
 - `setConfigOverrides(overrides)` is an imperative escape hatch for tests and hosts without an `IConfigService`; hosts on `IConfigService` should set the `[experimental]` section instead.
 
 Config shape:
@@ -54,7 +54,7 @@ Declare the definition in the owning domain's `flag.ts` and call `registerFlagDe
 `src/<domain>/flag.ts`:
 
 ```ts
-import { type FlagDefinitionInput, registerFlagDefinition } from '#/flag';
+import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 export const myFeatureFlag: FlagDefinitionInput = {
   id: 'my_feature',
@@ -94,8 +94,8 @@ if (!this.flags.enabled('my_feature')) return;
 
 ## Layering & scope
 
-- Domain `flag` is registered at **L3**. It imports only `config` (L2) downward.
-- It cannot live in `_base` (L0): registering/reading the config section requires importing `config`, and L0 must not import L2.
+- Domain `flag` imports only `config` downward.
+- It cannot live in `_base`: registering/reading the config section requires importing `config`, and `_base` is pure infrastructure that must not know any business domain.
 - Scope: `IFlagRegistry` and `IFlagService` are both `App`. Env + config are process-global inputs, so there is no per-session/agent state. Flag definitions are contributed at **import time** (top-level `registerFlagDefinition` calls), so they are queued before any scope is created and drained when `FlagRegistryService` is first instantiated — before `IFlagService` is first resolved.
 - Tests build `FlagService` + `FlagRegistryService` directly with a real `ConfigRegistry`/`ConfigService` and an injected env map, then `register` the flags they exercise.
 
@@ -105,4 +105,4 @@ if (!this.flags.enabled('my_feature')) return;
 - Contribute each flag from the **owning domain's** `flag.ts` (`src/<domain>/flag.ts`) via a top-level `registerFlagDefinition` call; there is no central catalog to edit. The directory names the domain, so the file is just `flag.ts`.
 - `env` must start with `KIMI_CODE_EXPERIMENTAL_`, be unique, and not equal `KIMI_CODE_EXPERIMENTAL_FLAG`; `id` must not be `flag`.
 - `FlagId` is `string` (decentralized registration) — do not reintroduce a central `FLAG_DEFINITIONS` array or a derived literal union.
-- `flag` lives at L3 and `App` scope — never in `_base`, never per-session.
+- `flag` lives at `App` scope — never in `_base`, never per-session.

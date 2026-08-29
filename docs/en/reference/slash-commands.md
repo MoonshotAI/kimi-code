@@ -14,8 +14,9 @@ Some commands are only available in the idle state. Executing these commands whi
 | --- | --- | --- | --- |
 | `/login` | — | Select an account or platform and log in: Kimi Code uses OAuth device-code flow; Kimi Platform uses API key login | No |
 | `/logout` | — | Clear credentials for the currently selected account | No |
-| `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-与供应商管理) | Yes |
+| `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-—-interactive-provider-management) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
+| `/secondary-model` | `/subagent-model` | Pick the default model for subagents (writes `[secondary_model] default_model`; see the [subagent model pool](../configuration/config-files.md#subagent-model-pool)). Visible when the subagent model pool experiment is enabled | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/experiments` | `/experimental` | Open the experimental feature panel | Yes |
 | `/permission` | — | Select a permission mode | Yes |
@@ -29,7 +30,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/new` | `/clear` | Start a fresh session, discarding the current context | No |
 | `/sessions` | `/resume` | Browse historical sessions and switch to / restore one | No |
 | `/tasks` | `/task` | Browse the background task list | Yes |
-| `/fork` | — | Fork a new session from the current one, preserving the full conversation history | No |
+| `/fork` | — | Fork a new session from the current one, preserving the full conversation history; you stay in the current session | No |
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
 | `/compact [<instruction>]` | — | Compact the current conversation context to free up token usage; an optional custom instruction can hint to the model what to preserve | No |
 | `/undo [<count>]` | — | Undo recent prompts from the active context. Without a count, opens a selector; with a count, undoes that many prompts. Prompts before the last compaction cannot be undone. Undoing also rolls back the todo list and plan mode state produced by those prompts (code changes are not reverted) | No |
@@ -60,7 +61,7 @@ Some commands are only available in the idle state. Executing these commands whi
 
 ## Autonomous Goal
 
-`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Goals](../guides/goals.md).
+`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Interaction and input: Goal mode](../guides/interaction.md#goal-mode).
 
 ```sh
 /goal Update the checkout docs, run docs build, and stop if still blocked after 20 turns
@@ -107,7 +108,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | `/mcp` | — | List MCP servers and their connection status in the current session | Yes |
 | `/plugins` | — | Open the interactive plugin manager | Yes |
 | `/version` | — | Display the Kimi Code CLI version number | Yes |
-| `/feedback` | — | Submit feedback with optional diagnostic logs and codebase context | Yes |
+| `/feedback` | `/bug` | Submit feedback with optional diagnostic logs and codebase context | Yes |
 
 ## Exit
 
@@ -153,7 +154,7 @@ For convenience, external Skill commands also support a shorthand form that omit
 Built-in Skills shipped with Kimi Code CLI appear directly as `/<name>` in the slash command panel. For example, `/mcp-config` helps configure MCP servers and handle MCP OAuth login, and `/custom-theme [extra text]` invokes the custom-theme workflow to create or edit a TUI theme.
 
 ::: info
-All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
+External Skill commands entered while the agent is busy are queued behind the running turn instead of being rejected — press `Ctrl-S` to steer a queued command into the running turn immediately. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
 :::
 
 For installing and authoring Skills, see [Agent Skills](../customization/skills.md).

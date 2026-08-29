@@ -1,33 +1,14 @@
-/**
- * `kosong/provider` Kimi trait probes (probe 6) — every Kimi deviation is a
- * declarative trait hook on one of two trait objects, tested directly
- * against a stub trait context:
- *
- *  - `kimiOpenAITrait.convertTool`: `$`-prefixed tools become
- *    `builtin_function`; regular tools get the Kimi schema dialect
- *    normalization;
- *  - `kimiOpenAITrait.convertMessage`: empty-content assistant tool messages
- *    drop `content`; `tool_calls[].extras` round-trips; message-level
- *    `tools` embed;
- *  - reasoning: the trait does NOT pin a `reasoningKey` — the base
- *    auto-detects the endpoint's dialect, defaulting to `reasoning_content`;
- *    `preserveThinking` force-replays only `keep: 'all'` sessions with
- *    thinking not disabled;
- *  - `kimiOpenAITrait.extractUsage`: usage at the top level or
- *    `choices[0].usage`;
- *  - `kimiOpenAITrait` request params: endpoint chain, `max_tokens` →
- *    `max_completion_tokens` with `extra_body` expansion,
- *    `extra_body.thinking` encoding, no 128k ceiling, `prompt_cache_key`,
- *    and the `strictThinkingValidation` marker;
- *  - `kimiAnthropicTrait` (the `(kimi, anthropic)` registration): thinking
- *    encoding and interleaved-thinking beta stripping.
- */
+import { APIError as OpenAIAPIError } from 'openai';
+import { describe, expect, it, vi } from 'vitest';
 
-import { describe, expect, it } from 'vitest';
-
+import {
+  APIProviderQuotaExhaustedError,
+  isRetryableGenerateError,
+} from '#/kosong/contract/errors';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type { ProtocolTrait, TraitContext } from '#/kosong/protocol/protocolTrait';
+import { KimiFiles } from '#/kosong/provider/providers/kimi/kimi-files';
 import {
   convertKimiTool,
   kimiAnthropicTrait,
@@ -142,9 +123,6 @@ describe('kimiOpenAITrait.convertMessage', () => {
 
 describe('kimiOpenAITrait reasoning hooks', () => {
   it('does not pin a reasoning field — the base detects the endpoint dialect', () => {
-    // Detection defaults to `reasoning_content` (Kimi's native field) and
-    // adapts to peers that speak `reasoning` (newer vLLM); a trait pin would
-    // disable that adaptation. Operator config `reasoning_key` still pins.
     expect(kimiOpenAITrait.reasoningKey).toBeUndefined();
   });
 
@@ -288,6 +266,7 @@ describe('trait objects are plain declarations', () => {
     expect(hookNames(kimiOpenAITrait).toSorted()).toEqual([
       'buildParams',
       'cacheKey',
+      'convertError',
       'convertMessage',
       'convertTool',
       'endpoint',
@@ -298,13 +277,41 @@ describe('trait objects are plain declarations', () => {
       'withMaxCompletionTokens',
       'withThinking',
     ]);
-    expect(hookNames(kimiAnthropicTrait)).toEqual(['withThinking']);
+    expect(hookNames(kimiAnthropicTrait).toSorted()).toEqual(['convertError', 'withThinking']);
   });
 
   it('marks only the native-transport thinking trait as strict-validation (v1 parity)', () => {
-    // Kimi's native API rejects unlisted efforts → strict; over the Anthropic
-    // transport the backend may accept them → lenient (warning + pass-through).
     expect(kimiOpenAITrait.strictThinkingValidation).toBe(true);
     expect(kimiAnthropicTrait.strictThinkingValidation).toBeUndefined();
+  });
+});
+
+describe('KimiFiles upload error conversion', () => {
+  it('fails fast on a Moonshot quota-exhausted 429 from the files API', async () => {
+    const quotaError = new OpenAIAPIError(
+      429,
+      {
+        message: 'Your account is suspended due to insufficient balance, please recharge',
+        type: 'exceeded_current_quota_error',
+      },
+      '429 quota exhausted',
+      new Headers(),
+    );
+    const files = new KimiFiles({
+      baseUrl: 'https://api.example/v1',
+      clientFactory: () => ({ files: { create: vi.fn().mockRejectedValue(quotaError) } }) as never,
+    });
+
+    const caught = await files
+      .uploadVideo(
+        { data: Buffer.from([1, 2, 3]), mimeType: 'video/mp4' },
+        { auth: { apiKey: 'request-token' } },
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(caught)).toBe(false);
   });
 });

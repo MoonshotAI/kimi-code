@@ -1,10 +1,3 @@
-/**
- *   GET    /v1/workspaces
- *   POST   /v1/workspaces
- *   PATCH  /v1/workspaces/{workspace_id}
- *   DELETE /v1/workspaces/{workspace_id}
- */
-
 import { z } from 'zod';
 
 import {
@@ -40,3 +33,8 @@ export const deleteWorkspaceResponseSchema = z.object({
   deleted: z.literal(true),
 });
 export type DeleteWorkspaceResponse = z.infer<typeof deleteWorkspaceResponseSchema>;
+
+export const workspaceTrustResponseSchema = z.object({
+  trusted: z.boolean(),
+});
+export type WorkspaceTrustResponse = z.infer<typeof workspaceTrustResponseSchema>;

@@ -1,11 +1,3 @@
-/**
- * `kosong/provider` domain (L2) — Kimi files API client.
- *
- * The file-upload companion of the video-upload trait: uploads a video (from
- * a filesystem path or in-memory bytes) to the Kimi files endpoint and
- * returns the `ms://<file-id>` video URL part the wire messages reference.
- */
-
 import { Blob, File } from 'node:buffer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -23,6 +15,7 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from '../../bases/request-auth';
+import { classifyKimiQuotaError } from './kimi-errors';
 
 export interface KimiUploadOptions {
   auth?: ProviderRequestAuth;
@@ -99,7 +92,7 @@ export class KimiFiles {
         options?.signal ? { signal: options.signal } : undefined,
       )) as unknown as { id: string };
     } catch (error: unknown) {
-      throw convertOpenAIError(error);
+      throw convertOpenAIError(error, classifyKimiQuotaError);
     }
 
     return {

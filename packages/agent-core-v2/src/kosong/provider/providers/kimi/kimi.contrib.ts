@@ -1,77 +1,3 @@
-/**
- * `kosong/provider` domain (L2) — side-effect module: the Kimi vendor
- * registration, one definition per transport Kimi runs over, each driven by
- * a single trait object.
- *
- * Kimi is not a wire protocol — it is a set of vendor registrations:
- *
- *  - `(kimi, openai)`, driven by `kimiOpenAITrait`, declaring every deviation
- *    from the OpenAI base on Kimi's native transport:
- *     - request params: the `KIMI_API_KEY` / `KIMI_BASE_URL` endpoint
- *       fallback chain and the default base URL; `cacheKey` →
- *       `prompt_cache_key`; `withThinking` → `extra_body.thinking`
- *       (`{ type: 'disabled' | 'enabled', effort? }`, carrying the per-turn
- *       `keep` when present); `withMaxCompletionTokens` →
- *       `max_completion_tokens` with NO 128k ceiling (the base's window
- *       clamp has already run; the trait takes over the ceiling); and
- *       `buildParams` (the last hook before send) backfills `max_tokens` →
- *       `max_completion_tokens`, drops `max_tokens`, and expands
- *       `extra_body` into the top-level params;
- *     - `strictThinkingValidation` (a metadata marker, not a hook — the v1
- *       parity contract): Kimi's native API rejects thinking efforts the
- *       model metadata does not list, so client-side validation must be
- *       strict when this trait drives thinking;
- *     - tools: `convertTool` emits `$`-prefixed tool names as
- *       `builtin_function` declarations; every other tool goes through the
- *       base OpenAI conversion with its parameters normalized into the Kimi
- *       schema dialect (`normalizeKimiToolSchema` from `./kimi-schema`);
- *     - messages: `convertMessage` post-processes each base-converted wire
- *       message — assistant tool-call messages whose content is effectively
- *       empty drop the `content` field entirely, `tool_calls[].extras`
- *       round-trips from the contract message into the wire shape (the base
- *       conversion never emits `extras`), and message-level `tools`
- *       declarations are embedded into the message;
- *     - reasoning: the trait deliberately does NOT pin `reasoningKey` — the
- *       base auto-detects the endpoint's reasoning dialect from inbound
- *       responses (`reasoning_content` by default, `reasoning` on newer vLLM)
- *       and echoes that field on outbound replay; operator config
- *       (`reasoning_key`) or a trait declaration still pins when present.
- *       `preserveThinking` force-replays the field in a `keep: 'all'` session
- *       with thinking not disabled — it reads the already-seeded request
- *       kwargs (the thinking config `withThinking` just encoded), so it
- *       decides per request, not per instance;
- *     - usage: `extractUsage` finds the usage payload of a Kimi stream chunk
- *       either at the top level (the base's default location) or inside
- *       `choices[0].usage`; returning `undefined` defers to the base default
- *       when neither position carries one;
- *     - video upload: `uploadVideo` uploads through the Kimi files API
- *       (`KimiFiles` from `./kimi-files`), memoized per trait context with a
- *       WeakMap — one composition (one resolved ctx) gets one files client,
- *       derived from the same endpoint fallback chain the trait declares;
- *  - `(kimi, anthropic)`, driven by `kimiAnthropicTrait`: the thinking intent
- *    is encoded as `thinking: { type: 'enabled' }` plus
- *    `output_config.effort`, and the interleaved-thinking beta is stripped
- *    from the seeded beta list. The `keep` dimension needs no trait handling
- *    — the Anthropic base overlays the context-management edit itself. The
- *    trait deliberately does NOT declare `strictThinkingValidation`: over
- *    this foreign transport the backend may accept efforts the local catalog
- *    metadata does not list, so client-side validation stays lenient
- *    (warning + pass-through).
- *
- * Vendor-level facts — the endpoint fallback chain, full host-header
- * forwarding, and OAuth-catalog model discovery — are shared constants
- * declared identically on both registrations, so id-level queries read
- * either one. Kimi declares no vendor-level capability: model capabilities
- * come from the catalog, not from client-side tables (Kimi model ids never
- * match the protocol bases' builtin catalogs, so the detected layer answers
- * UNKNOWN on its own).
- *
- * Deliberately absent (do not reintroduce): a 64-char tool-call-id policy
- * (the base default is identical), an extra-body deep-merge morph, and a
- * vendor-specific provider `name` (the composed provider's name is the
- * base's `'openai'`).
- */
-
 import type { ContentPart } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type {
@@ -82,6 +8,7 @@ import type {
 
 import { type OpenAIToolParam, toolToOpenAI } from '../../bases/openai/openai-common';
 import { registerProviderDefinition } from '../../providerDefinition';
+import { classifyKimiQuotaError } from './kimi-errors';
 import { KimiFiles } from './kimi-files';
 import { normalizeKimiToolSchema } from './kimi-schema';
 
@@ -166,8 +93,6 @@ function resolveFiles(ctx: TraitContext): KimiFiles {
 }
 
 export const kimiOpenAITrait: ProtocolTrait = {
-  // v1 parity contract: Kimi's native API rejects unlisted thinking efforts,
-  // so the profile validates strictly when this trait drives thinking.
   strictThinkingValidation: true,
 
   endpoint: () => ({
@@ -175,6 +100,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
     baseUrlEnv: KIMI_BASE_URL_ENV,
     defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
   }),
+
+  convertError: (error) => classifyKimiQuotaError(error),
 
   cacheKey: (key) => ({ prompt_cache_key: key }),
 
@@ -218,7 +145,6 @@ export const kimiOpenAITrait: ProtocolTrait = {
       out['max_completion_tokens'] = resolvedMaxCompletionTokens;
     }
     if (extraBody !== undefined && extraBody !== null) {
-      // extra_body expands last — its keys win over top-level kwargs.
       Object.assign(out, extraBody);
     }
     return out;
@@ -230,7 +156,6 @@ export const kimiOpenAITrait: ProtocolTrait = {
     if (message.role === 'assistant' && message.toolCalls.length > 0) {
       const nonThinkParts = message.content.filter((part) => part.type !== 'think');
       if (isEffectivelyEmptyContent(nonThinkParts)) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete converted['content'];
       }
     }
@@ -274,6 +199,8 @@ export const kimiOpenAITrait: ProtocolTrait = {
 };
 
 export const kimiAnthropicTrait: ProtocolTrait = {
+  convertError: (error) => classifyKimiQuotaError(error),
+
   withThinking: (effort, _options, generationKwargs) => {
     const seeded = generationKwargs['betaFeatures'];
     const betaFeatures = (Array.isArray(seeded) ? (seeded as string[]) : []).filter(
@@ -294,7 +221,6 @@ export const kimiAnthropicTrait: ProtocolTrait = {
   },
 };
 
-/** The vendor-level endpoint declaration, shared by both registrations. */
 const kimiEndpoint: ProtocolEndpoint = {
   apiKeyEnv: KIMI_API_KEY_ENV,
   baseUrlEnv: KIMI_BASE_URL_ENV,

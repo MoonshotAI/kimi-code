@@ -1,20 +1,10 @@
-/**
- * `hostFolderBrowser` domain (L2) — `IHostFolderBrowser` implementation.
- *
- * Browses the real local filesystem through `node:fs/promises` and derives
- * `recent_roots` from the process-wide `IWorkspaceService`. Bound at App
- * scope. Mirrors the v1 `WorkspaceFsService` behaviour so the `/api/v1`
- * transport stays wire-compatible: realpath resolution, directory-only
- * entries, dot-last sorting, and `parent` resolution.
- */
-
 import { readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
 import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from './hostFolderBrowser';
-
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 
 import {

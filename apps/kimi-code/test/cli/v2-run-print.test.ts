@@ -5,12 +5,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  IAgentCatalogRuntimeOptions,
-  IAgentGoalService,
+  AgentCron,
+  AgentGoal,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentPromptService,
+  IAgentScopeContext,
   IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
@@ -18,13 +19,12 @@ import {
   IEventBus,
   IFileSystemStorageService,
   IOAuthToolkit,
-  ISessionCronService,
   ISessionIndex,
-  ISessionLifecycleService,
-  ISkillCatalogRuntimeOptions,
+  ISessionManager,
   ITelemetryService,
-  type DomainEvent,
-  type ScopeSeed,
+  makeAgentScopeContext,
+  type BootstrapInput,
+  type Event2,
 } from '@moonshot-ai/agent-core-v2';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
@@ -125,7 +125,7 @@ function opts(overrides: Record<string, unknown> = {}) {
 function makeFakeHarness() {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
-  const eventListeners = new Set<(event: DomainEvent) => void>();
+  const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
 
   const agentServices = new Map<unknown, unknown>([
@@ -143,7 +143,7 @@ function makeFakeHarness() {
     [
       IEventBus,
       {
-        subscribe: vi.fn((handler: (event: DomainEvent) => void) => {
+        subscribe: vi.fn((handler: (event: Event2<any>) => void) => {
           eventListeners.add(handler);
           return { dispose: () => eventListeners.delete(handler) };
         }),
@@ -155,7 +155,7 @@ function makeFakeHarness() {
         enqueue: vi.fn(async () => {
           // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
-            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as DomainEvent);
+            listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return {
             launched: Promise.resolve({
@@ -167,15 +167,29 @@ function makeFakeHarness() {
       },
     ],
     [IAgentTaskService, { list: vi.fn(() => []) }],
-    [IAgentGoalService, { createGoal: vi.fn(), getGoal: vi.fn() }],
+    [
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }),
+    ],
   ]);
+  const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
+  const cron = { getNextFireTime: vi.fn(() => null) };
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
-    [IAgentLifecycleService, { list: vi.fn(() => []) }],
-    // No scheduled cron tasks → no future fire time to wait on.
-    [ISessionCronService, { getNextFireTime: vi.fn(() => null) }],
+    [
+      IAgentLifecycleService,
+      {
+        list: vi.fn(() => []),
+        handleOf: vi.fn(() => agent),
+        resolve: vi.fn((_context: unknown, capability: unknown) => {
+          if (capability === AgentGoal) return goal;
+          if (capability === AgentCron) return cron;
+          throw new Error('unexpected capability');
+        }),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -193,19 +207,39 @@ function makeFakeHarness() {
       },
     ],
     [
-      ISessionLifecycleService,
+      ISessionManager,
       {
         create: vi.fn(async () => session),
         resume: vi.fn(async () => session),
+        get: vi.fn(() => session),
+        list: vi.fn(() => [session]),
+      } as unknown as ISessionManager,
+    ],
+    [
+      ISessionIndex,
+      {
+        list: vi.fn(async () => ({ items: [] })),
+        get: vi.fn(async (id: string) => ({
+          id,
+          workspaceId: 'wd_v2',
+          cwd: process.cwd(),
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+        })),
       },
     ],
-    [ISessionIndex, { list: vi.fn(async () => ({ items: [] })) }],
+    [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
     [
       IBootstrapService,
       {
         platform: 'linux',
         arch: 'x64',
-        clientVersion: '1.2.3-test',
+        clientIdentity: {
+          productName: 'test-product',
+          version: '1.2.3-test',
+          platform: 'test_platform',
+        },
         osHomeDir: '/home/test',
         getEnv: () => undefined,
       },
@@ -248,7 +282,7 @@ describe('runV2Print', () => {
     const { app, agent, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
@@ -267,36 +301,35 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
-  it('seeds explicit skill dirs from --skillsDir into bootstrap', async () => {
+  it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ skillsDirs: ['/skills'] }) as never, '1.2.3-test', {
       stdout,
       stderr,
     });
 
-    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
-    const seeded = seeds.find(([id]) => id === ISkillCatalogRuntimeOptions);
-    expect(seeded?.[1]).toMatchObject({ explicitDirs: ['/skills'] });
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.skillDirs).toEqual(['/skills']);
   });
 
-  it('leaves the skill runtime options unseeded when --skillsDir is empty', async () => {
+  it('leaves the skill dirs arg unset when --skillsDir is empty', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
-    expect(seeds.some(([id]) => id === ISkillCatalogRuntimeOptions)).toBe(false);
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.skillDirs ?? []).toEqual([]);
   });
 
   it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
@@ -305,7 +338,7 @@ describe('runV2Print', () => {
     const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ agent: 'reviewer', agentFiles: ['/agents/reviewer.md'] }) as never,
@@ -313,14 +346,11 @@ describe('runV2Print', () => {
       { stdout, stderr },
     );
 
-    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
-    const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
-    expect(seeded?.[1]).toMatchObject({ explicitFiles: ['/agents/reviewer.md'] });
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.agentFiles).toEqual(['/agents/reviewer.md']);
 
-    const lifecycle = appServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    expect(lifecycle.create).toHaveBeenCalledWith({
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'reviewer', model: 'k2' },
@@ -341,21 +371,18 @@ describe('runV2Print', () => {
     const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', {
       stdout,
       stderr,
     });
 
-    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
-    const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
-    expect(seeded?.[1]).toMatchObject({ explicitFiles: [agentFile] });
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.agentFiles).toEqual([agentFile]);
 
-    const lifecycle = appServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    expect(lifecycle.create).toHaveBeenCalledWith({
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
       workDir: process.cwd(),
       additionalDirs: undefined,
       mainAgentBinding: { profile: 'file-reviewer', model: 'k2' },
@@ -368,10 +395,8 @@ describe('runV2Print', () => {
     const stdout = writer();
     const stderr = writer();
     const { app, appServices } = makeFakeHarness();
-    const lifecycle = appServices.get(ISessionLifecycleService) as {
-      create: ReturnType<typeof vi.fn>;
-    };
-    lifecycle.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    sessions.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
     mocks.bootstrap.mockReturnValue({ app });
 
     await expect(
@@ -390,7 +415,7 @@ describe('runV2Print', () => {
     const { app, agent, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await expect(
       runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', { stdout, stderr }),
@@ -402,18 +427,18 @@ describe('runV2Print', () => {
     expect(profile.bind).not.toHaveBeenCalled();
   });
 
-  it('leaves the agent runtime options unseeded when --agentFile is empty', async () => {
+  it('leaves the agent files arg unset when --agentFile is empty', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
-    expect(seeds.some(([id]) => id === IAgentCatalogRuntimeOptions)).toBe(false);
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.agentFiles ?? []).toEqual([]);
   });
 
   it('passes --agent-file paths through unresolved so the engine can expand ~', async () => {
@@ -422,7 +447,7 @@ describe('runV2Print', () => {
     const { app, agent } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ agent: 'reviewer', agentFiles: ['~/agents/reviewer.md'] }) as never,
@@ -430,9 +455,8 @@ describe('runV2Print', () => {
       { stdout, stderr },
     );
 
-    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
-    const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
-    expect(seeded?.[1]).toMatchObject({ explicitFiles: ['~/agents/reviewer.md'] });
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.agentFiles).toEqual(['~/agents/reviewer.md']);
   });
 
   it('treats re-selecting the already-bound profile on resume as a no-op', async () => {
@@ -441,11 +465,11 @@ describe('runV2Print', () => {
     const { app, agent, agentServices, appServices, profileState } = makeFakeHarness();
     profileState.profileName = 'reviewer';
 
-    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
-    index.list.mockResolvedValue({ items: [{ id: 'ses_1', cwd: process.cwd() }] });
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(opts({ session: 'ses_1', agent: 'reviewer' }) as never, '1.2.3-test', {
       stdout,
@@ -466,11 +490,11 @@ describe('runV2Print', () => {
     const { app, agent, agentServices, appServices, profileState } = makeFakeHarness();
     profileState.profileName = 'reviewer';
 
-    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
-    index.list.mockResolvedValue({ items: [{ id: 'ses_1', cwd: process.cwd() }] });
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
 
     mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue(agent);
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
     await runV2Print(
       opts({ session: 'ses_1', agent: 'reviewer', model: 'new-model' }) as never,

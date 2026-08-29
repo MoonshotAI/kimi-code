@@ -1,23 +1,18 @@
-/**
- * `/api/v1` route registration.
- *
- * Mirrors the v1 server's prefixing and per-module delegation, but resolves
- * services from the `agent-core-v2` Core `Scope` instead of the v1 flat
- * `IInstantiationService`. v0.1 mounts the subset of routes that v2 can serve
- * end-to-end today (health, meta, auth readiness, OAuth device flow, config,
- * model/provider catalog, sessions, messages, approvals, workspaces, the fs
- * folder picker, the session filesystem, terminals, connections, shutdown).
- */
-
-import type { Scope } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
+import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
+import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import type { TranscriptService } from '../services/transcript/transcriptService';
 import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
+import { registerCapabilitiesRoutes } from './capabilities';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
 import { registerFilesRoutes } from './files';
@@ -25,13 +20,16 @@ import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
-import type { ISnapshotReader } from '../services/snapshot';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
+import { registerPluginsRoutes } from './plugins';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerRuntimeRoutes } from './runtime';
+import { registerSearchRoutes } from './search';
+import { registerSessionMediaRoutes } from './sessionMedia';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
@@ -61,6 +59,7 @@ interface ApiV1RouteHost {
 
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
+  readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
   readonly enableTerminals?: boolean;
@@ -68,14 +67,11 @@ export interface RegisterApiV1RoutesOptions {
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly snapshotReader: ISnapshotReader;
   readonly transcriptService: TranscriptService;
-  /**
-   * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
-   * from the `disableAuth` server option (the `--dangerous-bypass-auth` CLI
-   * flag).
-   */
+  readonly pluginMarketplaceUrl: () => string;
+  readonly pluginMarketplaceIsDefault: boolean;
   readonly dangerousBypassAuth?: boolean;
+  readonly webTitle?: string;
 }
 
 export async function registerApiV1Routes(
@@ -87,8 +83,6 @@ export async function registerApiV1Routes(
     async (apiV1) => {
       registerHealthRoute(apiV1);
 
-      // Dev-only debug RPC surface (`--debug-endpoints`, loopback-gated in
-      // `start.ts`): every scoped Service reachable.
       if (opts.debugEndpoints === true) {
         registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
       }
@@ -98,6 +92,20 @@ export async function registerApiV1Routes(
         serverId: ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
+        webTitle: opts.webTitle,
+        getExperimentalFlags: async () => {
+          await core.accessor.get(IConfigService).ready;
+          return core.accessor.get(IFlagService).snapshot();
+        },
+        getFeatures: () =>
+          core.accessor
+            .get(IFeatureManager)
+            .units()
+            .map((unit) => ({
+              name: unit.name,
+              state: FiberState[unit.state] as MetaFeature['state'],
+              meta: unit.meta,
+            })),
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
@@ -111,16 +119,26 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
       );
+      registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
         core,
-        { serverVersion: opts.serverVersion },
+        { hostIdentity: opts.hostIdentity },
       );
       registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
+      registerCapabilitiesRoutes(
+        apiV1 as unknown as Parameters<typeof registerCapabilitiesRoutes>[0],
+        core,
+      );
+      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core, {
+        marketplaceUrl: opts.pluginMarketplaceUrl,
+        marketplaceIsDefault: opts.pluginMarketplaceIsDefault,
+      });
       registerMessagesRoutes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
       );
+      registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
       registerApprovalsRoutes(
         apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
@@ -143,6 +161,10 @@ export async function registerApiV1Routes(
         core,
       );
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
+      registerSessionMediaRoutes(
+        apiV1 as unknown as Parameters<typeof registerSessionMediaRoutes>[0],
+        core,
+      );
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
       registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
@@ -159,7 +181,6 @@ export async function registerApiV1Routes(
       registerSnapshotRoutes(apiV1 as unknown as Parameters<typeof registerSnapshotRoutes>[0], {
         core,
         broadcaster: opts.broadcaster,
-        reader: opts.snapshotReader,
       });
       registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
         core,

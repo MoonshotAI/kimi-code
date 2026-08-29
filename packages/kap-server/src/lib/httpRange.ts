@@ -1,8 +1,3 @@
-/**
- * HTTP helpers for raw-content routes — request header access and single-range
- * `Range` header parsing shared by the file download / content endpoints.
- */
-
 export function pickHeader(
   headers: Record<string, unknown>,
   name: string,
@@ -12,11 +7,6 @@ export function pickHeader(
   return Array.isArray(v) ? (v[0] as string | undefined) : (v as string);
 }
 
-/**
- * Parse a single-range `bytes=` header against a known size. Returns null for
- * absent, malformed, multi-range, or unsatisfiable specs (callers then serve
- * the full body with 200).
- */
 export function parseRangeHeader(
   raw: string | undefined,
   size: number,

@@ -123,8 +123,8 @@ Reference:
 
 ```ts
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   _clearScopedRegistryForTests,
   registerScopedService,
   ScopeActivation,
@@ -157,6 +157,14 @@ Always `_clearScopedRegistryForTests()` and re-register explicitly in
 `beforeEach`. Do not rely on a production module's top-level
 `registerScopedService(...)` side-effect: import order then becomes part of the
 test, and another suite's `_clearScopedRegistryForTests()` can wipe it.
+
+When a test intentionally replaces an existing static registration — swapping
+one production implementation for a fake while keeping the rest of the registry
+— use `overrideScopedService` (same signature). `registerScopedService` throws
+on a duplicate (scope, id) pair, and `overrideScopedService` throws when nothing
+is registered for the pair yet. Tool tests that re-register or restore agent
+tool contributions use `overrideAgentToolService`, which replaces the scoped
+registration and upserts the contribution-table entry.
 
 The scoped registration signature is
 `registerScopedService(scope, id, ctor, activation = ScopeActivation.OnScopeCreated, domain?)`.

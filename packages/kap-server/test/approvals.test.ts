@@ -2,10 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ISessionApprovalService, ISessionLifecycleService } from '@moonshot-ai/agent-core-v2';
+import { ISessionApprovalService, ensureMainAgent, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -45,6 +46,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-approvals-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -92,12 +94,14 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
       metadata: { cwd: home as string },
     });
     expect(body.code).toBe(0);
+    const handle = getLiveSessionById(server!.core.accessor, body.data.id);
+    expect(handle).toBeDefined();
+    await ensureMainAgent(handle!);
     return body.data.id;
   }
 
-  /** Park an approval in-process so the REST route has something to list/resolve. */
   function enqueueApproval(sessionId: string, toolCallId: string): string {
-    const handle = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();
     const parked = handle!.accessor.get(ISessionApprovalService).enqueue({
       toolCallId,
@@ -161,6 +165,24 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
       decision: 'rejected',
     });
     expect(body.code).toBe(40404);
+  });
+
+  it('mints distinct approval ids when the provider reuses a tool_call id', async () => {
+    const sid = await createSession();
+    const first = enqueueApproval(sid, 'Bash_0');
+    const second = enqueueApproval(sid, 'Bash_0');
+    expect(first).not.toBe(second);
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
+    expect(body.data.items.map((i) => i.approval_id).sort()).toEqual([first, second].sort());
+    expect(body.data.items.every((i) => i.tool_call_id === 'Bash_0')).toBe(true);
+
+    for (const aid of [first, second]) {
+      const resolved = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+        decision: 'approved',
+      });
+      expect(resolved.body.code).toBe(0);
+    }
   });
 
   it('returns 40401 for an unknown session', async () => {

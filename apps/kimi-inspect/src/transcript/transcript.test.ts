@@ -4,8 +4,6 @@
  * test suite and are intentionally not re-tested here.
  */
 
-import { describe, expect, it, vi } from 'vitest';
-
 import {
   itemId,
   type StepHeader,
@@ -14,12 +12,15 @@ import {
   type TurnHeader,
   type TurnState,
 } from '@moonshot-ai/transcript';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { WsLike } from '../channel/wsLike';
 import {
+  fetchTranscriptAttachment,
   fetchTranscriptOps,
   fetchTranscriptPage,
   fetchTranscriptPlan,
+  transcriptAttachmentUrl,
   type TranscriptPage,
 } from './api';
 import {
@@ -45,6 +46,44 @@ function stepHeader(stepId: string, ordinal: number): StepHeader {
   return { kind: 'step', stepId, turnId: stepId.split('.')[0] ?? 't1', ordinal, state: 'running' };
 }
 
+describe('transcript attachments', () => {
+  it('maps each attachment locator to its transport route', () => {
+    expect(
+      transcriptAttachmentUrl('http://h:1', 's 1', { kind: 'file', fileId: 'f 1' }),
+    ).toBe('http://h:1/api/v1/files/f%201');
+    expect(
+      transcriptAttachmentUrl('http://h:1', 's 1', {
+        kind: 'session_media',
+        fileId: 'f 1',
+      }),
+    ).toBe('http://h:1/api/v1/sessions/s%201/media/f%201');
+    expect(
+      transcriptAttachmentUrl('http://h:1', 's1', {
+        kind: 'url',
+        url: 'https://example.com/a.png',
+      }),
+    ).toBe('https://example.com/a.png');
+  });
+
+  it('fetches stored attachment bytes with bearer auth', async () => {
+    const fetchImpl = vi.fn(async () => new Response('media-bytes', { status: 200 }));
+
+    const blob = await fetchTranscriptAttachment({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's1',
+      source: { kind: 'session_media', fileId: 'f_1' },
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://h:1/api/v1/sessions/s1/media/f_1',
+      { headers: { authorization: 'Bearer tok' } },
+    );
+    await expect(blob.text()).resolves.toBe('media-bytes');
+  });
+});
+
 const textFrameUpsert = (turnId: string, stepId: string, frameId: string, text: string) => ({
   op: 'frame.upsert' as const,
   turnId,
@@ -52,7 +91,13 @@ const textFrameUpsert = (turnId: string, stepId: string, frameId: string, text: 
   frame: { kind: 'text' as const, frameId, role: 'assistant' as const, text },
 });
 
-const frameAppend = (turnId: string, stepId: string, frameId: string, offset: number, text: string) => ({
+const frameAppend = (
+  turnId: string,
+  stepId: string,
+  frameId: string,
+  offset: number,
+  text: string,
+) => ({
   op: 'append' as const,
   target: { type: 'frame' as const, turnId, stepId, frameId },
   offset,
@@ -132,7 +177,12 @@ class FakeWs implements WsLike {
 
 function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0]['handlers']> = {}) {
   const seen = {
-    ops: [] as { agentId: string; ops: readonly TranscriptOperation[]; at?: string; seq?: number }[],
+    ops: [] as {
+      agentId: string;
+      ops: readonly TranscriptOperation[];
+      at?: string;
+      seq?: number;
+    }[],
     resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
     resyncs: 0,
     reconnects: 0,
@@ -172,7 +222,9 @@ describe('fetchTranscriptPage', () => {
     agent_id: 'main',
     items: [turnItem(1)],
     has_more: true,
-    tasks: [{ taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' }],
+    tasks: [
+      { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' },
+    ],
     interactions: [],
     attachments: [],
     todos: [],
@@ -597,7 +649,9 @@ describe('TranscriptChatStore', () => {
         ...emptyPage,
         items: [turnItem(1), turnItem(2)],
         hasMoreOlder: true,
-        tasks: [{ taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: '' }],
+        tasks: [
+          { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: '' },
+        ],
         meta: { activity: 'idle' },
         pendingInteractions: ['apr-1'],
       },
@@ -613,8 +667,16 @@ describe('TranscriptChatStore', () => {
 
   it('prepends older pages ahead of the window, dedupes, keeps live globals', () => {
     const store = new TranscriptChatStore();
-    store.applyPage({ ...emptyPage, items: [turnItem(3)], hasMoreOlder: true, meta: { activity: 'idle' } }, { replace: true });
-    store.applyPage({ ...emptyPage, items: [turnItem(1), turnItem(2)], hasMoreOlder: true, meta: {} });
+    store.applyPage(
+      { ...emptyPage, items: [turnItem(3)], hasMoreOlder: true, meta: { activity: 'idle' } },
+      { replace: true },
+    );
+    store.applyPage({
+      ...emptyPage,
+      items: [turnItem(1), turnItem(2)],
+      hasMoreOlder: true,
+      meta: {},
+    });
     expect(store.getState().items.map((item) => itemId(item))).toEqual(['t1', 't2', 't3']);
     expect(store.getState().hasMoreOlder).toBe(true);
     // Globals from the older page do not clobber the fresher live state.

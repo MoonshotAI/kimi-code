@@ -15,6 +15,7 @@ export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = () => void | Promise<void>;
+export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
 
 export function createProgram(
   version: string,
@@ -22,6 +23,7 @@ export function createProgram(
   onMigrate: MigrateCommandHandler,
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
+  onUpdateDownload: UpdateDownloadHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -77,7 +79,7 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent <name>',
-        'Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.',
+        'Agent profile to start the new session with. Custom profiles are discovered from agent directories or loaded via --agent-file. Cannot be combined with --session/--continue.',
       )
         .argParser((value: string, previous: string | undefined) => {
           if (previous !== undefined) {
@@ -90,7 +92,7 @@ export function createProgram(
     .addOption(
       new Option(
         '--agent-file <path>',
-        'Load an agent definition from a Markdown file and select it (v2 engine only).',
+        'Load an agent definition from a Markdown file and select it for the new session. Cannot be combined with --session/--continue.',
       )
         .argParser((value: string, previous: string[] | undefined) => {
           if ((previous?.length ?? 0) > 0) {
@@ -136,6 +138,17 @@ export function createProgram(
     .allowUnknownOption(true)
     .action((entry: string, args: string[]) => {
       onPluginNodeRunner(entry, args);
+    });
+
+  // Self-spawned worker for native staged updates (detached background
+  // download, or foreground from `kimi upgrade` — `--manual` marks the
+  // latter's stage as user-requested). Hidden: not user-facing.
+  program
+    .command('__update_download', { hidden: true })
+    .argument('<version>')
+    .option('--manual', 'the stage answers an explicit user-initiated upgrade')
+    .action((targetVersion: string, options: { manual?: boolean }) => {
+      onUpdateDownload(targetVersion, options.manual === true);
     });
 
   program.argument('[args...]').action((args: string[]) => {

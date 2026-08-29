@@ -101,6 +101,8 @@ export const ErrorCode = {
   FS_ALREADY_EXISTS: 40919,
   /** goal 只允许主 agent 使用 */
   GOAL_UNSUPPORTED_AGENT: 40920,
+  /** prompt_id 已在该 agent 的历史中使用 */
+  PROMPT_ID_CONFLICT: 40927,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -109,7 +111,7 @@ export const ErrorCode = {
   /** 临时文件已过期 */
   FILE_EXPIRED: 41003,
 
-  /** 上传超 50MB */
+  /** 文件过大（如 session 导出超限；/files 上传不设上限） */
   FILE_TOO_LARGE: 41301,
   /** fs.read 超 10MB */
   FS_TOO_LARGE: 41302,
@@ -197,6 +199,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: 'goal.objective_too_long',
   [ErrorCode.FS_ALREADY_EXISTS]: 'fs.already_exists',
   [ErrorCode.GOAL_UNSUPPORTED_AGENT]: 'goal.unsupported_agent',
+  [ErrorCode.PROMPT_ID_CONFLICT]: 'prompt.id_conflict',
 
   [ErrorCode.APPROVAL_EXPIRED]: 'approval.expired',
   [ErrorCode.QUESTION_EXPIRED]: 'question.expired',

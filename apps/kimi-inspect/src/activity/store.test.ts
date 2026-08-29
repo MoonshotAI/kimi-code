@@ -113,7 +113,10 @@ describe('SessionActivityHub', () => {
     expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(hub.store.get('s2')?.pendingInteraction).toBe('approval');
     // The hello goes out with no subscriptions — global facts flow regardless.
-    const hello = JSON.parse(instances[0]!.sent[0]!) as { type: string; payload: { subscriptions: string[] } };
+    const hello = JSON.parse(instances[0]!.sent[0]!) as {
+      type: string;
+      payload: { subscriptions: string[] };
+    };
     expect(hello.type).toBe('client_hello');
     expect(hello.payload.subscriptions).toEqual([]);
     hub.close();
@@ -165,6 +168,45 @@ describe('SessionActivityHub', () => {
 
     expect(onListChanged).toHaveBeenCalledTimes(2);
     expect(hub.store.get('s1')).toBeUndefined();
+    hub.close();
+  });
+
+  it('forwards archived and workspace frames as list-level signals and drops archived facts', () => {
+    const { ctor, instances } = makeFakeWsCtor();
+    const onListChanged = vi.fn();
+    const hub = new SessionActivityHub({
+      url: 'http://127.0.0.1:58627',
+      onListChanged,
+      WebSocketImpl: ctor,
+      fetchImpl: seedFetch([]),
+    });
+    instances[0]!.emit('open');
+
+    instances[0]!.emitFrame({
+      type: 'event.session.work_changed',
+      session_id: 's1',
+      payload: { type: 'event.session.work_changed', busy: true },
+    });
+    expect(hub.store.get('s1')).toBeDefined();
+
+    // Global-dispatched frames carry the __global__ watermark; the real
+    // session id rides in the payload.
+    instances[0]!.emitFrame({
+      type: 'event.session.archived',
+      session_id: '__global__',
+      payload: { type: 'event.session.archived', sessionId: 's1', workspace_id: 'wd_1' },
+    });
+    expect(hub.store.get('s1')).toBeUndefined();
+    expect(onListChanged).toHaveBeenCalledTimes(1);
+
+    for (const type of [
+      'event.workspace.created',
+      'event.workspace.updated',
+      'event.workspace.deleted',
+    ]) {
+      instances[0]!.emitFrame({ type, session_id: '__global__', payload: {} });
+    }
+    expect(onListChanged).toHaveBeenCalledTimes(4);
     hub.close();
   });
 });

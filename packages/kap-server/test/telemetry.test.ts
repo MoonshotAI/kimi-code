@@ -1,10 +1,3 @@
-/**
- * Kap server telemetry composition tests — boot the real App scope and storage,
- * then verify config gating, host-appender preservation, cloud delivery wiring,
- * and owned shutdown. The outbound cloud fetch is stubbed at the network
- * boundary.
- */
-
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,6 +54,11 @@ describe('server telemetry', () => {
         homeDir: home as string,
         configPath: resolveConfigPath({ homeDir: home as string }),
         env: resolvedEnv,
+        clientIdentity: {
+          productName: 'test-product',
+          version: '0.0.0-test',
+          platform: 'test_platform',
+        },
       },
       [
         ...logSeed(resolveLoggingConfig({ homeDir: home as string, env: resolvedEnv })),

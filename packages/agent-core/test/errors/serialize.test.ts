@@ -1,6 +1,8 @@
-import { APIStatusError } from '@moonshot-ai/kosong';
+import { APIProviderQuotaExhaustedError, APIStatusError } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
+import { KimiError } from '#/errors/classes';
+import { ErrorCodes, isKimiErrorCode, KIMI_ERROR_INFO } from '#/errors/codes';
 import { toKimiErrorPayload } from '#/errors/serialize';
 
 const NGINX_413_HTML =
@@ -46,5 +48,51 @@ describe('toKimiErrorPayload — APIStatusError message sanitization', () => {
     expect(toKimiErrorPayload(new APIStatusError(401, 'Unauthorized')).code).toBe(
       'provider.auth_error',
     );
+  });
+});
+
+describe('toKimiErrorPayload — quota-exhausted 429', () => {
+  it('maps a quota-exhausted 429 to provider.api_error, not provider.rate_limit', () => {
+    // provider.rate_limit is retryable and re-minted as a rate-limit error
+    // across the wire boundary, which drives the swarm requeue/suspend loop;
+    // quota exhaustion must carry the non-retryable generic code instead.
+    const payload = toKimiErrorPayload(
+      new APIProviderQuotaExhaustedError(
+        'Your account is suspended due to insufficient balance, please recharge your account',
+        'req-quota',
+      ),
+    );
+    expect(payload.code).toBe('provider.api_error');
+    expect(payload.retryable).toBe(false);
+    expect(payload.message).toContain('recharge');
+    expect(payload.details).toMatchObject({ statusCode: 429, requestId: 'req-quota' });
+  });
+});
+
+describe('toKimiErrorPayload — mcp.oauth_failed registry entry', () => {
+  it('serializes a KimiError stamped with the engine OAuth failure code', () => {
+    // The v2 engine raises `mcp.oauth_failed` from its MCP OAuth service; an
+    // unregistered code would throw on the KIMI_ERROR_INFO lookup here.
+    const payload = toKimiErrorPayload(
+      new KimiError(ErrorCodes.MCP_OAUTH_FAILED, 'OAuth flow timed out'),
+    );
+    expect(payload).toMatchObject({
+      code: 'mcp.oauth_failed',
+      message: 'OAuth flow timed out',
+      retryable: KIMI_ERROR_INFO['mcp.oauth_failed'].retryable,
+    });
+  });
+});
+
+describe('isKimiErrorCode', () => {
+  it('accepts registered codes and rejects unknown or inherited property names', () => {
+    expect(isKimiErrorCode('mcp.oauth_failed')).toBe(true);
+    expect(isKimiErrorCode('mcp.future_code')).toBe(false);
+    // `in` would walk the prototype chain and admit these.
+    expect(isKimiErrorCode('constructor')).toBe(false);
+    expect(isKimiErrorCode('toString')).toBe(false);
+    expect(isKimiErrorCode('__proto__')).toBe(false);
+    expect(isKimiErrorCode(undefined)).toBe(false);
+    expect(isKimiErrorCode(42)).toBe(false);
   });
 });

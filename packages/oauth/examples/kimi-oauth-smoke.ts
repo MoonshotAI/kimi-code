@@ -78,8 +78,9 @@ function smokeIdentityFromEnv(): KimiHostIdentity {
     throw new Error('KIMI_CODE_SMOKE_VERSION is required for Kimi OAuth smoke.');
   }
   return {
-    userAgentProduct: "kimi-code-cli",
+    productName: "kimi-code-cli",
     version,
+    platform: "kimi_code_cli",
   };
 }
 
@@ -109,9 +110,11 @@ function printUsage(
     process.stdout.write(`usage: no summary, limits=${String(usage.limits.length)}\n`);
     return;
   }
-  process.stdout.write(
-    `usage: ${summary.label} ${String(summary.used)}/${String(summary.limit)}\n`,
-  );
+  const label =
+    summary.window !== undefined
+      ? `${String(summary.window.duration)}${summary.window.unit[0] ?? ''} limit`
+      : (summary.name ?? 'Limit');
+  process.stdout.write(`usage: ${label} ${String(summary.used)}/${String(summary.limit)}\n`);
 }
 
 function shouldKeepToken(hasExplicitHomeDir: boolean): boolean {

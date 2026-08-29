@@ -16,30 +16,24 @@
  * every Service.
  */
 
+import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
+import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
+import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
+import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
+import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
+import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
-
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
-import { ISessionInitService } from '@moonshot-ai/agent-core-v2/session/sessionInit/sessionInit';
-import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
+import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/sessionInit/sessionInit';
+import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { IAgentContextSizeService } from '@moonshot-ai/agent-core-v2/agent/contextSize/contextSize';
-import { IAgentGoalService } from '@moonshot-ai/agent-core-v2/agent/goal/goal';
-import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
-import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
-import { IAgentPermissionRulesService } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRules';
-import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
-import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
-import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm';
-import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
-import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
 /** Loosely-typed view of a scoped service proxy (every member is a remote call). */
 export type AnyService = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -66,7 +60,7 @@ export interface ServicePanelDef {
   readonly id: string;
   readonly label: string;
   /** Wire scope the Service is called on (`app` maps to the `core` route). */
-  readonly scope: 'app' | 'session' | 'agent';
+  readonly scope: 'app' | 'workspace' | 'session' | 'agent';
   readonly fetch?: (svc: AnyService) => Promise<unknown>;
   readonly actions?: readonly PanelAction[];
 }
@@ -129,12 +123,6 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
     fetch: (svc) => call(svc, 'listPending'),
   },
   {
-    id: String(ISessionInteractionService),
-    label: 'SessionInteractionService',
-    scope: 'session',
-    fetch: (svc) => call(svc, 'listPending'),
-  },
-  {
     id: String(ISessionWorkspaceContext),
     label: 'SessionWorkspaceContext',
     scope: 'session',
@@ -170,20 +158,7 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     }),
     actions: [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
-      { label: 'Refresh system prompt', run: (svc) => call(svc, 'refreshSystemPrompt') },
     ],
-  },
-  {
-    id: String(IAgentUsageService),
-    label: 'AgentUsageService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'status'),
-  },
-  {
-    id: String(IAgentContextSizeService),
-    label: 'AgentContextSizeService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'get'),
   },
   {
     id: String(IAgentPermissionModeService),
@@ -213,23 +188,17 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     ],
   },
   {
-    id: String(IAgentGoalService),
-    label: 'AgentGoalService',
-    scope: 'agent',
-    fetch: (svc) => call(svc, 'getGoal'),
-    actions: [
-      { label: 'pause', run: (svc) => call(svc, 'pauseGoal', {}) },
-      { label: 'resume', run: (svc) => call(svc, 'resumeGoal', {}) },
-      { label: 'cancel', danger: true, run: (svc) => call(svc, 'cancelGoal', {}) },
-    ],
-  },
-  {
     id: String(IAgentTaskService),
     label: 'AgentTaskService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'list'),
     actions: [
-      { label: 'Stop task', input: 'Task id', danger: true, run: (svc, id) => call(svc, 'stop', id) },
+      {
+        label: 'Stop task',
+        input: 'Task id',
+        danger: true,
+        run: (svc, id) => call(svc, 'stop', id),
+      },
       { label: 'stopAll', danger: true, run: (svc) => call(svc, 'stopAll') },
     ],
   },
@@ -248,7 +217,11 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     scope: 'agent',
     fetch: (svc) => call(svc, 'list'),
     actions: [
-      { label: 'Reconnect server', input: 'Server name', run: (svc, name) => call(svc, 'reconnect', name) },
+      {
+        label: 'Reconnect server',
+        input: 'Server name',
+        run: (svc, name) => call(svc, 'reconnect', name),
+      },
     ],
   },
   {
@@ -259,19 +232,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     actions: [
       { label: 'enter (manual)', run: (svc) => call(svc, 'enter', 'manual') },
       { label: 'exit', run: (svc) => call(svc, 'exit') },
-    ],
-  },
-  {
-    id: String(IAgentRPCService),
-    label: 'AgentRPCService',
-    scope: 'agent',
-    actions: [
-      { label: 'cancel turn', run: (svc) => call(svc, 'cancel', {}) },
-      {
-        label: 'undoHistory',
-        input: 'Steps',
-        run: (svc, n) => call(svc, 'undoHistory', { count: Number(n) }),
-      },
     ],
   },
 ];

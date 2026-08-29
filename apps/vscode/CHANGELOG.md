@@ -1,9 +1,80 @@
 # Changelog
 
+## 0.7.3
+
+### Patch Changes
+
+- [#3098](https://github.com/MoonshotAI/kimi-code/pull/3098) [`75550c5`](https://github.com/MoonshotAI/kimi-code/commit/75550c5686cb867c0cb34bc515997d5e6305fc94) Thanks [@LCZcn96](https://github.com/LCZcn96)! - Restore live context-window usage updates after switching to the v2 engine.
+
+- [#3276](https://github.com/MoonshotAI/kimi-code/pull/3276) [`f34b2ec`](https://github.com/MoonshotAI/kimi-code/commit/f34b2ecfb01dc194aaa3f209a00772991caad3f3) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix streamed replies occasionally showing every character twice and tool calls appearing in duplicate.
+
+- Updated dependencies [[`75550c5`](https://github.com/MoonshotAI/kimi-code/commit/75550c5686cb867c0cb34bc515997d5e6305fc94), [`d723cc4`](https://github.com/MoonshotAI/kimi-code/commit/d723cc47ee43e5ca3c3c4ec2473f205d44acede2)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.2
+
+## 0.7.2
+
+### Patch Changes
+
+- [#3079](https://github.com/MoonshotAI/kimi-code/pull/3079) [`35befdc`](https://github.com/MoonshotAI/kimi-code/commit/35befdcef2be344d931ea20063cb64113350dc4b) Thanks [@gaoyuan1223m](https://github.com/gaoyuan1223m)! - Fix multi-select questions jumping to the next question after only one answer is selected.
+
+- Updated dependencies [[`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.1
+
+## 0.7.1
+
+### Patch Changes
+
+- [#3026](https://github.com/MoonshotAI/kimi-code/pull/3026) [`13857f3`](https://github.com/MoonshotAI/kimi-code/commit/13857f383200881aa77dc972a8963ba421eeb2b6) Thanks [@bj456736](https://github.com/bj456736)! - Show plugin- and file-declared MCP servers as read-only entries in the MCP servers panel.
+
+- Updated dependencies [[`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0), [`61591bc`](https://github.com/MoonshotAI/kimi-code/commit/61591bce09f4467aa1664cb8ecb6aa6904b7accd), [`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0), [`13857f3`](https://github.com/MoonshotAI/kimi-code/commit/13857f383200881aa77dc972a8963ba421eeb2b6)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.0
+
+## 0.7.0
+
+### Minor Changes
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Run the extension on the v2 agent engine by default; the interface, sessions, and workflows are unchanged. To roll back, enable the `kimi.useAgentCoreV1` setting and reload the window.
+
+### Patch Changes
+
+- Updated dependencies [[`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629), [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797), [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797), [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797)]:
+  - @moonshot-ai/kimi-code-sdk@0.18.0
+
+## 0.6.9
+
+### Patch Changes
+
+- Updated dependencies [[`c9bfe8b`](https://github.com/MoonshotAI/kimi-code/commit/c9bfe8b2c8314ba4ef8806fb3b92ac654c1d1860), [`c212ae9`](https://github.com/MoonshotAI/kimi-code/commit/c212ae9715371c0d7939c15e664acbe0d7cf7fc3)]:
+  - @moonshot-ai/kimi-code-sdk@0.17.0
+
+## 0.6.8
+
+### Patch Changes
+
+- Updated dependencies [[`437a1b8`](https://github.com/MoonshotAI/kimi-code/commit/437a1b8ba1b7e0f6662bdadc669564fdc58c3f5a), [`0b2e803`](https://github.com/MoonshotAI/kimi-code/commit/0b2e803d5e71afaab45212bb2ee6117ecbf8bbc9), [`3c9e3b2`](https://github.com/MoonshotAI/kimi-code/commit/3c9e3b297cf5286c761159c1b4d642c478fd394d)]:
+  - @moonshot-ai/kimi-code-sdk@0.16.0
+
+## 0.6.7
+
+### Patch Changes
+
+- [#2326](https://github.com/MoonshotAI/kimi-code/pull/2326) [`302b2cd`](https://github.com/MoonshotAI/kimi-code/commit/302b2cd680e0ec66f68b4572238de84ce311c5f4) Thanks [@gaoyuan1223m](https://github.com/gaoyuan1223m)! - Fix only the first question being answerable when the agent asked multiple questions at once; each question is now answered one by one and submitted together.
+
+## 0.6.6
+
+### Patch Changes
+
+- [#2393](https://github.com/MoonshotAI/kimi-code/pull/2393) [`6d0a046`](https://github.com/MoonshotAI/kimi-code/commit/6d0a046488edda56219961b253c4787abae7a113) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix new users getting stranded on "Model setup required" with no way back to sign-in when the first login finishes authorization but fails to complete model setup; the screen now offers a path back to the sign-in page so login can be retried.
+- [#2402](https://github.com/MoonshotAI/kimi-code/pull/2402) [`0f3b106`](https://github.com/MoonshotAI/kimi-code/commit/0f3b106c4260ad626f66bc5c457a535d3163f2bc) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Reword the sign-in waiting message from "Waiting for authorization" to "Waiting for authentication".
+
+- Updated dependencies [[`40172c7`](https://github.com/MoonshotAI/kimi-code/commit/40172c7ca96ca981b043b793588dd32e898979fa)]:
+  - @moonshot-ai/kimi-code-sdk@0.15.0
+
 ## 0.6.5
 
 ### Patch Changes
 
+- [#1994](https://github.com/MoonshotAI/kimi-code/pull/1994) [`beeb964`](https://github.com/MoonshotAI/kimi-code/commit/beeb964393c8f9a38c2b1e2273e4415fc434b16d) Thanks [@RealKai42](https://github.com/RealKai42)! - Reduce webview streaming re-render churn: settled assistant messages no longer re-render on every streaming delta, and local images over 10MB are no longer inlined into the webview DOM.
 - Updated dependencies [[`ec88d35`](https://github.com/MoonshotAI/kimi-code/commit/ec88d352e8f4dc5e8ffd1212f016138458f69893), [`b5efba7`](https://github.com/MoonshotAI/kimi-code/commit/b5efba7abcaf4041f81ec520097a61e6546e8c50), [`ce0e3ce`](https://github.com/MoonshotAI/kimi-code/commit/ce0e3ceb04223bdaad8e8931bad46eff561055b6), [`e458323`](https://github.com/MoonshotAI/kimi-code/commit/e45832398d0d9cad98dbad1cbf1e5b103a20aace)]:
   - @moonshot-ai/kimi-code-sdk@0.14.0
 

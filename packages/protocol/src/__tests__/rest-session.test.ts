@@ -410,6 +410,19 @@ describe('sessionStatusResponseSchema', () => {
     expect(parsed.model).toBeUndefined();
   });
 
+  it('accepts an omitted max_context_tokens (unknown context limit)', () => {
+    const parsed = sessionStatusResponseSchema.parse({
+      busy: false,
+      thinking_level: 'off',
+      permission: 'auto',
+      plan_mode: false,
+      swarm_mode: false,
+      context_tokens: 0,
+      context_usage: 0,
+    });
+    expect(parsed.max_context_tokens).toBeUndefined();
+  });
+
   it('rejects missing busy', () => {
     expect(
       sessionStatusResponseSchema.safeParse({

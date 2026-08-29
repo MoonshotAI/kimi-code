@@ -4,10 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { LifecycleScope } from '#/app/scopes';
 import {
-  LifecycleScope,
   ScopeActivation,
   _clearScopedRegistryForTests,
+  overrideScopedService,
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
@@ -15,22 +16,44 @@ import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
-import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import {
+  ISessionIndex,
+  ISessionIndexMirror,
+  type SessionSummary,
+} from '#/app/sessionIndex/sessionIndex';
+import { recencyColumn, sessionCollection } from '#/app/sessionIndex/sessionIndexModel';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
-import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import {
+  drainSessionIndexMirror,
+  SessionIndexMirror,
+} from '#/app/sessionIndex/sessionIndexMirrorService';
+import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IQueryStore } from '#/persistence/interface/queryStore';
-import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
+import {
+  IQueryStore,
+  type Checkpoint,
+  type ColumnPageQuery,
+  type IQuery,
+  type Page,
+  type WriteOp,
+} from '#/persistence/interface/queryStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
+import { stubSessionIndexMirror } from './stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubFlag } from '../flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubQueryStore } from '../../persistence/interface/stubs';
 
 const WORK_DIR = '/home/user/repo';
-const SESSION_COLLECTION = 'session';
+
+function canonicalIds(summaries: readonly SessionSummary[]): string[] {
+  return [...summaries]
+    .sort((a, b) => (a.updatedAt !== b.updatedAt ? b.updatedAt - a.updatedAt : a.id < b.id ? 1 : -1))
+    .map((s) => s.id);
+}
 
 describe('FileSessionIndex (legacy)', () => {
   let homeDir: string;
@@ -65,6 +88,7 @@ describe('FileSessionIndex (legacy)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IQueryStore, stubQueryStore()),
+      stubPair(ISessionIndexMirror, stubSessionIndexMirror()),
       stubPair(IFlagService, stubFlag(false)),
       stubPair(ILogService, stubLog()),
     ]);
@@ -88,24 +112,24 @@ describe('FileSessionIndex (legacy)', () => {
     await fsp.mkdir(join(sessionsDir, wsId, sessionId), { recursive: true });
   }
 
-  it('list returns non-archived sessions by default', async () => {
+  it('listRecent returns non-archived sessions by default', async () => {
     await seedSession('active', { createdAt: 1, updatedAt: 2 });
     await seedSession('archived', { archived: true });
     await seedEmpty('no-state');
 
     const store = build();
-    const page = await store.list({ workspaceIds: [workspaceId] });
-    expect(page.items.map((s) => s.id).toSorted()).toEqual(['active']);
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['active']);
     expect(page.items[0]?.workspaceId).toBe(workspaceId);
     expect(page.items[0]?.archived).toBe(false);
   });
 
-  it('list includes archived when requested', async () => {
+  it('listRecent includes archived when requested', async () => {
     await seedSession('active', {});
     await seedSession('archived', { archived: true });
 
     const store = build();
-    const page = await store.list({ workspaceIds: [workspaceId], includeArchived: true });
+    const page = await store.listRecent({ workspaceIds: [workspaceId], includeArchived: true });
     expect(page.items.map((s) => s.id).toSorted()).toEqual(['active', 'archived']);
   });
 
@@ -132,22 +156,25 @@ describe('FileSessionIndex (legacy)', () => {
     expect((await store.get('none'))?.cwd).toBeUndefined();
   });
 
-  it('list filters by sessionId without enumerating all sessions', async () => {
+  it('listRecent filters by sessionId without enumerating all sessions', async () => {
     await seedSession('active', { title: 'hello' });
     await seedSession('archived', { archived: true });
 
     const store = build();
-    const active = await store.list({ sessionId: 'active' });
+    const active = await store.listRecent({ sessionId: 'active' });
     expect(active.items.map((s) => s.id)).toEqual(['active']);
 
-    const archived = await store.list({ sessionId: 'archived' });
+    const archived = await store.listRecent({ sessionId: 'archived' });
     expect(archived.items).toEqual([]);
 
-    const archivedIncluded = await store.list({ sessionId: 'archived', includeArchived: true });
+    const archivedIncluded = await store.listRecent({
+      sessionId: 'archived',
+      includeArchived: true,
+    });
     expect(archivedIncluded.items.map((s) => s.id)).toEqual(['archived']);
   });
 
-  it('list filters by childOf using the parent_session_id + child_session_kind markers', async () => {
+  it('listRecent filters by childOf using the parent_session_id + child_session_kind markers', async () => {
     await seedSession('parent', { createdAt: 1, updatedAt: 10 });
     await seedSession('child-a', {
       createdAt: 2,
@@ -171,22 +198,23 @@ describe('FileSessionIndex (legacy)', () => {
     });
 
     const store = build();
-    const page = await store.list({ childOf: 'parent' });
+    const page = await store.listRecent({ childOf: 'parent' });
     expect(page.items.map((s) => s.id).toSorted()).toEqual(['child-a', 'child-b']);
   });
 
-  it('countActive counts non-archived sessions', async () => {
+  it('count counts non-archived sessions by default and everything with includeArchived', async () => {
     await seedSession('a', {});
     await seedSession('b', {});
     await seedSession('archived', { archived: true });
     await seedEmpty('no-state');
 
     const store = build();
-    expect(await store.countActive([workspaceId])).toBe(2);
-    expect(await store.countActive(['wd_unknown'])).toBe(0);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
+    expect(await store.count({ workspaceIds: ['wd_unknown'] })).toBe(0);
   });
 
-  it('list merges a workspace-id set into one recency-ordered page', async () => {
+  it('listRecent merges a workspace-id set into one recency-ordered page', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a1', { createdAt: 1, updatedAt: 1 });
     await seedSession('a3', { createdAt: 3, updatedAt: 3 });
@@ -194,44 +222,79 @@ describe('FileSessionIndex (legacy)', () => {
     await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
 
     const store = build();
-    const page = await store.list({ workspaceIds: [workspaceId, otherId] });
+    const page = await store.listRecent({ workspaceIds: [workspaceId, otherId] });
     expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
     expect(page.items[0]?.workspaceId).toBe(otherId);
   });
 
-  it('list applies limit after the cross-bucket merge', async () => {
+  it('listRecent applies limit after the cross-bucket merge', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a1', { createdAt: 1, updatedAt: 1 });
     await seedSession('a3', { createdAt: 3, updatedAt: 3 });
     await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
 
     const store = build();
-    const page = await store.list({ workspaceIds: [workspaceId, otherId], limit: 2 });
+    const page = await store.listRecent({ workspaceIds: [workspaceId, otherId], limit: 2 });
     expect(page.items.map((s) => s.id)).toEqual(['a3', 'b2']);
+    expect(page.nextCursor).toBe('b2');
   });
 
-  it('list filters archived across every bucket of the id set', async () => {
+  it('listRecent filters archived across every bucket of the id set', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('active', {});
     await seedSession('archived', { archived: true }, otherId);
 
     const store = build();
-    const visible = await store.list({ workspaceIds: [workspaceId, otherId] });
+    const visible = await store.listRecent({ workspaceIds: [workspaceId, otherId] });
     expect(visible.items.map((s) => s.id)).toEqual(['active']);
 
-    const all = await store.list({ workspaceIds: [workspaceId, otherId], includeArchived: true });
+    const all = await store.listRecent({ workspaceIds: [workspaceId, otherId], includeArchived: true });
     expect(all.items.map((s) => s.id).toSorted()).toEqual(['active', 'archived']);
   });
 
-  it('countActive sums over the workspace-id set', async () => {
+  it('count sums over the workspace-id set', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a', {});
     await seedSession('b', {}, otherId);
     await seedSession('archived', { archived: true }, otherId);
 
     const store = build();
-    expect(await store.countActive([workspaceId, otherId])).toBe(2);
-    expect(await store.countActive([otherId])).toBe(1);
+    expect(await store.count({ workspaceIds: [workspaceId, otherId] })).toBe(2);
+    expect(await store.count({ workspaceIds: [otherId] })).toBe(1);
+  });
+
+  it('pages with the before/after keyset cursors', async () => {
+    for (let i = 0; i < 5; i++) {
+      await seedSession(`s${i}`, { createdAt: i, updatedAt: i });
+    }
+    const store = build();
+
+    const page1 = await store.listRecent({ workspaceIds: [workspaceId], limit: 2 });
+    expect(page1.items.map((s) => s.id)).toEqual(['s4', 's3']);
+    expect(page1.nextCursor).toBe('s3');
+
+    const page2 = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 2,
+      before: page1.nextCursor,
+    });
+    expect(page2.items.map((s) => s.id)).toEqual(['s2', 's1']);
+    expect(page2.nextCursor).toBe('s1');
+
+    const page3 = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 2,
+      before: page2.nextCursor,
+    });
+    expect(page3.items.map((s) => s.id)).toEqual(['s0']);
+    expect(page3.nextCursor).toBeUndefined();
+
+    const newer = await store.listRecent({ workspaceIds: [workspaceId], after: 's2' });
+    expect(newer.items.map((s) => s.id)).toEqual(['s4', 's3']);
+
+    const unknown = await store.listRecent({ workspaceIds: [workspaceId], before: 'missing' });
+    expect(unknown.items).toEqual([]);
+    expect(unknown.nextCursor).toBeUndefined();
   });
 });
 
@@ -241,6 +304,7 @@ describe('FileSessionIndex (read model)', () => {
   let workspaceId: string;
   let disposeHost: (() => void) | undefined;
   let queryStore: IQueryStore;
+  let mirror: ISessionIndexMirror;
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -248,6 +312,13 @@ describe('FileSessionIndex (read model)', () => {
       LifecycleScope.App,
       ISessionIndex,
       FileSessionIndex,
+      ScopeActivation.OnDemand,
+      'sessionIndex',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      ISessionIndexMirror,
+      SessionIndexMirror,
       ScopeActivation.OnDemand,
       'sessionIndex',
     );
@@ -266,11 +337,14 @@ describe('FileSessionIndex (read model)', () => {
   afterEach(async () => {
     disposeHost?.();
     disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(): ISessionIndex {
-    const fileStorage = new FileStorageService(homeDir);
+  function build(
+    fileStorage: FileStorageService = new FileStorageService(homeDir),
+  ): FileSessionIndex {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
@@ -282,7 +356,8 @@ describe('FileSessionIndex (read model)', () => {
       host.dispose();
     };
     queryStore = host.app.accessor.get(IQueryStore);
-    return host.app.accessor.get(ISessionIndex);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    return host.app.accessor.get(ISessionIndex) as FileSessionIndex;
   }
 
   async function seedSession(
@@ -295,7 +370,7 @@ describe('FileSessionIndex (read model)', () => {
     await fsp.writeFile(join(dir, 'state.json'), JSON.stringify(meta));
   }
 
-  function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+  function summary(id: string, overrides: Partial<SessionSummary> = {}) {
     return {
       id,
       workspaceId,
@@ -306,32 +381,226 @@ describe('FileSessionIndex (read model)', () => {
     };
   }
 
-  it('list backfills from disk on a cold read model, then serves from it', async () => {
+  async function walkPages(
+    store: FileSessionIndex,
+    query: { workspaceIds?: readonly string[]; includeArchived?: boolean },
+    pageSize: number,
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await store.listRecent({ ...query, limit: pageSize, before: cursor });
+      ids.push(...page.items.map((s) => s.id));
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    return ids;
+  }
+
+  class CountingStorage extends FileStorageService {
+    listCalls = 0;
+    override async list(scope: string, prefix?: string): Promise<readonly string[]> {
+      this.listCalls += 1;
+      return super.list(scope, prefix);
+    }
+  }
+
+  interface OpCounts {
+    calls: number;
+    rows: number;
+  }
+
+  class CountingQueryStore extends MiniDbQueryStore {
+    private readonly counts = new Map<string, OpCounts>();
+
+    resetCounts(): void {
+      this.counts.clear();
+    }
+
+    snapshotCounts(): Record<string, OpCounts> {
+      return Object.fromEntries([...this.counts.entries()].toSorted(([a], [b]) => (a < b ? -1 : 1)));
+    }
+
+    private record(method: string, collection: string, rows: number): void {
+      const key = `${method}:${collection}`;
+      const entry = this.counts.get(key) ?? { calls: 0, rows: 0 };
+      entry.calls += 1;
+      entry.rows += rows;
+      this.counts.set(key, entry);
+    }
+
+    override async get<T>(collection: string, key: string): Promise<T | undefined> {
+      const value = await super.get<T>(collection, key);
+      this.record('get', collection, value === undefined ? 0 : 1);
+      return value;
+    }
+
+    override async getMany<T>(
+      collection: string,
+      keys: readonly string[],
+    ): Promise<Map<string, T>> {
+      const values = await super.getMany<T>(collection, keys);
+      this.record('getMany', collection, values.size);
+      return values;
+    }
+
+    override async pageByColumn<T>(
+      collection: string,
+      query: ColumnPageQuery,
+    ): Promise<Page<T>> {
+      const page = await super.pageByColumn<T>(collection, query);
+      this.record('pageByColumn', collection, page.items.length);
+      return page;
+    }
+
+    override query<T>(collection: string): IQuery<T> {
+      const inner = super.query<T>(collection);
+      const wrapper: IQuery<T> = {
+        where: (filter) => {
+          inner.where(filter);
+          return wrapper;
+        },
+        whereColumn: (column, bounds) => {
+          inner.whereColumn(column, bounds);
+          return wrapper;
+        },
+        orderBy: (field, dir) => {
+          inner.orderBy(field, dir);
+          return wrapper;
+        },
+        limit: (n) => {
+          inner.limit(n);
+          return wrapper;
+        },
+        cursor: (cursor) => {
+          inner.cursor(cursor);
+          return wrapper;
+        },
+        execute: async () => {
+          const page = await inner.execute();
+          this.record('query', collection, page.items.length);
+          return page;
+        },
+      };
+      return wrapper;
+    }
+
+    override async listKeys(collection: string): Promise<readonly string[]> {
+      const keys = await super.listKeys(collection);
+      this.record('listKeys', collection, keys.length);
+      return keys;
+    }
+  }
+
+  it('prepare projects the persisted sessions and publishes a generation', async () => {
     await seedSession('active', { title: 'hello', createdAt: 1, updatedAt: 2 });
     await seedSession('archived', { archived: true });
 
     const store = build();
-    const first = await store.list({ workspaceIds: [workspaceId] });
-    expect(first.items.map((s) => s.id)).toEqual(['active']);
-    expect(first.items[0]?.title).toBe('hello');
+    expect(store.status()).toEqual({ state: 'uninitialized', degradedCount: 0 });
 
-    await queryStore.put(
-      SESSION_COLLECTION,
-      'active',
-      summary('active', { title: 'renamed', updatedAt: 3 }),
-    );
-    const second = await store.list({ workspaceIds: [workspaceId] });
-    expect(second.items[0]?.title).toBe('renamed');
+    const status = await store.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['active']);
+    expect(page.items[0]?.title).toBe('hello');
+    expect(await store.get('active')).toMatchObject({ id: 'active', title: 'hello' });
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
+    expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(2);
   });
 
-  it('get prefers the read model over disk', async () => {
+  it('serves warm reads without touching the session directories', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    const fileStorage = new CountingStorage(homeDir);
+    const store = build(fileStorage);
+    await store.prepare();
+
+    fileStorage.listCalls = 0;
+    const page = await store.listRecent({ workspaceIds: [workspaceId], limit: 20 });
+    expect(page.items).toHaveLength(2);
+    expect(await store.get('a')).toMatchObject({ id: 'a' });
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect(fileStorage.listCalls).toBe(0);
+  });
+
+  it('paginates exactly through same-millisecond ties', async () => {
+    const specs: [string, number][] = [
+      ['a', 100],
+      ['b', 100],
+      ['c', 100],
+      ['d', 100],
+      ['e', 90],
+      ['f', 90],
+      ['g', 90],
+      ['h', 80],
+      ['i', 80],
+      ['j', 70],
+    ];
+    const summaries = specs.map(([id, updatedAt]) => summary(id, { updatedAt }));
+    for (const [id, updatedAt] of specs) {
+      await seedSession(id, { createdAt: updatedAt - 1, updatedAt });
+    }
     const store = build();
-    await queryStore.put(SESSION_COLLECTION, 'warm', summary('warm', { title: 'cached' }));
-    const got = await store.get('warm');
-    expect(got?.title).toBe('cached');
+    await store.prepare();
+
+    const walked = await walkPages(store, { workspaceIds: [workspaceId] }, 3);
+    expect(walked).toEqual(canonicalIds(summaries));
+    expect(new Set(walked).size).toBe(specs.length);
   });
 
-  it('list filters by childOf from the read model', async () => {
+  it('listRecent treats a cache entry missing required fields as a cold miss', async () => {
+    await seedSession('s1', { title: 'on-disk', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    const collection = sessionCollection(1);
+    await queryStore.put(collection, 's1', {
+      id: 's1',
+      workspaceId,
+      title: 'stale',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    const page = await store.listRecent({ sessionId: 's1' });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.title).toBe('on-disk');
+    expect(page.items[0]?.archived).toBe(false);
+
+    await (mirror as SessionIndexMirror).drain();
+    const cached = await queryStore.get<SessionSummary>(collection, 's1');
+    expect(cached?.archived).toBe(false);
+  });
+
+  it('get falls back to disk when the cached entry fails the shape check', async () => {
+    await seedSession('s1', { title: 'on-disk', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    await queryStore.put(sessionCollection(1), 's1', { id: 's1' });
+
+    const got = await store.get('s1');
+    expect(got?.title).toBe('on-disk');
+    expect(got?.archived).toBe(false);
+  });
+
+  it('walks all pages of a large listing without duplicates', async () => {
+    const specs: SessionSummary[] = [];
+    for (let i = 0; i < 25; i++) {
+      specs.push(summary(`s${String(i).padStart(2, '0')}`, { createdAt: i, updatedAt: i }));
+      await seedSession(`s${String(i).padStart(2, '0')}`, { createdAt: i, updatedAt: i });
+    }
+    const store = build();
+    await store.prepare();
+
+    const walked = await walkPages(store, { workspaceIds: [workspaceId] }, 10);
+    expect(walked).toEqual(canonicalIds(specs));
+
+    const newer = await store.listRecent({ workspaceIds: [workspaceId], after: 's20' });
+    expect(newer.items.map((s) => s.id)).toEqual(['s24', 's23', 's22', 's21']);
+  });
+
+  it('listRecent filters by childOf from the read model', async () => {
     await seedSession('child-a', {
       createdAt: 2,
       updatedAt: 9,
@@ -354,22 +623,12 @@ describe('FileSessionIndex (read model)', () => {
     });
 
     const store = build();
-    const page = await store.list({ childOf: 'parent' });
-    expect(page.items.map((s) => s.id).toSorted()).toEqual(['child-a', 'child-b']);
+    await store.prepare();
+    const page = await store.listRecent({ childOf: 'parent' });
+    expect(page.items.map((s) => s.id)).toEqual(['child-a', 'child-b']);
   });
 
-  it('countActive reflects read-model updates', async () => {
-    await seedSession('a', {});
-    await seedSession('b', { archived: true });
-
-    const store = build();
-    expect(await store.countActive([workspaceId])).toBe(1);
-
-    await queryStore.put(SESSION_COLLECTION, 'a', summary('a', { archived: true }));
-    expect(await store.countActive([workspaceId])).toBe(0);
-  });
-
-  it('list merges a workspace-id set into one recency-ordered page', async () => {
+  it('listRecent merges a workspace-id set into one recency-ordered page', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a1', { createdAt: 1, updatedAt: 1 });
     await seedSession('a3', { createdAt: 3, updatedAt: 3 });
@@ -377,55 +636,820 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
 
     const store = build();
-    const page = await store.list({ workspaceIds: [workspaceId, otherId] });
+    await store.prepare();
+    const page = await store.listRecent({ workspaceIds: [workspaceId, otherId] });
     expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
-    expect(page.items[0]?.workspaceId).toBe(otherId);
+    expect(await store.count({ workspaceIds: [workspaceId, otherId] })).toBe(4);
+    expect(await store.count({ workspaceIds: [otherId] })).toBe(2);
   });
 
-  it('countActive sums over the workspace-id set', async () => {
-    const otherId = encodeWorkDirKey('/home/user/other');
-    await seedSession('a', {});
-    await seedSession('b', {}, otherId);
-    await seedSession('archived', { archived: true }, otherId);
-
+  it('get falls back to the authoritative document for an un-mirrored session', async () => {
+    await seedSession('old', { title: 'projected', createdAt: 1, updatedAt: 2 });
     const store = build();
-    expect(await store.countActive([workspaceId, otherId])).toBe(2);
-    expect(await store.countActive([otherId])).toBe(1);
+    await store.prepare();
+
+    await seedSession('fresh', { title: 'from disk', createdAt: 3, updatedAt: 4 });
+    const found = await store.get('fresh');
+    expect(found?.title).toBe('from disk');
+    expect(mirror.pending().map((s) => s.id)).toContain('fresh');
   });
 
-  it('falls back to the legacy disk path when the query store is locked', async () => {
-    await seedSession('active', { title: 'from disk', createdAt: 1, updatedAt: 2 });
+  it('cursor-less pages merge the mirror queue for read-your-writes', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
 
-    // The minidb cluster backend shares the store across processes and no
-    // longer produces storage.locked itself; stub it here so the
-    // disable-and-fall-back wiring stays under test.
-    const locked = new StorageError(StorageErrors.codes.STORAGE_LOCKED, 'locked by test');
-    const lockedStore: IQueryStore = {
-      ...stubQueryStore(),
-      ensureIndex: async () => { throw locked; },
-      get: async () => { throw locked; },
-      query: () => { throw locked; },
-    };
-    const warnings: string[] = [];
-    const log = { ...stubLog(), warn: (msg: string) => { warnings.push(msg); } };
+    mirror.record(summary('pending-one', { title: 'pending', createdAt: 3, updatedAt: 10 }));
+    const page = await store.listRecent({ workspaceIds: [workspaceId], limit: 20 });
+    expect(page.items.map((s) => s.id)).toEqual(['pending-one', 'a']);
+
+    await mirror.drain();
+    expect(mirror.pending()).toEqual([]);
+    const after = await store.listRecent({ workspaceIds: [workspaceId], limit: 20 });
+    expect(after.items.map((s) => s.id)).toEqual(['pending-one', 'a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+  });
+
+  it('resolves a keyset cursor that is still queued in the mirror', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 3 });
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('cursor-new', { createdAt: 3, updatedAt: 10 }));
+    const first = await store.listRecent({ workspaceIds: [workspaceId], limit: 1 });
+    expect(first.items.map((s) => s.id)).toEqual(['cursor-new']);
+    expect(first.nextCursor).toBe('cursor-new');
+
+    const rest = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 5,
+      before: first.nextCursor,
+    });
+    expect(rest.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(rest.nextCursor).toBeUndefined();
+
+    const unknown = await store.listRecent({ workspaceIds: [workspaceId], before: 'missing' });
+    expect(unknown.items).toEqual([]);
+  });
+
+  it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const before = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(before.items.map((s) => s.id)).toEqual(['fresh', 'a']);
+
+    await store.remove('fresh');
+    expect(mirror.pending()).toEqual([]);
+    const after = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(after.items.map((s) => s.id)).toEqual(['a']);
+
+    await mirror.drain();
+    const settled = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(settled.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('remove waits out an in-flight mirror flush before deleting from the store', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+
+    let batchGate: Promise<void> | undefined;
+    let releaseBatch: () => void = () => {};
+    let notifyBatchEntered: (() => void) | undefined;
+    class GatedQueryStore extends MiniDbQueryStore {
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        notifyBatchEntered?.();
+        const gate = batchGate;
+        batchGate = undefined;
+        if (gate !== undefined) await gate;
+        return super.batch(ops);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
     const fileStorage = new FileStorageService(homeDir);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(IQueryStore, lockedStore),
-      stubPair(ILogService, log),
+      stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(true)),
     ]);
-    disposeHost = () => { host.dispose(); };
-    const store = host.app.accessor.get(ISessionIndex);
-    // The read model throws storage.locked; the index serves from disk.
-    const page = await store.list({ workspaceIds: [workspaceId] });
-    expect(page.items.map((s) => s.id)).toEqual(['active']);
-    expect(page.items[0]?.title).toBe('from disk');
-    expect(await store.get('active')).toMatchObject({ id: 'active', title: 'from disk' });
-    expect(await store.countActive([workspaceId])).toBe(1);
-    // The lock is warned about once, then the read model stays disabled.
-    expect(warnings).toEqual(['query-store locked by another process; disabling read model']);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    await store.prepare();
+
+    const entered = new Promise<void>((resolve) => {
+      notifyBatchEntered = resolve;
+    });
+    batchGate = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+    mirror.record(summary('fresh', { createdAt: 3, updatedAt: 10 }));
+    const draining = mirror.drain();
+    await entered;
+
+    const removing = store.remove('fresh');
+    releaseBatch();
+    await Promise.all([removing, draining]);
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('count folds the mirror queue in before the flush lands', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 3 });
+    const store = build();
+    await store.prepare();
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+
+    mirror.record(summary('new', { createdAt: 3, updatedAt: 4 }));
+    mirror.record(summary('a', { archived: true, updatedAt: 5 }));
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
+
+    await mirror.drain();
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
+  });
+
+  it('a crashed initial projection falls back to disk and recovers on retry', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    class FlakyQueryStore extends MiniDbQueryStore {
+      failNextBatch = false;
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        if (this.failNextBatch) {
+          this.failNextBatch = false;
+          throw new Error('injected projection crash');
+        }
+        return super.batch(ops);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      FlakyQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    (queryStore as FlakyQueryStore).failNextBatch = true;
+    const status = await store.prepare();
+    expect(status.state).toBe('degraded');
+    expect(status.degradedCount).toBe(1);
+    expect(status.reason).toBe('projection failed');
+    const fallback = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(fallback.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(store.status()).toEqual({
+      state: 'degraded',
+      reason: 'projection failed',
+      degradedCount: 1,
+    });
+
+    const recovered = await store.prepare();
+    expect(recovered).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  it('a crashed re-projection keeps readers on the previous generation', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { createdAt: 3, updatedAt: 1 });
+
+    class FlakyQueryStore extends MiniDbQueryStore {
+      failNextBatch = false;
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        if (this.failNextBatch) {
+          this.failNextBatch = false;
+          throw new Error('injected projection crash');
+        }
+        return super.batch(ops);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      FlakyQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    await store.prepare();
+    expect(store.status().state).toBe('ready');
+
+    await fsp.rm(join(sessionsDir, workspaceId, 'b'), { recursive: true, force: true });
+    (queryStore as FlakyQueryStore).failNextBatch = true;
+    await store.reprojectNow();
+
+    expect(store.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+
+    await store.reprojectNow();
+    expect(store.status()).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
+    const rebuilt = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(rebuilt.items.map((s) => s.id)).toEqual(['a', 'c']);
+  });
+
+  it('reprojects automatically after the store is wiped, without per-request backfill', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+
+    const first = build();
+    await first.prepare();
+    expect(first.status().state).toBe('ready');
+
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+
+    const second = build();
+    const fallback = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(fallback.items.map((s) => s.id)).toEqual(['a', 'b']);
+    const status = await second.prepare();
+    expect(status.state).toBe('ready');
+    const warm = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(await second.count({ workspaceIds: [workspaceId] })).toBe(2);
+  });
+
+  it('reconciliation repairs external edits and deletions of state.json', async () => {
+    await seedSession('keep', { title: 'before', createdAt: 1, updatedAt: 3 });
+    await seedSession('archived', { createdAt: 2, updatedAt: 2 });
+    await seedSession('gone', { createdAt: 3, updatedAt: 1 });
+
+    const store = build();
+    await store.prepare();
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
+
+    await seedSession('keep', { title: 'after', createdAt: 1, updatedAt: 4 });
+    await fsp.rm(join(sessionsDir, workspaceId, 'gone'), { recursive: true, force: true });
+    await store.reconcileNow();
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['keep', 'archived']);
+    expect(page.items[0]?.title).toBe('after');
+    expect(await store.get('gone')).toBeUndefined();
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+  });
+
+  it('the first read kicks one initial projection and shares its authoritative scan', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 1 });
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    const [page, status, sameFlight] = await Promise.all([
+      store.listRecent({ workspaceIds: [workspaceId] }),
+      store.prepare(),
+      store.prepare(),
+    ]);
+    expect(page.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(sameFlight).toEqual(status);
+    expect(docs.gets).toBe(6);
+
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
+    expect(docs.gets).toBe(6);
+  });
+
+  it('serves authoritative reads immediately while preparing', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    class GatedQueryStore extends MiniDbQueryStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+        this.gate = undefined;
+      }
+      override async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
+        await this.gate;
+        return super.getCheckpoint(source);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    (queryStore as GatedQueryStore).hold();
+    const preparing = store.prepare();
+    expect(store.status().state).toBe('preparing');
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect((await store.get('b'))?.title).toBe('b');
+    expect(store.status().state).toBe('preparing');
+
+    (queryStore as GatedQueryStore).release();
+    const status = await preparing;
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  it('folds the mirror queue into reads that join an in-flight scan (read-your-writes)', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    class GatedDocs extends JsonAtomicDocumentStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      private markFirstGet: (() => void) | undefined;
+      readonly firstGet = new Promise<void>((resolve) => {
+        this.markFirstGet = resolve;
+      });
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+      }
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.markFirstGet?.();
+        await this.gate;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new GatedDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    docs.hold();
+    const first = store.listRecent({ workspaceIds: [workspaceId] });
+    await docs.firstGet;
+
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    mirror.record(summary('c', { title: 'c', createdAt: 3, updatedAt: 4 }));
+    mirror.record(summary('a', { archived: true, updatedAt: 5 }));
+
+    const second = store.listRecent({ workspaceIds: [workspaceId] });
+    docs.release();
+    const [firstPage, secondPage] = await Promise.all([first, second]);
+    for (const page of [firstPage, secondPage]) {
+      expect(page.items.map((s) => s.id)).toEqual(['c', 'b']);
+    }
+
+    const status = await store.prepare();
+    expect(status.state).toBe('ready');
+    await mirror.drain();
+    const warm = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['c', 'b']);
+    const all = await store.listRecent({ workspaceIds: [workspaceId], includeArchived: true });
+    expect(all.items.map((s) => s.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('never serves a settled shared scan to a fallback read', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    class GatedQueryStore extends MiniDbQueryStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+        this.gate = undefined;
+      }
+      override async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
+        await this.gate;
+        return super.getCheckpoint(source);
+      }
+    }
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    (queryStore as GatedQueryStore).hold();
+    const preparing = store.prepare();
+    const first = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(first.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(docs.gets).toBe(4);
+
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    const second = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(second.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+    expect(docs.gets).toBe(10);
+
+    (queryStore as GatedQueryStore).release();
+    const status = await preparing;
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(docs.gets).toBe(10);
+  });
+
+  it('status() walks the read-model lifecycle and stays diagnosable through degradation', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+
+    class GatedFlakyQueryStore extends MiniDbQueryStore {
+      private gate: Promise<void> | undefined;
+      private openGate: (() => void) | undefined;
+      failNextBatch = false;
+      hold(): void {
+        this.gate = new Promise((resolve) => {
+          this.openGate = resolve;
+        });
+      }
+      release(): void {
+        this.openGate?.();
+        this.gate = undefined;
+      }
+      override async getCheckpoint(source: string): Promise<Checkpoint | undefined> {
+        await this.gate;
+        return super.getCheckpoint(source);
+      }
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        if (this.failNextBatch) {
+          this.failNextBatch = false;
+          throw new Error('injected projection crash');
+        }
+        return super.batch(ops);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedFlakyQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+    const gated = queryStore as GatedFlakyQueryStore;
+
+    expect(store.status()).toEqual({ state: 'uninitialized', degradedCount: 0 });
+    gated.hold();
+    const preparing = store.prepare();
+    expect(store.status()).toEqual({ state: 'preparing', degradedCount: 0 });
+    gated.release();
+    expect(await preparing).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    gated.failNextBatch = true;
+    await store.reprojectNow();
+    expect(store.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+
+    const second = build();
+    (queryStore as GatedFlakyQueryStore).failNextBatch = true;
+    const degraded = await second.prepare();
+    expect(degraded.state).toBe('degraded');
+    expect(degraded.reason).toBe('projection failed');
+    expect(degraded.degradedCount).toBe(1);
+    const fallback = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(fallback.items.map((s) => s.id)).toEqual(['a']);
+    expect(await second.prepare()).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
+  });
+
+  it('a restart loads the published generation instead of re-scanning', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 1 });
+
+    const first = build();
+    await first.prepare();
+    expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const second = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    const status = await second.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(docs.gets).toBe(0);
+    const warm = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(warm.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(docs.gets).toBe(0);
+  });
+
+  it('the resume-startup sequence pays one scan: point lookup, projection, then warm lists', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 1 });
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    expect((await store.get('b'))?.title).toBe('b');
+    expect(await store.prepare()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    expect(docs.gets).toBe(8);
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(docs.gets).toBe(8);
+  });
+
+  it('the session query-store carries no full-text index artifacts', async () => {
+    await seedSession('a', { title: 'alpha', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'beta', createdAt: 2, updatedAt: 3 });
+
+    const store = build();
+    await store.prepare();
+    mirror.record(summary('c', { title: 'gamma', createdAt: 3, updatedAt: 4 }));
+    await mirror.drain();
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
+
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const entries = await fsp.readdir(storeDir, { recursive: true, withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((name) => name === 'db.textindexes.json')).toEqual([]);
+    expect(files.filter((name) => /^db\.text-.*\.postings$/.test(name))).toEqual([]);
+    expect(files.filter((name) => /^text-.*\.(dictionary|postings|docs)$/.test(name))).toEqual([]);
+  });
+
+  const baseline = { retry: 1, timeout: 120_000 };
+
+  it('baseline: warm listRecent(limit=20) at 1k vs 10k vs 50k sessions', baseline, async () => {
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      CountingQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const fileStorage = new CountingStorage(homeDir);
+    const store = build(fileStorage);
+    const countingStore = queryStore as CountingQueryStore;
+    await seedSession('seed', { createdAt: 0, updatedAt: 0 });
+    await store.prepare();
+    store.stopReconcileLoop();
+    const collection = sessionCollection(1);
+
+    const seedRows = async (from: number, to: number): Promise<void> => {
+      for (let start = from; start < to; start += 500) {
+        const ops = [];
+        for (let i = start; i < Math.min(start + 500, to); i++) {
+          ops.push({
+            kind: 'put' as const,
+            collection,
+            key: `s${i}`,
+            value: {
+              ...summary(`s${i}`, { title: `session ${i}`, createdAt: i, updatedAt: i + 1 }),
+              [recencyColumn(1)]: i + 1,
+            },
+            columns: { [recencyColumn(1)]: i + 1 },
+          });
+        }
+        await queryStore.batch(ops);
+      }
+    };
+    const median = async (run: () => Promise<unknown>, repeats = 5): Promise<number> => {
+      const runs: number[] = [];
+      for (let r = 0; r < repeats; r++) {
+        const t0 = performance.now();
+        await run();
+        runs.push(performance.now() - t0);
+      }
+      runs.sort((a, b) => a - b);
+      return runs[(runs.length / 2) | 0]!;
+    };
+
+    const LIST_LIMIT = 20;
+    const listPage = async () => {
+      const page = await store.listRecent({ workspaceIds: [workspaceId], limit: LIST_LIMIT });
+      expect(page.items).toHaveLength(LIST_LIMIT);
+    };
+    const getOne = () => store.get('s0');
+    const countAll = () => store.count({ workspaceIds: [workspaceId] });
+
+    const measure = async () => {
+      const countOp = async (op: () => Promise<unknown>) => {
+        countingStore.resetCounts();
+        const listed = fileStorage.listCalls;
+        await op();
+        return { counts: countingStore.snapshotCounts(), fsLists: fileStorage.listCalls - listed };
+      };
+      const ops = {
+        list: await countOp(listPage),
+        get: await countOp(getOne),
+        count: await countOp(countAll),
+      };
+      const list = await median(listPage);
+      const get = await median(getOne);
+      const count = await median(countAll);
+      return { ops, list, get, count };
+    };
+
+    await seedRows(0, 1_000);
+    const at1k = await measure();
+    await seedRows(1_000, 10_000);
+    const at10k = await measure();
+    await seedRows(10_000, 50_000);
+    const at50k = await measure();
+    console.log(
+      `[baseline] sessionIndex read-model ${JSON.stringify({ sessions: [1000, 10000, 50000], list: [at1k.list, at10k.list, at50k.list], get: [at1k.get, at10k.get, at50k.get], count: [at1k.count, at10k.count, at50k.count] })}`,
+    );
+
+    const sessionOps = (counts: Record<string, OpCounts>): string[] =>
+      Object.keys(counts).filter((key) => key.endsWith(`:${collection}`));
+    const sessionRows = (counts: Record<string, OpCounts>): number =>
+      sessionOps(counts).reduce((total, key) => total + counts[key]!.rows, 0);
+
+    for (const measured of [at1k, at10k, at50k]) {
+      for (const op of Object.values(measured.ops)) expect(op.fsLists).toBe(0);
+      expect(sessionOps(measured.ops.list.counts)).toEqual([`pageByColumn:${collection}`]);
+      expect(sessionRows(measured.ops.list.counts)).toBeLessThanOrEqual(2 * (LIST_LIMIT + 1));
+      expect(measured.ops.get.counts[`get:${collection}`]).toEqual({ calls: 1, rows: 1 });
+      expect(sessionOps(measured.ops.get.counts)).toEqual([`get:${collection}`]);
+      expect(sessionOps(measured.ops.count.counts)).toEqual([]);
+    }
+    expect(at10k.ops).toEqual(at1k.ops);
+    expect(at50k.ops).toEqual(at1k.ops);
   });
 });

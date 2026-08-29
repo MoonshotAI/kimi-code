@@ -14,11 +14,8 @@
  * `useSyncExternalStore`.
  */
 
-import {
-  GlobalEventsWs,
-  type SessionWorkFacts,
-} from './ws';
 import type { WsLikeCtor } from '../channel/wsLike';
+import { GlobalEventsWs, type SessionWorkFacts } from './ws';
 
 export type { SessionWorkFacts };
 
@@ -61,6 +58,12 @@ export class SessionActivityStore {
     this.bump();
   }
 
+  /** Drop one session's live facts (e.g. it was archived — no further
+   *  work_changed frames will arrive to correct a stale badge). */
+  remove(sessionId: string): void {
+    if (this.activities.delete(sessionId)) this.bump();
+  }
+
   private bump(): void {
     this.version += 1;
     for (const listener of this.listeners) listener();
@@ -99,6 +102,11 @@ export class SessionActivityHub {
         onWorkChanged: (sessionId, facts) => this.store.applyWorkChanged(sessionId, facts),
         onSessionCreated: () => opts.onListChanged(),
         onMetaUpdated: () => opts.onListChanged(),
+        onSessionArchived: (sessionId) => {
+          this.store.remove(sessionId);
+          opts.onListChanged();
+        },
+        onWorkspaceChanged: () => opts.onListChanged(),
         onReconnected: () => void this.seed(),
       },
     });
@@ -131,8 +139,7 @@ export class SessionActivityHub {
           {
             busy: item['busy'],
             mainTurnActive: item['main_turn_active'] === true,
-            pendingInteraction:
-              pending === 'approval' || pending === 'question' ? pending : 'none',
+            pendingInteraction: pending === 'approval' || pending === 'question' ? pending : 'none',
             lastTurnReason:
               reason === 'completed' || reason === 'cancelled' || reason === 'failed'
                 ? reason

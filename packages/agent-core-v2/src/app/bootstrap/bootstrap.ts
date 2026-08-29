@@ -1,22 +1,9 @@
-/**
- * `bootstrap` domain (L1) — frozen startup snapshot and composition root.
- *
- * Defines the `IBootstrapService`, the snapshot of the world the process runs
- * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientVersion`) and the
- * app path layout (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is
- * the single place that reads `process.env` / `os.homedir()` / invocation
- * input to resolve the snapshot; everything downstream reads from
- * `IBootstrapService` instead of touching `process` directly. Bound at App
- * scope. Also seeds the `IFileSystemStorageService` with a `FileStorageService`
- * rooted at `homeDir` so the byte layer (and every Store above it) persists
- * to disk.
- */
-
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { join } from 'pathe';
+
+import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -25,8 +12,34 @@ import {
   IFileSystemStorageService,
 } from '#/persistence/interface/storage';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
-import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
+import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
+import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
+
+export interface HostArgs {
+  readonly agentFiles?: readonly string[];
+  readonly skillDirs?: readonly string[];
+  readonly requestHeaders: Readonly<Record<string, string>>;
+  readonly displayName?: string;
+  readonly replyStyleGuide?: string;
+}
+
+export interface HostArgsInput {
+  readonly agentFiles?: readonly string[];
+  readonly skillDirs?: readonly string[];
+  readonly requestHeaders?: Readonly<Record<string, string>>;
+  readonly displayName?: string;
+  readonly replyStyleGuide?: string;
+}
+
+export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
+  return {
+    agentFiles: input?.agentFiles,
+    skillDirs: input?.skillDirs,
+    requestHeaders: input?.requestHeaders ?? {},
+    displayName: input?.displayName,
+    replyStyleGuide: input?.replyStyleGuide,
+  };
+}
 
 export interface IBootstrapOptions {
   readonly homeDir: string;
@@ -36,7 +49,8 @@ export interface IBootstrapOptions {
   readonly arch: string;
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
-  readonly clientVersion: string;
+  readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
 }
 
 export const IBootstrapOptions: ServiceIdentifier<IBootstrapOptions> =
@@ -49,8 +63,7 @@ export type PersistenceScopeName =
   | 'store'
   | 'logs'
   | 'cache'
-  | 'credentials'
-  | 'cron';
+  | 'credentials';
 
 export interface IBootstrapService {
   readonly _serviceBrand: undefined;
@@ -61,7 +74,8 @@ export interface IBootstrapService {
   readonly osHomeDir: string;
   readonly homeDir: string;
   readonly configPath: string;
-  readonly clientVersion: string;
+  readonly clientIdentity: KimiHostIdentity;
+  readonly args: HostArgs;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -69,10 +83,6 @@ export interface IBootstrapService {
   readonly logsDir: string;
   getEnv(name: string): string | undefined;
   scope(name: PersistenceScopeName): string;
-  sessionScope(workspaceId: string, sessionId: string): string;
-  agentScope(workspaceId: string, sessionId: string, agentId: string): string;
-  sessionDir(workspaceId: string, sessionId: string): string;
-  agentHomedir(workspaceId: string, sessionId: string, agentId: string): string;
   readonly configKey: string;
 }
 
@@ -87,10 +97,11 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
-  readonly clientVersion?: string;
+  readonly clientIdentity: KimiHostIdentity;
+  readonly args?: HostArgsInput;
 }
 
-export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapOptions {
+export function resolveBootstrapOptions(input: BootstrapInput): IBootstrapOptions {
   const env = input.env ?? process.env;
   const osHomeDir = input.osHomeDir ?? homedir();
   const homeDir = resolveKimiHome(input.homeDir, env, osHomeDir);
@@ -103,22 +114,28 @@ export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapO
     arch: input.arch ?? process.arch,
     cwd: input.cwd ?? process.cwd(),
     env,
-    clientVersion: input.clientVersion ?? 'unknown',
+    clientIdentity: input.clientIdentity,
+    args: resolveHostArgs(input.args),
   };
 }
 
-export function bootstrapSeed(input: BootstrapInput = {}): ScopeSeed {
-  return [[IBootstrapOptions as ServiceIdentifier<unknown>, resolveBootstrapOptions(input)]];
+export function bootstrapSeed(input: BootstrapInput): ScopeSeed {
+  return [
+    [
+      IBootstrapOptions as ServiceIdentifier<unknown>,
+      resolveBootstrapOptions(input),
+    ],
+  ];
 }
 
 export interface BootstrapResult {
   readonly app: Scope;
 }
 
-export function bootstrap(input: BootstrapInput = {}, extraSeeds: ScopeSeed = []): BootstrapResult {
+export function bootstrap(input: BootstrapInput, extraSeeds: ScopeSeed = []): BootstrapResult {
   const options = resolveBootstrapOptions(input);
   const app = createAppScope({
-    extra: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
+    seeds: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
   });
   return { app };
 }

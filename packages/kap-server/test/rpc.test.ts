@@ -3,23 +3,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  AgentGoal,
+  agentContextOf,
+  ErrorCodes,
   IAgentActivityView,
-  IAgentGoalService,
   IAgentLifecycleService,
-  IAgentRPCService,
+  IAgentPluginCommandService,
+  IAgentPromptService,
+  IAgentRuntimeBindingService,
   IAgentShellCommandService,
   IAppendLogStore,
+  IDebugEventsService,
   IEventService,
+  IInstantiationService,
   IPluginService,
   ISessionIndex,
-  ISessionLifecycleService,
+  ISessionManager,
   ISessionMetadata,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
+  getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type {
+  AgentRuntimeBindingSnapshot,
+  ServiceIdentifier,
+  SessionWorkspaceAssociationSnapshot,
+  WorkspaceInstanceSnapshot,
+} from '@moonshot-ai/agent-core-v2';
+import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
 interface Envelope<T> {
@@ -39,25 +54,6 @@ interface SessionMetaWire {
   archived: boolean;
 }
 
-interface GoalSnapshotWire {
-  goalId: string;
-  objective: string;
-  completionCriterion?: string;
-  status: 'active' | 'paused' | 'blocked' | 'complete';
-  turnsUsed: number;
-  tokensUsed: number;
-  wallClockMs: number;
-  budget: unknown;
-  terminalReason?: string;
-}
-
-interface GoalToolResultWire {
-  goal: GoalSnapshotWire | null;
-}
-
-// Build an `/api/v1/debug` path from a Service token (channel = decorator id) + method
-// name — exactly how the typed client composes URLs, so the test never hardcodes
-// a channel name that could drift from the token.
 function rpc(
   scope: 'core' | 'session' | 'agent',
   service: ServiceIdentifier<unknown>,
@@ -76,7 +72,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rpc-'));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent', debugEndpoints: true });
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent', debugEndpoints: true });
     base = `http://127.0.0.1:${server.port}`;
   });
 
@@ -109,8 +105,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
       headers['content-type'] = 'application/json';
       init.body = JSON.stringify(arg);
     }
-    // Default to the persistent bearer token — the debug RPC surface is gated by the
-    // same credential as every other route.
     const credential = token ?? (server as RunningServer).authTokenService.getToken();
     headers['authorization'] = `Bearer ${credential}`;
     const res = await fetch(url, init);
@@ -128,21 +122,26 @@ describe('server-v2 /api/v1/debug RPC', () => {
     return body.data.id;
   }
 
-  // The main agent scope is not created automatically on session creation
-  // (server-v2 gap G10); create it here so the agent-scope dispatch resolves.
   async function createMainAgent(sessionId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
   async function createSubagent(sessionId: string, agentId: string): Promise<void> {
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId });
   }
 
-  // --- Core scope -----------------------------------------------------------
+  function goalFacade(sessionId: string, agentId = 'main') {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    const manager = session.accessor.get(IAgentLifecycleService);
+    const handle = manager.handleOf(agentId);
+    if (handle === undefined) throw new Error(`agent ${agentId} not found`);
+    return manager.resolve(agentContextOf(handle), AgentGoal);
+  }
 
   it('describes all channels via GET /api/v1/debug/channels', async () => {
     const { status, body } = await call<
@@ -163,7 +162,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const byName = new Map(body.data.map((c) => [c.name, c]));
     expect(byName.get('sessionIndex')?.scope).toBe('app');
     expect(byName.get('sessionMetadata')?.scope).toBe('session');
-    expect(byName.get('agentRPCService')?.scope).toBe('agent');
+    expect(byName.get('agentPromptService')?.scope).toBe('agent');
 
     const meta = byName.get('sessionMetadata');
     expect(meta?.methods.map((m) => m.name)).toEqual(
@@ -174,19 +173,45 @@ describe('server-v2 /api/v1/debug RPC', () => {
       arity: 0,
       params: '',
     });
-    // Parameter names come from the declaration source (types are erased).
     expect(meta?.methods.find((m) => m.name === 'setTitle')).toMatchObject({
       arity: 1,
       params: 'title',
     });
-    // Framework plumbing stays out of the listing.
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
+
+    const prompts = byName.get('agentPromptService');
+    expect(prompts?.methods.map((m) => m.name)).toContain('enqueue');
+    expect(prompts?.methods.map((m) => m.name)).not.toContain('reserve');
+  });
+
+  it('reaches a runtime-contributed Service absent from /channels (decorator-name fallback)', async () => {
+    const channels = await call<readonly { name: string }[]>(
+      'GET',
+      '/api/v1/debug/channels',
+    );
+    expect(channels.body.data.some((c) => c.name === String(IDebugEventsService))).toBe(false);
+
+    const { status, body } = await call<{
+      subscriptions: unknown[];
+      buses: unknown[];
+      globalListeners?: number;
+    }>('GET', rpc('core', IDebugEventsService, 'subscriptions'));
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(Array.isArray(body.data.subscriptions)).toBe(true);
+    expect(Array.isArray(body.data.buses)).toBe(true);
+    expect(typeof body.data.globalListeners).toBe('number');
+  });
+
+  it('rejects kernel tokens registered neither statically nor by a feature (40001)', async () => {
+    const { body } = await call<null>('POST', rpc('core', IInstantiationService, 'dispose'));
+    expect(body.code).toBe(40001);
   });
 
   it('lists sessions via GET', async () => {
     const { body } = await call<{ items: unknown[]; has_more: boolean }>(
       'GET',
-      rpc('core', ISessionIndex, 'list'),
+      rpc('core', ISessionIndex, 'listRecent'),
       {},
     );
     expect(body.code).toBe(0);
@@ -210,6 +235,58 @@ describe('server-v2 /api/v1/debug RPC', () => {
     );
     expect(got.body.code).toBe(0);
     expect(got.body.data.root).toBe(cwd);
+  });
+
+  it('exposes workspace, session association, and agent binding business snapshots', async () => {
+    const sessionId = await createSession(home as string);
+    await createMainAgent(sessionId);
+    const summary = await server!.core.accessor.get(ISessionIndex).get(sessionId);
+    expect(summary).toBeDefined();
+    const workspaceId = summary!.workspaceId;
+
+    const workspace = await call<WorkspaceInstanceSnapshot>(
+      'GET',
+      `/api/v1/debug/workspace/${workspaceId}/snapshot`,
+    );
+    expect(workspace.body.data).toMatchObject({
+      metadata: { id: workspaceId, root: home },
+      lifecycle: 'active',
+      program: {
+        binding: { workspaceId, runtimeId: 'local' },
+      },
+      runtimes: {
+        workspaceId,
+        runtimes: [{ runtimeId: 'local', status: 'ready' }],
+      },
+    });
+    expect(workspace.body.data).not.toHaveProperty('accessor');
+    expect(workspace.body.data).not.toHaveProperty('container');
+
+    const association = await call<SessionWorkspaceAssociationSnapshot>(
+      'GET',
+      `/api/v1/debug/session/${sessionId}/association`,
+    );
+    expect(association.body.data).toEqual({
+      sessionId,
+      workspaceId,
+      cwd: home,
+    });
+
+    const binding = await call<AgentRuntimeBindingSnapshot>(
+      'GET',
+      `/api/v1/debug/session/${sessionId}/agent/main/runtime-binding`,
+    );
+    expect(binding.body.data).toMatchObject({
+      binding: { workspaceId, runtimeId: 'local' },
+      available: true,
+      runtime: { runtimeId: 'local', status: 'ready' },
+    });
+
+    const legacy = await fetch(
+      `${base}/api/v1/debug/workspace/${workspaceId}/workspaceTrust/get`,
+      { headers: authHeaders(server as RunningServer) },
+    );
+    expect(legacy.status).toBe(404);
   });
 
   it('rejects createOrTouch for a missing root directory (40409)', async () => {
@@ -253,14 +330,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
     await createSession(cwd);
     const { body } = await call<number>(
       'POST',
-      rpc('core', ISessionIndex, 'countActive'),
-      [[created.body.data.id]],
+      rpc('core', ISessionIndex, 'count'),
+      [{ workspaceIds: [created.body.data.id] }],
     );
     expect(body.code).toBe(0);
     expect(body.data).toBeGreaterThanOrEqual(1);
   });
-
-  // --- Session scope --------------------------------------------------------
 
   it('reads and updates session metadata', async () => {
     const id = await createSession(home as string);
@@ -287,13 +362,74 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.lifecycle).toBe('ready');
   });
 
-  it('archives a session', async () => {
+  it('exposes runtime binding through REST and debug dispatcher contracts', async () => {
     const id = await createSession(home as string);
-    const { body } = await call<null>('POST', rpc('session', ISessionLifecycleService, 'archive', { sid: id }), id);
-    expect(body.code).toBe(0);
+    await createMainAgent(id);
+
+    const dispatched = await call<{ workspaceId: string; runtimeId: string }>(
+      'POST',
+      rpc('agent', IAgentRuntimeBindingService, 'get', { sid: id, aid: 'main' }),
+    );
+    expect(dispatched.body.data.runtimeId).toBe('local');
+
+    const current = await call<{ workspace_id: string; runtime_id: string }>(
+      'GET',
+      `/api/v1/sessions/${id}/runtime`,
+    );
+    expect(current.body.data).toMatchObject({ runtime_id: 'local' });
+
+    const invalid = await call<null>(
+      'POST',
+      `/api/v1/sessions/${id}/runtime`,
+      { runtime_id: 'missing-runtime' },
+    );
+    expect(invalid.body.code).toBe(40420);
+
+    const unchanged = await call<{ workspace_id: string; runtime_id: string }>(
+      'GET',
+      `/api/v1/sessions/${id}/runtime`,
+    );
+    expect(unchanged.body.data).toEqual(current.body.data);
+
+    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+      id: 'debug-remote-provider',
+      imports: { root: [], imports: [], local: [] },
+      attach: async (context, host) => {
+        host.registerRuntime(new FakeRuntime({
+          workspaceId: context.id,
+          runtimeId: 'remote',
+          generation: 'remote-two',
+        }));
+        return { dispose: () => {} };
+      },
+    });
+    try {
+      const switched = await call<{ workspace_id: string; runtime_id: string }>(
+        'POST',
+        `/api/v1/sessions/${id}/runtime`,
+        { runtime_id: 'remote' },
+      );
+      expect(switched.body.data.runtime_id).toBe('remote');
+      const snapshot = await call<AgentRuntimeBindingSnapshot>(
+        'GET',
+        `/api/v1/debug/session/${id}/agent/main/runtime-binding`,
+      );
+      expect(snapshot.body.data).toMatchObject({
+        binding: { workspaceId: current.body.data.workspace_id, runtimeId: 'remote' },
+        available: true,
+        runtime: { runtimeId: 'remote', generation: 'remote-two', status: 'ready' },
+      });
+    } finally {
+      await provider.dispose();
+    }
   });
 
-  // --- Agent scope ----------------------------------------------------------
+  it('archives a session', async () => {
+    const id = await createSession(home as string);
+    const { body } = await call<null>('POST', rpc('core', ISessionManager, 'archive'), id);
+    expect(body.code).toBe(0);
+    expect(body.data).toBeNull();
+  });
 
   it('submits a prompt and returns the turn id', async () => {
     const id = await createSession(home as string);
@@ -301,11 +437,35 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const { body } = await call<{ turn_id: number }>(
       'POST',
-      rpc('agent', IAgentRPCService, 'prompt', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
       { input: [{ type: 'text', text: 'hello' }] },
     );
     expect(body.code).toBe(0);
     expect(body.data.turn_id).toBe(0);
+  });
+
+  it('maps a duplicate promptId to 40927 before metadata changes', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const path = rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' });
+
+    const first = await call<{ turn_id: number }>('POST', path, {
+      input: [{ type: 'text', text: 'first prompt' }],
+      promptId: 'submission-1',
+    });
+    expect(first.body.code).toBe(0);
+
+    const duplicate = await call<null>('POST', path, {
+      input: [{ type: 'text', text: 'must not become metadata' }],
+      promptId: 'submission-1',
+    });
+    expect(duplicate.body.code).toBe(40927);
+
+    const metadata = await call<SessionMetaWire>(
+      'POST',
+      rpc('session', ISessionMetadata, 'read', { sid: id }),
+    );
+    expect(metadata.body.data.lastPrompt).toBe('first prompt');
   });
 
   it('rejects disabledTools before bind without mutating prompt metadata', async () => {
@@ -314,7 +474,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const { body } = await call<null>(
       'POST',
-      rpc('agent', IAgentRPCService, 'prompt', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
       {
         input: [{ type: 'text', text: 'must not become metadata' }],
         disabledTools: ['Bash'],
@@ -337,11 +497,11 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const events: { type: string; payload: unknown }[] = [];
     const sub = (server as RunningServer).core.accessor
       .get(IEventService)
-      .subscribe((event) => events.push(event));
+      .subscribe((event) => events.push(event as unknown as { type: string; payload: unknown }));
 
     const { body } = await call<{ turn_id: number }>(
       'POST',
-      rpc('agent', IAgentRPCService, 'prompt', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
       { input: [{ type: 'text', text: 'hello title' }] },
     );
     expect(body.code).toBe(0);
@@ -370,7 +530,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
     const { body } = await call<{ turn_id: number }>(
       'POST',
-      rpc('agent', IAgentRPCService, 'prompt', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'main' }),
       { input: [{ type: 'text', text: 'should not become the title' }] },
     );
     expect(body.code).toBe(0);
@@ -396,89 +556,52 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.isError).not.toBe(true);
   });
 
-  it('controls goals through RPC', async () => {
+  it('controls goals through the goal runtime facade', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    const created = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'createGoal', { sid: id, aid: 'main' }),
-      { objective: 'finish the migration' },
-    );
-    expect(created.body.code).toBe(0);
-    expect(created.body.data).toMatchObject({
+    const goal = goalFacade(id);
+    const created = await goal.createGoal({ objective: 'finish the migration' });
+    expect(created).toMatchObject({
       objective: 'finish the migration',
       status: 'active',
     });
 
-    const read = await call<GoalToolResultWire>(
-      'GET',
-      rpc('agent', IAgentGoalService, 'getGoal', { sid: id, aid: 'main' }),
-    );
-    expect(read.body.code).toBe(0);
-    expect(read.body.data.goal).toMatchObject({
+    expect(goal.getGoal().goal).toMatchObject({
       objective: 'finish the migration',
       status: 'active',
     });
 
-    const paused = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'pauseGoal', { sid: id, aid: 'main' }),
-      {},
-    );
-    expect(paused.body.data.status).toBe('paused');
+    const paused = await goal.pauseGoal({});
+    expect(paused.status).toBe('paused');
 
-    const resumed = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'resumeGoal', { sid: id, aid: 'main' }),
-      {},
-    );
-    expect(resumed.body.data.status).toBe('active');
+    const resumed = await goal.resumeGoal({});
+    expect(resumed.status).toBe('active');
 
-    const cancelled = await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'cancelGoal', { sid: id, aid: 'main' }),
-      {},
-    );
-    expect(cancelled.body.code).toBe(0);
-    expect(cancelled.body.data.status).toBe('active');
+    const cancelled = await goal.cancelGoal({});
+    expect(cancelled.status).toBe('active');
 
-    const afterCancel = await call<GoalToolResultWire>(
-      'GET',
-      rpc('agent', IAgentGoalService, 'getGoal', { sid: id, aid: 'main' }),
-    );
-    expect(afterCancel.body.data.goal).toBeNull();
+    expect(goal.getGoal().goal).toBeNull();
   });
 
-  it('maps goal errors through RPC envelopes', async () => {
+  it('rejects a duplicate goal through the goal runtime facade', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
-    await call<GoalSnapshotWire>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'createGoal', { sid: id, aid: 'main' }),
-      { objective: 'first' },
-    );
-    const duplicate = await call<null>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'createGoal', { sid: id, aid: 'main' }),
-      { objective: 'second' },
-    );
-    expect(duplicate.body.code).toBe(40913);
+    const goal = goalFacade(id);
+    await goal.createGoal({ objective: 'first' });
+    await expect(goal.createGoal({ objective: 'second' })).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_ALREADY_EXISTS,
+    });
   });
 
-  it('rejects reflected goal helper access for subagents', async () => {
+  it('rejects goal access for subagents', async () => {
     const id = await createSession(home as string);
     await createSubagent(id, 'sub-1');
 
-    const { body } = await call<null>(
-      'POST',
-      rpc('agent', IAgentGoalService, 'clearInternal', { sid: id, aid: 'sub-1' }),
-      'user',
-    );
-
-    expect(body.code).toBe(40920);
-    expect(body.msg).toBe('Goals are only supported by the main agent');
+    await expect(goalFacade(id, 'sub-1').createGoal({ objective: 'sub' })).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_UNSUPPORTED_AGENT,
+    });
   });
 
   it('lists and installs plugins through RPC', async () => {
@@ -518,7 +641,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       await createMainAgent(sessionId);
       const activated = await call<null>(
         'POST',
-        rpc('agent', IAgentRPCService, 'activatePluginCommand', { sid: sessionId, aid: 'main' }),
+        rpc('agent', IAgentPluginCommandService, 'activate', { sid: sessionId, aid: 'main' }),
         { pluginId: 'rpc-plugin', commandName: 'deploy', args: 'prod' },
       );
       expect(activated.body.code).toBe(0);
@@ -531,22 +654,18 @@ describe('server-v2 /api/v1/debug RPC', () => {
     const id = await createSession(home as string);
     const { body } = await call<null>(
       'POST',
-      rpc('agent', IAgentRPCService, 'prompt', { sid: id, aid: 'does-not-exist' }),
+      rpc('agent', IAgentPromptService, 'submit', { sid: id, aid: 'does-not-exist' }),
       { input: [{ type: 'text', text: 'hello' }] },
     );
     expect(body.code).toBe(40401);
-    // A missing agent must not be reported as a missing session — the message
-    // names the agent (parity with v1's `agent.not_found`).
     expect(body.msg).toBe(`agent does-not-exist not found in session ${id}`);
   });
-
-  // --- cross-scope channel routing -----------------------------------------
 
   it('routes core / session / agent scopes by channel name', async () => {
     const cwd = home as string;
     await createSession(cwd);
 
-    const listed = await call<{ items: { id: string }[] }>('POST', rpc('core', ISessionIndex, 'list'), {});
+    const listed = await call<{ items: { id: string }[] }>('POST', rpc('core', ISessionIndex, 'listRecent'), {});
     expect(listed.body.code).toBe(0);
     expect(listed.body.data.items.length).toBeGreaterThanOrEqual(1);
 
@@ -555,8 +674,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(read.body.code).toBe(0);
     expect(read.body.data.id).toBe(id);
   });
-
-  // --- NFR ------------------------------------------------------------------
 
   it('rejects unknown method (40001)', async () => {
     const { body } = await call<null>('POST', rpc('core', ISessionIndex, 'nope'));
@@ -579,17 +696,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
   });
 
   it('rejects oversized body', async () => {
-    // Fastify's default bodyLimit is 1MB; a larger body is rejected. Fastify's
-    // body-parser throws a 413 which our global error handler currently wraps
-    // as `50001` (HTTP 200) — either way the request is rejected, not served.
-    // A valid token is sent so the request reaches the body parser (the auth
-    // hook would short-circuit with 401 before reading the body otherwise).
     const huge = 'x'.repeat(2 * 1024 * 1024);
     const token = (server as RunningServer).authTokenService.getToken();
     let rejected = false;
     let code: number | undefined;
     try {
-      const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+      const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ big: huge }),
@@ -606,8 +718,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
 
   it('surfaces the originating stack trace on error', async () => {
     const { body } = await call<null>('POST', rpc('session', ISessionMetadata, 'read', { sid: 'nope' }));
-    // Contract: error envelopes carry the thrown error's stack so operators can
-    // locate the source (the 40401 below originates in `dispatch`).
     const json = JSON.stringify(body);
     expect(json).toContain('"stack"');
     expect(json).toContain('dispatch');
@@ -623,6 +733,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rpc-auth-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -644,14 +755,14 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
   });
 
   it('rejects calls without a token (40101)', async () => {
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, { method: 'POST' });
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, { method: 'POST' });
     expect(res.status).toBe(401);
     const body = (await res.json()) as Envelope<null>;
     expect(body.code).toBe(40101);
   });
 
   it('accepts calls with the correct rpcToken', async () => {
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({}),
@@ -662,7 +773,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
 
   it('accepts the persistent token on /api/v1/debug', async () => {
     const persistent = (server as RunningServer).authTokenService.getToken();
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${persistent}`, 'content-type': 'application/json' },
       body: JSON.stringify({}),
@@ -672,7 +783,7 @@ describe('server-v2 /api/v1/debug RPC auth', () => {
   });
 
   it('rejects a wrong token (40101)', async () => {
-    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'list')}`, {
+    const res = await fetch(`${base}${rpc('core', ISessionIndex, 'listRecent')}`, {
       method: 'POST',
       headers: { authorization: 'Bearer wrong' },
     });
@@ -690,6 +801,7 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-debug-rpc-'));
     server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
@@ -737,13 +849,9 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
     );
     expect(status).toBe(200);
     expect(body.code).toBe(0);
-    // The debug surface spans the whole
-    // scoped DI registry (App + Session + Agent).
     expect(body.data.length).toBeGreaterThan(50);
     const names = body.data.map((c) => c.name);
-    // Internal Services are included...
     expect(names).toContain(String(IAppendLogStore));
-    // ...alongside the regular ones.
     expect(names).toContain(String(ISessionIndex));
   });
 
@@ -760,7 +868,7 @@ describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
   it('also reaches whitelisted Services by the same wire names', async () => {
     const { body } = await call<{ items: unknown[] }>(
       'POST',
-      `/api/v1/debug/${String(ISessionIndex)}/list`,
+      `/api/v1/debug/${String(ISessionIndex)}/listRecent`,
       [{ limit: 1 }],
     );
     expect(body.code).toBe(0);

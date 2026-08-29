@@ -1,16 +1,3 @@
-/**
- *   GET    /v1/models
- *   GET    /v1/providers
- *   GET    /v1/providers/{provider_id}
- *   POST   /v1/providers
- *   PUT    /v1/providers/{provider_id}
- *   DELETE /v1/providers/{provider_id}
- *
- * The catalog item shapes are owned by the engine
- * (`kosong/model/catalog`); these are only the REST list/get wrappers
- * around them, plus the manual create/replace/delete write surface.
- */
-
 import { z } from 'zod';
 
 import { PROVIDER_ID_PATTERN } from '@moonshot-ai/agent-core-v2';
@@ -29,22 +16,11 @@ export const listProvidersResponseSchema = z.object({
 });
 export type ListProvidersResponse = z.infer<typeof listProvidersResponseSchema>;
 
-// The single-provider GET additionally reveals the stored `api_key` so the
-// local desktop client can prefill its edit form (the loopback transport is
-// already bearer-guarded; the list route and /config stay redacted).
 export const getProviderResponseSchema = providerCatalogItemSchema.extend({
   api_key: z.string().optional(),
 });
 export type GetProviderResponse = z.infer<typeof getProviderResponseSchema>;
 
-// ---------------------------------------------------------------------------
-// POST /v1/providers — manual provider creation
-// ---------------------------------------------------------------------------
-
-/**
- * The six wire protocols the core config schema accepts as a provider `type`.
- * (`vertexai` resolves through the google-genai base's vertex mode at runtime.)
- */
 export const providerWireTypeSchema = z.enum([
   'kimi',
   'openai',
@@ -66,12 +42,6 @@ export const createProviderModelSchema = z.object({
 });
 export type CreateProviderModel = z.infer<typeof createProviderModelSchema>;
 
-/**
- * Shared superRefine checks for the create/replace bodies: the base URL must
- * be trimmed and must not contain an env placeholder the config cannot
- * express (mirrors resolveCatalogImport), and models must not repeat a model
- * id (the alias build would silently keep only the last one).
- */
 function refineProviderForm(
   value: { base_url?: string | undefined; models: Array<{ model: string }> },
   ctx: z.RefinementCtx,
@@ -97,7 +67,6 @@ function refineProviderForm(
   }
 }
 
-/** The provider id shape accepted by the create/replace routes. */
 export const providerIdSchema = z
   .string()
   .regex(
@@ -132,18 +101,6 @@ export type CreateProviderRequest = z.infer<typeof createProviderRequestSchema>;
 export const createProviderResponseSchema = providerCatalogItemSchema;
 export type CreateProviderResponse = z.infer<typeof createProviderResponseSchema>;
 
-// ---------------------------------------------------------------------------
-// PUT /v1/providers/{provider_id} — replace-style provider edit
-// ---------------------------------------------------------------------------
-
-/**
- * The desktop "edit & save" payload: the whole provider form. `new_id`
- * renames the provider (the id in the path is the current identity) — the
- * providers key, all model aliases, default_provider and a default_model
- * pointing at an old alias are migrated to the new id. `api_key` is
- * tri-state so the edit form can leave the stored key untouched — absent
- * keeps it, `""` clears it, anything else replaces it.
- */
 export const replaceProviderRequestSchema = z
   .object({
     new_id: providerIdSchema.optional(),
@@ -173,11 +130,6 @@ export const replaceProviderResponseSchema = z.object({
 });
 export type ReplaceProviderResponse = z.infer<typeof replaceProviderResponseSchema>;
 
-// ---------------------------------------------------------------------------
-// GET /v1/catalog/providers[{catalog_id}] — models.dev directory (proxied)
-// ---------------------------------------------------------------------------
-
-/** Pruned catalog model shape — enough for the import preview, nothing more. */
 export const catalogModelItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
@@ -187,11 +139,6 @@ export const catalogModelItemSchema = z.object({
 });
 export type CatalogModelItem = z.infer<typeof catalogModelItemSchema>;
 
-/**
- * One browsable models.dev entry. `rejected: true` means this client version
- * cannot import it at all (greyed out, `reject_reason` explains);
- * `needs_base_url: true` means the import form must collect a base URL.
- */
 export const catalogProviderItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -213,19 +160,6 @@ export type ListCatalogProvidersResponse = z.infer<typeof listCatalogProvidersRe
 export const getCatalogProviderResponseSchema = catalogProviderItemSchema;
 export type GetCatalogProviderResponse = z.infer<typeof getCatalogProviderResponseSchema>;
 
-/**
- * Body of the `/providers:action` collection route. Every field is optional
- * so the bodyless `:refresh` actions (and their legacy `{}` bodies) still
- * validate; the `:import_catalog` handler enforces `catalog_id` and the
- * `:import_registry` handler enforces `url` themselves.
- *
- * `:import_catalog` semantics: import a models.dev entry as a configured
- * provider; `id` overrides the catalog id as the local provider id, and
- * importing an id that already exists is a refresh (the provider and its
- * aliases are rewritten from the catalog — the same re-import semantics as
- * the TUI). The global default_provider/default_model pointers are never
- * modified.
- */
 export const providerCollectionActionBodySchema = z.object({
   catalog_id: z.string().min(1).optional(),
   api_key: z.string().optional(),
@@ -241,17 +175,6 @@ export const importCatalogProviderResponseSchema = z.object({
 });
 export type ImportCatalogProviderResponse = z.infer<typeof importCatalogProviderResponseSchema>;
 
-// ---------------------------------------------------------------------------
-// POST /v1/providers:import_registry — import a custom registry (api.json)
-// ---------------------------------------------------------------------------
-
-/**
- * Import a models.dev-shaped private registry (api.json URL + optional Bearer
- * key) as configured providers. Re-import semantics: providers previously
- * imported from the same URL but no longer listed are removed (the URL is the
- * stable registry identity; the key commonly rotates). The global
- * default_provider/default_model pointers are never modified.
- */
 export const importCustomRegistryResponseSchema = z.object({
   providers: z.array(providerCatalogItemSchema),
   models_imported: z.number().int().min(0),
