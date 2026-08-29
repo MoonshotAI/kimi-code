@@ -58,17 +58,16 @@ describe('server-v2 GET /api/v1/auth', () => {
     return authSummarySchema.parse(body.data);
   }
 
-  it('returns ready=false with an empty snapshot on empty config', async () => {
+  it('returns models_ready=false with an empty snapshot on empty config', async () => {
     await boot();
     expect(await getAuth()).toEqual({
-      ready: false,
+      models_ready: false,
       providers_count: 0,
-      default_model: null,
       managed_provider: null,
     });
   });
 
-  it('returns ready=true when provider + api_key + default_model are set', async () => {
+  it('returns models_ready=true when the default model resolves to a configured provider', async () => {
     await boot(
       [
         'default_model = "x"',
@@ -85,14 +84,13 @@ describe('server-v2 GET /api/v1/auth', () => {
       ].join('\n'),
     );
     expect(await getAuth()).toEqual({
-      ready: true,
+      models_ready: true,
       providers_count: 1,
-      default_model: 'x',
       managed_provider: null,
     });
   });
 
-  it('returns ready=false when a provider exists but default_model is missing', async () => {
+  it('returns models_ready=false when a provider exists but default_model is missing', async () => {
     await boot(
       [
         '[providers.x]',
@@ -107,10 +105,49 @@ describe('server-v2 GET /api/v1/auth', () => {
       ].join('\n'),
     );
     const summary = await getAuth();
-    expect(summary.ready).toBe(false);
+    expect(summary.models_ready).toBe(false);
     expect(summary.providers_count).toBe(1);
-    expect(summary.default_model).toBeNull();
     expect(summary.managed_provider).toBeNull();
+  });
+
+  it('returns models_ready=false when the default model dangles', async () => {
+    await boot(
+      [
+        'default_model = "gone"',
+        '',
+        '[providers.x]',
+        'type = "kimi"',
+        'api_key = "sk-test"',
+        '',
+        '[models.x]',
+        'provider = "x"',
+        'model = "x"',
+        'max_context_size = 1000',
+        '',
+      ].join('\n'),
+    );
+    const summary = await getAuth();
+    expect(summary.models_ready).toBe(false);
+    expect(summary.providers_count).toBe(1);
+  });
+
+  it('returns models_ready=true for a providerless flat default model', async () => {
+    await boot(
+      [
+        'default_model = "flat"',
+        '',
+        '[models.flat]',
+        'base_url = "https://example.test/v1"',
+        'model = "x"',
+        'protocol = "openai"',
+        'max_context_size = 1000',
+        'api_key = "sk-test"',
+        '',
+      ].join('\n'),
+    );
+    const summary = await getAuth();
+    expect(summary.models_ready).toBe(true);
+    expect(summary.providers_count).toBe(0);
   });
 
   it('surfaces managed_provider.unauthenticated without a cached token', async () => {
@@ -131,6 +168,6 @@ describe('server-v2 GET /api/v1/auth', () => {
       name: 'managed:kimi-code',
       status: 'unauthenticated',
     });
-    expect(summary.ready).toBe(false);
+    expect(summary.models_ready).toBe(false);
   });
 });

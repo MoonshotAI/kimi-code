@@ -8,10 +8,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import {
-  DEFAULT_AGENT_PROFILE_NAME,
-  type EnvironmentDisclosureSnapshot,
-} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   AgentDateChange,
   DateChangeRuntime,
@@ -55,36 +52,10 @@ function systemPromptWithDate(iso: string): string {
   ].join('\n');
 }
 
-function updateSystemPromptWithDate(
-  profile: IAgentProfileService,
-  cwd: string,
-  iso: string,
-  localDate: string,
-): void {
-  const environment: EnvironmentDisclosureSnapshot = {
-    cwd,
-    date: {
-      disclosed: true,
-      value: {
-        localDate,
-        timeZone: TEST_TIME_ZONE,
-      },
-    },
-  };
+function updateSystemPrompt(profile: IAgentProfileService, systemPrompt: string, cwd: string): void {
   profile.update({
-    systemPrompt: systemPromptWithDate(iso),
-    environmentDisclosure: environment,
-  });
-}
-
-function updateSystemPromptWithoutDate(profile: IAgentProfileService, cwd: string): void {
-  const environment: EnvironmentDisclosureSnapshot = {
-    cwd,
-    date: { disclosed: false },
-  };
-  profile.update({
-    systemPrompt: 'You are a deterministic test agent.',
-    environmentDisclosure: environment,
+    systemPrompt,
+    environmentDisclosure: { cwd },
   });
 }
 
@@ -124,25 +95,21 @@ describe('dateChangeAgentRuntime', () => {
     }
   });
 
-  it('does not inject when the system prompt date is today', async () => {
-    updateSystemPromptWithDate(
-      profile,
-      ctx.get(ISessionContext).cwd,
-      INITIAL_INSTANT,
-      '2026-07-29',
-    );
+  it('injects on the first step even when the system prompt text states today\'s date', async () => {
+    updateSystemPrompt(profile, systemPromptWithDate(INITIAL_INSTANT), ctx.get(ISessionContext).cwd);
 
     await runWillBeginStepHooks(loop);
 
-    expect(dateReminders(context)).toHaveLength(0);
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(1);
+    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
   });
 
-  it('injects once when the rendered date is stale, then stays quiet', async () => {
-    updateSystemPromptWithDate(
+  it('discloses the current date and stays quiet when the system prompt text is stale', async () => {
+    updateSystemPrompt(
       profile,
+      systemPromptWithDate('2026-07-28T04:00:00.000Z'),
       ctx.get(ISessionContext).cwd,
-      '2026-07-28T04:00:00.000Z',
-      '2026-07-28',
     );
 
     await runWillBeginStepHooks(loop);
@@ -152,7 +119,7 @@ describe('dateChangeAgentRuntime', () => {
     const first = reminders[0];
     expect(first).toBeDefined();
     const text = messageText(first as ContextMessage);
-    expect(text).toContain('2026-07-29');
+    expect(text).toContain("Today's date is 2026-07-29");
     expect(first?.origin).toMatchObject({
       kind: 'injection',
       variant: 'date_change',
@@ -169,28 +136,23 @@ describe('dateChangeAgentRuntime', () => {
   });
 
   it('announces each date crossed by a long-lived session', async () => {
-    updateSystemPromptWithDate(
-      profile,
-      ctx.get(ISessionContext).cwd,
-      INITIAL_INSTANT,
-      '2026-07-29',
-    );
+    updateSystemPrompt(profile, systemPromptWithDate(INITIAL_INSTANT), ctx.get(ISessionContext).cwd);
     await runWillBeginStepHooks(loop);
 
     clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
 
     let reminders = dateReminders(context);
-    expect(reminders).toHaveLength(1);
-    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-30');
+    expect(reminders).toHaveLength(2);
+    expect(messageText(reminders[1] as ContextMessage)).toContain('2026-07-30');
 
     clock.set('2026-07-31T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
 
     reminders = dateReminders(context);
-    expect(reminders).toHaveLength(2);
-    expect(messageText(reminders[1] as ContextMessage)).toContain('2026-07-31');
-    expect(reminders[1]?.origin).toMatchObject({
+    expect(reminders).toHaveLength(3);
+    expect(messageText(reminders[2] as ContextMessage)).toContain('2026-07-31');
+    expect(reminders[2]?.origin).toMatchObject({
       disclosure: {
         kind: 'date',
         renderGeneration: 2,
@@ -204,12 +166,7 @@ describe('dateChangeAgentRuntime', () => {
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
     profile = ctx.get(IAgentProfileService);
-    updateSystemPromptWithDate(
-      profile,
-      ctx.get(ISessionContext).cwd,
-      INITIAL_INSTANT,
-      '2026-07-29',
-    );
+    updateSystemPrompt(profile, systemPromptWithDate(INITIAL_INSTANT), ctx.get(ISessionContext).cwd);
     await ctx.wire.flush();
     await ctx.dispose();
 
@@ -297,16 +254,19 @@ describe('dateChangeAgentRuntime', () => {
     }
   });
 
-  it('uses the newer persisted render snapshot over older reminder metadata', async () => {
-    updateSystemPromptWithDate(
+  it('keeps the newer render-generation disclosure when an older metadata reminder appears later', async () => {
+    updateSystemPrompt(
       profile,
+      'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
-      '2026-07-28T04:00:00.000Z',
-      '2026-07-28',
     );
+
+    await runWillBeginStepHooks(loop);
+    expect(dateReminders(context)).toHaveLength(1);
+
     context.append({
       role: 'user',
-      content: [{ type: 'text', text: 'older date reminder' }],
+      content: [{ type: 'text', text: 'older metadata reminder' }],
       toolCalls: [],
       origin: {
         kind: 'injection',
@@ -314,7 +274,7 @@ describe('dateChangeAgentRuntime', () => {
         disclosure: {
           kind: 'date',
           renderGeneration: 1,
-          localDate: '2026-07-29',
+          localDate: '2026-07-30',
           timeZone: TEST_TIME_ZONE,
         },
       },
@@ -322,23 +282,14 @@ describe('dateChangeAgentRuntime', () => {
 
     await runWillBeginStepHooks(loop);
 
-    const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(2);
-    expect(reminders.at(-1)?.origin).toMatchObject({
-      disclosure: {
-        kind: 'date',
-        renderGeneration: 2,
-        localDate: '2026-07-29',
-      },
-    });
+    expect(dateReminders(context)).toHaveLength(2);
   });
 
   it('re-injects after undo removes the structured reminder metadata', async () => {
-    updateSystemPromptWithDate(
+    updateSystemPrompt(
       profile,
+      'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
-      '2026-07-28T04:00:00.000Z',
-      '2026-07-28',
     );
     context.append({
       role: 'user',
@@ -364,7 +315,11 @@ describe('dateChangeAgentRuntime', () => {
   });
 
   it('re-discloses after undo removes the initial disclosure', async () => {
-    updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
@@ -390,8 +345,12 @@ describe('dateChangeAgentRuntime', () => {
     expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
   });
 
-  it('discloses the current date on the first step when the system prompt carries no date', async () => {
-    updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+  it('discloses the current date on the first step and stays quiet', async () => {
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
 
     await runWillBeginStepHooks(loop);
 
@@ -414,7 +373,11 @@ describe('dateChangeAgentRuntime', () => {
   });
 
   it('announces a crossed midnight after the initial disclosure', async () => {
-    updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
@@ -429,18 +392,8 @@ describe('dateChangeAgentRuntime', () => {
     expect(dateReminders(context)).toHaveLength(2);
   });
 
-  it('treats an empty snapshot cwd as unknown and uses the disclosed date as baseline', async () => {
-    updateSystemPromptWithDate(profile, '', '2026-07-28T04:00:00.000Z', '2026-07-28');
-
-    await runWillBeginStepHooks(loop);
-
-    const reminders = dateReminders(context);
-    expect(reminders).toHaveLength(1);
-    expect(messageText(reminders[0] as ContextMessage)).toContain('2026-07-29');
-  });
-
-  it('discloses then announces when the snapshot cwd is empty and no date is disclosed', async () => {
-    updateSystemPromptWithoutDate(profile, '');
+  it('discloses then announces when the snapshot cwd is empty', async () => {
+    updateSystemPrompt(profile, 'You are a deterministic test agent.', '');
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
@@ -453,12 +406,7 @@ describe('dateChangeAgentRuntime', () => {
   });
 
   it('never injects when the snapshot belongs to a different cwd', async () => {
-    updateSystemPromptWithDate(
-      profile,
-      '/some/other/workspace',
-      '2026-07-28T04:00:00.000Z',
-      '2026-07-28',
-    );
+    updateSystemPrompt(profile, 'You are a deterministic test agent.', '/some/other/workspace');
 
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(0);
@@ -469,7 +417,11 @@ describe('dateChangeAgentRuntime', () => {
   });
 
   it('keeps one provider registration across repeated runtime restore', async () => {
-    updateSystemPromptWithoutDate(profile, ctx.get(ISessionContext).cwd);
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
 
     expect(ctx.resolve(AgentDateChange)).toBeInstanceOf(DateChangeRuntime);
     await runWillBeginStepHooks(loop);

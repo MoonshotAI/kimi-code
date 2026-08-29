@@ -153,7 +153,6 @@ SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺
 | `${cwd_listing}` | 工作目录的文件列表 |
 | `${os}` | 操作系统类型 |
 | `${shell}` | Shell 名称与路径，例如 `bash (\`/bin/bash\`)` |
-| `${now}` | 当前时间（ISO 格式） |
 | `${additional_dirs_info}` | 加入工作区的额外目录信息；没有时为空 |
 | `${base_prompt}` | 默认系统提示词。在 `SYSTEM.md` 中指内置默认提示词；在 Agent 文件中指有效默认提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖） |
 | `${plugin_sections}` | 已启用 plugin 提供的完整 Plugin Instructions 块；没有已启用 plugin 提供指令时为空 |

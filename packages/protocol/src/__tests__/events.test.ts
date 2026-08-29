@@ -122,6 +122,104 @@ describe('events / display re-exports', () => {
     expect((parsed as { promptId?: string }).promptId).toBe('prompt_1');
   });
 
+  it('validates global config and model catalog events through the full event union', () => {
+    expect(
+      eventSchema.safeParse({
+        type: 'event.config.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changedFields: ['defaultModel'],
+        config: { default_model: 'k2', providers: {} },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      eventSchema.safeParse({
+        type: 'event.config.warning',
+        agentId: 'main',
+        sessionId: '__global__',
+        warnings: [{ domain: 'loopControl', message: 'deprecated key' }, { message: 'other' }],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      eventSchema.safeParse({
+        type: 'event.model_catalog.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changed: [
+          { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+        ],
+        unchanged: ['openai-main'],
+        failed: [{ provider: 'managed:kimi-code', reason: 'network disabled' }],
+      }).success,
+    ).toBe(true);
+
+    const parsed = eventSchema.parse({
+      type: 'event.config.changed',
+      agentId: 'main',
+      sessionId: '__global__',
+      changedFields: ['mcp'],
+      config: { providers: {}, mcp: { servers: { fs: { command: 'mcp-fs' } } } },
+    });
+    expect((parsed as { config: Record<string, unknown> }).config['mcp']).toEqual({
+      servers: { fs: { command: 'mcp-fs' } },
+    });
+  });
+
+  it('rejects malformed config and model catalog events through the full event union', () => {
+    expect(
+      eventSchema.safeParse({
+        type: 'event.config.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changedFields: 'defaultModel',
+        config: {},
+      }).success,
+    ).toBe(false);
+
+    expect(
+      eventSchema.safeParse({
+        type: 'event.config.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changedFields: [],
+        config: [],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      eventSchema.safeParse({
+        type: 'event.config.warning',
+        agentId: 'main',
+        sessionId: '__global__',
+        warnings: [{ domain: 'loopControl' }],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      eventSchema.safeParse({
+        type: 'event.model_catalog.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changed: [{ provider_id: '', provider_name: 'Kimi Code', added: 2, removed: 1 }],
+        unchanged: [],
+        failed: [],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      eventSchema.safeParse({
+        type: 'event.model_catalog.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+        changed: [{ provider_id: 'p', provider_name: 'P', added: -1, removed: 0 }],
+        unchanged: [],
+        failed: [],
+      }).success,
+    ).toBe(false);
+  });
+
   it('validates prompt.submitted events', () => {
     const parsed = eventSchema.parse({
       type: 'prompt.submitted',
