@@ -145,7 +145,7 @@ export class BtwPanelComponent implements Component {
       lines.push(...this.renderTurn(turn, width));
     }
     if (this.turns.length === 0) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question…'));
     }
     lines.push(...this.renderTransientNotices(width));
     return this.fitBodyLines(lines);
@@ -213,7 +213,7 @@ export class BtwPanelComponent implements Component {
           : thinkingLines;
       lines.push(...visibleThinking);
     } else if (turn.error === undefined) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer…'));
     }
     if (turn.error !== undefined) {
       const error = chalk.hex(currentTheme.palette.error)(turn.error);
