@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,7 +37,7 @@ interface SessionWireV2 {
     updated_at: number;
     archived: boolean;
   };
-  activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle' };
+  activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle'; model: string | null };
   git?: {
     branch: string | null;
     pull_request: { number: number; state: 'open' | 'closed' | 'merged'; url: string } | null;
@@ -228,13 +228,63 @@ describe('server /api/v2/sessions', () => {
       archived: false,
       archived_at: null,
     });
-    expect(first.activity).toEqual({ status: 'idle' });
+    expect(first.activity).toEqual({ status: 'idle', model: null });
     expect('git' in first).toBe(false);
 
     const second = page.items[1] as SessionWireV2;
     expect(second.meta.title).toBeNull();
     const third = page.items[2] as SessionWireV2;
     expect(third.meta.last_prompt).toBeNull();
+  });
+
+  it('exposes the live session model in the activity domain', async () => {
+    await (server as RunningServer).close();
+    await writeFile(
+      join(home as string, 'config.toml'),
+      [
+        'default_model = "stub"',
+        '',
+        '[providers.stub]',
+        'type = "openai"',
+        'base_url = "http://127.0.0.1:9999"',
+        'api_key = "stub"',
+        '',
+        '[models.stub]',
+        'provider = "stub"',
+        'model = "stub"',
+        'max_context_size = 1000',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const created = await authedFetch(server, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    });
+    const createdBody = (await created.json()) as { code: number; data: { id: string } };
+    expect(createdBody.code).toBe(0);
+    const id = createdBody.data.id;
+
+    const bound = await authedFetch(server, base, `/api/v1/sessions/${id}/profile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent_config: { model: 'stub' } }),
+    });
+    expect(((await bound.json()) as { code: number }).code).toBe(0);
+
+    const page = await getData();
+    const item = page.items.find((entry) => entry.id === id);
+    expect(item?.activity).toEqual({ status: 'idle', model: 'stub' });
   });
 
   it('filters by workspace.id (single, repeated OR, unknown)', async () => {
@@ -563,7 +613,7 @@ describe('server /api/v2/sessions', () => {
 
     const first = a.sessions[0] as SessionWireV2;
     expect(first.meta.last_prompt).toBe('do alpha');
-    expect(first.activity).toEqual({ status: 'idle' });
+    expect(first.activity).toEqual({ status: 'idle', model: null });
     expect('git' in first).toBe(false);
   });
 

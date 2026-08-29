@@ -1316,15 +1316,6 @@ export interface AgentStateSnapshot {
     readonly systemPrompt: string;
     readonly environmentDisclosure?: /* EnvironmentDisclosureSnapshot — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
       readonly cwd: string;
-      readonly date: {
-        readonly disclosed: true;
-        readonly value: {
-          readonly localDate: string;
-          readonly timeZone: string;
-        };
-      } | {
-        readonly disclosed: false;
-      };
     };
     readonly renderGeneration: number;
     readonly agentsMdPaths?: readonly string[];

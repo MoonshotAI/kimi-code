@@ -28,7 +28,6 @@ import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -150,7 +149,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-    @IHostClock private readonly clock: IHostClock,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
@@ -816,16 +814,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
     const skills = await this.resolveSkillListing();
     const pluginSections = await this.resolvePluginSections();
-    const now = this.clock.now();
-    const timeZone = this.clock.timeZone();
     return {
       ...base,
       cwd: view.workDir,
       osKind: env.osKind,
       shellName: env.shellName,
       shellPath: env.shellPath,
-      now: now.toISOString(),
-      timeZone,
       skills,
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),

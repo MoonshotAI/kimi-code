@@ -45,6 +45,7 @@ import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { sessionEventMessageSchema } from '../src/protocol/ws-control';
 import {
   type BroadcastDelivery,
   type BroadcastTarget,
@@ -1555,6 +1556,170 @@ describe('SessionEventBroadcaster', () => {
         payload: { warnings },
       });
     });
+
+    it('delivers event.config.changed to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const config = { default_model: 'k2', providers: {} };
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel'], config },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        session_id: '__global__',
+        payload: { changedFields: ['defaultModel'], config },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('preserves unlisted config domains through event validation', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const config = { default_model: 'k2', providers: {}, mcp: { servers: { fs: { command: 'npx' } } } };
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['mcp'], config },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        session_id: '__global__',
+        payload: { changedFields: ['mcp'], config },
+      });
+    });
+
+    it('drops malformed event.config.changed payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.config.changed', payload: null });
+      eventBus.emit({ type: 'event.config.changed', payload: { changedFields: 'defaultModel' } });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel', 7], config: {} },
+      });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel'], config: null },
+      });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['defaultModel'], config: [] },
+      });
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: [''], config: {} },
+      });
+
+      eventBus.emit({
+        type: 'event.config.changed',
+        payload: { changedFields: ['models'], config: { models: {} } },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.config.changed',
+        payload: { changedFields: ['models'], config: { models: {} } },
+      });
+    });
+
+    it('delivers event.model_catalog.changed to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const changed = [
+        { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+      ];
+      const failed = [{ provider: 'managed:kimi-code', reason: 'network disabled' }];
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: ['openai-main'], failed },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.model_catalog.changed',
+        session_id: '__global__',
+        payload: { changed, unchanged: ['openai-main'], failed },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
+    it('drops malformed event.model_catalog.changed payloads', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({ type: 'event.model_catalog.changed', payload: null });
+      eventBus.emit({ type: 'event.model_catalog.changed', payload: { changed: [] } });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'p', provider_name: 'P', added: '1', removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'p', provider_name: 'P', added: -1, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'p', provider_name: 'P', added: 0.5, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: '', provider_name: 'P', added: 1, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: ['ok', 7], failed: [] },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: ['ok', ''], failed: [] },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: [], failed: [{ provider: 'p' }] },
+      });
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: [], failed: [{ provider: 'p', reason: '' }] },
+      });
+
+      const changed = [
+        { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 },
+      ];
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: [], failed: [] },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.model_catalog.changed',
+        payload: { changed, unchanged: [], failed: [] },
+      });
+    });
   });
 
   it('emits a durable event.session.work_changed(busy) trailing turn.started', async () => {
@@ -2872,5 +3037,94 @@ describe('SessionEventBroadcaster', () => {
 
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
     });
+  });
+});
+
+describe('sessionEventMessageSchema', () => {
+  const timestamp = '2026-08-27T00:00:00.000Z';
+
+  function envelope(payload: Record<string, unknown>): Record<string, unknown> {
+    return {
+      type: payload['type'],
+      seq: 3,
+      session_id: '__global__',
+      timestamp,
+      payload: { agentId: 'main', sessionId: '__global__', ...payload },
+    };
+  }
+
+  it('accepts config changed, config warning, and model catalog changed envelopes', () => {
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.config.changed',
+          changedFields: ['defaultModel'],
+          config: { default_model: 'k2', providers: {} },
+        }),
+      ).success,
+    ).toBe(true);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.config.warning',
+          warnings: [{ domain: 'loopControl', message: 'deprecated key' }, { message: 'other' }],
+        }),
+      ).success,
+    ).toBe(true);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.model_catalog.changed',
+          changed: [
+            { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+          ],
+          unchanged: ['openai-main'],
+          failed: [{ provider: 'managed:kimi-code', reason: 'network disabled' }],
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it('rejects malformed config and model catalog event envelopes', () => {
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({ type: 'event.config.changed', changedFields: 'defaultModel', config: {} }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({ type: 'event.config.changed', changedFields: [], config: [] }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({ type: 'event.config.warning', warnings: [{ domain: 'loopControl' }] }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.model_catalog.changed',
+          changed: [],
+          failed: [],
+        }),
+      ).success,
+    ).toBe(false);
+
+    expect(
+      sessionEventMessageSchema.safeParse(
+        envelope({
+          type: 'event.model_catalog.changed',
+          changed: [],
+          unchanged: [],
+          failed: [{ provider: 'managed:kimi-code', reason: 42 }],
+        }),
+      ).success,
+    ).toBe(false);
   });
 });
