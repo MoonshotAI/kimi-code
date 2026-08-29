@@ -1,12 +1,4 @@
-/**
- * zod schemas for every value that crosses a process boundary (REST body,
- * WS payload). Structure is closed and validated; open content envelopes
- * (tool input/output/display, payloads) validate as `z.unknown()`.
- */
-
 import { z } from 'zod';
-
-// ------------------------------------------------------------------ ids
 
 export const turnIdSchema = z.string().min(1);
 export const stepIdSchema = z.string().min(1);
@@ -14,26 +6,11 @@ export const frameIdSchema = z.string().min(1);
 export const taskIdSchema = z.string().min(1);
 export const agentIdSchema = z.string().min(1);
 
-/**
- * Filename-safe agent id shape (engine-minted ids are slugs / ulids /
- * uuids). Beyond traversal (`/`, `\`, `.` segments), anything outside this
- * set — NUL bytes, control characters, overlong segments — makes the
- * filesystem throw unhandled errors (`ERR_INVALID_ARG_VALUE`,
- * `ENAMETOOLONG`) instead of reading a `wire.jsonl`.
- */
 const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
-/**
- * Whether an agent id is a single plain name. Ids are joined into filesystem
- * paths server-side (`<sessionDir>/agents/<agentId>/`), so anything
- * path-hostile must be rejected before it can escape the agents directory
- * or crash the read.
- */
 export function isPlainAgentId(agentId: string): boolean {
   return AGENT_ID_PATTERN.test(agentId) && agentId !== '.' && agentId !== '..';
 }
-
-// ---------------------------------------------------------------- model
 
 export const turnOriginSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user'), payload: z.unknown().optional() }),
@@ -56,7 +33,6 @@ export const transcriptUsageSchema = z.object({
   cost: z.number().optional(),
 });
 
-/** Step token usage — the engine's `TokenUsage` wire shape, verbatim. */
 export const stepUsageSchema = z.object({
   inputOther: z.number(),
   output: z.number(),
@@ -93,6 +69,7 @@ export const textFrameSchema = z.object({
   text: z.string(),
   attachmentIds: z.array(z.string()).optional(),
   taskId: taskIdSchema.optional(),
+  promptIds: z.array(z.string()).optional(),
 });
 
 export const thinkingFrameSchema = z.object({
@@ -226,6 +203,8 @@ export const transcriptTaskSchema = z.object({
   error: z.string().optional(),
   stateReason: z.string().optional(),
   usage: stepUsageSchema.optional(),
+  model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 });
 
 export const goalMetaSchema = z.object({
@@ -239,18 +218,18 @@ export const goalMetaSchema = z.object({
 export const modesMetaSchema = z.object({
   plan: z.object({ reviewPath: z.string().optional(), version: z.number().optional() }).optional(),
   swarm: z.object({ trigger: z.string().optional() }).optional(),
+  tower: z.object({}).optional(),
 });
 
-/** `meta.merge` contract shape: a mode key set to `null` clears that badge. */
 export const modesMetaMergeSchema = z.object({
   plan: z
     .object({ reviewPath: z.string().optional(), version: z.number().optional() })
     .nullable()
     .optional(),
   swarm: z.object({ trigger: z.string().optional() }).nullable().optional(),
+  tower: z.object({}).nullable().optional(),
 });
 
-/** Same shape as the wire `agentPhaseSchema`, re-declared (this package must not import the server). */
 export const agentPhaseMetaSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }),
   z.object({
@@ -340,10 +319,9 @@ export const transcriptMetaSchema = z.object({
 });
 
 export const transcriptMetaMergeSchema = transcriptMetaSchema.extend({
+  goal: goalMetaSchema.nullable().optional(),
   modes: modesMetaMergeSchema.optional(),
 });
-
-// ---------------------------------------------------------------- ops
 
 export const attachmentSchema = z.object({
   attachmentId: z.string(),
@@ -354,6 +332,7 @@ export const attachmentSchema = z.object({
     .discriminatedUnion('kind', [
       z.object({ kind: z.literal('url'), url: z.string() }),
       z.object({ kind: z.literal('file'), fileId: z.string() }),
+      z.object({ kind: z.literal('session_media'), fileId: z.string() }),
     ])
     .optional(),
   placeholder: z.string().optional(),
@@ -383,7 +362,6 @@ export const transcriptPromptSchema = z.object({
 export const agentTranscriptSnapshotSchema = z.object({
   items: z.array(transcriptItemSchema),
   tasks: z.array(transcriptTaskSchema),
-  // Added later; defaulted so newer consumers tolerate older servers.
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),
@@ -445,47 +423,12 @@ export const transcriptOpBatchSchema = z.object({
   ops: z.array(transcriptOperationSchema),
 });
 
-// ---------------------------------------------------------------- subscription
-
 export const transcriptGradeSchema = z.enum(['off', 'turn', 'block', 'delta']);
 
-/**
- * Transcript op-batch sequence number. Semantics (the protocol contract all
- * peers implement against):
- *
- *  - Scope: per (session, agent). Starts at 1; the server increments it once
- *    per DISPATCHED OP BATCH (not per op), so batch seqs are consecutive.
- *  - Watermark: a `seq` on `transcript.reset` or on the REST transcript
- *    response means "this state includes every batch with seq <= N".
- *  - Catch-up: a client holding watermark N asks for batches with seq > N
- *    (`GET .../transcript/ops?since_seq=N`, or the `transcript_since`
- *    subscription cursor). A `complete: false` catch-up response means the
- *    server's journal no longer reaches back to N — the client MUST fall
- *    back to a full REST refresh.
- *  - Legacy: seq is optional on every shape. A peer that omits it speaks the
- *    pre-seq protocol; consumers fall back to loss-signal-driven refreshes.
- */
 export const transcriptSeqSchema = z.number().int().nonnegative();
 
-/**
- * Per-session grade map: `'*'` is the default, explicit agent ids override.
- * Record<agentId|'*', grade>.
- */
 export const transcriptGradeSpecSchema = z.record(z.string(), transcriptGradeSchema);
 
-/**
- * Wire payload of the v1 WS `subscribe_v2` control frame — the ONLY carrier of
- * transcript subscriptions: one session, its grade map, and the optional
- * per-agent op-batch seq cursor. This contract is owned by THIS package
- * (transcript types never live in `@moonshot-ai/protocol`); the v1 connection
- * layer validates the payload with this schema and answers malformed frames
- * with an ack error.
- *
- * `transcript_since`: `Record<agentId|'*', seq>` — the caller's last applied
- * op-batch seq per agent. When present and the server's journal still covers
- * it, the server replays the missing batches instead of sending a baseline
- * `transcript.reset`; otherwise it falls back to the reset.
- */
 export const transcriptSubscribeV2PayloadSchema = z.object({
   session_id: z.string().min(1),
   transcript: transcriptGradeSpecSchema,
@@ -494,16 +437,6 @@ export const transcriptSubscribeV2PayloadSchema = z.object({
 
 export type TranscriptSubscribeV2Payload = z.infer<typeof transcriptSubscribeV2PayloadSchema>;
 
-// ---------------------------------------------------------------- REST
-
-/**
- * `GET /v1/sessions/{session_id}/transcript` contract shape, owned by this
- * package: `agent_id` (required) + turn cursor (`before_turn` / `after_turn`,
- * mutually exclusive) + `page_size` (default 20, max 100). The page unit is
- * the turn (contiguous turn slice plus segment markers/taskrefs); `tasks`,
- * `interactions`, `meta`, `agents` and `pending_interactions` are global
- * state and ship unpaginated with every response.
- */
 export const transcriptQuerySchema = z
   .object({
     agent_id: agentIdSchema,
@@ -542,7 +475,6 @@ export const transcriptResponseSchema = z.object({
   items: z.array(transcriptItemSchema),
   has_more: z.boolean(),
   tasks: z.array(transcriptTaskSchema),
-  // Added later; defaulted so newer consumers tolerate older servers.
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),
@@ -550,16 +482,9 @@ export const transcriptResponseSchema = z.object({
   meta: transcriptMetaSchema,
   agents: z.array(agentDescriptorSchema),
   pending_interactions: z.array(z.string()),
-  /** Op-batch watermark: this state includes every batch with seq <= N. */
   seq: transcriptSeqSchema.optional(),
 });
 
-/**
- * `GET /v1/sessions/{session_id}/transcript/ops` response: journaled op
- * batches with seq > `since_seq`, oldest first. `complete: false` means the
- * journal does not reach back to `since_seq` (or the session is not live) —
- * the caller must fall back to a full transcript refresh.
- */
 export const transcriptOpsCatchupResponseSchema = z.object({
   agent_id: agentIdSchema,
   batches: z.array(
@@ -569,12 +494,6 @@ export const transcriptOpsCatchupResponseSchema = z.object({
   complete: z.boolean(),
 });
 
-/**
- * One turn-opening input, projected out of a transcript for the
- * user-messages read: every turn whose `prompt` is defined (real user text,
- * user-slash skill/plugin commands, cron prompts, …). `origin` stays on the
- * entry so the caller can tell those kinds apart.
- */
 export const transcriptUserMessageSchema = z.object({
   turn_id: turnIdSchema,
   ordinal: z.number().int(),
@@ -585,13 +504,6 @@ export const transcriptUserMessageSchema = z.object({
   started_at: z.string().optional(),
 });
 
-/**
- * `GET /v1/sessions/{session_id}/transcript/user-messages` contract shape:
- * per-agent user messages (agents are separate transcripts — user input is
- * each agent's own). `agent_id` optional on the query: present reads one
- * agent, absent reads every rostered agent. `attachments` carries the
- * entities referenced by the listed messages (metadata only, never bytes).
- */
 export const transcriptUserMessagesResponseSchema = z.object({
   agents: z.array(
     z.object({
@@ -602,32 +514,17 @@ export const transcriptUserMessagesResponseSchema = z.object({
   ),
 });
 
-/**
- * The review round-trip of one ExitPlanMode call, projected from the linked
- * approval interaction. Absent when the call never went through an
- * interactive review (auto permission mode, or a configured allow rule).
- */
 export const transcriptPlanReviewSchema = z.object({
   state: z.enum(['pending', 'approved', 'rejected', 'cancelled']),
-  /** `response.selectedLabel` — a plan option label, or a reserved one ('Revise' / 'Reject and Exit'). */
   selected_option: z.string().optional(),
-  /** `response.feedback` — the user's revision / rejection feedback. */
   feedback: z.string().optional(),
 });
 
-/**
- * One ExitPlanMode call's plan information. `source` records which fact the
- * content was projected from — the linked approval interaction's `request`
- * display (interactive review), the live tool frame's display (auto mode),
- * or the tool result output text (cold rebuilds without an interaction).
- */
 export const transcriptPlanEntrySchema = z.object({
   tool_call_id: z.string(),
   turn_id: turnIdSchema,
   source: z.enum(['interaction', 'display', 'output']),
-  /** Full plan content as submitted for review. */
   plan: z.string(),
-  /** The plan file path, when known. */
   path: z.string().optional(),
   options: z
     .array(z.object({ label: z.string(), description: z.string().optional() }))
@@ -635,30 +532,20 @@ export const transcriptPlanEntrySchema = z.object({
   review: transcriptPlanReviewSchema.optional(),
 });
 
-/**
- * `GET /v1/sessions/{session_id}/transcript/plan` contract shape: the plans
- * of one agent's ExitPlanMode calls, in timeline order. `tool_call_id`
- * optional on the query: present narrows the read to that one call (unknown
- * id → 40416), absent lists every call with recoverable plan content.
- */
 export const transcriptPlanResponseSchema = z.object({
   agent_id: agentIdSchema,
   plans: z.array(transcriptPlanEntrySchema),
 });
 
-// ---------------------------------------------------------------- WS payloads
-
 export const transcriptResetPayloadSchema = z.object({
   agent_id: agentIdSchema,
   snapshot: agentTranscriptSnapshotSchema,
   has_more_older: z.boolean(),
-  /** Watermark: the snapshot includes every op batch with seq <= N. */
   seq: transcriptSeqSchema.optional(),
 });
 
 export const transcriptOpsPayloadSchema = z.object({
   agent_id: agentIdSchema,
   ops: z.array(transcriptOperationSchema),
-  /** This batch's sequence number (consecutive per agent; see transcriptSeqSchema). */
   seq: transcriptSeqSchema.optional(),
 });

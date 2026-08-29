@@ -1,20 +1,3 @@
-/**
- * `telemetry` domain — telemetry event registry.
- *
- * Central registry of every business event emitted through
- * `ITelemetryService.track2`: each entry pairs the event's property type
- * (the compile-time contract enforced at call sites) with review metadata
- * (owner, purpose, per-property comment) whose keys must match the property
- * type exactly. Agent-scoped entries compose their payload with the centrally
- * declared Agent telemetry context, keeping ambient identity out of business
- * payloads while preserving the effective wire schema. Registered names are
- * the raw event names, before the transport's `kfc_` server prefix. Naming
- * conventions: events and properties are snake_case; durations/counts/sizes
- * carry a unit suffix (`_ms` / `_count` / `_bytes`); never register user
- * content or file paths as properties. App-scoped, self-contained — property
- * unions are declared locally instead of imported from business domains.
- */
-
 import type { TelemetryPrimitive } from './telemetry';
 
 export interface TelemetryEventMeta {
@@ -91,6 +74,17 @@ export interface TurnEndedEvent {
   protocol?: string;
   thinking_effort?: string;
   trace_id?: string;
+}
+
+export interface PromptCacheProbeEvent {
+  source: 'fork';
+  turn_id: number;
+  provider_type?: string;
+  protocol?: string;
+  input_tokens: number;
+  input_cache_read: number;
+  input_cache_creation: number;
+  output_tokens: number;
 }
 
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
@@ -252,6 +246,14 @@ export interface BackgroundTaskCompletedEvent {
   status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
 }
 
+export interface WaitForCompletedEvent {
+  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
+  timeout_ms: number;
+  waited_ms: number;
+  has_task_id: boolean;
+  extra_completed_count: number;
+}
+
 export interface ModelSwitchEvent {
   model: string;
 }
@@ -323,6 +325,16 @@ export interface ToolCallRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallTurnRepeatEvent {
+  turn_id?: number;
+  step_no: number;
+  tool_call_id: string;
+  tool_name: string;
+  turn_repeat_count: number;
+  args_hash: string;
+  trace_id?: string;
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -344,12 +356,18 @@ export interface FsGrepNodeFallbackEvent {
   reason: 'rg_missing';
 }
 
+export interface FsSuggestNodeFallbackEvent {
+  reason: 'rg_missing' | 'rg_error';
+}
+
 export interface SubagentCreatedEvent {
   subagent_name: string;
   run_in_background: boolean;
+  fork: boolean;
   agent_id: string;
   parent_agent_id: string;
   parent_tool_call_id: string;
+  model?: string;
 }
 
 export interface McpConnectedEvent {
@@ -442,6 +460,13 @@ export interface SessionLoadFailedEvent {
   reason: string;
 }
 
+export interface WireRepairEvent {
+  kind: 'corrupted' | 'truncated';
+  outcome: 'repaired' | 'failed';
+  dropped_count: number;
+  backup_created: boolean;
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
@@ -488,6 +513,21 @@ export const telemetryEventDefinitions = {
       thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
+    },
+  }),
+  prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
+    owner: 'kimi-code',
+    comment:
+      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage.',
+    properties: {
+      source: 'Why a cache hit was expected for this request',
+      turn_id: 'Per-agent turn index of the probed request',
+      provider_type: 'Provider protocol type',
+      protocol: 'Request protocol',
+      input_tokens: 'Total input tokens of the probed request (other + cache read + cache creation)',
+      input_cache_read: 'Cache-read input tokens of the probed request',
+      input_cache_creation: 'Cache-creation input tokens of the probed request',
+      output_tokens: 'Output tokens of the probed request',
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({
@@ -695,6 +735,18 @@ export const telemetryEventDefinitions = {
       status: 'Terminal task status',
     },
   }),
+  wait_for_completed: defineAgentTelemetryEvent<WaitForCompletedEvent>({
+    owner: 'kimi-code',
+    comment: 'A WaitFor tool call returns.',
+    properties: {
+      outcome:
+        'How the wait ended: the waited task finished, the wait timed out, the task id was unknown, or the wait was aborted',
+      timeout_ms: 'Timeout argument in milliseconds',
+      waited_ms: 'Actual wall-clock wait time in milliseconds',
+      has_task_id: 'Whether a specific task id was given',
+      extra_completed_count: 'Number of additional tasks that finished within the wait window',
+    },
+  }),
   model_switch: defineAgentTelemetryEvent<ModelSwitchEvent>({
     owner: 'kimi-code',
     comment: 'The active model is bound or switched.',
@@ -795,6 +847,20 @@ export const telemetryEventDefinitions = {
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },
   }),
+  tool_call_turn_repeat: defineAgentTelemetryEvent<ToolCallTurnRepeatEvent>({
+    owner: 'kimi-code',
+    comment: 'A tool call reappears within the same turn.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      step_no: 'Step index within the turn',
+      tool_call_id: 'Provider-assigned tool call id',
+      tool_name: 'Registered tool name',
+      turn_repeat_count: 'Number of prior-step tool-call reappearances counted in the turn',
+      args_hash: 'Hash of the tool call arguments',
+      trace_id:
+        'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
+    },
+  }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
     comment: 'An AGENTS.md discovery reminder is appended to a tool result.',
@@ -827,15 +893,22 @@ export const telemetryEventDefinitions = {
     comment: 'The fs grep path falls back to the node implementation.',
     properties: { reason: 'Why the fallback was taken' },
   }),
+  fs_suggest_node_fallback: defineTelemetryEvent<FsSuggestNodeFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'The fs suggest path falls back to the node implementation.',
+    properties: { reason: 'Why the fallback was taken' },
+  }),
   subagent_created: defineTelemetryEvent<SubagentCreatedEvent>({
     owner: 'kimi-code',
     comment: 'A subagent run is created.',
     properties: {
       subagent_name: 'Profile name of the subagent',
       run_in_background: 'Whether the subagent runs in the background',
+      fork: 'Whether the subagent was forked with a snapshot of the parent conversation history',
       agent_id: 'Child agent id',
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
+      model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({
@@ -941,6 +1014,16 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A session resume fails.',
     properties: { reason: 'Error code, error name, or unknown' },
+  }),
+  wire_repair: defineTelemetryEvent<WireRepairEvent>({
+    owner: 'kimi-code',
+    comment: 'A corrupted wire journal is truncated to its valid prefix and healed on disk.',
+    properties: {
+      kind: 'Corruption kind: unparseable middle line or torn final line',
+      outcome: 'Whether the on-disk repair succeeded',
+      dropped_count: 'Journal lines dropped from the corrupted tail',
+      backup_created: 'Whether a first-time .bak backup of the corrupted file was created',
+    },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

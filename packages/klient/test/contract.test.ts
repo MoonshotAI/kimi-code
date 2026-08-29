@@ -9,7 +9,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { pluginManifestSchema } from '../src/contract/global/plugins.js';
+import { mcpServerAuthFlowHandleSchema } from '../src/contract/global/mcpManagement.js';
 import { createSessionOptionsSchema } from '../src/contract/session/lifecycle.js';
+import { promptPayloadSchema } from '../src/contract/agent/schemas.js';
 
 type McpTimeoutField = 'startupTimeoutMs' | 'toolTimeoutMs';
 
@@ -63,5 +65,26 @@ describe('MCP timeout contract validation', () => {
       },
     });
     expect(parsed.success).toBe(false);
+  });
+
+  it('completeAuth timeoutMs accepts the setTimeout maximum and rejects above it', () => {
+    expect(
+      mcpServerAuthFlowHandleSchema.safeParse({ flowId: 'flow-1', timeoutMs: 2_147_483_647 })
+        .success,
+    ).toBe(true);
+    expect(
+      mcpServerAuthFlowHandleSchema.safeParse({ flowId: 'flow-1', timeoutMs: 2_147_483_648 })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('prompt contract validation', () => {
+  it('rejects an empty caller-chosen promptId', () => {
+    expect(promptPayloadSchema.safeParse({ input: [], promptId: '' }).success).toBe(false);
+  });
+
+  it('accepts a non-empty caller-chosen promptId', () => {
+    expect(promptPayloadSchema.safeParse({ input: [], promptId: 'submission-1' }).success).toBe(true);
   });
 });

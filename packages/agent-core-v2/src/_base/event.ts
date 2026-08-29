@@ -1,14 +1,3 @@
-/**
- * `event` domain — `Event` / `Emitter` primitives, the async
- * `AsyncEmitter` / `IWaitUntil` participation primitive (for interceptable
- * `onWill` events whose listeners register work via `waitUntil`), the
- * `handleVetos` helper (for `onBefore*` veto events whose listeners answer
- * with `veto(value, id)`), and event combinators (`once` / `map` / `filter`
- * / `any`). `Emitter` accepts an optional debug name that its
- * `EventSubscription` carries as an `on:<name>` ledger label, so event
- * subscriptions stay identifiable in unit-book introspection.
- */
-
 import { onUnexpectedError, safelyCallListener } from './errors/unexpectedError';
 import {
   Disposable,
@@ -123,6 +112,24 @@ export type IWaitUntilData<T> = Omit<T, 'waitUntil' | 'signal'>;
 export class AsyncEmitter<T extends IWaitUntil> extends Emitter<T> {
   private _asyncDeliveryQueue?: LinkedList<[(event: T) => void, IWaitUntilData<T>]>;
 
+  async fireAsyncConcurrent(data: IWaitUntilData<T>, signal: AbortSignal): Promise<void> {
+    if (this.isDisposed || this._listeners === undefined || signal.aborted) {
+      return;
+    }
+    const snapshot = Array.from(this._listeners);
+    await Promise.all(
+      snapshot.map((entry) =>
+        this.deliverAsync(
+          (event) => {
+            entry.listener.call(entry.thisArg, event);
+          },
+          data,
+          signal,
+        ),
+      ),
+    );
+  }
+
   async fireAsync(data: IWaitUntilData<T>, signal: AbortSignal): Promise<void> {
     if (this.isDisposed || this._listeners === undefined) {
       return;
@@ -140,32 +147,37 @@ export class AsyncEmitter<T extends IWaitUntil> extends Emitter<T> {
 
     while (this._asyncDeliveryQueue.size > 0 && !signal.aborted) {
       const [deliver, eventData] = this._asyncDeliveryQueue.shift()!;
-      const thenables: Promise<unknown>[] = [];
+      await this.deliverAsync(deliver, eventData, signal);
+    }
+  }
 
-      const event = {
-        ...eventData,
-        signal,
-        waitUntil: (p: Promise<unknown>): void => {
-          if (Object.isFrozen(thenables)) {
-            throw new Error('waitUntil can NOT be called asynchronously');
-          }
-          thenables.push(p);
-        },
-      } as T;
-
-      try {
-        deliver(event);
-      } catch (error) {
-        onUnexpectedError(error);
-        continue;
-      }
-
-      void Object.freeze(thenables);
-      const settled = await Promise.allSettled(thenables);
-      for (const result of settled) {
-        if (result.status === 'rejected') {
-          onUnexpectedError(result.reason);
+  private async deliverAsync(
+    deliver: (event: T) => void,
+    data: IWaitUntilData<T>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const thenables: Promise<unknown>[] = [];
+    const event = {
+      ...data,
+      signal,
+      waitUntil: (p: Promise<unknown>): void => {
+        if (Object.isFrozen(thenables)) {
+          throw new Error('waitUntil can NOT be called asynchronously');
         }
+        thenables.push(p);
+      },
+    } as T;
+    try {
+      deliver(event);
+    } catch (error) {
+      onUnexpectedError(error);
+      return;
+    }
+    void Object.freeze(thenables);
+    const settled = await Promise.allSettled(thenables);
+    for (const result of settled) {
+      if (result.status === 'rejected') {
+        onUnexpectedError(result.reason);
       }
     }
   }
@@ -207,7 +219,6 @@ export function handleVetos(
   return Promise.allSettled(promises).then(() => lazyValue);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Event {
   export const None: Event<unknown> = () => Disposable.None;
 

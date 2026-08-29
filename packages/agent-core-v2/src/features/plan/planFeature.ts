@@ -1,19 +1,3 @@
-/**
- * `plan` domain — `PlanFeature`: the plan-mode capability assembled as one
- * App-scope Feature unit.
- *
- * Contributes the per-Agent `IAgentPlanService` and the `EnterPlanMode` /
- * `ExitPlanMode` agent tools through the `features` base-class seams;
- * retracting the unit withdraws all of them across the scope tree. The
- * `defaultPlanMode` config section (`features/plan/configSection`), the
- * `plan` agent profile (`features/plan/profile`), and the `plan_mode.*` /
- * `plan.revision` wire vocabulary (`features/plan/planOps`) stay on their
- * static import=register channels — user-facing contracts must remain
- * statically discoverable (config manifest) and wire records replayable even
- * when the feature unit is retracted. Registered into the feature table at
- * import.
- */
-
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 

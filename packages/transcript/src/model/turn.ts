@@ -1,18 +1,6 @@
-/**
- * Turn and step containers.
- *
- * A turn is one agent "run" (a prompt through loop completion). Turn headers
- * are closed structures; steps and frames arrive through their own ops, so a
- * coarse-grained subscriber legitimately holds turns with `steps: []`.
- */
-
 import type { TranscriptFrame } from './frame';
 import type { AttachmentId, StepId, TaskId, TurnId } from './ids';
 
-/**
- * What triggered this turn. Drives `inputRenderers` at the view layer. The
- * union is closed; per-origin detail rides in `payload` (open content).
- */
 export type TurnOrigin =
   | { kind: 'user'; payload?: unknown }
   | { kind: 'cron'; taskId?: TaskId; payload?: unknown }
@@ -33,10 +21,6 @@ export interface TranscriptUsage {
   readonly cost?: number;
 }
 
-/**
- * Token usage of one LLM step. Same shape as the engine's `TokenUsage` wire
- * payload — the server copies it through opaquely.
- */
 export interface StepUsage {
   readonly inputOther: number;
   readonly output: number;
@@ -44,7 +28,6 @@ export interface StepUsage {
   readonly inputCacheCreation: number;
 }
 
-/** LLM latency breakdown of one step; the wire may carry any subset. */
 export interface StepTiming {
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
@@ -54,11 +37,6 @@ export interface StepTiming {
   readonly llmClientConsumeMs?: number;
 }
 
-/**
- * A retry in flight on a running step. Set while retrying; the step's
- * terminal upsert simply carries no `retry`, which clears it (step.upsert
- * replaces the whole header).
- */
 export interface StepRetry {
   readonly failedAttempt: number;
   readonly nextAttempt: number;
@@ -72,24 +50,16 @@ export interface StepRetry {
 export interface TranscriptTurn {
   readonly kind: 'turn';
   readonly turnId: TurnId;
-  /** Per-agent monotonic ordinal; also the pagination cursor anchor. */
   readonly ordinal: number;
   readonly state: TurnState;
   readonly origin: TurnOrigin;
-  /** The raw prompt that opened the turn (user text, cron prompt, …). */
   readonly prompt?: string;
-  /** Attachments carried by the turn-opening input (entities in `attachments`). */
   readonly attachmentIds?: readonly AttachmentId[];
   readonly steps: TranscriptStep[];
   readonly startedAt?: string;
   readonly endedAt?: string;
   readonly usage?: TranscriptUsage;
-  /** Wall-clock duration of the turn, set on terminal upserts (`turn.ended`). */
   readonly durationMs?: number;
-  /**
-   * Terminal error message (`turn.ended.error`); the structured payload
-   * already rides the 'error' notice marker.
-   */
   readonly error?: string;
 }
 
@@ -102,13 +72,10 @@ export interface TranscriptStep {
   readonly frames: TranscriptFrame[];
   readonly startedAt?: string;
   readonly endedAt?: string;
-  /** Token usage of this step's LLM call (`turn.step.completed`). */
   readonly usage?: StepUsage;
-  /** Provider finish reason (`finishReason ?? rawFinishReason ?? providerFinishReason`). */
   readonly finishReason?: string;
   readonly timing?: StepTiming;
   readonly retry?: StepRetry;
-  /** `turn.step.interrupted` reason / message. */
   readonly endReason?: string;
   readonly endMessage?: string;
 }

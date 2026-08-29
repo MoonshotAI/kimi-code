@@ -86,7 +86,7 @@ export {
   questionRequestToElicitationParams,
 } from './question';
 export { projectHistoryToSessionUpdates } from './replay';
-export { AcpProcessRunner } from './acp-terminal';
+export { AcpRuntimeProviderFactory } from './acp-terminal';
 export type {
   AcpTerminalCreatedEvent,
   AcpTerminalCreatedListener,

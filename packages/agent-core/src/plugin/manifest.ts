@@ -104,10 +104,12 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
   }
 
   let skills = await resolveDirListField(pluginRoot, 'skills', raw['skills'], diagnostics);
+  let rootSkillFallback: boolean | undefined;
   if (raw['skills'] === undefined) {
     const rootSkillMd = path.join(pluginRoot, 'SKILL.md');
     if (await isFile(rootSkillMd)) {
       skills = [pluginRoot];
+      rootSkillFallback = true;
     }
   }
 
@@ -135,6 +137,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     license: stringField(raw, 'license'),
     author: readAuthor(raw['author']),
     skills,
+    rootSkillFallback,
     agents,
     sessionStart: readSessionStart(raw['sessionStart'], diagnostics),
     mcpServers: await readMcpServers(pluginRoot, raw['mcpServers'], diagnostics),

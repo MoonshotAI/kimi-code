@@ -1,28 +1,31 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
-import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
-import type { SkillCatalog } from '#/app/skillCatalog/types';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import type { SkillCatalog } from '#/features/skill/catalog/types';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import {
   BUILTIN_SKILL_SOURCE_ID,
   PLUGIN_SKILL_SOURCE_ID,
-} from '#/app/skillCatalog/skillSource';
+} from '#/features/skill/catalog/skillSource';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { DEFAULT_PRODUCT_NAME } from '#/app/agentProfileCatalog/profile-shared';
 
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 
 import {
+  agentService,
   appService,
   createTestAgent,
   execEnvServices,
@@ -105,7 +108,6 @@ describe('AgentProfileService.applyProfile', () => {
   }
 
   describe('custom identity', () => {
-    // The default builtin profile opens with `You are ${product_name}`.
     const selfNaming: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'self-naming',
       systemPrompt: (context) => `You are ${context.productName ?? DEFAULT_PRODUCT_NAME}`,
@@ -153,17 +155,68 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'project instructions'));
   });
 
-  it('refreshes the active profile system prompt exactly without resetting active tools', async () => {
+  it('maps prompt context roots through the bound runtime workspace view', async () => {
+    const mappedDir = await mkdtemp(join(tmpdir(), 'kimi-apply-mapped-'));
+    const localExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-local-'));
+    const mappedExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-mapped-'));
+    try {
+      await writeFile(join(workDir, 'local-only.txt'), 'x', 'utf-8');
+      await writeFile(join(mappedDir, 'mapped-only.txt'), 'x', 'utf-8');
+      await writeFile(join(localExtra, 'extra-local.txt'), 'x', 'utf-8');
+      await writeFile(join(mappedExtra, 'extra-mapped.txt'), 'x', 'utf-8');
+      const mapping = new Map([
+        [workDir, mappedDir],
+        [localExtra, mappedExtra],
+      ]);
+      const fs = new HostFileSystem();
+      const { profile: svc } = buildContext(
+        agentService(
+          IAgentRuntimeService,
+          mappedRuntimeService(fs, homeDir, (path) => mapping.get(path) ?? path),
+        ),
+      );
+
+      await svc.applyProfile(exactProfile, { additionalDirs: [localExtra] });
+
+      const prompt = svc.data().systemPrompt;
+      expect(prompt).toContain(`cwd:${mappedDir}`);
+      expect(prompt).toContain('mapped-only.txt');
+      expect(prompt).not.toContain('local-only.txt');
+      expect(prompt).toContain(`### ${mappedExtra}`);
+      expect(prompt).toContain('extra-mapped.txt');
+      expect(prompt).not.toContain('extra-local.txt');
+    } finally {
+      await rm(mappedDir, { recursive: true, force: true });
+      await rm(localExtra, { recursive: true, force: true });
+      await rm(mappedExtra, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the directory listing when the bound runtime has no fs capability', async () => {
+    const fs = new HostFileSystem();
+    const { profile: svc } = buildContext(
+      agentService(IAgentRuntimeService, mappedRuntimeService(fs, homeDir, (path) => path, [])),
+    );
+
+    await svc.applyProfile(exactProfile);
+
+    const prompt = svc.data().systemPrompt;
+    expect(prompt).toContain(`cwd:${workDir}`);
+    expect(prompt).toContain('ls:\nextra:');
+  });
+
+  it('keeps the system prompt frozen until an explicit applyProfile rebuild', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const { profile: svc } = buildContext();
     await svc.applyProfile(exactProfile);
-    svc.update({ activeToolNames: ['Read'] });
+    const before = svc.data().systemPrompt;
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
 
-    await svc.refreshSystemPrompt();
+    expect(svc.data().systemPrompt).toBe(before);
+
+    await svc.applyProfile(exactProfile);
 
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'new instructions'));
-    expect(svc.getActiveToolNames()).toEqual(['Read']);
   });
 
   it('caches an agents-md warning when the content exceeds the 32 KB soft budget', async () => {
@@ -226,7 +279,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     sections.value = [{ pluginId: 'demo', content: 'V2' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
     change.dispose();
@@ -242,8 +295,8 @@ describe('AgentProfileService.applyProfile', () => {
     await svc.applyProfile(pluginProfile);
     const before = svc.data().systemPrompt;
 
-    sections.value = []; // plugin uninstalled
-    await svc.refreshSystemPrompt();
+    sections.value = [];
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
   });
@@ -255,15 +308,11 @@ describe('AgentProfileService.applyProfile', () => {
     const before = svc.data().systemPrompt;
 
     sections.value = [{ pluginId: 'demo', content: 'Always cite sources.' }];
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toBe(before);
   });
 
-  // While the initial plugin load has failed, `enabledSystemPrompts()`
-  // resolves to its consumption fallback instead of rejecting — that empty
-  // read must not freeze, or a later successful reload would never reach
-  // the live agent.
   it('freezes plugin sections only once the plugin snapshot has loaded', async () => {
     const sections = { value: [] as readonly EnabledPluginSystemPrompt[] };
     const loaded = { value: false };
@@ -273,7 +322,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     loaded.value = true;
     sections.value = [{ pluginId: 'demo', content: 'V1' }];
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin demo -->');
   });
@@ -294,7 +343,7 @@ describe('AgentProfileService.applyProfile', () => {
     await first.ctx.dispose();
   });
 
-  it('keeps plugin sections frozen while other prompt inputs still refresh', async () => {
+  it('keeps plugin sections frozen across rebuilds while other prompt inputs re-render', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'old instructions', 'utf-8');
     const sections = {
       value: [{ pluginId: 'demo', content: 'cite' }] as readonly EnabledPluginSystemPrompt[],
@@ -306,15 +355,12 @@ describe('AgentProfileService.applyProfile', () => {
 
     sections.value = [];
     await writeFile(join(workDir, 'AGENTS.md'), 'new instructions', 'utf-8');
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(agentsAndPluginsProfile);
 
     expect(svc.data().systemPrompt).toContain('new instructions');
     expect(svc.data().systemPrompt).toContain('cite');
   });
 
-  // The skill listing is frozen together with the plugin sections: even the
-  // builtin source's reload rebuilds from the frozen listing, so a live
-  // agent's prompt stays byte-identical. New agents snapshot the new listing.
   it('keeps the skill listing frozen when the builtin skill source reloads', async () => {
     const change = new Emitter<string>();
     const listing = { value: 'before' };
@@ -327,7 +373,7 @@ describe('AgentProfileService.applyProfile', () => {
 
     listing.value = 'after';
     change.fire(BUILTIN_SKILL_SOURCE_ID);
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(skillsProfile);
 
     expect(svc.data().systemPrompt).toBe('skills:before');
     change.dispose();
@@ -348,14 +394,11 @@ describe('AgentProfileService.applyProfile', () => {
     change.fire(PLUGIN_SKILL_SOURCE_ID);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    // Plugin-derived inputs are frozen for the agent's lifetime, so a plugin
-    // source change must not trigger a rebuild at all — a rebuild would only
-    // churn `${now}` and invalidate the provider's prompt cache.
     expect(svc.data().systemPrompt).toBe('render:1');
     change.dispose();
   });
 
-  it('rebuilds the system prompt when the builtin skill source changes', async () => {
+  it('does not rebuild the system prompt when the builtin skill source changes', async () => {
     let renders = 0;
     const countingProfile: ResolvedAgentProfile = normalizeAgentProfile({
       name: 'counting-profile',
@@ -368,10 +411,9 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe('render:1');
 
     change.fire(BUILTIN_SKILL_SOURCE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    await vi.waitFor(() => {
-      expect(svc.data().systemPrompt).toBe('render:2');
-    });
+    expect(svc.data().systemPrompt).toBe('render:1');
     change.dispose();
   });
 
@@ -393,11 +435,9 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
 
-    // A reload-driven re-render reuses the frozen sections: the prompt does
-    // not change and the budget warning is not re-emitted.
     sections.value = [...sections.value, { pluginId: 'third', content: 'small' }];
     change.fire(PLUGIN_SKILL_SOURCE_ID);
-    await svc.refreshSystemPrompt();
+    await svc.applyProfile(pluginProfile);
 
     expect(svc.data().systemPrompt).toContain('<!-- From: plugin first -->');
     expect(svc.data().systemPrompt).not.toContain('<!-- From: plugin second -->');
@@ -454,4 +494,57 @@ function exactSystemPrompt(workDir: string, agentsMd: string): string {
     'ls:\u2514\u2500\u2500 AGENTS.md',
     'extra:',
   ].join('\n');
+}
+
+function mappedRuntimeService(
+  fs: HostFileSystem,
+  homeDir: string,
+  map: (path: string) => string,
+  capabilities: readonly RuntimeCapability[] = ['fs'],
+): IAgentRuntimeService {
+  const runtime: Runtime = {
+    identity: { workspaceId: 'workspace-1', runtimeId: 'mapped', generation: 'g1' },
+    capabilities: new Set(capabilities),
+    environment: {
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir,
+    },
+    path: {
+      separator: '/',
+      delimiter: ':',
+      isAbsolute: (path) => isAbsolute(path),
+      join: (...paths) => join(...paths),
+      relative: (from, to) => relative(from, to),
+      resolve: (...paths) => resolve(...paths),
+      basename: (path) => basename(path),
+      dirname: (path) => dirname(path),
+    },
+    workspace: {
+      mapRoots: (roots) => ({
+        workDir: map(roots.workDir),
+        additionalDirs: roots.additionalDirs?.map(map),
+      }),
+    },
+    fs,
+    status: 'ready',
+    onDidChangeStatus: Event.None as Event<RuntimeStatus>,
+    dispose: () => {},
+  };
+  return {
+    _serviceBrand: undefined,
+    onDidChange: Event.None as Event<void>,
+    isAvailable: (required = []) =>
+      required.every((capability) => runtime.capabilities.has(capability)),
+    inspect: () => runtime,
+    acquire: () => ({
+      runtime,
+      track: <T,>(resource: T): T => resource,
+      dispose: () => {},
+    }),
+  };
 }

@@ -11,11 +11,29 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
-import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
+import { IEventBus } from '#/app/event/eventBus';
+import type { Event2, Event2Class } from '#/app/event/event2';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type {
+  AgentRuntimeDefinition,
+  RuntimeOf,
+} from '#/agent/runtime/agentRuntime';
+import {
+  AgentActivityUpdated,
+  IAgentActivityView,
+  type AgentActivityState,
+} from '#/agent/activityView/activityView';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import {
+  type Interaction,
+  type InteractionKind,
+  type InteractionPendingChangedEvent,
+  type InteractionRequest,
+  type InteractionResolution,
+} from '#/features/interaction/interaction';
 import {
   ISessionActivityView,
   type SessionActivityChangedEvent,
@@ -25,12 +43,13 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 class FakeBus implements IEventBus {
   declare readonly _serviceBrand: undefined;
-  private readonly handlers = new Set<{ type?: string; fn: (event: DomainEvent) => void }>();
+  private readonly handlers = new Set<{ type?: string; fn: (event: Event2) => void }>();
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     for (const h of [...this.handlers]) {
       if (h.type === undefined || h.type === event.type) h.fn(event);
     }
@@ -39,32 +58,92 @@ class FakeBus implements IEventBus {
   subscribe(arg1: unknown, arg2?: unknown): IDisposable {
     const entry =
       typeof arg1 === 'string'
-        ? { type: arg1, fn: arg2 as (event: DomainEvent) => void }
-        : { fn: arg1 as (event: DomainEvent) => void };
+        ? { type: arg1, fn: arg2 as (event: Event2) => void }
+        : typeof arg1 === 'function' && 'type' in arg1
+          ? { type: (arg1 as Event2Class).type, fn: arg2 as (event: Event2) => void }
+          : { fn: arg1 as (event: Event2) => void };
     this.handlers.add(entry);
     return { dispose: () => this.handlers.delete(entry) };
+  }
+}
+
+class FakeInteractionKernel {
+  private readonly pending = new Map<string, Interaction>();
+  private readonly changeEmitter = new Emitter<InteractionPendingChangedEvent>();
+  private readonly resolveEmitter = new Emitter<InteractionResolution>();
+  readonly onDidChangePending = this.changeEmitter.event;
+  readonly onDidResolve = this.resolveEmitter.event;
+
+  request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
+    return new Promise<TResponse>((resolve) => {
+      this.park(req, (response) => resolve(response as TResponse));
+    });
+  }
+
+  enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
+    return this.park(req, () => {});
+  }
+
+  respond(id: string, response: unknown): boolean {
+    if (!this.pending.delete(id)) return false;
+    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    this.resolveEmitter.fire({ id, response });
+    return true;
+  }
+
+  listPending(kind?: InteractionKind): readonly Interaction[] {
+    const all = [...this.pending.values()];
+    return kind === undefined ? all : all.filter((i) => i.kind === kind);
+  }
+
+  isRecentlyResolved(): boolean {
+    return false;
+  }
+
+  cancelPendingForTurn(): void {}
+
+  private park<TPayload>(
+    req: InteractionRequest<TPayload>,
+    resolve: (response: unknown) => void,
+  ): Interaction {
+    void resolve;
+    const interaction: Interaction = {
+      id: req.id ?? `interaction-${this.pending.size}`,
+      kind: req.kind,
+      payload: req.payload,
+      origin: req.origin ?? {},
+      createdAt: Date.now(),
+    };
+    this.pending.set(interaction.id, interaction);
+    this.changeEmitter.fire({ pending: [...this.pending.keys()] });
+    return interaction;
   }
 }
 
 class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeBus();
+  readonly state = new AgentStateService();
+  readonly interactions = new FakeInteractionKernel();
   activity: AgentActivityState = { lifecycle: 'ready', background: [] };
   private readonly view = { state: () => this.activity };
+  readonly context: AgentContext;
   readonly accessor;
 
   constructor(readonly id: string) {
+    this.context = stubAgentContext(id, 1);
     this.accessor = {
       get: (token: unknown) => {
         if (token === IEventBus) return this.bus;
         if (token === IAgentActivityView) return this.view;
+        if (token === IAgentStateService) return this.state;
         return undefined;
       },
     };
   }
 
   emitActivity(): void {
-    this.bus.publish({ type: 'agent.activity.updated', ...this.activity } as DomainEvent);
+    this.bus.publish(new AgentActivityUpdated({ ...this.activity, agentId: this.id }));
   }
 
   dispose(): void {}
@@ -72,43 +151,76 @@ class FakeAgentHandle {
 
 class FakeAgentLifecycle implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
-  private readonly createEmitter = new Emitter<IAgentScopeHandle>();
-  private readonly disposeEmitter = new Emitter<string>();
+  private readonly createEmitter = new Emitter<AgentContext>();
+  private readonly createScopeEmitter = new Emitter<{
+    readonly context: AgentContext;
+    readonly handle: IAgentScopeHandle;
+  }>();
+  private readonly willCloseEmitter = new Emitter<AgentContext>();
+  private readonly didCloseEmitter = new Emitter<AgentContext>();
   readonly onDidCreate = this.createEmitter.event;
-  readonly onDidDispose = this.disposeEmitter.event;
+  readonly onDidCreateScope = this.createScopeEmitter.event;
+  readonly onWillClose = this.willCloseEmitter.event;
+  readonly onDidClose = this.didCloseEmitter.event;
   readonly handles: FakeAgentHandle[] = [];
 
-  list(): readonly IAgentScopeHandle[] {
-    return this.handles as unknown as IAgentScopeHandle[];
+  list(): readonly AgentContext[] {
+    return this.handles.map((handle) => handle.context);
   }
 
-  get(agentId: string): IAgentScopeHandle | undefined {
-    return this.handles.find((h) => h.id === agentId) as unknown as IAgentScopeHandle | undefined;
+  get(agentId: string): AgentContext | undefined {
+    return this.handles.find((h) => h.id === agentId)?.context;
+  }
+
+  handleOf(agentId: string): IAgentScopeHandle | undefined {
+    return this.handles.find((h) => h.id === agentId) as IAgentScopeHandle | undefined;
   }
 
   addAgent(id: string): FakeAgentHandle {
     const handle = new FakeAgentHandle(id);
     this.handles.push(handle);
-    this.createEmitter.fire(handle as unknown as IAgentScopeHandle);
+    const scopeHandle = handle as unknown as IAgentScopeHandle;
+    this.createEmitter.fire(handle.context);
+    this.createScopeEmitter.fire({ context: handle.context, handle: scopeHandle });
     return handle;
   }
 
   removeAgent(id: string): void {
     const index = this.handles.findIndex((h) => h.id === id);
-    if (index >= 0) this.handles.splice(index, 1);
-    this.disposeEmitter.fire(id);
+    if (index < 0) return;
+    const [handle] = this.handles.splice(index, 1);
+    this.willCloseEmitter.fire(handle!.context);
+    this.didCloseEmitter.fire(handle!.context);
   }
 
-  create(): Promise<IAgentScopeHandle> {
+  create(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  fork(): Promise<IAgentScopeHandle> {
+  fork(): Promise<AgentContext> {
+    throw new Error('not implemented');
+  }
+  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
+    agent: AgentContext,
+    definition: Definition,
+  ): RuntimeOf<Definition> {
+    if (definition !== AgentInteraction) throw new Error('not implemented');
+    const handle = this.handles.find((h) => h.context === agent);
+    if (handle === undefined) throw new Error(`unknown agent ${agent.agentId}`);
+    return handle.interactions as RuntimeOf<Definition>;
+  }
+  inspect(): never {
     throw new Error('not implemented');
   }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
   broadcastPermissionMode(): void {
+    throw new Error('not implemented');
+  }
+  adopt(): AgentContext {
+    throw new Error('not implemented');
+  }
+  attachRuntimes(): void {
     throw new Error('not implemented');
   }
 }
@@ -147,7 +259,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   beforeEach(() => {
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
-    registerScopedService(LifecycleScope.Session, ISessionInteractionService, SessionInteractionService, ScopeActivation.OnDemand, 'interaction');
     registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
     registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, ScopeActivation.OnScopeCreated, 'sessionActivity');
 
@@ -290,8 +401,8 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   });
 
   it('fires interaction when the pending set flips the session slice', () => {
-    lifecycle.addAgent(MAIN_AGENT_ID);
-    const interactions = session.accessor.get(ISessionInteractionService);
+    const main = lifecycle.addAgent(MAIN_AGENT_ID);
+    const interactions = main.interactions;
     const { changes } = viewWithChanges();
 
     interactions.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { agentId: MAIN_AGENT_ID } });
@@ -308,8 +419,8 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
   });
 
   it('treats user_tool pending as none', () => {
-    lifecycle.addAgent(MAIN_AGENT_ID);
-    const interactions = session.accessor.get(ISessionInteractionService);
+    const main = lifecycle.addAgent(MAIN_AGENT_ID);
+    const interactions = main.interactions;
     const { changes } = viewWithChanges();
 
     interactions.enqueue({ id: 'u1', kind: 'user_tool', payload: {}, origin: { agentId: MAIN_AGENT_ID } });

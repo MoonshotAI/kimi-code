@@ -1,10 +1,3 @@
-/**
- * `hostFs` domain — `IHostFileSystem` implementation.
- *
- * Reads and writes files on the real local disk through `node:fs/promises`.
- * Bound at App scope.
- */
-
 import {
   appendFile,
   lstat,
@@ -79,16 +72,17 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async readBytes(path: string, n?: number): Promise<Uint8Array> {
+  async readBytes(path: string, n?: number, offset = 0): Promise<Uint8Array> {
     try {
-      if (n === undefined) {
+      if (n === undefined && offset === 0) {
         const buf = await readFile(path);
         return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
       }
       const fh = await open(path, 'r');
       try {
-        const buf = Buffer.alloc(n);
-        const { bytesRead } = await fh.read(buf, 0, n, 0);
+        const length = n ?? Math.max(0, (await fh.stat()).size - offset);
+        const buf = Buffer.alloc(length);
+        const { bytesRead } = await fh.read(buf, 0, length, offset);
         return buf.subarray(0, bytesRead);
       } finally {
         await fh.close();

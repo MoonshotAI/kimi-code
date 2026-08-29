@@ -1,38 +1,16 @@
-/**
- * `LegacyStatus` — kap-server-layer projection of the v1-style
- * combined `agent.status.updated` payload from the agent's native v2 services.
- *
- * v1 emits a single `agent.status.updated` carrying usage + contextTokens +
- * maxContextTokens + model together. v2 splits those into independent Models /
- * Ops (`usage.record`, `token_counting.measured`, `config.update` …), so the
- * partial events reach clients separately and a usage-only event can overwrite
- * a previously-known contextTokens with a stale zero. The v1 edge re-reads the
- * authoritative services when a native status or context change arrives, so it
- * always forwards a real, consistent context-window value.
- *
- * Temporary bridge while the v2 wire contract still exposes the slices
- * separately — defined at the kap-server edge rather than in agent-core-v2 so
- * the core engine stays free of v1 wire-compatibility concerns.
- */
-
 import {
+  agentContextOf,
   IAgentProfileService,
-  IAgentTokenCountingService,
-  IAgentUsageService,
+  ISessionTokenCountingService,
+  ISessionUsageService,
   IModelCatalog,
   IModelService,
-  SECONDARY_DERIVED_MODEL_ID,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
-/**
- * The v1 `phase` field of the combined `agent.status.updated` payload — a
- * v1-only concept with no producer on the v2 side (v2's native status events
- * never carry it), so it is defined here at the v1 edge that projects it.
- */
 export type AgentPhase =
   | { readonly kind: 'idle' }
   | {
@@ -99,40 +77,32 @@ export type AgentPhase =
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
   readonly contextTokens: number;
-  /** Omitted when the context limit is unknown — 0 is never pushed (0 is the engine's "unknown" marker, not a real limit). */
   readonly maxContextTokens?: number;
   readonly model: string;
 }
 
-/** Read the current combined status when the handle exposes a complete agent. */
 export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
   const profile = agent.accessor.get(IAgentProfileService) as
     | IAgentProfileService
     | undefined;
-  const usageService = agent.accessor.get(IAgentUsageService) as
-    | IAgentUsageService
+  const usageService = agent.accessor.get(ISessionUsageService) as
+    | ISessionUsageService
     | undefined;
-  const tokenCounting = agent.accessor.get(IAgentTokenCountingService) as
-    | IAgentTokenCountingService
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
+    | ISessionTokenCountingService
     | undefined;
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return undefined;
   }
-  const usage = usageService.status();
-  // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`IAgentTokenCountingService.statusSize`) —
-  // mirrors the REST status rollup (`ISessionLegacyService.status`) and v1's
-  // `context.tokenCount`.
-  const contextTokens = tokenCounting.statusSize();
+  const context = agentContextOf(agent);
+  const usage = usageService.status(context);
+  const contextTokens = tokenCounting.statusSize(context);
   const capabilities = profile.getModelCapabilities();
   let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   if (maxContextTokens === 0 && profile.getModel() === '') {
-    // No model bound yet (e.g. a draft session): fall back to the configured
-    // default model's limit, mirroring the REST status rollup
-    // (`ISessionLegacyService.status`), so the push and REST agree.
     maxContextTokens = defaultModelContextTokens(agent) ?? 0;
   }
-  const model = displayModelAlias(agent, profile.getModel());
+  const model = profile.getModel();
   return {
     usage,
     contextTokens,
@@ -141,10 +111,6 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   };
 }
 
-/**
- * Context limit of the configured default model, or `undefined` when no
- * default model is configured or it does not resolve.
- */
 function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined {
   const models = agent.accessor.get(IModelService) as IModelService | undefined;
   const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
@@ -160,38 +126,6 @@ function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined
   }
 }
 
-/**
- * The wire `model` is normally the bound alias, which clients resolve against
- * the model listing into a display name. The secondary-model derived entry is
- * synthesized runtime state hidden from that listing, so resolve it here to
- * the pointed entry's display string (the client's own
- * `displayName ?? wireName` priority) instead of leaking the reserved id.
- */
-function displayModelAlias(agent: IAgentScopeHandle, alias: string): string {
-  if (alias !== SECONDARY_DERIVED_MODEL_ID) return alias;
-  const catalog = agent.accessor.get(IModelCatalog) as IModelCatalog | undefined;
-  if (catalog === undefined) return alias;
-  try {
-    const model = catalog.get(alias);
-    return model.displayName ?? model.name;
-  } catch {
-    return alias;
-  }
-}
-
-/**
- * Map the native v2 `AgentActivityState` to the legacy v1 `AgentPhase`
- * (`agent.status.updated` payload). Pure function — kept at the kap-server
- * edge so the core engine stays free of v1 wire-compatibility concerns.
- *
- * Returns `undefined` for `disposing` / `disposed`, which have no v1
- * concept (emitting `idle` would mislead the UI).
- *
- * Three deliberate v1 divergences from the naive mapping (see status-refactor
- * plan 04 §3): a parallel approval resolve keeps `awaiting_approval` while any
- * approval is still pending (no premature `running`); `interrupted` carries the
- * `endingReason`; `disposing`/`disposed` emit nothing.
- */
 export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined {
   const { lifecycle, turn, lastTurn } = state;
 
@@ -274,6 +208,5 @@ export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined
     }
   }
 
-  // `disposing` / `disposed` — no v1 concept.
   return undefined;
 }

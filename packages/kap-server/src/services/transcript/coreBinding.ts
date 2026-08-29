@@ -1,30 +1,13 @@
-/**
- * Session-level transcript binding — the live producer path.
- *
- * Mirrors the broadcaster's `attachAgents` pattern
- * (`transport/ws/v1/sessionEventBroadcaster.ts`): driven by the Session-scope
- * `IAgentLifecycleService` (`list()` + `onDidCreate` / `onDidDispose`), each
- * agent gets `store.ensureAgent(...)` + an {@link AgentTranscriptProjector}
- * subscribed to that agent's `IEventBus`. Approvals / questions are bridged
- * from the Session-scope `ISessionInteractionService`
- * (`onDidChangePending` / `onDidResolve`) — deliberately NOT from
- * `permission.*` agent events — and routed to the owning agent's projector via
- * `origin.agentId` (falling back to the request payload's `agentId`, then
- * 'main').
- *
- * All ops flow through `AgentTranscript.apply` (the single convergence path);
- * an `append` gap signals producer/consumer skew and is logged at warn level.
- *
- * The returned Disposable tears down every subscription created here.
- */
-
 import {
   IAgentLifecycleService,
   IAgentActivityView,
+  IAgentTaskService,
   IEventBus,
   ISessionMetadata,
-  ISessionInteractionService,
   MAIN_AGENT_ID,
+  listSessionPendingInteractions,
+  onSessionInteractionDidChangePending,
+  onSessionInteractionDidResolve,
   type AgentMeta,
   type IDisposable,
   type IAgentScopeHandle,
@@ -33,26 +16,17 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
-import { AgentTranscriptProjector, type ProjectorInteraction } from './coreEventMap';
+import {
+  AgentTranscriptProjector,
+  type ProjectorBusEvent,
+  type ProjectorInteraction,
+} from './coreEventMap';
 
-/** Minimal warn sink (matches `JournalLogger`). */
 export interface TranscriptBindingLogger {
   warn(obj: unknown, msg: string): void;
 }
 
-/** The live binding plus its deferred seeding hook. */
 export interface TranscriptBinding extends IDisposable {
-  /**
-   * Announce interactions that were already pending at bind time.
-   * Deliberately NOT run during bind: the store (and the projector's tool
-   * map) is empty until the initial history backfill lands, so an early
-   * announce misplaces the frame into a synthetic step and loses the
-   * resolve-time `approvalId` back-link. The service calls it after the
-   * initial backfill for the main agent, and after each agent's on-demand
-   * backfill for that agent's interactions — pass `agentId` to seed only the
-   * pendings routed to that agent (a subagent's pending must not be placed
-   * before its own history is replayed).
-   */
   seedPendingInteractions(agentId?: string): void;
 }
 
@@ -60,39 +34,17 @@ export function bindSessionTranscript(
   store: TranscriptStore,
   session: ISessionScopeHandle,
   logger?: TranscriptBindingLogger,
-  /**
-   * Mapped-op batches (post-`apply`, gap-checked) — the WS fanout source.
-   *
-   * Why not `AgentTranscript.onChange`: `apply` reports only ops that CHANGED
-   * the store, and the producer store has already absorbed every `append`, so
-   * the step/turn flush `frame.upsert` (full text) is a local no-op and never
-   * re-emitted. That flush is exactly what 'block'-grade subscribers (who
-   * receive no `append`) need for convergence, so the wire stream must carry
-   * the projector's mapped ops, not the store's accepted ops. All ops remain
-   * state-style/idempotent, so replaying a locally-unchanged upsert is safe.
-   */
   onOps?: (event: TranscriptChangeEvent) => void,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
-  const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
-  /** Per-agent subscriptions (bus listeners capturing the agent's projector) — disposed with the agent. */
   const agentDisposables = new Map<string, IDisposable[]>();
-  /** Agents with a live bus subscription (a projector may exist before its handle does — see seedPendingInteractions). */
   const subscribedAgents = new Set<string>();
   const projectors = new Map<string, AgentTranscriptProjector>();
-  /** interaction id → owning projector agent id (for resolve routing). */
   const interactionAgents = new Map<string, string>();
-  /** interaction ids already announced (seeded + seen), mirrors the broadcaster. */
   const knownInteractions = new Set<string>();
-  /**
-   * Pendings registered at bind time but not yet announced (deferred to the
-   * post-backfill seed): id → the interaction to announce.
-   */
   const unseeded = new Map<string, Interaction>();
-  /** Resolves captured before the seed ran: id → routed resolve to replay. */
   const earlyResolves = new Map<string, { agentId: string; response: unknown }>();
-  /** Agents whose pendings may announce live (their backfill+seed has run). */
   const seededAgents = new Set<string>();
   let seededAll = false;
   const isSeeded = (agentId: string): boolean => seededAll || seededAgents.has(agentId);
@@ -105,8 +57,6 @@ export function bindSessionTranscript(
         { sessionId: store.sessionId, agentId, gap: result.gap },
         'transcript: append gap — producer/consumer skew',
       );
-      // A gapped batch never reaches the wire: the producer store could not
-      // place it, so clients would inherit the inconsistency.
       return;
     }
     onOps?.({ agentId, ops });
@@ -115,11 +65,7 @@ export function bindSessionTranscript(
   const projectorFor = (agentId: string): AgentTranscriptProjector => {
     let projector = projectors.get(agentId);
     if (projector === undefined) {
-      // The lookups let the projector adopt state the history backfill seeded
-      // into the store before the projector existed (mid-stream/mid-bind
-      // attach): stream frames continue id + offset, tool frames take their
-      // results, instead of clobbering the seeded state or dropping events.
-      projector = new AgentTranscriptProjector(agentId, {
+      projector = new AgentTranscriptProjector(agentId, store.sessionId, {
         stepFrames: (turnId, stepId) =>
           store.getAgent(agentId)?.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
         toolFrame: (toolCallId) => {
@@ -137,36 +83,49 @@ export function bindSessionTranscript(
           }
           return undefined;
         },
-        // The engine's folded activity view knows the current step even when
-        // the projector attached after `turn.step.started` for a later step.
-        // The handle resolves lazily (the projector may predate the handle).
         stepOrdinal: (turnId) => {
-          const agentHandle = agents.get(agentId);
+          const agentHandle = agents.handleOf(agentId);
           if (agentHandle === undefined) return undefined;
           const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
           const turn = view?.state().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
+        turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        items: () => store.getAgent(agentId)?.getItems(),
       });
+      const agentHandle = agents.handleOf(agentId);
+      if (agentHandle !== undefined) {
+        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
+        for (const info of tasks) {
+          if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
+            applyOps(
+              agentId,
+              projector.seedSubagentTask({
+                taskId: info.taskId,
+                agentId: info.agentId,
+                description: info.description,
+                status: info.status,
+                detached: info.detached ?? false,
+                startedAt: info.startedAt,
+              }),
+            );
+          }
+        }
+      }
       projectors.set(agentId, projector);
     }
     return projector;
   };
 
   const subscribeAgent = (handle: IAgentScopeHandle): void => {
-    // Guard on the subscription, not the projector: seeding can create the
-    // projector before the agent's handle exists, and it still needs its bus
-    // subscription once the handle appears.
     if (subscribedAgents.has(handle.id)) return;
     subscribedAgents.add(handle.id);
     const projector = projectorFor(handle.id);
     store.ensureAgent(handle.id, { agentId: handle.id });
-    // Every domain emits live events via the per-agent `IEventBus`; the bus is
-    // Agent-scoped, so this sees only this agent's events. The subscription is
-    // tracked per agent and disposed with it — the listener captures the
-    // projector, so a dead agent must not keep projecting into the store.
     const bus = handle.accessor.get(IEventBus);
-    const busD = bus.subscribe((event) => applyOps(handle.id, projector.map(event)));
+    const busD = bus.subscribe((event) =>
+      applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
+    );
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);
@@ -190,14 +149,11 @@ export function bindSessionTranscript(
       kind: interaction.kind,
       payload: interaction.payload,
       origin: interaction.origin,
+      createdAt: interaction.createdAt,
     };
     applyOps(agentId, projectorFor(agentId).mapInteractionRequested(request));
   };
 
-  // Agent descriptors (type / parentAgentId / label) ride read-only on top of
-  // the persisted session meta registry (`SessionMeta.agents`); the
-  // AgentMeta write lands before `onDidCreate` fires, so one refresh per
-  // roster event is enough. `label` mirrors the swarm item name when present.
   const refreshDescriptors = (): void => {
     void session.accessor
       .get(ISessionMetadata)
@@ -208,29 +164,22 @@ export function bindSessionTranscript(
         }
       })
       .catch(() => {
-        // Metadata read is best-effort; transcripts work without descriptors.
       });
   };
 
-  for (const handle of agents.list()) subscribeAgent(handle);
+  for (const agent of agents.list()) {
+    const handle = agents.handleOf(agent.agentId);
+    if (handle !== undefined) subscribeAgent(handle);
+  }
   disposables.push(
-    agents.onDidCreate((handle) => {
-      subscribeAgent(handle);
-      // An agent created AFTER binding is fully covered by its live
-      // projector (every event happens from now on) — its pendings may
-      // announce immediately, no backfill to wait for. (Pre-existing agents
-      // seed after their own backfill via ensureAgentHistory.)
-      seededAgents.add(handle.id);
+    agents.onDidCreate((context) => {
+      const handle = agents.handleOf(context.agentId);
+      if (handle !== undefined) subscribeAgent(handle);
+      seededAgents.add(context.agentId);
       refreshDescriptors();
     }),
-    agents.onDidDispose((agentId) => {
-      // Release the agent's subscriptions first — late events from a dying
-      // scope must not project into the store. Only the projector dies with
-      // the scope; the materialized transcript and roster entry stay (the
-      // roster mirrors session metadata, which keeps completed agents), and
-      // dropping the transcript would lose already-served history for good —
-      // the service's backfill cache dedupes per agent, so a later read
-      // would rebuild an empty shell instead of replaying persisted records.
+    agents.onDidClose((context) => {
+      const agentId = context.agentId;
       for (const d of agentDisposables.get(agentId) ?? []) d.dispose();
       agentDisposables.delete(agentId);
       subscribedAgents.delete(agentId);
@@ -239,13 +188,7 @@ export function bindSessionTranscript(
     }),
   );
 
-  // Interactions already pending at bind time are REGISTERED without
-  // announcing (ownership must exist immediately so a resolve arriving before
-  // the deferred seed still routes); their entity ops land in
-  // seedPendingInteractions, which the service calls after the initial
-  // backfill so the resolve-time approvalId back-link finds the persisted
-  // tool frames. New pendings announce live through onDidChangePending below.
-  for (const pending of interactions.listPending()) {
+  for (const pending of listSessionPendingInteractions(agents)) {
     if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
     if (knownInteractions.has(pending.id)) continue;
     knownInteractions.add(pending.id);
@@ -261,9 +204,6 @@ export function bindSessionTranscript(
       announceInteraction(interaction);
       const early = earlyResolves.get(id);
       if (early === undefined) continue;
-      // The interaction opened and closed before the transcript attached:
-      // emit request + resolve back to back so the entity lands resolved,
-      // with the approvalId back-link on the (now backfilled) tool frame.
       interactionAgents.delete(id);
       earlyResolves.delete(id);
       const projector = projectors.get(early.agentId);
@@ -271,9 +211,7 @@ export function bindSessionTranscript(
         applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
       }
     }
-    // Pendings that arrived live since bind are announced already; sweep for
-    // any that slipped past (e.g. a pending change during the backfill).
-    for (const pending of interactions.listPending()) {
+    for (const pending of listSessionPendingInteractions(agents)) {
       if (knownInteractions.has(pending.id)) continue;
       if (agentId !== undefined && interactionAgentId(pending) !== agentId) continue;
       knownInteractions.add(pending.id);
@@ -281,15 +219,11 @@ export function bindSessionTranscript(
     }
   };
   disposables.push(
-    interactions.onDidChangePending(() => {
-      for (const pending of interactions.listPending()) {
+    onSessionInteractionDidChangePending(agents, () => {
+      for (const pending of listSessionPendingInteractions(agents)) {
         if (knownInteractions.has(pending.id)) continue;
         const agentId = interactionAgentId(pending);
         knownInteractions.add(pending.id);
-        // A pending created before its owning agent was seeded (the backfill
-        // may not have replayed the referenced tool frame yet) defers like a
-        // bind-time one — announcing it now would misplace it into a
-        // synthetic step, with no later repair.
         if (!isSeeded(agentId)) {
           interactionAgents.set(pending.id, agentId);
           unseeded.set(pending.id, pending);
@@ -298,13 +232,11 @@ export function bindSessionTranscript(
         announceInteraction(pending);
       }
     }),
-    interactions.onDidResolve(({ id, response }) => {
+    onSessionInteractionDidResolve(agents, ({ id, response }) => {
       knownInteractions.delete(id);
       const agentId = interactionAgents.get(id);
       if (agentId === undefined) return;
       interactionAgents.delete(id);
-      // A resolve that beats the post-backfill seed: capture and replay onto
-      // the freshly announced frame at seed time.
       if (unseeded.has(id)) {
         earlyResolves.set(id, { agentId, response });
         return;

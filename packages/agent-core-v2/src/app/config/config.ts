@@ -1,33 +1,3 @@
-/**
- * `config` domain — configuration registry and layered global config service.
- *
- * Defines the config service identifiers and section models: the
- * `IConfigRegistry` for section schemas, and the App-scoped `IConfigService`
- * that resolves a value by precedence across layers (defaults → user config →
- * per-run memory overrides) and writes through a `ConfigTarget`. Owners react
- * to edits through two change events — `onDidChangeConfiguration` (a domain was touched) and
- * `onDidSectionChange` (the delivered value actually changed, deep-diffed) —
- * each carrying the delivered `value` and `previousValue`.
- *
- * Sections may bind fields to env vars (`envBindings`), resolved as
- * env > user config > default on every read; an env value that fails its
- * binding's `parse` is ignored. `stripEnvBoundFields` builds the matching
- * write guard for persistable env-bound fields: while a field's env var
- * resolves to a value, `set`/`replace` restores the field's value from the
- * env-free raw base (already `fromToml`-normalized) — or drops it when absent
- * there — instead of persisting an echoed env value; otherwise writes pass
- * through untouched. When nothing
- * persistable remains, the write is a no-op for the section — the env-free
- * raw base is kept as-is (unknown forward-compatible fields survive repeated
- * stripped writes) — and the section is cleared only when the base is empty,
- * so registered defaults keep applying.
- *
- * Sections declare key renames through `deprecations` and env-var renames
- * through a binding's `deprecatedEnv`: a deprecated TOML key is ignored (its
- * value no longer applies) and a deprecated env var still resolves as a
- * fallback; both surface warning `ConfigDiagnostic`s while in use.
- */
-
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
@@ -43,26 +13,14 @@ export type EnvBinding =
   | string
   | {
       readonly env: string;
-      /**
-       * Deprecated former name of `env`. Still honored (with a deprecation
-       * warning) when `env` itself is absent or fails to parse, so existing
-       * setups keep working until the user renames the variable.
-       */
       readonly deprecatedEnv?: string;
       readonly parse?: (raw: string) => unknown;
       readonly default?: unknown;
     };
 
-/**
- * A declared config-key rename: `key` (snake_case, as written on disk) is
- * deprecated in favor of `replacement`. While the old key is present in the
- * user's config file the service reports a warning diagnostic; the old value
- * is NOT honored — only `replacement` (or the section default) applies.
- */
 export interface ConfigKeyDeprecation {
   readonly key: string;
   readonly replacement: string;
-  /** Optional extra guidance appended to the generated warning message. */
   readonly message?: string;
 }
 
@@ -106,11 +64,6 @@ export function stripEnvBoundFields<T>(bindings: EnvBindings<T>): ConfigStripEnv
   };
 }
 
-/**
- * Whether a leaf binding currently resolves from the environment: the primary
- * var wins when set and parseable, then the deprecated fallback (same rule as
- * the read path in `configService`'s `resolveBinding`).
- */
 function resolvesFromEnv(binding: EnvBinding, getEnv: (name: string) => string | undefined): boolean {
   const parse = typeof binding === 'string' ? undefined : binding.parse;
   const names =
@@ -242,11 +195,6 @@ export interface IConfigService {
   readonly ready: Promise<void>;
   readonly onDidChangeConfiguration: Event<ConfigChangedEvent>;
   readonly onDidSectionChange: Event<ConfigSectionChangedEvent>;
-  /**
-   * Fired when the diagnostics list changes (load / reload / env overlay
-   * re-application), carrying the full current list — including an empty
-   * list when the last diagnostic clears.
-   */
   readonly onDidChangeDiagnostics: Event<readonly ConfigDiagnostic[]>;
   get<T = unknown>(domain: string): T;
   inspect<T = unknown>(domain: string): ConfigInspectValue<T>;

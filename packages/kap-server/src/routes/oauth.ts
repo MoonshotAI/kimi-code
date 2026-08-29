@@ -1,17 +1,3 @@
-/**
- * `/oauth/*` REST routes.
- *
- *   POST   /oauth/login     start a device-code flow → OAuthFlowStart
- *   GET    /oauth/login     poll current flow state  → OAuthFlowSnapshot | null
- *   DELETE /oauth/login     cancel pending flow       → { cancelled, status }
- *   POST   /oauth/logout    logout                    → { logged_out, provider }
- *   GET    /oauth/userinfo  managed-account profile   → ManagedUserInfoResult
- *
- * Backed by the v2 `IOAuthService` (Core scope), which already returns the
- * protocol wire types, so the handlers only swap the v1 accessor
- * (`ix.invokeFunction`) for the v2 one (`core.accessor.get`).
- */
-
 import { IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
   managedUserInfoResultSchema,
@@ -20,6 +6,7 @@ import {
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
+  oauthRegionResultSchema,
   type ManagedUsageResult,
   type UsageRow,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
@@ -67,7 +54,6 @@ const oauthFlowSnapshotOrNullSchema = z.union([
 ]);
 
 export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
-  // POST /oauth/login — start device flow ----------------------------------
   const loginStartRoute = defineRoute(
     {
       method: 'POST',
@@ -78,7 +64,9 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).startLogin(req.body.provider);
+      const result = await core.accessor
+        .get(IOAuthService)
+        .startLogin(req.body.provider, { region: req.body.region });
       requestLog(req)?.info({ provider: req.body.provider, action: 'login' }, 'oauth login started');
       reply.send(okEnvelope(result, req.id));
     },
@@ -89,7 +77,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     loginStartRoute.handler as Parameters<RouteHost['post']>[2],
   );
 
-  // GET /oauth/login — poll current flow state -----------------------------
   const loginPollRoute = defineRoute(
     {
       method: 'GET',
@@ -110,7 +97,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     loginPollRoute.handler as Parameters<RouteHost['get']>[2],
   );
 
-  // DELETE /oauth/login — cancel pending flow ------------------------------
   const loginCancelRoute = defineRoute(
     {
       method: 'DELETE',
@@ -135,7 +121,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     loginCancelRoute.handler as Parameters<RouteHost['delete']>[2],
   );
 
-  // POST /oauth/logout -----------------------------------------------------
   const logoutRoute = defineRoute(
     {
       method: 'POST',
@@ -157,7 +142,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     logoutRoute.handler as Parameters<RouteHost['post']>[2],
   );
 
-  // GET /oauth/usage — managed-account plan usage (limits + booster wallet) ---
   const usageRoute = defineRoute(
     {
       method: 'GET',
@@ -178,7 +162,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     usageRoute.handler as Parameters<RouteHost['get']>[2],
   );
 
-  // GET /oauth/userinfo — managed-account profile ------------------------------
   const userInfoRoute = defineRoute(
     {
       method: 'GET',
@@ -198,9 +181,27 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     userInfoRoute.options,
     userInfoRoute.handler as Parameters<RouteHost['get']>[2],
   );
+
+  const regionRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/oauth/region',
+      success: { data: oauthRegionResultSchema },
+      description: 'Resolve the client region (mainland-cn/global)',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const region = core.accessor.get(IOAuthService).getRegion();
+      reply.send(okEnvelope({ region }, req.id));
+    },
+  );
+  app.get(
+    regionRoute.path,
+    regionRoute.options,
+    regionRoute.handler as Parameters<RouteHost['get']>[2],
+  );
 }
 
-/** Domain (camelCase) → wire (snake_case) mapping for the usage payload. */
 function toWireUsage(result: ManagedUsageDomainResult): ManagedUsageResult {
   if (result.kind === 'error') {
     return { kind: 'error', message: result.message, status: result.status };

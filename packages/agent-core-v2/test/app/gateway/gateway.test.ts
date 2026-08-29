@@ -7,12 +7,14 @@ import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createHooks } from '#/hooks';
@@ -53,9 +55,12 @@ describe('RestGateway', () => {
     const promptService: IAgentPromptService = {
       _serviceBrand: undefined,
       enqueue: ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); },
+      submit: () => Promise.resolve(undefined),
+      submitSteer: () => Promise.resolve(undefined),
       steer: () => Promise.resolve([]),
       list: () => ({ active: undefined, pending: [] }),
       abort: () => true,
+      drain: () => Promise.resolve(),
       inject: () => Promise.resolve(undefined),
       retry: () => Promise.resolve(undefined),
       clear: () => {},
@@ -71,16 +76,28 @@ describe('RestGateway', () => {
       ]),
       dispose: () => {},
     };
+    const agentContext = stubAgentContext('main', 1);
     const agents: IAgentLifecycleService = {
       _serviceBrand: undefined,
       onDidCreate: () => ({ dispose: () => {} }),
-      onDidDispose: () => ({ dispose: () => {} }),
-      create: () => Promise.resolve(agentHandle),
-      fork: () => Promise.resolve(agentHandle),
-      get: (id) => (id === 'main' ? agentHandle : undefined),
-      list: () => [agentHandle],
+      onDidCreateScope: () => ({ dispose: () => {} }),
+      onWillClose: () => ({ dispose: () => {} }),
+      onDidClose: () => ({ dispose: () => {} }),
+      create: () => Promise.resolve(agentContext),
+      fork: () => Promise.resolve(agentContext),
+      get: (agentId: string) => (agentId === 'main' ? agentContext : undefined),
+      list: () => [agentContext],
+      resolve: () => {
+        throw new Error('not supported in this test');
+      },
+      inspect: () => {
+        throw new Error('not supported in this test');
+      },
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
+      handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
+      adopt: () => agentContext,
+      attachRuntimes: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',
@@ -93,6 +110,7 @@ describe('RestGateway', () => {
       _serviceBrand: undefined,
       onWillCreateSession: () => ({ dispose: () => {} }),
       onDidCreateSession: () => ({ dispose: () => {} }),
+      onWillCloseSession: () => ({ dispose: () => {} }),
       onDidCloseSession: () => ({ dispose: () => {} }),
       onDidArchiveSession: () => ({ dispose: () => {} }),
       onDidForkSession: () => ({ dispose: () => {} }),
@@ -109,16 +127,21 @@ describe('RestGateway', () => {
     };
     const handlerHandle = {
       id: 'wd_stub',
-      kind: LifecycleScope.Workspace,
+      kind: 'program',
       accessor: makeAccessor([[ISessionLifecycleService, sessionLifecycle]]),
       dispose: () => {},
     } as const;
-    ix.stub(IWorkspaceLifecycleService, {
+    ix.stub(ISessionManager, {
       _serviceBrand: undefined,
-      onDidMaterializeHandler: () => ({ dispose: () => {} }),
-      handlerFor: () => Promise.resolve(handlerHandle),
-      handlers: { list: () => [handlerHandle] },
-      sessions: { list: () => ['s1'] },
+      create: () => Promise.resolve(sessionHandle),
+      resume: () => Promise.resolve(sessionHandle),
+      get: (id: string) => (id === 's1' ? sessionHandle : undefined),
+      list: () => [sessionHandle],
+      close: () => Promise.resolve(),
+      archive: () => Promise.resolve(),
+      restore: () => Promise.resolve(sessionHandle),
+      delete: () => Promise.resolve(),
+      fork: () => Promise.resolve(sessionHandle),
     });
     ix.stub(ILogService, stubLog());
     ix.set(IRestGateway, new SyncDescriptor(RestGateway));

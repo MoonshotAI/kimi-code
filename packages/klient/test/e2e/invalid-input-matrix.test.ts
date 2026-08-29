@@ -476,7 +476,17 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
   const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
-  return body!.messages!;
+  return body!.messages!.filter((message) => !isDateReminderMessage(message));
+}
+
+const DATE_REMINDER_MARKERS = [
+  'The current date is restated in a reminder whenever it changes',
+  'Rely on this reminder over any earlier date statement',
+];
+
+function isDateReminderMessage(message: Record<string, unknown>): boolean {
+  const serialized = JSON.stringify(message);
+  return DATE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
 }
 
 // ---------------------------------------------------------------------------
@@ -681,6 +691,47 @@ describe('image blocks with invalid data', () => {
     expect(secondBlocks.some((block) => (block as { type?: string }).type === 'image')).toBe(false);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Daemon file references (kimi-file://): engine-side resolution before the
+// provider wire.
+// ---------------------------------------------------------------------------
+
+describe('daemon file references (kimi-file://)', () => {
+  it('a kimi-file image reference reaches the provider as a data URL, never verbatim', async () => {
+    // Regression for the duplicated resolver-token shadowing: the legacy
+    // video-only resolver won the shared DI token on the production import
+    // order, so image kimi-file refs leaked to the provider unchanged and
+    // gateways rejected the unknown scheme with a 400 ("unsupported image
+    // url"), which the media-strip fallback then mistook for a bad image.
+    const cases = [
+      { label: 'kimifile-image-openai', model: M_OPENAI_VISION, reply: OK_OPENAI },
+      { label: 'kimifile-image-kimi', model: M_KIMI, reply: OK_OPENAI },
+    ] as const;
+    for (const { label, model, reply } of cases) {
+      const meta = await klient.global.files.save({
+        data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
+        filename: 'pasted-image.png',
+        mimeType: 'image/png',
+        expiresInSec: 3600,
+      });
+      const ctx = await newCase(model, label);
+      resetMock(queueScript(reply));
+      await promptAndWait(ctx, [
+        { type: 'image_url', imageUrl: { url: `kimi-file://${meta.id}` } },
+        { type: 'text', text: 'what is this?' },
+      ]);
+      expect(requests, label).toHaveLength(1);
+      expect(JSON.stringify(requests[0]?.json), label).not.toContain('kimi-file://');
+      const content = openAiMessages(0).at(-1)?.['content'] as unknown[];
+      const imagePart = content.find(
+        (part) => (part as { type?: string }).type === 'image_url',
+      ) as { image_url?: { url?: string } } | undefined;
+      expect(imagePart?.image_url?.url ?? '', label).toMatch(/^data:image\/png;base64,/);
+      expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
+    }
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------

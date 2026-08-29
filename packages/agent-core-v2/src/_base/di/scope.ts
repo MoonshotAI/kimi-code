@@ -1,14 +1,3 @@
-/**
- * `di` domain — DI Scope tree (`Scope`) and scoped service registry.
- *
- * Scoped services are resolved when their scope is created by default;
- * registrations that defer construction until first resolution use `OnDemand`.
- *
- * The kernel only knows the scope tree and the `ScopeKind` partial order.
- * The tier set is a business concept: the host bootstrap declares it through
- * `setScopeTopology` (see `src/app/scopes.ts`).
- */
-
 import { BugIndicatingError } from '../errors/errors';
 import { SyncDescriptor } from './descriptors';
 import { ScopeActivation, type ProvideAllEntry } from './instantiation';
@@ -51,14 +40,23 @@ export interface ScopedEntry {
 
 const _scopedRegistry: ScopedEntry[] = [];
 
+function findScopedEntryIndex(scope: ScopeKind, id: ServiceIdentifier<unknown>): number {
+  return _scopedRegistry.findIndex((entry) => entry.scope === scope && entry.id === id);
+}
+
 export function registerScopedService<T>(
   scope: ScopeKind,
   id: ServiceIdentifier<T>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
   activation: ScopeActivation = ScopeActivation.OnScopeCreated,
   domain: string = 'unknown',
 ): void {
+  const existing = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (existing !== -1) {
+    throw new BugIndicatingError(
+      `duplicate scoped service registration for '${String(id)}' in scope '${scope}' (registered domain '${_scopedRegistry[existing]?.domain}', attempted domain '${domain}'); use overrideScopedService for intentional replacement`,
+    );
+  }
   const descriptor = new SyncDescriptor<T>(ctor);
   _scopedRegistry.push({
     scope,
@@ -67,6 +65,29 @@ export function registerScopedService<T>(
     domain,
     activation,
   });
+}
+
+export function overrideScopedService<T>(
+  scope: ScopeKind,
+  id: ServiceIdentifier<T>,
+  ctor: new (...args: any[]) => T,
+  activation: ScopeActivation = ScopeActivation.OnScopeCreated,
+  domain: string = 'unknown',
+): void {
+  const index = findScopedEntryIndex(scope, id as ServiceIdentifier<unknown>);
+  if (index === -1) {
+    throw new BugIndicatingError(
+      `overrideScopedService found no registration for '${String(id)}' in scope '${scope}' (domain '${domain}'); use registerScopedService for the initial registration`,
+    );
+  }
+  const descriptor = new SyncDescriptor<T>(ctor);
+  _scopedRegistry[index] = {
+    scope,
+    id: id as ServiceIdentifier<unknown>,
+    descriptor: descriptor as SyncDescriptor<unknown>,
+    domain,
+    activation,
+  };
 }
 
 export function getScopedServiceDescriptors(scope: ScopeKind): ReadonlyArray<ScopedEntry> {
@@ -78,7 +99,6 @@ export function _clearScopedRegistryForTests(): void {
 }
 
 export type ScopeSeed = ReadonlyArray<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly [ServiceIdentifier<any>, unknown]
 >;
 
@@ -92,11 +112,10 @@ export interface IScopeHandle<K extends ScopeKind = ScopeKind> {
   readonly id: string;
   readonly kind: K;
   readonly accessor: ServicesAccessor;
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
 export type IAppScopeHandle = IScopeHandle<'app'>;
-export type IWorkspaceScopeHandle = IScopeHandle<'workspace'>;
 export type ISessionScopeHandle = IScopeHandle<'session'>;
 export type IAgentScopeHandle = IScopeHandle<'agent'>;
 
@@ -152,7 +171,7 @@ export function createScopedChildHandle(
     get: <T>(serviceId: ServiceIdentifier<T>): T =>
       child.invokeFunction((a) => a.get(serviceId)),
   };
-  return { id, kind, accessor, dispose: () => child.dispose() };
+  return { id, kind, accessor, dispose: () => child.disposeAsync() };
 }
 
 export class Scope implements IDisposable {

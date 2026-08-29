@@ -1,13 +1,3 @@
-/**
- * `kosong/protocol` errors — provider-error boundary translation.
- *
- * Locks the abort behavior fix: the `throwIfAbortError` guard runs FIRST in
- * `translateProviderError` and THROWS the standard abort DOMException for
- * every abort shape, so a user cancellation can never come back as a
- * retryable `provider.*` Error2. Also locks the status→code mapping, the
- * message sanitizer, and the domain's self-registration at import time.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { errorInfo, isErrorCode } from '#/_base/errors/codes';

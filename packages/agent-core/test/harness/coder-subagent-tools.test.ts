@@ -3,9 +3,8 @@
  * agent-core-v2's CODER_TOOLS). Proves the tools newly added to the profile
  * don't just pass the profile allowlist but actually execute inside a real
  * subagent: Skill / TodoList / background Bash + the Task* trio / plan mode
- * enter+write+exit / a nested Agent (explore) call / a nested AgentSwarm batch.
- * Also pins the declared-but-not-delivered contract for cron tools on sub
- * agents (same as v2).
+ * enter+write+exit. Also pins the declared-but-not-delivered contract for
+ * cron tools on sub agents (same as v2).
  */
 
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -75,9 +74,9 @@ function callTool(name: string, args: unknown): StreamedMessagePart[] {
 
 const FINAL_TEXT =
   'E2E-CODER-DONE: exercised Skill, TodoList, background Bash with the TaskList/TaskOutput/TaskStop ' +
-  'trio, plan mode enter/write-plan/exit, and a nested explore Agent call. Every newly aligned tool ' +
-  'executed successfully on a real Session with a real home directory, skill registry, background ' +
-  'manager, and subagent host wiring. No tool call returned an error.';
+  'trio, and plan mode enter/write-plan/exit. Every newly aligned tool executed successfully on a ' +
+  'real Session with a real home directory, skill registry, background manager, and subagent host ' +
+  'wiring. No tool call returned an error.';
 
 function createVerifyGenerate(steps: StepRecord[]): GenerateFn {
   let taskId = '';
@@ -88,90 +87,51 @@ function createVerifyGenerate(steps: StepRecord[]): GenerateFn {
     options?.onRequestStart?.();
 
     const wireTools = tools.filter((tool) => tool.deferred !== true).map((tool) => tool.name);
-    const firstUserText = toolText(history.find((message) => message.role === 'user')) ?? '';
-    const isExploreChild = firstUserText.includes('Probe nested subagent support');
-    const isSwarmChild = firstUserText.includes('SWARM-PROBE');
+
+    const last = lastToolMessage(history);
+    const prevToolOutput = toolText(last);
+    const prevToolIsError = (last as { isError?: boolean } | undefined)?.isError === true;
+    const step = history.filter((message) => message.role === 'assistant').length + 1;
+    steps.push({ label: `step-${String(step)}`, wireTools, prevToolOutput, prevToolIsError });
 
     let parts: StreamedMessagePart[];
-    if (isExploreChild) {
-      parts = [
-        {
-          type: 'text',
-          text: 'NESTED-EXPLORE-OK: the nested explore subagent ran and reported back to the coder.',
-        },
-      ];
-    } else if (isSwarmChild) {
-      // Long enough (>200 chars) to skip the subagent summary-continuation retry,
-      // keeping the scripted call count deterministic across the swarm batch.
-      parts = [
-        {
-          type: 'text',
-          text:
-            'SWARM-CHILD-OK: this swarm child subagent ran to completion inside the coder subagent, ' +
-            'executed its assigned slice of the batch, and is reporting the outcome back to its ' +
-            'parent so the swarm results can be aggregated.',
-        },
-      ];
-    } else {
-      const last = lastToolMessage(history);
-      const prevToolOutput = toolText(last);
-      const prevToolIsError = (last as { isError?: boolean } | undefined)?.isError === true;
-      const step = history.filter((message) => message.role === 'assistant').length + 1;
-      steps.push({ label: `step-${String(step)}`, wireTools, prevToolOutput, prevToolIsError });
-
-      switch (step) {
-        case 1:
-          parts = callTool('Skill', { skill: 'demo-skill', args: 'e2e' });
-          break;
-        case 2:
-          parts = callTool('TodoList', { todos: [{ title: 'verify-tools-e2e', status: 'in_progress' }] });
-          break;
-        case 3:
-          parts = callTool('Bash', { command: 'sleep 15', description: 'e2e bg sleep', run_in_background: true });
-          break;
-        case 4: {
-          const match = /task_id: (\S+)/.exec(prevToolOutput ?? '');
-          taskId = match?.[1] ?? '';
-          parts = callTool('TaskList', {});
-          break;
-        }
-        case 5:
-          parts = callTool('TaskOutput', { task_id: taskId });
-          break;
-        case 6:
-          parts = callTool('TaskStop', { task_id: taskId });
-          break;
-        case 7:
-          parts = callTool('EnterPlanMode', {});
-          break;
-        case 8: {
-          const match = /Plan file: (\S+)/.exec(prevToolOutput ?? '');
-          planPath = match?.[1] ?? '';
-          parts = callTool('Write', { path: planPath, content: '# e2e plan\n\nDo the thing.\n' });
-          break;
-        }
-        case 9:
-          parts = callTool('ExitPlanMode', {});
-          break;
-        case 10:
-          parts = callTool('Agent', {
-            description: 'nested explore check',
-            prompt: 'Probe nested subagent support: confirm you can run and report back.',
-            subagent_type: 'explore',
-          });
-          break;
-        case 11:
-          parts = callTool('AgentSwarm', {
-            description: 'swarm probe',
-            prompt_template: 'SWARM-PROBE {{item}}',
-            items: ['alpha', 'beta'],
-            subagent_type: 'explore',
-          });
-          break;
-        default:
-          parts = [{ type: 'text', text: FINAL_TEXT }];
-          break;
+    switch (step) {
+      case 1:
+        parts = callTool('Skill', { skill: 'demo-skill', args: 'e2e' });
+        break;
+      case 2:
+        parts = callTool('TodoList', { todos: [{ title: 'verify-tools-e2e', status: 'in_progress' }] });
+        break;
+      case 3:
+        parts = callTool('Bash', { command: 'sleep 15', description: 'e2e bg sleep', run_in_background: true });
+        break;
+      case 4: {
+        const match = /task_id: (\S+)/.exec(prevToolOutput ?? '');
+        taskId = match?.[1] ?? '';
+        parts = callTool('TaskList', {});
+        break;
       }
+      case 5:
+        parts = callTool('TaskOutput', { task_id: taskId });
+        break;
+      case 6:
+        parts = callTool('TaskStop', { task_id: taskId });
+        break;
+      case 7:
+        parts = callTool('EnterPlanMode', {});
+        break;
+      case 8: {
+        const match = /Plan file: (\S+)/.exec(prevToolOutput ?? '');
+        planPath = match?.[1] ?? '';
+        parts = callTool('Write', { path: planPath, content: '# e2e plan\n\nDo the thing.\n' });
+        break;
+      }
+      case 9:
+        parts = callTool('ExitPlanMode', {});
+        break;
+      default:
+        parts = [{ type: 'text', text: FINAL_TEXT }];
+        break;
     }
 
     for (const part of parts) {
@@ -320,8 +280,6 @@ describe('coder subagent aligned tools (real Session e2e)', () => {
     // The child's first request must carry the new tools on the wire.
     const firstCallTools = steps[0]?.wireTools ?? [];
     for (const expected of [
-      'Agent',
-      'AgentSwarm',
       'Bash',
       'Edit',
       'EnterPlanMode',
@@ -338,7 +296,11 @@ describe('coder subagent aligned tools (real Session e2e)', () => {
     ]) {
       expect(firstCallTools, `wire tools should include ${expected}`).toContain(expected);
     }
-    // Cron tools stay declared-but-not-delivered for sub agents (v2 parity).
+    // Subagent delegation is opt-in now: the builtin coder profile no longer
+    // offers Agent / AgentSwarm. Cron tools stay declared-but-not-delivered
+    // for sub agents (v2 parity).
+    expect(firstCallTools).not.toContain('Agent');
+    expect(firstCallTools).not.toContain('AgentSwarm');
     expect(firstCallTools).not.toContain('CronCreate');
     expect(firstCallTools).not.toContain('CreateGoal');
 
@@ -355,8 +317,6 @@ describe('coder subagent aligned tools (real Session e2e)', () => {
     expect(byStep(8)?.prevToolOutput).toContain('Plan file:');
     expect(byStep(9)?.prevToolIsError).toBe(false);
     expect(byStep(10)?.prevToolOutput).toContain('Exited plan mode');
-    expect(byStep(11)?.prevToolOutput).toContain('NESTED-EXPLORE-OK');
-    expect(byStep(12)?.prevToolOutput).toContain('SWARM-CHILD-OK');
 
     for (const record of steps) {
       expect(record.prevToolIsError, `${record.label} saw an error tool result`).toBe(false);

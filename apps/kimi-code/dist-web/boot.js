@@ -4,7 +4,7 @@
     if (v === 'light' || v === 'dark' || v === 'system') {
       document.documentElement.dataset.colorScheme = v;
     }
-    // Font scale, with the same migration rules as useAppearance (web-core):
+    // Font scale, with the same migration rules as useAppearance (app-core):
     // the retired 'xxlarge' lands on 'xlarge', and a legacy px key maps onto
     // the nearest step — seeded pre-paint so a non-Medium user never flashes
     // the Medium scale before the bundle runs.
