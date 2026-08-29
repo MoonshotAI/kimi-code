@@ -130,9 +130,7 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const status = (text: string): string => chalk.hex(darkColors.success)(text);
   const link = (url: string): string =>
-    supportsHyperlinks()
-      ? toTerminalHyperlink(accent(shortRemoteControlUrl(url)), url)
-      : accent(url);
+    supportsHyperlinks() ? toTerminalHyperlink(accent(url), url) : accent(url);
   const docs = toTerminalHyperlink('docs', 'https://kimi.com/code/docs/remote-control');
   const feedback = toTerminalHyperlink('feedback', 'https://kimi.com/code/feedback');
   return [
@@ -171,17 +169,6 @@ export function formatRemoteControlStatus(status: RemoteControlStatus): string {
     case 'device_disconnected':
       return `  ${value('→')} ${label('Remote device disconnected')}\n`;
   }
-}
-
-function shortRemoteControlUrl(url: string): string {
-  const parsed = new URL(url);
-  const parts = parsed.pathname.split('/');
-  const deviceIndex = parts.indexOf('devices');
-  const deviceId = deviceIndex >= 0 ? parts[deviceIndex + 1] : undefined;
-  if (deviceId !== undefined && deviceId.length > 12) {
-    parts[deviceIndex + 1] = `${deviceId.slice(0, 6)}…${deviceId.slice(-4)}`;
-  }
-  return `${parsed.host}${parts.join('/')}`;
 }
 
 export function buildRemoteControlUrl(

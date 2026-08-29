@@ -17,6 +17,8 @@ import type {
 import { toStorageIoError } from '#/persistence/interface/storage';
 
 const WATCH_DEBOUNCE_MS = 150;
+const TORN_READ_RETRIES = 3;
+const TORN_READ_RETRY_DELAY_MS = 15;
 
 function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -35,11 +37,23 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
     const filePath = this.pathFor(scope, key);
-    try {
-      return await readFile(filePath);
-    } catch (error) {
-      if (isEnoent(error)) return undefined;
-      throw toStorageIoError(error, { path: filePath, op: 'read' });
+    for (let attempt = 0; ; attempt += 1) {
+      let bytes: Uint8Array;
+      try {
+        bytes = await readFile(filePath);
+      } catch (error) {
+        if (isEnoent(error)) return undefined;
+        throw toStorageIoError(error, { path: filePath, op: 'read' });
+      }
+      if (attempt >= TORN_READ_RETRIES) return bytes;
+      let size: number | undefined;
+      try {
+        size = (await stat(filePath)).size;
+      } catch {
+        size = undefined;
+      }
+      if (size === undefined || size === bytes.length) return bytes;
+      await new Promise((resolve) => setTimeout(resolve, TORN_READ_RETRY_DELAY_MS));
     }
   }
 

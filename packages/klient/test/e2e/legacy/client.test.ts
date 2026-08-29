@@ -437,9 +437,8 @@ describe('DaemonClient session action helpers', () => {
       fetchImpl: recordingFetchSequence(
         [
           okEnvelope({
-            ready: true,
+            models_ready: true,
             providers_count: 1,
-            default_model: model.model,
             managed_provider: null,
           }),
           okEnvelope({ items: [model] }),
@@ -451,7 +450,7 @@ describe('DaemonClient session action helpers', () => {
       ),
     });
 
-    await expect(client.getAuth()).resolves.toMatchObject({ default_model: model.model });
+    await expect(client.getAuth()).resolves.toMatchObject({ models_ready: true });
     await expect(client.listModels()).resolves.toEqual({ items: [model] });
     await expect(client.setDefaultModel(model.model)).resolves.toEqual({
       default_model: model.model,

@@ -216,7 +216,8 @@ interface ProviderModelSnapshot {
 // a registry can change capabilities (e.g. enabling reasoning) without changing
 // any model ID. Spreading the whole alias keeps this in sync with the schema
 // automatically; only `capabilities` needs normalizing because its order is not
-// meaningful.
+// meaningful. `defaultModel` joins the snapshot so a lost selection flips the
+// provider to changed and the re-selected default is written back.
 function providerModelSnapshot(
   config: ManagedKimiConfigShape,
   providerId: string,
@@ -235,7 +236,7 @@ function providerModelSnapshot(
     });
   }
   snapshots.sort((a, b) => a.alias.localeCompare(b.alias));
-  return JSON.stringify(snapshots);
+  return JSON.stringify({ defaultModel: config.defaultModel ?? null, models: snapshots });
 }
 
 function providerModelsEqual(
@@ -312,6 +313,14 @@ function restoreDefaultSelection(
   if (enabled !== undefined) {
     config.thinking = { ...config.thinking, enabled };
   }
+}
+
+async function rebaseSelectionAfterFetch(
+  host: RefreshProviderHost,
+  config: ManagedKimiConfigShape,
+): Promise<ManagedKimiConfigShape> {
+  const fresh = await host.getConfig();
+  return { ...config, defaultModel: fresh.defaultModel, thinking: fresh.thinking };
 }
 
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists
@@ -408,6 +417,7 @@ export async function refreshProviderModels(
         baseUrl: auth.baseUrl,
       });
       if (models.length > 0) {
+        config = await rebaseSelectionAfterFetch(host, config);
         const next = structuredClone(config);
         applyManagedKimiCodeConfig(next, {
           models,
@@ -487,6 +497,7 @@ export async function refreshProviderModels(
       models = filterModelsByPrefix(models, platform);
       if (models.length === 0) continue;
 
+      config = await rebaseSelectionAfterFetch(host, config);
       const selectedModelId = pickDefaultModel(config, providerId, models);
       const selectedModel = models.find((m) => m.id === selectedModelId);
       if (selectedModel === undefined) continue;
@@ -566,6 +577,7 @@ export async function refreshProviderModels(
       });
       if (models.length === 0) continue;
 
+      config = await rebaseSelectionAfterFetch(host, config);
       // A hand-written `managed:kimi-code` shares the OAuth branch's
       // `kimi-code/` alias prefix so the two shapes merge cleanly if the user
       // later logs in via OAuth; ordinary providers use their own id.
@@ -658,6 +670,7 @@ export async function refreshProviderModels(
     if (targetId !== undefined && !providerIds.includes(targetId)) continue;
     try {
       const { entries, source } = await fetchCustomRegistryFromSources(sources, host.userAgent);
+      config = await rebaseSelectionAfterFetch(host, config);
       // Build the whole batch on one clone so that several changed providers
       // from the same source do not overwrite each other's aliases, and so the
       // config we compare is exactly the config we persist.

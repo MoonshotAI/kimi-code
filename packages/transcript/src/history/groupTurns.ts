@@ -67,12 +67,14 @@ export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
     readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
-    readonly steeredContents?: ReadonlyMap<string, number>;
+    readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
   },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
-  const steeredContents = new Map(options?.steeredContents ?? []);
+  const steeredContents = new Map(
+    [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
+  );
   let turn: TurnDraft | undefined;
   let pendingNotificationFrames: {
     text: string;
@@ -217,10 +219,17 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
+      const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
+      if (markerKey !== undefined && !isUserSlashPrompt(message)) {
+        pushMarker(markerKey, { text: textOf(message), origin: message.origin });
+        continue;
+      }
       const contentKey = JSON.stringify(message.content ?? []);
-      const steeredRemaining = steeredContents.get(contentKey) ?? 0;
-      if (steeredRemaining > 0) {
-        steeredContents.set(contentKey, steeredRemaining - 1);
+      const steerKind = originKind ?? 'user';
+      const steeredByKind = steeredContents.get(contentKey);
+      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
+      if (steeredByKind !== undefined && steeredRemaining > 0) {
+        steeredByKind.set(steerKind, steeredRemaining - 1);
         const bundled = bundledSkillActivations(message);
         const parts = message.content ?? [];
         bundled.forEach((activation, index) => {
@@ -239,7 +248,6 @@ export function groupMessagesIntoSnapshot(
         });
         continue;
       }
-      const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
