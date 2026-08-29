@@ -1,26 +1,13 @@
-/**
- * `kimi-webbridge` capability entry (macOS / Linux / Windows).
- *
- * Layers: daemon binary (`~/.kimi-webbridge/bin/`, local HTTP daemon on
- * 127.0.0.1:10086) + agent wiring (the official `kimi-webbridge` plugin —
- * skills only, installed through `IPluginService`) + browser extension
- * (soft gate, user installs from the webstore or the manual zip).
- *
- * A running daemon is left untouched (start-if-down only, Kimi Work
- * coexistence). Reinstall replaces the on-disk binary from the latest
- * channel, which takes effect the next time the daemon starts. Installs
- * are detect-first and idempotent: only unsatisfied layers are redone,
- * setup re-enables a previously disabled wiring plugin, the binary step
- * requires the executable bit on POSIX (an interrupted install reads as
- * missing and re-downloads). Legacy standalone skill copies are moved into
- * a Kimi Code backup after the managed plugin has been refreshed, so plugin
- * updates become authoritative without deleting user files.
- */
-
 import { constants } from 'node:fs';
 import { access, chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import {
+  kimiCdnContentUrl,
+  kimiRegionProfile,
+  resolveKimiRegion,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { downloadToFile, runCommand } from '../host';
 import type {
@@ -32,9 +19,8 @@ import type {
 import type { CapabilityEntryContext } from './context';
 
 const PLUGIN_ID = 'kimi-webbridge';
-const PLUGIN_ZIP_URL =
-  'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip';
-const BINARY_CDN_BASE = 'https://cdn.kimi.com/webbridge/latest/releases';
+const PLUGIN_ZIP_PATH = 'plugins/official/kimi-webbridge.zip';
+const BINARY_CDN_PATH = 'webbridge/latest/releases';
 const DEFAULT_DAEMON_BASE_URL = 'http://127.0.0.1:10086';
 const STATUS_TIMEOUT_MS = 1_500;
 const START_TIMEOUT_MS = 30_000;
@@ -206,7 +192,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     throw new Error(`WebBridge daemon did not come up on ${baseUrl} — check ~/.kimi-webbridge/logs`);
   }
 
-  async function install(report: CapabilityInstallReporter): Promise<void> {
+  async function install(report: CapabilityInstallReporter): Promise<string | undefined> {
     const asset = binaryAssetName(ctx.platform, ctx.arch);
     if (asset === undefined) {
       throw new Error(`kimi-webbridge is not supported on ${ctx.platform}/${ctx.arch}`);
@@ -236,7 +222,10 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     }
 
     report('skill');
-    const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
+    const region = (await ctx.resolveRegion?.()) ?? resolveKimiRegion();
+    const summary = await ctx.plugins.installPlugin({
+      source: `${kimiRegionProfile(region).cdnBase}/${PLUGIN_ZIP_PATH}`,
+    });
     if (!summary.enabled) {
       await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
     }
@@ -251,6 +240,9 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
           `Could not back up the standalone kimi-webbridge skill: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
+    return standaloneSkillMigrationPending && standaloneSkillMigrationError === undefined
+      ? 'user-skill-migrated'
+      : undefined;
   }
 
   async function installBinary(
@@ -258,7 +250,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     asset: string,
   ): Promise<void> {
     report('download', 0);
-    const url = `${BINARY_CDN_BASE}/${asset}`;
+    const url = kimiCdnContentUrl(`${BINARY_CDN_PATH}/${asset}`);
     const staging = path.join(
       tmpdir(),
       `kimi-webbridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ctx.platform === 'win32' ? '.exe' : ''}`,

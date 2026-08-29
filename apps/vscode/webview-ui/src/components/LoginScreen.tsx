@@ -70,6 +70,11 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
   };
 
   const handleSubscribe = () => {
+    // TODO(region-split): derive this from the region profile's siteBase
+    // (`https://www.kimi.ai/code` for overseas logins). The webview cannot
+    // resolve the region itself — @moonshot-ai/kimi-code-oauth is not a
+    // webview dependency and its region resolver is Node-only — so the
+    // extension host needs to hand the site URL over the bridge first.
     window.open("https://www.kimi.com/code", "_blank");
     setShowSubscribeDialog(false);
   };

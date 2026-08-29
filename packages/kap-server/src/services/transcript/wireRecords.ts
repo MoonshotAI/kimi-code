@@ -1,12 +1,3 @@
-/**
- * `readWireRecords` — parse a session agent's `wire.jsonl` journal.
- *
- * A torn final line (crash mid-flush) is dropped; corruption anywhere else
- * throws so the caller surfaces 50001. The leading `metadata` envelope and any
- * non-`context.*` record are returned as-is and filtered by the transcript
- * reducer's `default` branch.
- */
-
 import { readFile } from 'node:fs/promises';
 
 export interface ContextRecord {

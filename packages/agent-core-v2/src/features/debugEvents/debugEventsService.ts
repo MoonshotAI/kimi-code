@@ -1,16 +1,3 @@
-/**
- * `debugEvents` domain — `IDebugEventsService` implementation.
- *
- * Read-only introspection over the kernel's debug accessors (`children` /
- * `servicesSnapshot` / `fiberHost.materializedInstance` / unit-book
- * `ledger.entries`), plus listener counters on the `event` domain's bus
- * implementations; no kernel state is mutated. Instances resolve up the parent
- * chain, so each is attributed to the first container that reaches it and
- * deduplicated by identity; unmaterialized on-demand units read as `undefined`
- * and are skipped. Contributed at App scope through `DebugEventsFeature`; the
- * injected container is the tree root.
- */
-
 import { IInstantiationService } from '#/_base/di/instantiation';
 import type { InstantiationService } from '#/_base/di/instantiationService';
 import type { LedgerEntryInfo } from '#/_base/lifecycle/ledger';

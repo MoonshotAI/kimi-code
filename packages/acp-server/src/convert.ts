@@ -181,6 +181,7 @@ export function acpMcpServersToConfigRecord(
         command: server.command,
         args: server.args,
         env: namedPairsToRecord(server.env),
+        runtime_id: 'local',
       };
       continue;
     }

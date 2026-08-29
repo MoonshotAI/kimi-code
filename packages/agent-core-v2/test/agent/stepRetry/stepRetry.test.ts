@@ -10,6 +10,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnStepRetrying } from '#/agent/stepRetry/stepRetryService';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
 
@@ -24,6 +26,7 @@ describe('stepRetry plugin', () => {
       await ctx.expectResumeMatches();
     } finally {
       await ctx.dispose();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -31,8 +34,19 @@ describe('stepRetry plugin', () => {
     return ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === name);
   }
 
+  function wireLoopEvents(eventType: string): Array<Record<string, unknown>> {
+    return ctx.allEvents
+      .filter(
+        (entry) =>
+          entry.type === '[wire]' &&
+          entry.event === 'context.append_loop_event' &&
+          (entry.args as { event?: { type?: string } }).event?.type === eventType,
+      )
+      .map((entry) => (entry.args as { event: Record<string, unknown> }).event);
+  }
+
   async function runTurn(turnId: number, signal?: AbortSignal) {
-    ctx.get(IEventBus).publish({ type: 'turn.started', turnId, origin: { kind: 'user' } });
+    void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const resultPromise = loop.run({ turnId, signal });
@@ -106,6 +120,37 @@ describe('stepRetry plugin', () => {
     ]);
   });
 
+  it('pairs every retried step.begin with a step.end in the wire', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) throw new APIConnectionError('terminated');
+        return {
+          id: 'retry-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 2, truncated: false });
+    const begins = wireLoopEvents('step.begin');
+    const ends = wireLoopEvents('step.end');
+    expect(begins).toHaveLength(2);
+    expect(ends.map((event) => event['finishReason'])).toEqual(['error', 'end_turn']);
+    expect(ends.map((event) => event['uuid'])).toEqual(begins.map((event) => event['uuid']));
+  });
+
   it('fails the turn after maxAttempts and reports the interruption only then', async () => {
     vi.useFakeTimers();
     let calls = 0;
@@ -148,7 +193,7 @@ describe('stepRetry plugin', () => {
       }),
     );
 
-    ctx.get(IEventBus).publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    void ctx.dispatcher.dispatch(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
     const loop = ctx.get(IAgentLoopService);
     loop.enqueue(new ContinuationStepRequest());
     const result = await loop.run({ turnId: 1 });
@@ -186,7 +231,7 @@ describe('stepRetry plugin', () => {
         throw new APIConnectionError('terminated');
       }),
     );
-    ctx.get(IEventBus).subscribe('turn.step.retrying', () => {
+    ctx.get(IEventBus).subscribe(TurnStepRetrying, () => {
       controller.abort(new Error('stop'));
     });
 
@@ -243,6 +288,86 @@ describe('stepRetry plugin', () => {
     failing = false;
     const second = await runTurn(2);
     expect(second).toEqual({ type: 'completed', steps: 1, truncated: false });
+  });
+
+  it('retries any request error inside the request when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) throw new APIStatusError(400, 'endpoint broken');
+        if (calls === 2) throw new APIStatusError(404, 'model not found');
+        if (calls === 3) throw new APIStatusError(429, 'slow down');
+        return {
+          id: 'infinite-retry-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 1, truncated: false });
+    expect(calls).toBe(4);
+    expect(rpcEvents('turn.step.retrying')).toEqual([]);
+    expect(rpcEvents('turn.step.interrupted')).toEqual([]);
+  });
+
+  it('keeps retrying past the per-step attempt budget when KIMI_CODE_INFINITE_RETRY is set', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls <= 12) throw new APIStatusError(429, 'slow down');
+        return {
+          id: 'infinite-retry-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    const result = await runTurn(1);
+
+    expect(result).toEqual({ type: 'completed', steps: 1, truncated: false });
+    expect(calls).toBe(13);
+    expect(rpcEvents('turn.step.retrying')).toEqual([]);
+  });
+
+  it('cancels the turn when aborted during an infinite retry backoff', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_INFINITE_RETRY', '1');
+    const controller = new AbortController();
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        throw new APIStatusError(400, 'endpoint broken');
+      }),
+    );
+    setTimeout(() => controller.abort(new Error('stop')), 100);
+
+    const result = await runTurn(1, controller.signal);
+
+    expect(result.type).toBe('cancelled');
+    expect(calls).toBe(1);
   });
 });
 

@@ -1,15 +1,3 @@
-/**
- * `kosongConfig` domain — models.dev upstream: fetch the third-party
- * directory, in-memory cache, built-in snapshot fallback, and the pruned
- * item mapping behind the import service's browse methods.
- *
- * The caller states the outbound `User-Agent`: this module is plain
- * module-level state with no container access, and the value depends on the
- * host and the configured identity, which only the calling service can see.
- * The cached catalog does not vary by caller, so a later call with a different
- * value still reuses it.
- */
-
 import { CoreErrors } from '#/_base/errors/codes';
 import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
@@ -123,7 +111,6 @@ export function modelsDevEntry(
   return Object.prototype.hasOwnProperty.call(catalog, id) ? catalog[id] : undefined;
 }
 
-
 function capabilityToStrings(capability: ModelCapability): string[] | undefined {
   const caps: string[] = [];
   if (capability.image_in) caps.push('image_in');
@@ -191,7 +178,6 @@ export function toModelsDevProviderItem(
     `unhandled models.dev import resolution: ${JSON.stringify(resolution)}`,
   );
 }
-
 
 export function modelsDevModelToRecord(providerId: string, model: ModelsDevModel): ModelRecord {
   const caps = capabilityToStrings(model.capability);

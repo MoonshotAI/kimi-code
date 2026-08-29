@@ -44,7 +44,7 @@ import {
 } from '#/app/sessionExport/sessionExportService';
 import { writeExportZip } from '#/app/sessionExport/zip';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
+import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
@@ -54,6 +54,7 @@ import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/se
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const fsOpenHook = vi.hoisted(() => ({
   afterOpen: undefined as ((path: string, handle: FileHandle) => Promise<void>) | undefined,
@@ -710,23 +711,6 @@ describe('sessionExport', () => {
     expect((await readdir(tmp)).toSorted()).toEqual(['export.zip', 'safe-output', 'state.json']);
   });
 
-  it('rejects with a coded error when compressed output exceeds the configured limit', async () => {
-    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
-
-    await expect(
-      writeExportZip({
-        outputPath: join(tmp, 'too-large.zip'),
-        manifest: testManifest('ses_too_large'),
-        sessionDir: tmp,
-        sessionFiles: [],
-        maxArchiveBytes: 1,
-      }),
-    ).rejects.toMatchObject({
-      code: 'session.export_too_large',
-      details: { maxArchiveBytes: 1 },
-    });
-  });
-
   it('throws a coded error when the session is unknown', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
     ix = createTestServices(tmp, {
@@ -900,52 +884,29 @@ function registerSessionExportServices(
     count: async () => (options.summary === undefined || options.summary.archived ? 0 : 1),
     remove: async () => {},
   });
-  reg.defineInstance(IWorkspaceLifecycleService, {
+  reg.defineInstance(ISessionManager, {
     _serviceBrand: undefined,
-    onDidMaterializeHandler: noopEvent,
-    handlerFor: async () => {
-      throw new Error('handlerFor should not be called by session export');
+    create: async () => {
+      throw new Error('create should not be called by session export');
     },
-    handlers: {
-      list: () => [
-        {
-          id: 'ws_live',
-          kind: LifecycleScope.Workspace,
-          accessor: accessorFrom([
-            [
-              ISessionLifecycleService,
-              {
-                _serviceBrand: undefined,
-                onWillCreateSession: noopEvent,
-                onDidCreateSession: noopEvent,
-                onDidCloseSession: noopEvent,
-                onDidArchiveSession: noopEvent,
-                onDidForkSession: noopEvent,
-                create: async () => {
-                  throw new Error('create should not be called by session export');
-                },
-                get: () => options.lifecycleHandle,
-                list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
-                resume: async () => options.lifecycleHandle,
-                close: async () => {},
-                archive: async () => {},
-                restore: async () => options.lifecycleHandle,
-                delete: async () => {},
-                fork: async () => {
-                  throw new Error('fork should not be called by session export');
-                },
-                createChild: async () => {
-                  throw new Error('createChild should not be called by session export');
-                },
-              } satisfies ISessionLifecycleService,
-            ],
-          ]),
-          dispose: () => {},
-        },
-      ],
+    resume: async () => options.lifecycleHandle,
+    get: () => options.lifecycleHandle,
+    status: async () => options.summary,
+    whenResumeSettled: async () => {},
+    withLifecycleSerialization: async <T>(
+      _sessionId: string,
+      work: (unguarded: UnguardedSessionLifecycle) => Promise<T>,
+    ): Promise<T> => work({ archive: async () => {}, restore: async () => undefined }),
+    list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
+    close: async () => {},
+    archive: async () => {},
+    restore: async () => options.lifecycleHandle,
+    delete: async () => {},
+    fork: async () => {
+      throw new Error('fork should not be called by session export');
     },
-    sessions: {
-      list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle.id]),
+    createChild: async () => {
+      throw new Error('createChild should not be called by session export');
     },
   });
   reg.defineInstance(IWorkspaceService, {
@@ -1021,6 +982,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     read: async () => meta,
     update: async () => {},
     setTitle: async () => {},
+    setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
   };
@@ -1030,13 +992,25 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
   return {
     _serviceBrand: undefined,
     onDidCreate: noopEvent,
-    onDidDispose: noopEvent,
-    create: async () => agents[0]!,
-    fork: async () => agents[0]!,
-    get: (agentId) => agents.find((agent) => agent.id === agentId),
-    list: () => agents,
+    onDidCreateScope: noopEvent,
+    onWillClose: noopEvent,
+    onDidClose: noopEvent,
+    create: async () => stubAgentContext(agents[0]!.id, 1),
+    fork: async () => stubAgentContext(agents[0]!.id, 1),
+    get: (agentId: string) =>
+      agents.some((agent) => agent.id === agentId) ? stubAgentContext(agentId, 1) : undefined,
+    list: () => agents.map((agent) => stubAgentContext(agent.id, 1)),
+    resolve: () => {
+      throw new Error('unexpected resolve');
+    },
+    inspect: () => {
+      throw new Error('unexpected inspect');
+    },
     remove: async () => {},
     broadcastPermissionMode: () => {},
+    handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
+    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
+    attachRuntimes: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

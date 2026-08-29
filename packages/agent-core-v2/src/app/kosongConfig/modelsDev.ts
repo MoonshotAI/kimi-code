@@ -1,18 +1,3 @@
-/**
- * `kosongConfig` domain — the third-party models.dev directory: its
- * api.json schema mirrored as types, plus the normalization that turns a
- * directory entry into an import decision.
- *
- * models.dev is an EXTERNAL schema that evolves on its own, so its mirror
- * lives here in the app layer, NOT in kosong — kosong's type surface stays
- * limited to the engine's own built-in vocabulary. The translation boundary
- * is this file: its output (`ModelsDevModel`) is already expressed in kosong
- * terms (`ModelCapability` / `ProviderType`), and nothing models.dev-shaped
- * leaks further into the engine. Callers consume a directory snapshot to
- * populate provider + model configuration without hand-writing context
- * windows or capabilities.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderType } from '#/kosong/provider/provider';
 

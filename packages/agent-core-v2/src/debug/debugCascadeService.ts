@@ -1,20 +1,3 @@
-/**
- * `debug` domain — `IDebugCascadeService` implementation.
- *
- * Read paths fold the kernel's debug accessors (`cascadeTree.engines` /
- * `history` / `pendingSnapshot` / `unitsSnapshot`); the triggers only call the
- * kernel's public entries (`unprovide` / `cascade.update` / `cascade.submit`)
- * after resolving `(scopePath, token)` to a live container and identifier.
- * Publishes `event.di.unit_changed` through `event` (`IEventService`) for
- * every unit state transition of the tree. Bound at App scope, activated with
- * the scope so the event feed is always on.
- *
- * NOTE: does not extend `Disposable` — the wire trigger `dispose(scopePath,
- * token)` collides with `IDisposable.dispose`; the no-arg overload below is
- * the framework teardown (the container retires this unit by calling
- * `dispose()`), the two-arg overload is the trigger.
- */
-
 import type { CascadeEngine } from '#/_base/di/cascadeEngine';
 import {
   IInstantiationService,
@@ -28,7 +11,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes } from '#/errors';
 
 import {
-  DI_UNIT_CHANGED_EVENT,
+  DiUnitChanged,
   IDebugCascadeService,
   type DebugCascadeEntry,
   type DebugFailedUnit,
@@ -180,7 +163,7 @@ export class DebugCascadeService implements IDebugCascadeService {
           state: change.state,
           error: change.error,
         };
-        this.events.publish({ type: DI_UNIT_CHANGED_EVENT, payload });
+        this.events.publish(new DiUnitChanged({ payload }));
       }),
     );
   }

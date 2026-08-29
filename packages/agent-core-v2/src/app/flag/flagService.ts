@@ -1,11 +1,3 @@
-/**
- * `flag` domain — `IFlagService` implementation.
- *
- * Resolves experimental flags from the environment, the `[experimental]`
- * config section, and defaults; reads flag definitions from the registry, and
- * reads/watches config. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -25,7 +17,6 @@ import { type FlagDefinitionInput, type FlagId, IFlagRegistry } from './flagRegi
 
 export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 
-// NOTE: stays Disposable — its own 'state' and 'config' collide with the Fiber
 export class FlagService extends Disposable implements IFlagService {
   declare readonly _serviceBrand: undefined;
   readonly registry: IFlagRegistry;

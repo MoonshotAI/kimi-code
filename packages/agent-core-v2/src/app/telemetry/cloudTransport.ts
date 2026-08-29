@@ -1,12 +1,10 @@
-/**
- * `telemetry` domain — `CloudTransport`, the HTTP transport for cloud
- * telemetry. Posts enriched events to the telemetry endpoint with Bearer
- * auth, retry, and a byte-store fallback for failed events, persisted through
- * the `storage` byte layer (`IFileSystemStorageService`) under the `telemetry` scope.
- * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
- */
-
 import { randomBytes } from 'node:crypto';
+
+import {
+  KIMI_REGION_PROFILES,
+  kimiRegionProfile,
+  resolveKimiRegion,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { isAbortError } from '#/_base/utils/abort';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -39,6 +37,8 @@ export interface CloudTransportOptions {
   readonly storage: IFileSystemStorageService;
   readonly deviceId: string;
   readonly endpoint?: string;
+  readonly homeDir?: string;
+  readonly readMarker?: boolean;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -47,7 +47,7 @@ export interface CloudTransportOptions {
   readonly now?: () => number;
 }
 
-export const TELEMETRY_ENDPOINT = 'https://telemetry-logs.kimi.com/v1/event';
+export const TELEMETRY_ENDPOINT = KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint;
 export const SERVER_EVENT_PREFIX = 'kfc_';
 export const USER_ID_PREFIX = 'kfc_device_id_';
 export const DISK_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -60,6 +60,12 @@ const JSONL_SUFFIX = '.jsonl';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+function defaultTelemetryEndpoint(homeDir?: string, readMarker = true): string {
+  return kimiRegionProfile(
+    resolveKimiRegion({ readMarker, homeDir }),
+  ).telemetryEndpoint;
+}
 
 export class CloudTransport {
   private readonly storage: IFileSystemStorageService;
@@ -75,7 +81,12 @@ export class CloudTransport {
   constructor(options: CloudTransportOptions) {
     this.storage = options.storage;
     this.deviceId = options.deviceId;
-    this.endpoint = options.endpoint ?? TELEMETRY_ENDPOINT;
+    this.endpoint =
+      options.endpoint ??
+      defaultTelemetryEndpoint(
+        options.homeDir,
+        options.readMarker ?? process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      );
     this.getAccessToken = options.getAccessToken ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.retryBackoffsMs = options.retryBackoffsMs ?? RETRY_BACKOFFS_MS;

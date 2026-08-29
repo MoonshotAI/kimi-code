@@ -1,23 +1,3 @@
-/**
- * `kosong/provider` domain — shared OpenAI-family wire mechanics.
- *
- * The shared pieces: content-part and tool conversion, usage extraction,
- * finish-reason normalization, the capability constants, and the error
- * converter.
- *
- * `convertOpenAIError`'s FIRST line is the contract's `throwIfAbortError`
- * guard: a user cancellation (SDK `APIUserAbortError`, bare `AbortError`, the
- * standard abort DOMException) is THROWN as the standard abort shape at the
- * very front of the classification chain — it can never be converted into,
- * nor returned as, a retryable provider error. After the guard,
- * already-converted `ChatProviderError`s pass through untouched; only then is
- * the optional trait-composed `convertError` hook consulted, so a vendor
- * classifies each RAW wire failure (e.g. quota 429s) exactly once before the
- * base rules run. The base itself classifies only OpenAI's own documented
- * `insufficient_quota` code as a non-retryable quota exhaustion —
- * vendor-specific quota signals belong on the vendor's trait.
- */
-
 import {
   APIConnectionError as OpenAIConnectionError,
   APIConnectionTimeoutError as OpenAITimeoutError,
@@ -243,7 +223,6 @@ export function convertToolMessageContent(
     .map((p) => convertContentPart(p))
     .filter((p): p is OpenAIContentPart => p !== null);
 }
-
 
 export const OPENAI_REASONING_CAPABILITY = Object.freeze({
   image_in: false,

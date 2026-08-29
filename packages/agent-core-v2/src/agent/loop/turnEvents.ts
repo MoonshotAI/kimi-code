@@ -1,19 +1,7 @@
-/**
- * `loop` domain — the `turn.*` / delta event payloads published through
- * `IEventBus` as a turn runs. These are the loop's share of the agent event
- * stream; consumers subscribe by `type`.
- * `turn.started` additionally carries the text extracted from the turn's
- * input parts (absent when the turn opened with no text part): consumers
- * that render the user's prompt must take it from there, because the context
- * append carrying the same text is not a bus event and lands later. The
- * prompt rides the event only for displayable user origins
- * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
- * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts.
- */
-
-import type { KimiErrorPayload } from '#/_base/errors/serialize';
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
+import { AgentEvent2 } from '#/app/event/event2';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
@@ -28,47 +16,99 @@ export type TurnInterruptReason =
   | 'filtered'
   | 'blocked';
 
-export interface TurnStartedEvent {
-  readonly type: 'turn.started';
+export interface TurnPromptAttachmentFile {
+  readonly kind: 'file';
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+export type TurnPromptAttachment =
+  | { readonly kind: 'image' | 'video' | 'audio'; readonly fileId: string }
+  | TurnPromptAttachmentFile;
+
+export interface TurnStartedPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
-export function turnPromptText(input: readonly ContentPart[]): string | undefined {
+export class TurnStarted extends AgentEvent2<TurnStartedPayload> {
+  static override readonly type = 'turn.started';
+  static override readonly observable = true;
+}
+export interface TurnStarted extends TurnStartedPayload {}
+
+export function turnPromptText(
+  input: readonly ContentPart[],
+  origin?: PromptOrigin,
+): string | undefined {
+  const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
   const text = input
     .filter((part): part is TextPart => part.type === 'text')
+    .slice(bundledBlocks)
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
 }
 
+export function turnPromptAttachments(
+  input: readonly ContentPart[],
+  origin?: PromptOrigin,
+): TurnStartedPayload['promptAttachments'] {
+  const attachments: TurnPromptAttachment[] = [];
+  const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
+    const fileId = parseDaemonFileUrl(url)?.fileId;
+    if (id === undefined) return fileId;
+    return fileId === id ? id : undefined;
+  };
+  for (const part of input) {
+    if (part.type === 'image_url') {
+      const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
+      if (fileId !== undefined) attachments.push({ kind: 'image', fileId });
+    } else if (part.type === 'video_url') {
+      const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
+      if (fileId !== undefined) attachments.push({ kind: 'video', fileId });
+    } else if (part.type === 'audio_url') {
+      const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
+      if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
+    }
+  }
+  if (origin?.kind === 'user' || origin?.kind === 'skill_activation') {
+    for (const attachment of origin.attachments ?? []) {
+      attachments.push({ kind: 'file', ...attachment });
+    }
+  }
+  return attachments.length > 0 ? attachments : undefined;
+}
+
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
   if (origin.kind === 'user') return true;
+  if (origin.kind === 'system_trigger' && origin.name === 'subagent') return true;
   return (
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
   );
 }
 
-export interface TurnEndedEvent {
-  readonly type: 'turn.ended';
-  readonly turnId: number;
-  readonly reason: TurnEndReason;
-  readonly error?: KimiErrorPayload;
-  readonly durationMs?: number;
-  readonly interruptReason?: TurnInterruptReason;
-}
-
-export interface TurnStepStartedEvent {
-  readonly type: 'turn.step.started';
+export interface TurnStepStartedPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
 }
 
-export interface TurnStepCompletedEvent {
-  readonly type: 'turn.step.completed';
+export class TurnStepStarted extends AgentEvent2<TurnStepStartedPayload> {
+  static override readonly type = 'turn.step.started';
+  static override readonly observable = true;
+}
+export interface TurnStepStarted extends TurnStepStartedPayload {}
+
+export interface TurnStepCompletedPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
@@ -84,8 +124,14 @@ export interface TurnStepCompletedEvent {
   readonly rawFinishReason?: string;
 }
 
-export interface TurnStepInterruptedEvent {
-  readonly type: 'turn.step.interrupted';
+export class TurnStepCompleted extends AgentEvent2<TurnStepCompletedPayload> {
+  static override readonly type = 'turn.step.completed';
+  static override readonly observable = true;
+}
+export interface TurnStepCompleted extends TurnStepCompletedPayload {}
+
+export interface TurnStepInterruptedPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly step: number;
   readonly stepId?: string;
@@ -93,35 +139,46 @@ export interface TurnStepInterruptedEvent {
   readonly message?: string;
 }
 
-export interface AssistantDeltaEvent {
-  readonly type: 'assistant.delta';
+export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload> {
+  static override readonly type = 'turn.step.interrupted';
+  static override readonly observable = true;
+}
+export interface TurnStepInterrupted extends TurnStepInterruptedPayload {}
+
+export interface AssistantDeltaPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly delta: string;
 }
 
-export interface ThinkingDeltaEvent {
-  readonly type: 'thinking.delta';
+export class AssistantDelta extends AgentEvent2<AssistantDeltaPayload> {
+  static override readonly type = 'assistant.delta';
+  static override readonly observable = true;
+}
+export interface AssistantDelta extends AssistantDeltaPayload {}
+
+export interface ThinkingDeltaPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly delta: string;
 }
 
-export interface ToolCallDeltaEvent {
-  readonly type: 'tool.call.delta';
+export class ThinkingDelta extends AgentEvent2<ThinkingDeltaPayload> {
+  static override readonly type = 'thinking.delta';
+  static override readonly observable = true;
+}
+export interface ThinkingDelta extends ThinkingDeltaPayload {}
+
+export interface ToolCallDeltaPayload {
+  readonly agentId: string;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly name?: string;
   readonly argumentsPart?: string;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'turn.started': TurnStartedEvent;
-    'turn.ended': TurnEndedEvent;
-    'turn.step.started': TurnStepStartedEvent;
-    'turn.step.completed': TurnStepCompletedEvent;
-    'turn.step.interrupted': TurnStepInterruptedEvent;
-    'assistant.delta': AssistantDeltaEvent;
-    'thinking.delta': ThinkingDeltaEvent;
-    'tool.call.delta': ToolCallDeltaEvent;
-  }
+export class ToolCallDelta extends AgentEvent2<ToolCallDeltaPayload> {
+  static override readonly type = 'tool.call.delta';
+  static override readonly observable = true;
 }
+export interface ToolCallDelta extends ToolCallDeltaPayload {}

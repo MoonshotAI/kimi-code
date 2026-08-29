@@ -19,6 +19,9 @@ import {
   fsStatManyRequestSchema,
   fsStatManyResponseSchema,
   fsStatRequestSchema,
+  fsRootSuggestRequestSchema,
+  fsSuggestRequestSchema,
+  fsSuggestResponseSchema,
 } from '../rest/fs';
 
 describe('fsListRequestSchema', () => {
@@ -283,6 +286,107 @@ describe('fsSearchResponseSchema (W11.1)', () => {
       truncated: true,
     };
     expect(fsSearchResponseSchema.parse(r)).toEqual(r);
+  });
+});
+
+describe('fsSuggestRequestSchema', () => {
+  it('applies all defaults on minimal body', () => {
+    const parsed = fsSuggestRequestSchema.parse({ query: 'Button' });
+    expect(parsed).toEqual({
+      query: 'Button',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+  });
+
+  it('accepts an empty query (workspace-root listing)', () => {
+    expect(fsSuggestRequestSchema.safeParse({ query: '' }).success).toBe(true);
+  });
+
+  it('caps limit at 200', () => {
+    expect(fsSuggestRequestSchema.safeParse({ query: 'a', limit: 201 }).success).toBe(false);
+    expect(fsSuggestRequestSchema.safeParse({ query: 'a', limit: 200 }).success).toBe(true);
+  });
+
+  it('round-trips a fully populated request', () => {
+    const body = {
+      query: 'apps/de',
+      limit: 100,
+      follow_gitignore: false,
+      show_hidden: true,
+      include_globs: ['**/*.ts'],
+      exclude_globs: ['**/node_modules/**'],
+    };
+    expect(fsSuggestRequestSchema.parse(body)).toEqual(body);
+  });
+});
+
+describe('fsRootSuggestRequestSchema', () => {
+  it('applies suggest defaults on a roots-only body', () => {
+    const parsed = fsRootSuggestRequestSchema.parse({ roots: ['/repo'], query: 'Button' });
+    expect(parsed).toEqual({
+      roots: ['/repo'],
+      query: 'Button',
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+  });
+
+  it('accepts multiple roots and runtime_id', () => {
+    const body = {
+      roots: ['/repo', '/extra'],
+      query: 'apps/de',
+      runtime_id: 'local',
+    };
+    expect(fsRootSuggestRequestSchema.parse(body)).toEqual({
+      ...body,
+      limit: 50,
+      follow_gitignore: true,
+      show_hidden: false,
+    });
+  });
+
+  it('rejects missing or empty roots', () => {
+    expect(fsRootSuggestRequestSchema.safeParse({ query: 'a' }).success).toBe(false);
+    expect(fsRootSuggestRequestSchema.safeParse({ roots: [], query: 'a' }).success).toBe(false);
+    expect(fsRootSuggestRequestSchema.safeParse({ roots: [''], query: 'a' }).success).toBe(false);
+  });
+
+  it('rejects more than 32 roots', () => {
+    const roots = Array.from({ length: 33 }, (_, i) => `/root-${i}`);
+    expect(fsRootSuggestRequestSchema.safeParse({ roots, query: 'a' }).success).toBe(false);
+    expect(
+      fsRootSuggestRequestSchema.safeParse({ roots: roots.slice(0, 32), query: 'a' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a missing query', () => {
+    expect(fsRootSuggestRequestSchema.safeParse({ roots: ['/repo'] }).success).toBe(false);
+  });
+});
+
+describe('fsSuggestResponseSchema', () => {
+  it('round-trips an empty response', () => {
+    expect(fsSuggestResponseSchema.parse({ items: [], truncated: false }))
+      .toEqual({ items: [], truncated: false });
+  });
+
+  it('round-trips a populated response', () => {
+    const r = {
+      items: [
+        {
+          path: 'apps/desktop',
+          name: 'desktop',
+          kind: 'directory' as const,
+          score: 0.9,
+          match_positions: [5, 6],
+        },
+      ],
+      truncated: true,
+    };
+    expect(fsSuggestResponseSchema.parse(r)).toEqual(r);
   });
 });
 

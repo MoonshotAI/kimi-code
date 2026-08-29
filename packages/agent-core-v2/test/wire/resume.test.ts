@@ -10,15 +10,14 @@ import {
 } from '#/_base/errors/unexpectedError';
 import {
   WIRE_PROTOCOL_VERSION,
-  IAgentGoalService,
+  AgentGoal,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { TurnModel } from '#/agent/loop/turnOps';
-import { IWireService } from '#/wire/wire';
+import { turnKey } from '#/agent/loop/turnOps';
 import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
@@ -39,7 +38,7 @@ const MOCK_PROVIDER = {
 } as const;
 
 function turnCurrentId(ctx: ReturnType<typeof testAgent>): number {
-  return ctx.get(IWireService).getModel(TurnModel).nextTurnId - 1;
+  return ctx.agentState.get(turnKey).nextTurnId - 1;
 }
 
 describe('Agent resume', () => {
@@ -65,7 +64,7 @@ describe('Agent resume', () => {
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
-  it('reconciles a pending user interruption after restore when the reminder is missing', async () => {
+  it('does not reconstruct an event-point interruption after restore', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
       {
@@ -104,13 +103,19 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.context.get()).toContainEqual(
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+      expect(ctx.context.get()).not.toContainEqual(
         expect.objectContaining({
           role: 'user',
           origin: { kind: 'injection', variant: 'interruption' },
         }),
       );
-      expect(persistence.appended).toContainEqual(
+      expect(persistence.appended).not.toContainEqual(
         expect.objectContaining({
           type: 'context.append_message',
           message: expect.objectContaining({
@@ -118,11 +123,78 @@ describe('Agent resume', () => {
           }),
         }),
       );
-      expect(persistence.appended).toContainEqual(
-        expect.objectContaining({ type: 'interruptionReminder.recorded', turnId: 0 }),
-      );
 
       await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('resumes a journal that stops mid-turn without any turn-closing record', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      contextAppendRecord(0, [{ role: 'user', text: 'dangling turn', origin: { kind: 'user' } }]),
+      turnPromptRecord(0, { kind: 'user' }),
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-0', turnId: '0', step: 1 },
+      },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.llmCalls).toHaveLength(0);
+      expect(turnCurrentId(ctx)).toBe(0);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+
+      expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 1 });
+      expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+        turnId: 1,
+        reason: 'completed',
+      });
+      expect(findRpcEvent(ctx.allEvents, 'error')).toBeUndefined();
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('does not reconcile a legacy interruption whose delivery was recorded', async () => {
+    const persistence = new RecordingAgentPersistence([
+      resumeConfigRecord(),
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'Hello' }],
+        origin: { kind: 'user' },
+      },
+      { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled' },
+      { type: 'interruptionReminder.recorded', turnId: 0 },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
+      await ctx.untilTurnEnd();
+
+      expect(ctx.context.get()).not.toContainEqual(
+        expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
+      );
     } finally {
       await ctx.dispose();
     }
@@ -134,7 +206,7 @@ describe('Agent resume', () => {
     const ctx = testAgent(
       execEnvServices({
         hostFs: createFakeHostFs({ readText: vi.fn().mockResolvedValue('') }),
-        processRunner: createFakeProcessRunner({ exec: execWithEnv }),
+        processRunner: createFakeProcessRunner({ spawn: execWithEnv }),
       }),
       { autoConfigure: false, persistence },
     );
@@ -168,6 +240,7 @@ describe('Agent resume', () => {
         messages:
           user: text "Historical compacted summary."
           user: text "Fresh prompt after resume"
+          user: text <date-reminder>
           user: text <plan-mode-reminder>
     `);
   });
@@ -376,7 +449,7 @@ describe('Agent resume', () => {
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
       call 1:
         system: <system-prompt>
-        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, Write
+        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
           user: text "Historical prompt before skill"
           assistant: []  calls call_resume_write:Write { "path": "result.txt" }, call_resume_skill:Skill { "skill": "review" }
@@ -384,6 +457,7 @@ describe('Agent resume', () => {
           tool[call_resume_skill]: text "skill loaded"
           user: text "<system-reminder>\\nresume skill body\\n</system-reminder>"
           user: text "Fresh prompt after deferred resume"
+          user: text <date-reminder>
     `);
     await ctx.expectResumeMatches();
   });
@@ -702,7 +776,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      const goal = ctx.get(IAgentGoalService).getGoal().goal;
+      const goal = ctx.resolve(AgentGoal).getGoal().goal;
       expect(goal).toMatchObject({
         status: 'paused',
         wallClockMs: 7_000,
@@ -759,7 +833,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+      expect(ctx.resolve(AgentGoal).getGoal().goal).toMatchObject({
         status: 'paused',
         wallClockMs: 5_000,
       });
@@ -904,8 +978,11 @@ describe('Agent resume', () => {
 
       expect(ctx.context.get()).toHaveLength(1);
       await expect(ctx.get(IAgentPlanService).status()).resolves.toBeNull();
-      expect(unexpected).toHaveLength(1);
-      expect(unexpected[0]).toMatchObject({
+      const malformed = unexpected.filter((error) =>
+        String((error as Error).message).includes('Malformed wire record'),
+      );
+      expect(malformed).toHaveLength(1);
+      expect(malformed[0]).toMatchObject({
         code: 'wire.unknown_record',
         details: { type: 'context.undo', index: 1 },
       });

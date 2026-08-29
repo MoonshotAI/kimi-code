@@ -1,31 +1,8 @@
-/**
- * `kosongConfig` domain — config-section declarations for kosong.
- *
- * The persistence wrapper for kosong's provider/model registries and the
- * thinking / model-catalog / secondary-model preferences: declares every
- * kosong-owned section constant and its zod schema, plus the env bindings /
- * write-path strips and the snake_case ↔ camelCase TOML transforms. Where
- * kosong owns a pure type (`providers` / `models` / `thinking`), the schema
- * is re-derived from it and pinned by an `AssertExact` assertion (schema ≡
- * type at compile time); `modelCatalog` and `secondaryModel` have no
- * kosong-side type — theirs derive from the local schemas. Self-registered
- * at module load via `registerConfigSection`.
- *
- * `ProviderTypeSchema` is deliberately free-form text: vendor identity is
- * NOT enumerated at parse time. Validation happens at resolve time against
- * kosong's provider-definition registry, which is what allows external
- * packages to register new vendors without touching this schema.
- *
- * Side-effect module: production imports it for the registration side
- * effects; tests import it on demand.
- */
-
 import { z } from 'zod';
 
 import {
   type ConfigStripEnv,
   envBindings,
-  stripEnvBoundFields,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
@@ -42,7 +19,6 @@ import type { ModelOverride, ModelRecord, ModelsSection } from '#/kosong/model/m
 import type { ThinkingConfig } from '#/kosong/model/thinking';
 import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/kosong/provider/provider';
 import { ProtocolSchema } from '#/kosong/protocol/protocol';
-
 
 export const PROVIDERS_SECTION = 'providers';
 
@@ -160,7 +136,6 @@ registerConfigSection(PROVIDERS_SECTION, ProvidersSectionSchema, {
   fromToml: providersFromToml,
   toToml: providersToToml,
 });
-
 
 export const MODELS_SECTION = 'models';
 
@@ -282,7 +257,6 @@ registerConfigSection(MODELS_SECTION, ModelsSectionSchema, {
   toToml: modelsToToml,
 });
 
-
 export const THINKING_SECTION = 'thinking';
 
 export const ThinkingConfigSchema = z.object({
@@ -310,33 +284,6 @@ registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
   env: thinkingEnvBindings,
   stripEnv: stripThinkingEnv,
 });
-
-export const SECONDARY_MODEL_SECTION = 'secondaryModel';
-
-export const SECONDARY_MODEL_ENV = 'KIMI_SECONDARY_MODEL';
-export const SECONDARY_MODEL_EFFORT_ENV = 'KIMI_SECONDARY_EFFORT';
-
-export const SecondaryModelConfigSchema = ModelOverrideSchema.extend({
-  model: z.string().min(1).optional(),
-});
-
-export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
-
-function parseNonEmptyEnv(raw: string): string | undefined {
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-export const secondaryModelEnvBindings = envBindings(SecondaryModelConfigSchema, {
-  model: { env: SECONDARY_MODEL_ENV, parse: parseNonEmptyEnv },
-  defaultEffort: { env: SECONDARY_MODEL_EFFORT_ENV, parse: parseNonEmptyEnv },
-});
-
-registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
-  env: secondaryModelEnvBindings,
-  stripEnv: stripEnvBoundFields(secondaryModelEnvBindings),
-});
-
 
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 

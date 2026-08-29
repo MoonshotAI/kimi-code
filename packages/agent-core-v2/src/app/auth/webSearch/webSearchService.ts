@@ -1,26 +1,3 @@
-/**
- * `auth` domain (cross-cutting) — `IWebSearchProviderService` implementation.
- *
- * Resolves the `WebSearch` backend from two sources, in precedence order:
- * (1) an explicit `[services.moonshot_search]` config section (read through
- * `config`) — built with its `apiKey` and/or an `oauth` ref resolved
- * through `IOAuthService.resolveTokenProvider(...)`; and (2) the managed Kimi
- * OAuth provider (`managed:kimi-code`) when it carries an `oauth` ref (the
- * state after a successful Kimi login), whose bearer token comes from
- * `IOAuthService.resolveTokenProvider(...)` and whose base URL is derived from
- * the provider's `baseUrl`. The explicit config wins over the managed
- * derivation. When neither source is configured it yields `undefined`.
- * Tests and hosts that need a custom backend bind `IWebSearchProviderService`
- * directly. Bound at App scope.
- *
- * Default headers split by who chose the endpoint: a `[services]` entry names
- * its own, so that path sends `agentIdentity`'s frozen `requestHeaders` — the
- * host header set with the `User-Agent` product token rewritten to the
- * configured identity — while the managed OAuth path sends the host's own
- * headers (`IBootstrapService.args.requestHeaders`) verbatim, being the
- * endpoint the session authenticated against.
- */
-
 import {
   KIMI_CODE_PROVIDER_NAME,
   kimiCodeBaseUrl,

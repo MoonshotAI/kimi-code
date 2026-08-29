@@ -1,4 +1,5 @@
-import type { HookDefConfig } from '#/agent/externalHooks/configSection';
+import type { IWaitUntil } from '#/_base/event';
+import type { HookDefConfig } from '#/features/externalHooks/configSection';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
@@ -39,6 +40,7 @@ export interface PluginManifest {
   readonly homepage?: string;
   readonly license?: string;
   readonly skills?: readonly string[];
+  readonly rootSkillFallback?: boolean;
   readonly agents?: readonly string[];
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
@@ -68,6 +70,13 @@ export interface PluginMcpServerInfo {
   readonly url?: string;
   readonly envKeys?: readonly string[];
   readonly headerKeys?: readonly string[];
+}
+
+export interface PluginMcpServerEntry {
+  readonly name: string;
+  readonly config: McpServerConfig;
+  readonly pluginId: string;
+  readonly serverName: string;
 }
 
 export interface PluginCommandDef {
@@ -163,6 +172,8 @@ export interface ReloadSummary {
   readonly removed: readonly string[];
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
 }
+
+export type PluginReloadEvent = ReloadSummary & IWaitUntil;
 
 export interface PluginMutation {
   readonly kind: 'install' | 'enable' | 'disable' | 'remove' | 'mcp-server';

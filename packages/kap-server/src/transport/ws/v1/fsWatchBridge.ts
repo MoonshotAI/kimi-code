@@ -1,41 +1,14 @@
-/**
- * `FsWatchBridge` — volatile `/api/v1/ws` delivery for filesystem changes.
- *
- * Turns the core `IWorkspaceFsWatchService` feed into `event.fs.changed`
- * frames on the v1 WebSocket, byte-compatible with the v1 server
- * (`packages/server/.../fsWatcherService.ts`):
- *
- *   client → `{type:'watch_fs_add',    id, payload:{session_id, paths}}`
- *   client → `{type:'watch_fs_remove', id, payload:{session_id, paths}}`
- *   server → `{type:'ack', id, code, payload:{watched_paths, current_count}}`
- *   server → `{type:'event.fs.changed', seq, session_id, timestamp, payload}`
- *
- * The bridge is transport state (like {@link ConnectionRegistry} /
- * {@link SessionEventBroadcaster}); it is **not** DI-registered and carries no
- * `_serviceBrand`. It owns the per-`(connection, session)` subscription sets,
- * fans the core feed out to each connection filtered by that connection's
- * paths, and assigns a per-session monotonic `seq`. Frames are sent straight
- * to the socket — they never enter the broadcaster / journal (fs changes are
- * volatile: on overflow the client sees `truncated` and re-syncs).
- *
- * The core watch service is Workspace-scoped: one os watcher per handler,
- * shared by every session of the workspace. The bridge holds ONE
- * `IWorkspaceFsWatchSubscription` per session (driven with the union of every
- * connection's paths for that session) and re-filters per connection on the
- * way out — two sessions of one workspace fan out from the same handler
- * watch instead of hanging a second os watcher.
- */
-
 import { isAbsolute, relative, sep } from 'node:path';
 
 import {
   type IDisposable,
-  type ISessionScopeHandle,
-  IWorkspaceFsWatchService,
   ISessionWorkspaceContext,
+  ISessionContext,
+  IWorkspaceInstanceManager,
   getLiveSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import type { Program } from '@moonshot-ai/agent-core-v2/program/program';
 import type {
   FsChangeEntry,
   FsChangeEvent,
@@ -45,6 +18,10 @@ import type {
 import type { EventEnvelope, JournalLogger } from './sessionEventJournal';
 
 const MAX_PATHS_PER_CONNECTION = 100;
+
+function sessionRuntimeKey(sessionId: string, runtimeId: string): string {
+  return `${sessionId}\0${runtimeId}`;
+}
 
 export const FS_WATCH_CODE = {
   OK: 0,
@@ -61,7 +38,6 @@ export interface FsChangedFrame {
   readonly payload: FsChangeEvent;
 }
 
-/** Minimal connection surface the bridge needs (satisfied by `WsConnectionV1`). */
 export interface FsWatchConnection {
   readonly id: string;
   send(envelope: EventEnvelope): void;
@@ -81,13 +57,17 @@ interface ConnEntry {
 
 interface SessionWatch {
   readonly id: string;
-  readonly session: ISessionScopeHandle;
-  readonly fsWatch: IWorkspaceFsWatchSubscription;
+  readonly runtimeId: string;
+  readonly workspaceId: string;
   readonly workspace: ISessionWorkspaceContext;
+  readonly program: Program;
+  readonly programSub: IDisposable;
+  programGeneration: string | undefined;
+  watchSub: IWorkspaceFsWatchSubscription | undefined;
+  watchEventSub: IDisposable | undefined;
   readonly conns: Map<string, ConnEntry>;
   union: Set<string>;
   seq: number;
-  sub: IDisposable | undefined;
 }
 
 export class FsWatchBridge {
@@ -105,12 +85,17 @@ export class FsWatchBridge {
     conn: FsWatchConnection,
     sessionId: string,
     rawPaths: readonly string[],
+    runtimeId: string,
   ): Promise<FsWatchAck> {
-    const resolved = this.resolveSession(sessionId);
-    if (resolved === undefined) {
+    const sw = this.resolveSession(sessionId, runtimeId);
+    if (sw === undefined) {
       return { code: FS_WATCH_CODE.SESSION_NOT_FOUND, msg: 'session not found' };
     }
-    const sw = resolved;
+    const watchSub = sw.watchSub;
+    if (watchSub === undefined) {
+      if (sw.conns.size === 0) this.teardownSession(sw);
+      return { code: 1, msg: 'fs watch unavailable' };
+    }
 
     const normalized: string[] = [];
     for (const raw of rawPaths) {
@@ -139,6 +124,16 @@ export class FsWatchBridge {
     for (const rel of toAdd) entry.paths.add(rel);
     this.connPathCount.set(conn.id, current + toAdd.length);
     this.recomputeAndApply(sw);
+    try {
+      await watchSub.ready;
+    } catch (error) {
+      for (const rel of toAdd) entry.paths.delete(rel);
+      if (entry.paths.size === 0) sw.conns.delete(conn.id);
+      this.connPathCount.set(conn.id, current);
+      this.recomputeAndApply(sw);
+      if (sw.conns.size === 0) this.teardownSession(sw);
+      throw error;
+    }
 
     return this.ok(sw, conn);
   }
@@ -147,8 +142,9 @@ export class FsWatchBridge {
     conn: FsWatchConnection,
     sessionId: string,
     rawPaths: readonly string[],
+    runtimeId: string,
   ): Promise<FsWatchAck> {
-    const sw = this.bySession.get(sessionId);
+    const sw = this.bySession.get(sessionRuntimeKey(sessionId, runtimeId));
     const entry = sw?.conns.get(conn.id);
     if (sw === undefined || entry === undefined) {
       return { code: FS_WATCH_CODE.OK, msg: 'success', watched_paths: [], current_count: this.countFor(conn.id) };
@@ -167,7 +163,6 @@ export class FsWatchBridge {
     return this.ok(sw, conn);
   }
 
-  /** Drop every subscription held by `conn` (called on socket close). */
   detachConnection(conn: FsWatchConnection): void {
     for (const sw of Array.from(this.bySession.values())) {
       const entry = sw.conns.get(conn.id);
@@ -180,25 +175,70 @@ export class FsWatchBridge {
     this.connPathCount.delete(conn.id);
   }
 
-  private resolveSession(sessionId: string): SessionWatch | undefined {
-    const existing = this.bySession.get(sessionId);
+  dispose(): void {
+    for (const sw of this.bySession.values()) this.teardownSession(sw);
+  }
+
+  private resolveSession(sessionId: string, runtimeId: string): SessionWatch | undefined {
+    const key = sessionRuntimeKey(sessionId, runtimeId);
+    const existing = this.bySession.get(key);
     if (existing !== undefined) return existing;
+
     const session = getLiveSessionById(this.core.accessor, sessionId);
     if (session === undefined) return undefined;
+    if (runtimeId !== 'local') throw new Error(`fs watch unavailable for runtime "${runtimeId}"`);
+    const workspace = session.accessor.get(ISessionWorkspaceContext);
+    const workspaceId = session.accessor.get(ISessionContext).workspaceId;
+    const instance = this.core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (instance === undefined) throw new Error(`workspace "${workspaceId}" unavailable`);
+    const program = instance.program;
+
     const sw: SessionWatch = {
       id: sessionId,
-      session,
-      // One subscription per session, held on the handler-shared Workspace
-      // watch service (resolved through the session's parent scope).
-      fsWatch: session.accessor.get(IWorkspaceFsWatchService).subscribe(),
-      workspace: session.accessor.get(ISessionWorkspaceContext),
+      runtimeId,
+      workspaceId,
+      workspace,
+      program,
+      programSub: program.onDidChange(() => {
+        this.onProgramChange(sw);
+      }),
+      programGeneration: undefined,
+      watchSub: undefined,
+      watchEventSub: undefined,
       conns: new Map(),
       union: new Set(),
       seq: 0,
-      sub: undefined,
     };
-    this.bySession.set(sessionId, sw);
+    this.bySession.set(key, sw);
+    this.attachWatch(sw);
     return sw;
+  }
+
+  private attachWatch(sw: SessionWatch): void {
+    sw.watchEventSub?.dispose();
+    sw.watchEventSub = undefined;
+    sw.watchSub?.dispose();
+    sw.watchSub = undefined;
+    let service;
+    try {
+      service = sw.program.watch;
+    } catch {
+      sw.programGeneration = undefined;
+      return;
+    }
+    sw.programGeneration = sw.program.snapshot().generation;
+    const sub = service.subscribe();
+    sw.watchSub = sub;
+    sw.watchEventSub = sub.onDidChangeFiles((event) => {
+      this.onWatchEvent(sw, event);
+    });
+    this.applyUnion(sw);
+  }
+
+  private onProgramChange(sw: SessionWatch): void {
+    if (!this.bySession.has(sessionRuntimeKey(sw.id, sw.runtimeId))) return;
+    if (sw.program.snapshot().generation === sw.programGeneration) return;
+    this.attachWatch(sw);
   }
 
   private recomputeAndApply(sw: SessionWatch): void {
@@ -207,23 +247,27 @@ export class FsWatchBridge {
       for (const p of paths) union.add(p);
     }
     sw.union = union;
-    sw.fsWatch.setWatchedPaths([...union]);
-    if (union.size > 0 && sw.sub === undefined) {
-      sw.sub = sw.fsWatch.onDidChangeFiles((ev) => this.onSessionEvent(sw.id, ev));
+    this.applyUnion(sw);
+  }
+
+  private applyUnion(sw: SessionWatch): void {
+    if (sw.watchSub === undefined) return;
+    try {
+      sw.watchSub.setWatchedPaths([...sw.union]);
+    } catch (error) {
+      this.logger?.warn({ sessionId: sw.id, err: String(error) }, 'fs-watch apply watched paths failed');
     }
   }
 
   private teardownSession(sw: SessionWatch): void {
-    sw.sub?.dispose();
-    sw.sub = undefined;
-    sw.fsWatch.setWatchedPaths([]);
-    sw.fsWatch.dispose();
-    this.bySession.delete(sw.id);
+    sw.programSub.dispose();
+    sw.watchEventSub?.dispose();
+    sw.watchSub?.dispose();
+    this.bySession.delete(sessionRuntimeKey(sw.id, sw.runtimeId));
   }
 
-  private onSessionEvent(sessionId: string, ev: FsChangeEvent): void {
-    const sw = this.bySession.get(sessionId);
-    if (sw === undefined) return;
+  private onWatchEvent(sw: SessionWatch, ev: FsChangeEvent): void {
+    if (!this.bySession.has(sessionRuntimeKey(sw.id, sw.runtimeId))) return;
     for (const { conn, paths } of sw.conns.values()) {
       let changes: FsChangeEntry[];
       if (ev.truncated === true) {
@@ -236,7 +280,7 @@ export class FsWatchBridge {
       const frame: FsChangedFrame = {
         type: 'event.fs.changed',
         seq: sw.seq,
-        session_id: sessionId,
+        session_id: sw.id,
         timestamp: new Date().toISOString(),
         payload: {
           changes,
@@ -247,19 +291,24 @@ export class FsWatchBridge {
       try {
         conn.send(frame as EventEnvelope);
       } catch (error) {
-        this.logger?.warn({ sessionId, err: String(error) }, 'fs-watch send failed');
+        this.logger?.warn({ sessionId: sw.id, err: String(error) }, 'fs-watch send failed');
       }
     }
   }
 
-  /** Lexical confinement + workspace-relative normalization (no `stat`). */
   private normalize(sw: SessionWatch, raw: string): string | undefined {
     if (raw === '' || raw === '/') return undefined;
     if (isAbsolute(raw)) return undefined;
     if (raw.split(/[/\\]+/).some((s) => s === '..')) return undefined;
-    const abs = sw.workspace.resolve(raw);
-    if (!sw.workspace.isWithin(abs)) return undefined;
-    return toRel(sw.workspace.workDir, abs);
+    let absolute: string;
+    try {
+      absolute = sw.workspace.resolve(raw);
+    } catch {
+      return undefined;
+    }
+    if (!sw.workspace.isWithin(absolute)) return undefined;
+    const rel = relative(sw.workspace.workDir, absolute);
+    return rel === '' ? '.' : rel.split(sep).join('/');
   }
 
   private ok(sw: SessionWatch, conn: FsWatchConnection): FsWatchAck {
@@ -275,13 +324,6 @@ export class FsWatchBridge {
   private countFor(connId: string): number {
     return this.connPathCount.get(connId) ?? 0;
   }
-}
-
-function toRel(cwd: string, abs: string): string {
-  if (abs === cwd) return '.';
-  const rel = relative(cwd, abs);
-  if (rel === '') return '.';
-  return rel.split(sep).join('/');
 }
 
 function isUnderAny(rel: string, parents: ReadonlySet<string>): boolean {

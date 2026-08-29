@@ -21,7 +21,8 @@
  * **Token + config** land via the toolkit's provisioning path: on success,
  * the `managed:kimi-code` provider + models entry are written to
  * `config.toml`, and the cached token is saved to credentials. Frontend
- * follow-up: hit `GET /v1/auth` to confirm `ready: true`.
+ * follow-up: hit `GET /v1/auth` to confirm
+ * `managed_provider.status: 'authenticated'` and `models_ready: true`.
  *
  * **Architecture**:
  *
@@ -97,8 +98,9 @@ export interface IOAuthService {
 
   /**
    * Logout — delete the stored token + strip the managed provider's
-   * `apply` config entries (provider + models). After this, `GET /v1/auth`
-   * flips to `ready: false`.
+   * `apply` config entries (provider + models). Afterwards `managed_provider`
+   * reports `unauthenticated`; `models_ready` only drops when the default
+   * model itself was managed — third-party defaults keep it `true`.
    */
   logout(providerName?: string): Promise<OAuthLogoutResponse>;
 }

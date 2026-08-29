@@ -23,25 +23,49 @@ After pasting, the input box shows a placeholder that you can edit like normal t
 
 ## Slash commands
 
-Anything starting with `/` is treated as a slash command. Typing `/` opens a completion menu that filters in real time as you keep typing; press `Esc` to close the menu. If nothing matches, the input is sent to the agent as a regular message.
+Type `/` to open the completion menu — it filters as you type, `Esc` closes it, and unmatched input goes to the agent as a regular message. Common commands:
 
-Active [Agent Skills](../customization/skills.md) are automatically registered as slash commands: ordinary external Skills are invoked with `/skill:<name>`, external sub-skills appear as dotted commands such as `/parent.child`, and built-in Skills appear directly as `/<name>` in the slash command panel. If an external skill name does not conflict with a system slash command, you can also drop the `skill:` prefix and type `/<name>` directly.
+| Command | Action |
+| --- | --- |
+| `/new` | Start a new session |
+| `/sessions` | Browse and resume past sessions |
+| `/compact` | Compact the current session's context |
+| `/undo` | Undo recent prompts |
+| `/model` | Switch the model used in the current session |
+| `/plan` | Toggle Plan mode (plan first, then execute) |
+| `/yolo` | Toggle YOLO mode (auto-approve regular tool calls) |
+| `/goal` | Start or manage goal mode |
+| `/help` | Show all commands |
 
-Some commands are only available when the agent is idle — you need to press `Esc` to interrupt streaming output or context compression before using them. Mode-toggle and query commands like `/yolo`, `/plan`, `/help`, and `/btw` are always available. For the full list, see [Slash commands reference](../reference/slash-commands.md).
+Active [Agent Skills](../customization/skills.md) are also registered as slash commands (e.g. `/skill:<name>`). For the full list, see [Slash commands reference](../reference/slash-commands.md).
 
 ## File references
 
-Type `@` to trigger file-path completion. Selecting a path inserts its relative form into your message; the agent loads the file content directly when it reads the message. File references work in both git and non-git directories, and folder suggestions end with `/` so you can keep completing paths inside them. If the fast search helper is still downloading, Kimi Code falls back to a basic filesystem scan. Hidden paths are available, but `.git` is excluded from suggestions.
+Type `@` to trigger file-path completion; the selected path is inserted in relative form, and the agent loads the file content directly when it reads your message.
 
-> `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills. A `/` typed after leading whitespace is treated as normal text, not as the slash-command menu.
+- **Where it works**: both git and non-git directories; hidden paths are included, `.git` is excluded
+- **Folder suggestions**: end with `/`, so you can keep completing paths inside them
+- **Fallback**: while the fast search helper is still downloading, Kimi Code falls back to a basic filesystem scan
+
+> `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills.
 
 ## Approval flow
 
-When the agent calls a tool that has side effects — modifying files, running commands — the TUI displays an approval panel for your confirmation. Approvals are not triggered for regular tool calls in YOLO mode, nor for writes to plan files in Plan mode.
+When the agent calls a tool that has side effects — modifying files, running commands — the TUI displays an approval panel for your confirmation.
 
-Use the arrow keys to select an option and press `Enter` to confirm, or press `1` / `2` / `3` to select by number directly. `Esc`, `Ctrl-C`, and `Ctrl-D` are all equivalent to rejecting.
+- **Approve**: select with the arrow keys and press `Enter`, or press `1` / `2` / `3` to choose directly
+- **Reject**: `Esc`, `Ctrl-C`, or `Ctrl-D`
+- **Approve for this session**: auto-approves the same kind of call for the rest of the session
+- **Permanent rules**: add allow / deny entries in [Configuration files](../configuration/config-files.md#permission)
 
-The panel typically includes an **Approve for this session** option; selecting it auto-approves the same kind of call for the rest of the session. For permanent rules, add allow / deny entries in [Configuration files](../configuration/config-files.md#permission).
+Approvals are not triggered for regular tool calls in YOLO mode, nor for writes to plan files in Plan mode.
+
+### YOLO / Auto mode
+
+**YOLO mode** (`/yolo`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, or exiting Plan mode — and the agent can still ask you questions.
+
+**Auto mode** (`/auto`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own.
+
 
 ## Mode switching
 
@@ -54,16 +78,6 @@ In Plan mode the agent first outputs an action plan and waits for your approval 
 
 After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode requires your confirmation even if YOLO mode is also active. Auto mode is the exception: plan exits are approved automatically and marked as "Auto-approved" in the transcript.
 
-### YOLO / Auto mode
-
-**YOLO mode** (`/yolo`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, or exiting Plan mode — and the agent can still ask you questions.
-
-**Auto mode** (`/auto`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own.
-
-::: warning
-YOLO mode skips confirmation for file writes and command execution. Only use it in working directories you trust.
-:::
-
 ### Shell mode
 
 Shell mode lets you run terminal commands without leaving the conversation. The command output is written into the conversation context, so the agent can see the results in later turns.
@@ -72,8 +86,35 @@ Shell mode lets you run terminal commands without leaving the conversation. The 
 - Exit: press `Backspace` or `Esc` in an empty input box; submitting a command also returns you to normal mode automatically.
 - Run in background: while a command is running, press `Ctrl+B` to move it to a background task.
 - Recall previous commands: with the input box empty in shell mode, press `↑` to browse earlier shell commands; recalling one keeps you in shell mode so it runs as a command again.
+- Long output: when a finished command's output is too long, the output card collapses automatically; press `Ctrl-O` to expand or collapse it together with tool output.
 
 In shell mode the input box shows a `!` prompt on the left and the border turns violet. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal, so Kimi can use `gh` afterward.
+
+### Goal mode
+
+A goal keeps the agent working toward a defined outcome across turns — a normal prompt says what to do next, a goal says what must become true. Use `/goal` for tasks with a clear finish line and verifiable evidence, like fixing a batch of failing tests.
+
+Write the objective after `/goal`, naming the finish line and the stop condition:
+
+```sh
+/goal Fix every checkout-regression bug, add or update tests for each fix, then run the checkout test suite
+```
+
+Avoid broad objectives like `/goal find every bug in this codebase` — with no success criteria, the agent may block immediately or work far longer than expected.
+
+Common management commands:
+
+| Command | Action |
+| --- | --- |
+| `/goal` or `/goal status` | Show the current goal and its progress |
+| `/goal pause` / `/goal resume` | Pause / resume the goal |
+| `/goal cancel` | Cancel the goal |
+| `/goal replace <objective>` | Replace the current goal |
+| `/goal next <objective>` | Queue a follow-up goal that starts when the current one completes |
+
+A goal stops in three ways: **complete** — achieved, cleared, and summarized; **paused** — you paused it, interrupted a turn, or an error occurred; **blocked** — the agent can't continue as stated and writes a short message explaining why. In the web UI, the goal bar below the conversation lets you pause, resume, or cancel the goal directly.
+
+> Tip: in `manual` permission mode a goal may stop at tool approvals; non-interactive mode only supports creating goals (`kimi -p "/goal ..."`) — exit code `0` on complete, `3` on blocked, `6` on paused.
 
 ## During streaming output
 

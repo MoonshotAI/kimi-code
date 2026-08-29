@@ -1,4 +1,5 @@
 import { ErrorCodes, KimiError } from '#/errors';
+import { McpServerConfigSchema } from '#/config/schema';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 import type {
   ActivateSkillPayload,
@@ -97,7 +98,18 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async reconnectMcpServer(payload: ReconnectMcpServerPayload): Promise<void> {
-    await this.session.mcp.reconnect(payload.name);
+    if (payload.config === undefined) {
+      await this.session.mcp.reconnect(payload.name);
+      return;
+    }
+    const parsed = McpServerConfigSchema.safeParse(payload.config);
+    if (!parsed.success) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid MCP server config for "${payload.name}": ${parsed.error.message}`,
+      );
+    }
+    await this.session.mcp.reconnect(payload.name, parsed.data);
   }
 
   generateAgentsMd(_payload: EmptyPayload): Promise<void> {

@@ -66,6 +66,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @moonshot-ai/pi-tui test
 
+  # The VS Code extension suite runs on the default (v2) engine as part of the
+  # sharded root run above; this job reruns it on the legacy v1 engine, which
+  # the extension selects through the rollback env var.
+  test-vscode-legacy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter kimi-code test
+        env:
+          KIMI_CODE_LEGACY_FLAG: "1"
+
   test-windows:
     runs-on: windows-latest
     # Temporarily disabled while Windows tests are being stabilized.
