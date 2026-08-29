@@ -78,8 +78,21 @@ describe('resolveTargetDeps', () => {
 
   it('encodes node-pty native files and executable modes per target', () => {
     const linuxPty = resolveTargetDeps('linux-x64').find((d) => d.resolvedName === 'node-pty');
-    expect(linuxPty?.nativeFileRelatives).toEqual([]);
-    expect(linuxPty?.nativeFileModes).toEqual({});
+    expect(linuxPty?.nativeFileRelatives).toEqual([
+      'prebuilds/linux-x64/pty.node',
+      'prebuilds/linux-x64/spawn-helper',
+    ]);
+    expect(linuxPty?.nativeFileModes).toEqual({
+      'prebuilds/linux-x64/spawn-helper': 0o755,
+    });
+    const linuxArmPty = resolveTargetDeps('linux-arm64').find((d) => d.resolvedName === 'node-pty');
+    expect(linuxArmPty?.nativeFileRelatives).toEqual([
+      'prebuilds/linux-arm64/pty.node',
+      'prebuilds/linux-arm64/spawn-helper',
+    ]);
+    expect(linuxArmPty?.nativeFileModes).toEqual({
+      'prebuilds/linux-arm64/spawn-helper': 0o755,
+    });
 
     const macPty = resolveTargetDeps('darwin-arm64').find((d) => d.resolvedName === 'node-pty');
     expect(macPty?.nativeFileRelatives).toEqual([

@@ -49,13 +49,13 @@ const nodePtyWinSidecars = Object.freeze([
   'conpty/OpenConsole.exe',
 ]);
 
-const nodePtyDarwinFiles = Object.freeze(['pty.node', 'spawn-helper']);
+const nodePtyUnixFiles = Object.freeze(['pty.node', 'spawn-helper']);
 
 const nodePtyNativeFileByTarget = Object.freeze({
-  'darwin-arm64': nodePtyDarwinFiles.map((name) => `prebuilds/darwin-arm64/${name}`),
-  'darwin-x64': nodePtyDarwinFiles.map((name) => `prebuilds/darwin-x64/${name}`),
-  'linux-arm64': [],
-  'linux-x64': [],
+  'darwin-arm64': nodePtyUnixFiles.map((name) => `prebuilds/darwin-arm64/${name}`),
+  'darwin-x64': nodePtyUnixFiles.map((name) => `prebuilds/darwin-x64/${name}`),
+  'linux-arm64': nodePtyUnixFiles.map((name) => `prebuilds/linux-arm64/${name}`),
+  'linux-x64': nodePtyUnixFiles.map((name) => `prebuilds/linux-x64/${name}`),
   'win32-arm64': [
     ...nodePtyWinSidecars.map((name) => `prebuilds/win32-arm64/${name}`),
     'lib/worker/conoutSocketWorker.js',
