@@ -16,6 +16,7 @@ const optionalRuntimeRequires = new Set([
   'canvas',
   'chokidar',
   'cpu-features',
+  'node-pty',
   'fast-json-stringify/lib/serializer',
   'fast-json-stringify/lib/validator',
   'utf-8-validate',

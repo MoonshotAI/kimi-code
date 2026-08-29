@@ -204,7 +204,7 @@ async function collectPackageFiles({
   return sorted;
 }
 
-async function packageManifestEntries({ packageName, packageRoot, files, target }) {
+async function packageManifestEntries({ packageName, packageRoot, files, target, fileModes = {} }) {
   const root = `node_modules/${packageName}`;
   const entries = [];
   const assets = {};
@@ -214,10 +214,12 @@ async function packageManifestEntries({ packageName, packageRoot, files, target 
     const packageRelativePath = toPosixPath(relative(packageRoot, file));
     const relativePath = `${root}/${packageRelativePath}`;
     const assetKey = `native/${target}/${relativePath}`;
+    const mode = fileModes[packageRelativePath];
     entries.push({
       assetKey,
       relativePath,
       sha256: sha256(sourceBytes),
+      mode,
     });
     assets[assetKey] = file;
   }
@@ -268,6 +270,7 @@ export async function collectNativeAssets({ appRoot, target }) {
       packageRoot,
       files,
       target,
+      fileModes: dep.nativeFileModes ?? {},
     });
     manifestPackages.push(result.packageManifest);
     Object.assign(assets, result.assets);
