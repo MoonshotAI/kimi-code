@@ -94,6 +94,7 @@ import {
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import {
   DEFAULT_SWARM_TIMEOUT_MS,
   resolveSwarmTimeoutMs,
@@ -129,6 +130,11 @@ import { stubFlag } from '../flag/stubs';
 function secondaryModelFlags(enabled = true) {
   return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
 }
+
+const permissiveModelCatalog = {
+  _serviceBrand: undefined,
+  get: (id: string) => ({ id }) as Model,
+} as unknown as IModelCatalog;
 
 const TEST_OS_ENV = {
   osKind: 'Linux',
@@ -1871,11 +1877,11 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
     const noPool = await createConfig({});
-    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
-    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(noPool.config, secondaryModelFlags(), own, 'primary', permissiveModelCatalog)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
@@ -1885,15 +1891,15 @@ describe('subagent config section', () => {
       {},
       '[secondary_model]\ndefault_model = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = "hard tasks"\n',
     );
-    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'provider/smart')).toEqual({
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'provider/smart', permissiveModelCatalog)).toEqual({
       model: 'provider/smart',
       thinking: undefined,
     });
-    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(pool.config, secondaryModelFlags(), own, 'primary', permissiveModelCatalog)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
@@ -1907,12 +1913,12 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(false), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
     expect(() =>
-      resolveSubagentBinding(config, secondaryModelFlags(false), own, 'provider/fast'),
+      resolveSubagentBinding(config, secondaryModelFlags(false), own, 'provider/fast', permissiveModelCatalog),
     ).toThrow(/no \[secondary_model\.models\] pool is configured/);
 
     disposables.dispose();
@@ -1925,15 +1931,15 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary', permissiveModelCatalog)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart', permissiveModelCatalog)).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
     );
 
@@ -1955,11 +1961,11 @@ describe('subagent config section', () => {
       defaultModel: 'provider/fast',
       models: { 'provider/fast': '' },
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: 'low',
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart')).toThrow(
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/smart', permissiveModelCatalog)).toThrow(
       /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
     );
 
@@ -1973,7 +1979,7 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/slow"\ndefault_model = "provider/fast"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
@@ -1981,16 +1987,17 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('does not let the legacy model key substitute for a pool table default_model', async () => {
+  it('falls back to the first pool entry when a pool table has no default_model', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
       {},
       '[secondary_model]\nmodel = "provider/fast"\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
-      '[secondary_model].default_model is required when [secondary_model.models] is configured',
-    );
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
+      model: 'provider/fast',
+      thinking: undefined,
+    });
 
     disposables.dispose();
   });
@@ -2002,11 +2009,11 @@ describe('subagent config section', () => {
       '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary', permissiveModelCatalog)).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
     );
 
@@ -2044,11 +2051,11 @@ describe('subagent config section', () => {
       '[secondary_model]\ndefault_model = "provider/fast"\ndefault_effort = "max"\n',
     );
 
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: 'max',
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary', permissiveModelCatalog)).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
@@ -2067,25 +2074,25 @@ describe('subagent config section', () => {
       defaultModel: 'provider/fast',
       force: true,
     });
-    expect(resolveSubagentBinding(config, secondaryModelFlags(), own)).toEqual({
+    expect(resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
     });
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary')).toThrow(
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'primary', permissiveModelCatalog)).toThrow(
       /Invalid model "primary": \[secondary_model\]\.force is set/,
     );
 
     disposables.dispose();
   });
 
-  it('rejects force combined with a models table at spawn resolution, matching startup validation', async () => {
+  it('rejects force combined with a models table at spawn resolution', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig(
       {},
       '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
     );
 
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own)).toThrow(
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, undefined, permissiveModelCatalog)).toThrow(
       /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
     );
 
@@ -2101,7 +2108,7 @@ describe('subagent config section', () => {
 
     let caught: unknown;
     try {
-      resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/typo');
+      resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/typo', permissiveModelCatalog);
     } catch (error) {
       caught = error;
     }
@@ -2118,7 +2125,7 @@ describe('subagent config section', () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
     const { config, disposables } = await createConfig({});
 
-    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/fast')).toThrow(
+    expect(() => resolveSubagentBinding(config, secondaryModelFlags(), own, 'provider/fast', permissiveModelCatalog)).toThrow(
       /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
     );
 

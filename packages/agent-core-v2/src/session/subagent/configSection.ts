@@ -111,84 +111,106 @@ export function isSubagentModelForced(config: IConfigService): boolean {
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.force === true;
 }
 
-export function exposesSubagentModelChoice(config: IConfigService, flags: IFlagService): boolean {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return false;
-  if (isSubagentModelForced(config)) return false;
-  return resolveSubagentModelPool(config) !== undefined;
-}
-
 export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
   '[secondary_model].default_model is required when [secondary_model.models] is configured';
 
 export const SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE = `[secondary_model.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: it always binds the caller's own model. Rename the pool entry.`;
 
-export function assertValidSubagentModelPool(
-  pool: SubagentModelPool,
-  modelCatalog: IModelCatalog,
-): void {
-  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
-      details: {
-        section: SECONDARY_MODEL_SECTION,
-        field: 'models',
-        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
-      },
-    });
-  }
-  const aliases = Object.keys(pool.models);
-  if (pool.defaultModel === undefined) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
-      details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
-    });
-  }
-  if (!Object.hasOwn(pool.models, pool.defaultModel)) {
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      `[secondary_model].default_model "${pool.defaultModel}" is not a [secondary_model.models] key. Available models: ${aliases.join(', ')}.`,
-      { details: { model: pool.defaultModel, availableModels: aliases } },
-    );
-  }
-  for (const alias of aliases) {
-    try {
-      modelCatalog.get(alias);
-    } catch (error) {
-      throw new Error2(
-        ErrorCodes.CONFIG_INVALID,
-        `[secondary_model.models] entry "${alias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error, details: { model: alias } },
-      );
-    }
-  }
+export interface SubagentModelPoolResolution {
+  readonly pool: SubagentModelPool | undefined;
+  readonly issues: readonly string[];
 }
 
-export function assertValidSubagentModelConfig(
+export function resolveEffectiveSubagentModelPool(
   config: IConfigService,
   flags: IFlagService,
   modelCatalog: IModelCatalog,
-): void {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return;
+): SubagentModelPoolResolution {
+  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return { pool: undefined, issues: [] };
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.force === true) {
+    const issues: string[] = [];
     if (section.models !== undefined) {
-      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
-        details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
-      });
+      issues.push(SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE);
     }
-    if (section.defaultModel === undefined && section.model === undefined) {
-      throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE, {
-        details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },
-      });
+    const forcedModel = section.defaultModel ?? section.model;
+    if (forcedModel === undefined) {
+      issues.push(SECONDARY_MODEL_FORCE_REQUIRES_DEFAULT_MESSAGE);
+    } else {
+      try {
+        modelCatalog.get(forcedModel);
+      } catch (error) {
+        issues.push(
+          `[secondary_model] forced model "${forcedModel}" could not be resolved: ${error instanceof Error ? error.message : String(error)}. Subagent spawns will fail until this is fixed.`,
+        );
+      }
+    }
+    return { pool: undefined, issues };
+  }
+  const raw = resolveSubagentModelPool(config);
+  if (raw === undefined) return { pool: undefined, issues: [] };
+  const issues: string[] = [];
+  const models: Record<string, string> = {};
+  for (const [alias, description] of Object.entries(raw.models)) {
+    if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
+      issues.push(
+        `${SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE} The entry is ignored until renamed.`,
+      );
+      continue;
+    }
+    try {
+      modelCatalog.get(alias);
+      models[alias] = description;
+    } catch (error) {
+      issues.push(
+        `[secondary_model.models] entry "${alias}" could not be resolved: ${error instanceof Error ? error.message : String(error)}. The entry is ignored until fixed.`,
+      );
     }
   }
-  const pool = resolveSubagentModelPool(config);
-  if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+  const aliases = Object.keys(models);
+  if (aliases.length === 0) {
+    if (raw.defaultModel === undefined) {
+      issues.push(
+        `${SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE}; subagents inherit the caller's model until fixed.`,
+      );
+    } else if (!Object.hasOwn(raw.models, raw.defaultModel)) {
+      issues.push(
+        `[secondary_model].default_model "${raw.defaultModel}" is not a [secondary_model.models] key; subagents inherit the caller's model until fixed.`,
+      );
+    }
+    return { pool: undefined, issues };
+  }
+  let defaultModel =
+    raw.defaultModel !== undefined && Object.hasOwn(models, raw.defaultModel)
+      ? raw.defaultModel
+      : undefined;
+  if (defaultModel === undefined) {
+    defaultModel = aliases[0]!;
+    issues.push(
+      raw.defaultModel === undefined
+        ? `${SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE}; falling back to "${defaultModel}" until fixed.`
+        : `[secondary_model].default_model "${raw.defaultModel}" is not available; falling back to "${defaultModel}" until fixed.`,
+    );
+  }
+  return { pool: { defaultModel, models }, issues };
+}
+
+export function exposesSubagentModelChoice(
+  config: IConfigService,
+  flags: IFlagService,
+  modelCatalog: IModelCatalog,
+): boolean {
+  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return false;
+  if (isSubagentModelForced(config)) return false;
+  return resolveEffectiveSubagentModelPool(config, flags, modelCatalog).pool !== undefined;
 }
 
 export function resolveSubagentBinding(
   config: IConfigService,
   flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
-  requested?: string,
+  requested: string | undefined,
+  modelCatalog: IModelCatalog,
 ): { model: string; thinking?: string } {
   const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
@@ -216,7 +238,9 @@ export function resolveSubagentBinding(
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     return { model: own.modelAlias, thinking: own.thinkingLevel };
   }
-  const pool = enabled ? resolveSubagentModelPool(config) : undefined;
+  const pool = enabled
+    ? resolveEffectiveSubagentModelPool(config, flags, modelCatalog).pool
+    : undefined;
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -226,15 +250,6 @@ export function resolveSubagentBinding(
       );
     }
     return { model: own.modelAlias, thinking: own.thinkingLevel };
-  }
-  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
-      details: {
-        section: SECONDARY_MODEL_SECTION,
-        field: 'models',
-        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
-      },
-    });
   }
   const choice = requested ?? pool.defaultModel;
   if (choice === undefined) {
@@ -267,9 +282,12 @@ export function buildSubagentModelDescriptions(
   config: IConfigService,
   flags: IFlagService,
   callerModelAlias: string | undefined,
+  modelCatalog: IModelCatalog,
 ): string | undefined {
-  if (!exposesSubagentModelChoice(config, flags)) return undefined;
-  const pool = resolveSubagentModelPool(config)!;
+  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return undefined;
+  if (isSubagentModelForced(config)) return undefined;
+  const pool = resolveEffectiveSubagentModelPool(config, flags, modelCatalog).pool;
+  if (pool === undefined) return undefined;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;
   const markersFor = (alias: string): string => {

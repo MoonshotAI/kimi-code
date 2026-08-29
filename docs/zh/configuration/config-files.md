@@ -220,7 +220,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 - `default_effort` 是节级设置：无论派生绑定到池中哪个条目（或 force 固定的模型）都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
 - `primary` 是保留字（含义见下文），不能作为池中 key。
 
-池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
+池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，失效条目会被跳过而不是阻塞启动——会话照常打开并给出指明该别名的警告，池继续以剩余条目工作。当 `default_model` 本身失效时，剩余的第一个条目成为实际默认值；当所有条目都失效时，subagent 继承调用方的模型。只有仍然绑定到失效模型的派生——显式以 `model` 参数指定它，或 `force` 固定——才会报错并指明该条目。系统不会自动改写 `[secondary_model]` 节。
 
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
 
@@ -292,10 +292,12 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 另外注意 main agent 与 subagent 的不对称：对 main agent，全局 `[thinking].effort` 一旦设置就压过变体的 `default_effort`；对绑定池内别名的 subagent，变体的 `default_effort` 优先于全局值，只有 `[secondary_model].default_effort` 的优先级更高。取值与回落规则同 [`[models]` 条目的 `default_effort`](#models)。
 
 ::: warning 注意
-配置错误一律直接报错，不做静默回退。出现以下情况时，会话的创建、恢复（resume）与 fork 都会在启动时失败：
+池配置问题不会阻塞会话启动。出现以下情况时，会话的创建、恢复（resume）与 fork 都会正常进行，并给出启动警告：
 
 - `default_model` 缺失、不是池中 key，或池中 key 无法解析到已配置的 [`[models]`](#models) 条目；
 - `force` 未搭配 `default_model`，或与 `models` 表同时使用。
+
+无法解析的条目会被跳过：它们不再出现在提供给 main agent 的模型选项中，`default_model` 失效时回落到剩余的第一个条目。只有仍然绑定到失效模型的派生——显式以 `model` 参数指定它，或 `force` 固定——才会报错并指明该条目。
 :::
 
 ## `thinking`

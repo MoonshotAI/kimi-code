@@ -61,7 +61,7 @@ import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
 import { IFlagService } from '#/app/flag/flag';
-import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
+import { resolveEffectiveSubagentModelPool } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -224,9 +224,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async assertSubagentModelPoolPreFlight(): Promise<void> {
+  private async logSubagentModelPoolIssues(): Promise<void> {
     await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
+    const { issues } = resolveEffectiveSubagentModelPool(this.config, this.flags, this.modelCatalog);
+    for (const issue of issues) {
+      this.log.warn(issue);
+    }
   }
 
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
@@ -234,7 +237,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sessionScope = sessionScopeOf(this.handlerScope, opts.sessionId);
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
-    await this.assertSubagentModelPoolPreFlight();
+    await this.logSubagentModelPoolIssues();
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
     const ctx: ISessionContext = {
@@ -493,7 +496,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
     try {
-      await this.assertSubagentModelPoolPreFlight();
+      await this.logSubagentModelPoolIssues();
       await drainSessionMetadataWrites();
       const sourceMeta =
         sourceHandle !== undefined

@@ -220,7 +220,7 @@ Constraints between the fields:
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
 - `primary` is a reserved alias (see below) and cannot be a pool key.
 
-Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias — fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
+Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, the broken entry is skipped instead of blocking startup — the session opens with a warning naming the alias, and the pool carries on with the remaining entries. When `default_model` itself breaks, the first remaining entry becomes the effective default; when no entry survives, subagents inherit the caller's model. Only a spawn that still ends up bound to a broken model — an explicit `model` request naming it, or a `force` pin — fails with an error naming the entry. The `[secondary_model]` section itself is never rewritten automatically.
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
 
@@ -293,10 +293,12 @@ Two prerequisites:
 Note the asymmetry between the main agent and pool-bound subagents: for the main agent, a configured global `[thinking].effort` overrides the variant's `default_effort`; for subagents the variant's `default_effort` wins over the global value, and only `[secondary_model].default_effort` outranks it. Value and fallback rules follow the [`[models]` entry's `default_effort`](#models).
 
 ::: warning Note
-Configuration errors fail loudly instead of falling back silently. Session creation, resume, and fork all fail at startup when:
+Pool problems never block session startup. Session creation, resume, and fork succeed with a startup warning when:
 
 - `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured [`[models]`](#models) entry;
 - `force` is set without `default_model`, or combined with a `models` table.
+
+Unresolvable entries are skipped: they disappear from the model choices advertised to the main agent, and a broken `default_model` falls back to the first remaining entry. Only a spawn that still binds a broken model — an explicit `model` request naming it, or a `force` pin — fails with an error naming the entry.
 :::
 
 ## `thinking`

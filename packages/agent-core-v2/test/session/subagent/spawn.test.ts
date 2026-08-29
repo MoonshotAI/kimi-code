@@ -304,12 +304,12 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.message).toBe('Caller agent has no model bound');
   });
 
-  it('wraps an unresolvable pool model with the secondary-model config hint', async () => {
+  it('wraps an unresolvable forced model with the secondary-model config hint', async () => {
     const svc = service(
       {
         [SECONDARY_MODEL_SECTION]: {
           defaultModel: 'provider/bad',
-          models: { 'provider/bad': 'broken' },
+          force: true,
         },
       },
       true,
@@ -320,6 +320,22 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
     expect(error.message).toContain('Model "provider/bad" is not configured in config.toml.');
     expect(error.message).toContain('comes from [secondary_model.models]');
+  });
+
+  it('inherits the caller model when every pool entry fails to resolve', async () => {
+    const svc = service(
+      {
+        [SECONDARY_MODEL_SECTION]: {
+          defaultModel: 'provider/bad',
+          models: { 'provider/bad': 'broken' },
+        },
+      },
+      true,
+    );
+
+    const plan = await svc.planSpawn({ callerAgentId: CALLER_ID, profileName: 'coder' });
+
+    expect(plan.model).toBe('main-model');
   });
 
   it('passes [secondary_model].default_effort as the explicit subagent thinking', async () => {
