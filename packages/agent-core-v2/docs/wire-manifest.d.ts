@@ -98,7 +98,6 @@ interface ConfigUpdatePayload {
   /** EnvironmentDisclosureSnapshot */
   environmentDisclosure?: {
     cwd: string;
-    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
   };
   renderGeneration?: number;
   agentsMdPaths?: string[];
@@ -495,7 +494,6 @@ interface ProfileBindPayload {
   /** EnvironmentDisclosureSnapshot */
   environmentDisclosure?: {
     cwd: string;
-    date: { disclosed: true, value: { localDate: string, timeZone: string } } | { disclosed: false };
   };
   renderGeneration?: number;
   agentsMdPaths?: string[];

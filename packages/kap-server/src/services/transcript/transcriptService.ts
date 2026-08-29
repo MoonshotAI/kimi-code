@@ -466,7 +466,7 @@ export class TranscriptService {
     }
     const messages = [...reduceContextTranscript(records).entries];
     const taskOriginTurnTaskIds = new Set<string>();
-    const steeredContents = new Map<string, number>();
+    const steeredContents = new Map<string, Map<string, number>>();
     const anchorStack: { taskIdsSnapshot: Set<string> }[] = [];
     let anchorFloor = 0;
     let sawTurnPrompt = false;
@@ -495,7 +495,11 @@ export class TranscriptService {
         const input = record['input'];
         if (Array.isArray(input)) {
           const key = JSON.stringify(input);
-          steeredContents.set(key, (steeredContents.get(key) ?? 0) + 1);
+          const steerOrigin = (record as { origin?: { kind?: unknown } }).origin?.kind;
+          const kind = typeof steerOrigin === 'string' ? steerOrigin : 'user';
+          const byKind = steeredContents.get(key) ?? new Map<string, number>();
+          byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
+          steeredContents.set(key, byKind);
         }
         continue;
       }

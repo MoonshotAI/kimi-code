@@ -17,7 +17,6 @@ import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/buil
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { IHostClock } from '#/os/interface/hostClock';
 import type { HostFsChange } from '#/os/interface/hostFsWatch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -26,6 +25,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -141,21 +141,14 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
   });
 
-  it('keeps the rendered prompt and disclosure free of clock-dependent content', async () => {
-    const hostClock: IHostClock = {
-      _serviceBrand: undefined,
-      now: () => new Date('2026-07-29T04:00:00.000Z'),
-      timeZone: () => 'Asia/Shanghai',
-    };
-    ctx = createTestAgent(appService(IHostClock, hostClock), hostEnvironmentServices(homeDir));
+  it('binds an environment disclosure snapshot with only the session cwd', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
     const svc = ctx.get(IAgentProfileService);
 
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(svc.getSystemPrompt()).not.toContain('2026-07-29');
-    expect(svc.data().environmentDisclosure).toMatchObject({
-      date: { disclosed: false },
-    });
+    expect(svc.data().environmentDisclosure).toEqual({ cwd: ctx.get(ISessionContext).cwd });
   });
 
   it('persists the complete binding in one journal record', async () => {

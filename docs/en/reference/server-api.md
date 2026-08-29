@@ -187,7 +187,7 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/auth` | Auth readiness snapshot |
+| `GET /api/v1/auth` | Auth snapshot |
 | `POST /api/v1/oauth/login` | Start the OAuth device-code login flow |
 | `GET /api/v1/oauth/login` | Poll the login flow state |
 | `DELETE /api/v1/oauth/login` | Cancel a pending login flow |
@@ -198,9 +198,9 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 
 #### `GET /api/v1/auth`
 
-Auth readiness snapshot: whether the server has a usable model configuration, plus the managed provider's login state. `ready` is `true` when at least one provider is configured, a default model is set, and the managed provider (when present) is not revoked.
+Auth snapshot: whether the default model resolves to a usable provider configuration, plus the managed provider's login state. `models_ready` is `true` when the global `default_model` alias exists in the model table and resolves to a configured provider — including providerless flat models carrying their own `base_url` and models injected through `KIMI_MODEL_*` environment variables. It does not verify credentials, so a prompt can still fail afterwards with `40111` / `40112`.
 
-On success, `data` carries `ready` (boolean), `providers_count` (number of configured providers), `default_model` (the global default model alias, or `null`), and `managed_provider` (`null`, or `{ name, status }` with `status` one of `authenticated` / `expired` / `revoked` / `unauthenticated`).
+On success, `data` carries `models_ready` (boolean), `providers_count` (number of configured providers), and `managed_provider` (`null`, or `{ name, status }` with `status` one of `authenticated` / `expired` / `revoked` / `unauthenticated`). The global default model alias itself is read from `GET /api/v1/config` (`default_model`), not from this endpoint.
 
 #### `POST /api/v1/oauth/login`
 
@@ -308,7 +308,9 @@ On success, `data` is the config object; its fields mirror the top-level domains
 
 #### `POST /api/v1/config`
 
-Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`. After a successful update the server broadcasts the global `event.config.changed` event with the changed field names and the full updated config; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+
+Every config change — a successful update through this endpoint, an external edit of `config.toml`, or a server-side write such as an OAuth login refresh — is broadcast as the global `event.config.changed` event. Changes inside a short window are merged into one event carrying the affected domain names in `changedFields` (camelCase config domains, for example `defaultModel`) and the full current config projection in `config` (same shape as the `GET /api/v1/config` response).
 
 The body is a partial config object — any subset of the response domains above except `raw`, all optional:
 
@@ -2165,7 +2167,7 @@ A next-generation session query for list views — filtering, sorting, and field
 | `page_token` | Pagination token from the previous page |
 | `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
-Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. The `activity` group also reports `model`: the session's bound model alias while it is live in this process, `null` for cold (not currently loaded) sessions. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
 
 With `view=by_workspace` the same filtered, sorted set is re-projected into per-workspace groups, so an overview client replaces one polling loop per workspace with a single request:
 
@@ -2177,7 +2179,7 @@ With `view=by_workspace` the same filtered, sorted set is re-projected into per-
     "groups": [
       {
         "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle" } } ],
+        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
         "total": 42
       }
     ],
@@ -2353,7 +2355,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`.
+- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
 - **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
 
 | Family | Main events |

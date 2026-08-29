@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -62,6 +62,26 @@ const PROMPT_TOML = [
   '[models.stub]',
   'provider = "stub"',
   'model = "stub"',
+  'max_context_size = 1000',
+  '',
+].join('\n');
+
+const PROMPT_TOML_NO_DEFAULT = PROMPT_TOML.replace('default_model = "stub"\n\n', '');
+const PROMPT_TOML_DANGLING_DEFAULT = PROMPT_TOML.replace(
+  'default_model = "stub"',
+  'default_model = "missing"',
+);
+const PROMPT_TOML_OTHER_DEFAULT = [
+  'default_model = "other"',
+  '',
+  '[providers.stub]',
+  'type = "openai"',
+  'base_url = "http://127.0.0.1:9999"',
+  'api_key = "stub"',
+  '',
+  '[models.other]',
+  'provider = "stub"',
+  'model = "other"',
   'max_context_size = 1000',
   '',
 ].join('\n');
@@ -159,6 +179,15 @@ async function expectSessionMedia(
   return path;
 }
 
+let configTomlSeq = 0;
+
+async function writeConfigToml(dir: string, content: string): Promise<void> {
+  configTomlSeq += 1;
+  const tmpPath = join(dir, `config.toml.${process.pid}.${configTomlSeq}.tmp`);
+  await writeFile(tmpPath, content, 'utf-8');
+  await rename(tmpPath, join(dir, 'config.toml'));
+}
+
 describe('server-v2 /api/v1 prompts', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -166,7 +195,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-'));
-    await writeFile(join(home, 'config.toml'), PROMPT_TOML, 'utf-8');
+    await writeConfigToml(home, PROMPT_TOML);
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -220,6 +249,14 @@ describe('server-v2 /api/v1 prompts', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
+  async function setSessionModel(sessionId: string, model: string): Promise<void> {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main');
+    if (agent === undefined) throw new Error(`main agent of session ${sessionId} not found`);
+    await agent.accessor.get(IAgentProfileService).setModel(model);
+  }
+
   it('submits a prompt and lists it as active', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -241,6 +278,93 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
     }
     expect(Array.isArray(list.body.data.queued)).toBe(true);
+  });
+
+  it('accepts a prompt-carried model when default_model is not configured', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+    });
+    expect(submitted.body.code).toBe(0);
+  });
+
+  it('accepts the session-bound model when default_model is not configured', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+    });
+    expect(submitted.body.code).toBe(0);
+  });
+
+  it('accepts the session-bound model when default_model dangles', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_DANGLING_DEFAULT);
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+    });
+    expect(submitted.body.code).toBe(0);
+  });
+
+  it('rejects when neither prompt, session, nor default_model resolves a model', async () => {
+    await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+    });
+    expect(submitted.body.code).toBe(40113);
+  });
+
+  it('rejects a bound profile switch with 40001 even when the session model is stale', async () => {
+    await mkdir(join(home as string, 'agents'), { recursive: true });
+    await writeFile(
+      join(home as string, 'agents', 'route-reviewer.md'),
+      [
+        '---',
+        'name: route-reviewer',
+        'description: reviewer defined by a user-level agent file',
+        '---',
+        '',
+        'You are a route-test reviewer.',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+    await writeConfigToml(home as string, PROMPT_TOML_OTHER_DEFAULT);
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'route-reviewer',
+    });
+    expect(submitted.body.code).toBe(40001);
+    expect(submitted.body.msg).toContain('already bound');
+  });
+
+  it('rejects a stale session model when no profile switch is requested', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    await setSessionModel(id, 'stub');
+    await writeConfigToml(home as string, PROMPT_TOML_OTHER_DEFAULT);
+
+    const submitted = await call('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+    });
+    expect(submitted.body.code).toBe(40113);
   });
 
   it('submits a bundled skill prompt through the skills field', async () => {

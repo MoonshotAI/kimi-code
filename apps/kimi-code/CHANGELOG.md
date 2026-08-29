@@ -1,5 +1,33 @@
 # @moonshot-ai/kimi-code
 
+## 0.39.1
+
+### Patch Changes
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix the command tool row rendering noticeably taller than other tool rows.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix the first IME (or keyboard) character being silently swallowed after clicking the placeholder text in an empty composer.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix switching the permission mode in one session changing it for every session; the permission mode is now scoped per session.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix flickering and broken interactions in the image and video attachment preview popovers.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix attachments in a newly created session still showing as uploading after the upload has finished.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Render the rich composer placeholder outside the editor, fixing the first typed/IME character being swallowed.
+
+- [#3307](https://github.com/MoonshotAI/kimi-code/pull/3307) [`0310f22`](https://github.com/MoonshotAI/kimi-code/commit/0310f223daf9596ac403e94c7224ce2f744951c3) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Increase the request timeout for `kimi update`.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Unify right-side panel headers and give the OpenIn menu a file mode (copy absolute path, editor picker, full-path tooltip).
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix signed-in users without a usable model being wrongly asked to sign in (and getting stuck there on web); the send gate now offers picking or configuring a model instead.
+
+- [#3333](https://github.com/MoonshotAI/kimi-code/pull/3333) [`8f43674`](https://github.com/MoonshotAI/kimi-code/commit/8f43674b902213f876359d82fa3831f485e3e82b) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix startup getting stuck on "Connecting…" for a long time when the account has many workspaces.
+
+- [#3328](https://github.com/MoonshotAI/kimi-code/pull/3328) [`dc6028d`](https://github.com/MoonshotAI/kimi-code/commit/dc6028dc6b5c9464039f16cfe38de6ba90a68b72) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fixed skill instructions injected by the Skill tool showing up as ordinary user messages in the rebuilt transcript.
+
+- [#3292](https://github.com/MoonshotAI/kimi-code/pull/3292) [`23921e9`](https://github.com/MoonshotAI/kimi-code/commit/23921e9f2c5a50f66ad5616554fac8565772919d) Thanks [@7Sageer](https://github.com/7Sageer)! - When a session resumes, the assistant is warned that background tasks from the previous session may still be running.
+
 ## 0.39.0
 
 ### Minor Changes

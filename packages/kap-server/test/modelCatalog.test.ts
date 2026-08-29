@@ -206,7 +206,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     expect(noKey.body.data).not.toHaveProperty('api_key');
   });
 
-  it('sets the global default model and reflects it in /auth', async () => {
+  it('sets the global default model and reflects it in /config', async () => {
     await boot(CATALOG_TOML);
     const { body } = await postJson<unknown>('/api/v1/models/turbo:set_default', {});
     expect(body.code).toBe(0);
@@ -220,9 +220,9 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       },
     });
 
-    const auth = await getJson<{ default_model: string | null }>('/api/v1/auth');
-    expect(auth.body.code).toBe(0);
-    expect(auth.body.data.default_model).toBe('turbo');
+    const config = await getJson<{ default_model: string | null }>('/api/v1/config');
+    expect(config.body.code).toBe(0);
+    expect(config.body.data.default_model).toBe('turbo');
   });
 
   it('maps unknown provider and model ids to catalog not-found codes', async () => {
