@@ -42,14 +42,22 @@ export class TodoListTool implements ITodoListTool {
           : 'Updating todo list';
     return {
       description,
-      display: {
-        kind: 'todo_list',
-        items: (args.todos ?? this.todo.get()).map((todo) => ({ ...todo })),
-      },
+      display:
+        args.todos === undefined
+          ? undefined
+          : {
+              kind: 'todo_list',
+              items: args.todos.map((todo) => ({ ...todo })),
+            },
       approvalRule: this.name,
       execute: async () => {
         if (args.todos === undefined) {
-          return { isError: false, output: renderTodoList(this.todo.get()) };
+          const current = this.todo.get().map((todo) => ({ ...todo }));
+          return {
+            isError: false,
+            output: renderTodoList(current),
+            display: { kind: 'todo_list' as const, items: current },
+          };
         }
 
         const next: readonly TodoItem[] = args.todos.map((todo) => ({
