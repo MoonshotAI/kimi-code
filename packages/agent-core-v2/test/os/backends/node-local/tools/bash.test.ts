@@ -1789,6 +1789,39 @@ describe('BashTool background mode', () => {
     }
   });
 
+  it('uses bashTaskTimeoutS as the background default timeout for an explicitly backgrounded command', async () => {
+    async function backgroundTimeoutMsFor(
+      configValues: Record<string, unknown>,
+    ): Promise<number | undefined> {
+      const { runner } = createTestRunner(processWithOutput());
+      const { service, tasks } = createFakeTaskService();
+      const tool = bashTool(
+        runner,
+        createTestEnv(),
+        createTestCtx(),
+        service,
+        stubToolPolicy(),
+        stubConfig(configValues),
+      );
+
+      const result = await executeTool(
+        tool,
+        context({ command: 'watch', run_in_background: true, description: 'watch files' }),
+      );
+      expect(result).toMatchObject({ isError: false });
+
+      const taskId = service.list(false)[0]!.taskId;
+      return tasks.get(taskId)?.options.timeoutMs;
+    }
+
+    await expect(backgroundTimeoutMsFor({})).resolves.toBe(600_000);
+    await expect(backgroundTimeoutMsFor({ task: { bashTaskTimeoutS: 45 } })).resolves.toBe(45_000);
+    await expect(backgroundTimeoutMsFor({ background: { bashTaskTimeoutS: 1800 } })).resolves.toBe(
+      1_800_000,
+    );
+    await expect(backgroundTimeoutMsFor({ task: { bashTaskTimeoutS: 0 } })).resolves.toBe(0);
+  });
+
   it('does not timeout-stop a background task when disable_timeout is true', async () => {
     vi.useFakeTimers();
     try {
