@@ -7,7 +7,11 @@ import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
+import {
+  USER_PROMPT_ORIGIN,
+  type ContextMessage,
+  type PromptOrigin,
+} from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { TurnSteer } from '#/agent/loop/turnOps';
@@ -97,6 +101,7 @@ export interface PromptQueuedPayload {
   readonly agentId: string;
   readonly promptId: string;
   readonly content: ContentPart[];
+  readonly origin?: PromptOrigin;
   readonly queueLength: number;
 }
 
@@ -112,6 +117,7 @@ export interface PromptSubmittedPayload {
   readonly userMessageId: string;
   readonly status: 'running' | 'queued';
   readonly content: ContentPart[];
+  readonly origin?: PromptOrigin;
   readonly createdAt: string;
 }
 
@@ -524,12 +530,28 @@ export class AgentPromptService implements IAgentPromptService {
   }
   private publishCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void { void this.dispatcher.dispatch(new PromptCompleted({ agentId: this.scopeContext.agentId, promptId, finishedAt: new Date().toISOString(), reason })); }
   private publishQueued(record: Record): void {
-    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    void this.dispatcher.dispatch(new PromptQueued({ agentId: this.scopeContext.agentId, promptId: record.id, content: stripBundledSkillBlocks(record.message), queueLength: this.pending.length }));
+    const origin = record.message.origin ?? USER_PROMPT_ORIGIN;
+    if (origin.kind !== 'user') return;
+    void this.dispatcher.dispatch(new PromptQueued({
+      agentId: this.scopeContext.agentId,
+      promptId: record.id,
+      content: stripBundledSkillBlocks(record.message),
+      ...(origin.skillActivations !== undefined ? { origin } : {}),
+      queueLength: this.pending.length,
+    }));
   }
   private publishSubmitted(record: Record, status: 'running' | 'queued'): void {
-    if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;
-    void this.dispatcher.dispatch(new PromptSubmitted({ agentId: this.scopeContext.agentId, promptId: record.id, userMessageId: record.userMessageId, status, content: stripBundledSkillBlocks(record.message), createdAt: record.createdAt }));
+    const origin = record.message.origin ?? USER_PROMPT_ORIGIN;
+    if (origin.kind !== 'user') return;
+    void this.dispatcher.dispatch(new PromptSubmitted({
+      agentId: this.scopeContext.agentId,
+      promptId: record.id,
+      userMessageId: record.userMessageId,
+      status,
+      content: stripBundledSkillBlocks(record.message),
+      ...(origin.skillActivations !== undefined ? { origin } : {}),
+      createdAt: record.createdAt,
+    }));
   }
   private publishStarted(record: Record): void {
     if ((record.message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return;

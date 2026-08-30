@@ -354,6 +354,7 @@ export const transcriptPromptSchema = z.object({
   status: z.enum(['running', 'queued', 'blocked', 'completed', 'failed', 'aborted']),
   userMessageId: z.string().optional(),
   content: z.unknown().optional(),
+  origin: z.unknown().optional(),
   createdAt: z.string(),
   finishedAt: z.string().optional(),
   steeredAt: z.string().optional(),

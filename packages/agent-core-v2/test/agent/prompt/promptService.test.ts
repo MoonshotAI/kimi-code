@@ -390,11 +390,11 @@ describe('AgentPromptService', () => {
     expect(prompt.list().pending.map((item) => item.id)).toEqual(['a', 'b', 'c']);
   });
 
-  it('publishes only caller parts when a bundled prompt queues', async () => {
+  it('publishes caller parts and structured provenance when a bundled prompt queues', async () => {
     const { prompt, eventBus } = harness();
-    const queued: Array<{ promptId: string; content: ContentPart[] }> = [];
+    const queued: Array<{ promptId: string; content: ContentPart[]; origin: unknown }> = [];
     eventBus.subscribe(PromptQueued, (event) => {
-      queued.push({ promptId: event.promptId, content: event.content });
+      queued.push({ promptId: event.promptId, content: event.content, origin: event.origin });
     });
     const active = await prompt.enqueue({ message: message('active') });
     await active.launched;
@@ -402,7 +402,14 @@ describe('AgentPromptService', () => {
     await prompt.enqueue({ id: 'bundled', message: bundledMessage('review', 'user text') });
 
     expect(queued).toEqual([
-      { promptId: 'bundled', content: [{ type: 'text', text: 'user text' }] },
+      {
+        promptId: 'bundled',
+        content: [{ type: 'text', text: 'user text' }],
+        origin: {
+          kind: 'user',
+          skillActivations: [{ activationId: 'act-review', skillName: 'review' }],
+        },
+      },
     ]);
   });
 

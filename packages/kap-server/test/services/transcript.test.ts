@@ -1950,11 +1950,25 @@ describe('AgentTranscriptProjector', () => {
         userMessageId: 'm2',
         status: 'queued',
         content: [{ type: 'text', text: 'second' }],
+        origin: {
+          kind: 'user',
+          skillActivations: [
+            { activationId: 'act-review', skillName: 'review', skillArgs: 'src/app.ts' },
+          ],
+        },
         createdAt: '2026-01-01T00:00:01.000Z',
       }),
     );
     expect(tx.getPrompt('p1')).toMatchObject({ status: 'running', userMessageId: 'm1' });
-    expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });
+    expect(tx.getPrompt('p2')).toMatchObject({
+      status: 'queued',
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'act-review', skillName: 'review', skillArgs: 'src/app.ts' },
+        ],
+      },
+    });
 
     feed(ev({ type: 'prompt.started', promptId: 'p2' }));
     expect(tx.getPrompt('p2')).toMatchObject({

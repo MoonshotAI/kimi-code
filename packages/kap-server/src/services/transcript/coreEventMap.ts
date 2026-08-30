@@ -1299,6 +1299,7 @@ export class AgentTranscriptProjector {
       status: 'queued',
       userMessageId: prev?.userMessageId,
       content: projectPromptContentParts(event.content),
+      origin: event.origin ?? prev?.origin,
       createdAt: prev?.createdAt ?? nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
@@ -1310,6 +1311,7 @@ export class AgentTranscriptProjector {
       status: prev !== undefined && isTerminalPromptStatus(prev.status) ? prev.status : event.status,
       userMessageId: event.userMessageId,
       content: projectPromptContentParts(event.content),
+      origin: event.origin ?? prev?.origin,
       createdAt: prev?.createdAt ?? event.createdAt,
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,

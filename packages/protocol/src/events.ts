@@ -1941,6 +1941,7 @@ export const promptSubmittedEventSchema = z.object({
   userMessageId: z.string(),
   status: z.enum(['running', 'queued', 'blocked']),
   content: z.array(messageContentSchema),
+  origin: z.unknown().optional(),
   createdAt: isoDateTimeSchema,
 }) satisfies z.ZodType<PromptSubmittedEvent>;
 
