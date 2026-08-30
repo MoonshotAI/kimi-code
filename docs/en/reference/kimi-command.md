@@ -19,7 +19,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--continue` | `-c` | Continue the most recent session in the current working directory, without specifying an ID manually |
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
-| `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
+| `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`. Overrides `KIMI_MODEL_OUTPUT_FORMAT`; otherwise defaults to `text` |
 | `--yolo` | `-y` | Auto-approve regular tool calls, skipping approval requests |
 | `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
@@ -128,6 +128,8 @@ When you need to parse output programmatically, use the `stream-json` format —
 ```sh
 kimi -p "List changed files" --output-format stream-json
 ```
+
+For scripts that always use JSONL output, set [`KIMI_MODEL_OUTPUT_FORMAT`](../configuration/env-vars.md#kimi-model-output-format). An explicit `--output-format` flag still takes priority.
 
 In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr.
 

@@ -1,6 +1,6 @@
 # 环境变量
 
-Kimi Code CLI 通过环境变量控制少数运行时行为——迁移数据目录、关闭遥测、不改配置文件临时切换模型。
+Kimi Code CLI 通过环境变量控制少数运行时行为——迁移数据目录、关闭遥测、选择非交互输出格式，以及不改配置文件临时切换模型。
 
 ::: warning 重要：API 密钥不在这里配置
 `KIMI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 等密钥变量**不会**从 shell 环境变量自动读取。在终端里 `export KIMI_API_KEY=xxx` 不会让任何供应商获得密钥——必须写在 `config.toml` 的 `[providers.<name>]` 段或 `[providers.<name>.env]` 子表里。
@@ -31,6 +31,17 @@ export KIMI_CODE_HOME="/path/to/custom/kimi-code"
 ```sh
 export KIMI_DISABLE_TELEMETRY=1
 ```
+
+### `KIMI_MODEL_OUTPUT_FORMAT`
+
+设置非交互 `-p` / `--prompt` 模式的默认输出格式。合法值为 `text` 和 `stream-json`：
+
+```sh
+export KIMI_MODEL_OUTPUT_FORMAT="stream-json"
+kimi -p "列出已修改的文件"
+```
+
+显式传入的 `--output-format` flag 优先级更高。该变量在非 prompt 模式下会被忽略，值不合法时启动会失败。虽然名称以 `KIMI_MODEL_` 开头，但它不要求设置 `KIMI_MODEL_NAME`。
 
 ### `KIMI_MODEL_*` 系列
 

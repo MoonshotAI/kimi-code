@@ -19,7 +19,7 @@ kimi <subcommand> [options]
 | `--continue` | `-c` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
-| `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
+| `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用。显式 flag 优先于 `KIMI_MODEL_OUTPUT_FORMAT`，后者未设置时默认 `text` |
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求 |
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
@@ -128,6 +128,8 @@ kimi -m kimi-code/kimi-for-coding -p "Explain the latest diff"
 ```sh
 kimi -p "List changed files" --output-format stream-json
 ```
+
+需要让脚本始终使用 JSONL 输出时，可以设置 [`KIMI_MODEL_OUTPUT_FORMAT`](../configuration/env-vars.md#kimi-model-output-format)。显式传入的 `--output-format` flag 仍然具有更高优先级。
 
 `stream-json` 模式下，普通回复输出 Assistant 消息；模型调用工具时，先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容不会写入 JSONL；工具进度和恢复会话提示仍写到 stderr。
 
