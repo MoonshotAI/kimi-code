@@ -3,7 +3,6 @@ import { useChatStore } from "@/stores";
 
 export function CompactionCard() {
   const isCompacting = useChatStore((s) => s.isCompacting);
-  const compactingModel = useChatStore((s) => s.compactingModel);
 
   return (
     <div className="rounded-lg border border-border bg-muted/20 overflow-hidden">
@@ -16,13 +15,7 @@ export function CompactionCard() {
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-foreground">
-            {isCompacting
-              ? compactingModel
-                ? `Compacting context using ${compactingModel}...`
-                : "Compacting context..."
-              : "Context compacted"}
-          </div>
+          <div className="text-xs font-medium text-foreground">{isCompacting ? "Compacting context…" : "Context compacted"}</div>
         </div>
       </div>
     </div>
