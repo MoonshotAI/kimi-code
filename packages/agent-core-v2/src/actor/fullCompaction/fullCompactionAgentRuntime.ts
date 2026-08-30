@@ -1,5 +1,4 @@
 import type { Draft } from 'immer';
-import { fromCallback, setup, type Snapshot } from 'xstate';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
@@ -8,12 +7,21 @@ import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
-  type AgentRuntimeRestoreEvent,
 } from '#/actor/agentRuntime';
 import type { CompactionResult, CompactionSource } from './types';
 import { FullCompactionBegin, FullCompactionCancel, FullCompactionComplete, type CompactionState } from './compactionOps';
 import { CompactionStarted } from './fullCompactionEvents';
-import { FullCompactionDomain } from './internal/fullCompactionDomain';
+import {
+  fullCompactionActorLogic,
+  type FullCompactionActorSnapshot,
+} from './internal/compactionMachine';
+import {
+  beginFullCompaction,
+  cancelFullCompaction,
+  compactionContextOf,
+  fullCompactionStatusOf,
+  registerCompactionHook,
+} from './internal/compactionOperations';
 
 export type FullCompactionStatus = 'idle' | 'running' | 'cancelled' | 'completed' | 'failed';
 
@@ -48,86 +56,31 @@ export interface FullCompactionRuntime {
 export class AgentFullCompactionRuntime implements FullCompactionRuntime {
   constructor(private readonly context: AgentRuntimeContext<CompactionState>) {}
 
-  private get domain(): FullCompactionDomain {
-    return this.context.getLogicState<FullCompactionActorContext>().domain;
-  }
-
   begin(input?: FullCompactionBeginInput): Promise<FullCompactionTask> {
-    return this.domain.begin(input);
+    return beginFullCompaction(this.context, input);
   }
 
   cancel(): Promise<void> {
-    return this.domain.cancel();
+    return cancelFullCompaction(this.context);
   }
 
   status(): FullCompactionStatus {
-    return this.domain.status();
+    return fullCompactionStatusOf(compactionContextOf(this.context));
   }
 
   get onDidFinish(): Event<FullCompactionTask> {
-    return this.domain.onDidFinish;
+    return compactionContextOf(this.context).didFinishEmitter.event;
   }
 
   registerBeforeCompactHook(
     name: string,
     hook: (ctx: FullCompactionHookContext) => Promise<void>,
   ): IDisposable {
-    return this.domain.registerBeforeCompactHook(name, hook);
+    return registerCompactionHook(this.context, name, hook);
   }
 }
 
 export const AgentFullCompaction = defineAgentRuntimeContract<FullCompactionRuntime>('fullCompaction');
-
-interface FullCompactionActorContext {
-  readonly runtime: AgentRuntimeContext<CompactionState>;
-  readonly domain: FullCompactionDomain;
-  state: CompactionState;
-}
-
-interface FullCompactionCommitEvent {
-  readonly type: 'fullCompaction.commit';
-  readonly state: CompactionState;
-}
-
-type FullCompactionActorSnapshot = Snapshot<unknown> & {
-  readonly context: FullCompactionActorContext;
-};
-
-const fullCompactionEffects = fromCallback(({ input }: { input: FullCompactionDomain }) => {
-  const attached = input.attach();
-  return () => attached.dispose();
-});
-
-const fullCompactionActorLogic = setup({
-  types: {} as {
-    context: FullCompactionActorContext;
-    input: AgentRuntimeContext<CompactionState>;
-    events: AgentRuntimeRestoreEvent | FullCompactionCommitEvent;
-  },
-  actors: { fullCompactionEffects },
-}).createMachine({
-  context: ({ input }) => ({
-    runtime: input,
-    domain: new FullCompactionDomain(input),
-    state: { phase: 'idle' },
-  }),
-  on: {
-    'fullCompaction.commit': {
-      actions: ({ context, event }) => {
-        context.state = event.state;
-      },
-    },
-    'runtime.restore': {
-      actions: ({ context, event }) => {
-        context.domain.normalizeAfterReplay(event);
-      },
-    },
-  },
-  invoke: {
-    src: 'fullCompactionEffects',
-    input: ({ context }) => context.domain,
-  },
-});
 
 function fullCompactionTransition(
   state: Draft<CompactionState>,
@@ -176,8 +129,8 @@ export const fullCompactionAgentRuntimeProvider = defineAgentRuntimeProvider<
     const { context } = snapshot as FullCompactionActorSnapshot;
     return {
       phase: context.state.phase,
-      status: context.domain.status(),
-      lastCompactedTokenCount: context.domain.lastCompactedTokenCount,
+      status: fullCompactionStatusOf(context),
+      lastCompactedTokenCount: context.lastCompactedTokenCount,
     };
   },
 });
