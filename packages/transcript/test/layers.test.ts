@@ -1900,4 +1900,30 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(second.error).toBe('boom');
     expect(second.triggerPromptId).toBe('prompt-2');
   });
+
+  it('skips undone turn boundaries when mapping prompt ids and turn endings', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'replacement' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'a3' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'undone' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 3 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 4 },
+        { type: 'context.undo', count: 1, time: 5 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'replacement' }], origin: { kind: 'user' }, promptId: 'prompt-3', time: 6 },
+        { type: 'turn.ended', turnId: 2, reason: 'failed', error: { message: 'replacement failed' }, time: 7 },
+      ],
+      base,
+    );
+    const replacement = folded.items[1];
+    if (replacement?.kind !== 'turn') throw new Error('expected turn');
+    expect(replacement.triggerPromptId).toBe('prompt-3');
+    expect(replacement.state).toBe('failed');
+    expect(replacement.error).toBe('replacement failed');
+  });
 });

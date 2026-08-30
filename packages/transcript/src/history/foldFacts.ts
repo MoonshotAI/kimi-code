@@ -67,6 +67,9 @@ interface TurnPromptPayload {
   readonly origin?: unknown;
   readonly promptId?: unknown;
 }
+interface ContextUndoPayload {
+  readonly count?: unknown;
+}
 interface TurnCancelPayload {
   readonly turnId?: unknown;
   readonly target?: unknown;
@@ -84,6 +87,15 @@ function isVisibleTurnOrigin(origin: unknown): boolean {
   }
   if (kind === 'injection' || kind === 'retry' || kind === 'compaction_summary') return false;
   return true;
+}
+
+function isUndoAnchorTurnOrigin(origin: unknown): boolean {
+  const payload = origin as { kind?: unknown; trigger?: unknown } | undefined;
+  if (payload?.kind === undefined || payload.kind === 'user') return true;
+  return (
+    (payload.kind === 'skill_activation' || payload.kind === 'plugin_command') &&
+    payload.trigger === 'user-slash'
+  );
 }
 
 function mapTaskKind(kind: unknown): TranscriptTask['kind'] {
@@ -182,6 +194,8 @@ export function foldWireRecordFacts(
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
+  const undoAnchorTurnIds: number[] = [];
+  let undoAnchorFloor = 0;
   const skipCancelledTurnIds = (): void => {
     while (cancelledTurnIds.delete(nextTurnId)) {
       hiddenTurnIds.add(nextTurnId);
@@ -382,6 +396,20 @@ export function foldWireRecordFacts(
         pushMarker('interruption', record);
         break;
       }
+      case 'context.undo': {
+        const count = (record as ContextUndoPayload).count;
+        if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) break;
+        for (let i = 0; i < count && undoAnchorTurnIds.length > undoAnchorFloor; i++) {
+          const turnId = undoAnchorTurnIds.pop();
+          if (turnId !== undefined) hiddenTurnIds.add(turnId);
+        }
+        break;
+      }
+      case 'context.clear':
+      case 'context.apply_compaction': {
+        undoAnchorFloor = undoAnchorTurnIds.length;
+        break;
+      }
       case 'interaction.request': {
         const payload = record as InteractionRequestPayload;
         if (payload.kind !== 'approval' && payload.kind !== 'question') break;
@@ -426,6 +454,7 @@ export function foldWireRecordFacts(
         nextTurnId += 1;
         const payload = record as TurnPromptPayload;
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
+        if (isUndoAnchorTurnOrigin(payload.origin)) undoAnchorTurnIds.push(turnId);
         if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
         break;
       }
