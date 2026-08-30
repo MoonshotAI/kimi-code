@@ -21,7 +21,7 @@ branch_prefix: ""
 # checks out the branch as before. By default the worktree is created inside
 # the project at `.worktrees/<branch>`. Override that with the
 # SPECIFY_WORKTREE_PATH environment variable.
-create_worktree: true
+create_worktree: false
 
 # Commit message used by `git commit` during repository initialization
 init_commit_message: "[Spec Kit] Initial commit"
