@@ -473,6 +473,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: job.turn.id,
+        promptId: job.seed.promptId,
         origin,
         prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
         promptAttachments: turnPromptAttachments(job.seed.input, origin),

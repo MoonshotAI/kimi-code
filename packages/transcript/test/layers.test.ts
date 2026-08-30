@@ -316,7 +316,7 @@ describe('contract schemas', () => {
       {
         op: 'turn.upsert',
         turn: {
-          kind: 'turn', turnId: 't1', ordinal: 1, state: 'failed', origin: { kind: 'user' },
+          kind: 'turn', turnId: 't1', triggerPromptId: 'prompt-1', ordinal: 1, state: 'failed', origin: { kind: 'user' },
           usage: { inputTokens: 12, outputTokens: 5, cachedTokens: 3 },
           durationMs: 1500,
           error: 'boom',

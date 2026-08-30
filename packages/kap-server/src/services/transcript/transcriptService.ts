@@ -336,6 +336,7 @@ export class TranscriptService {
         turnId,
         ordinal,
         state: 'running',
+        triggerPromptId: existing?.triggerPromptId ?? snapshotTurn?.triggerPromptId,
         origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
         prompt: existing?.prompt ?? snapshotTurn?.prompt,
         attachmentIds: existing?.attachmentIds ?? snapshotTurn?.attachmentIds,
@@ -691,6 +692,7 @@ export function healTurnOps(
     turn: {
       ...header,
       state: liveTurn.state,
+      triggerPromptId: liveTurn.triggerPromptId ?? header.triggerPromptId,
       prompt: liveTurn.prompt ?? header.prompt,
       attachmentIds: liveTurn.attachmentIds ?? header.attachmentIds,
       startedAt: liveTurn.startedAt ?? header.startedAt,

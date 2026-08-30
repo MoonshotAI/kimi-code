@@ -343,6 +343,7 @@ export class AgentTranscriptProjector {
 
   private onTurnStarted(event: {
     turnId: number;
+    promptId?: string;
     origin: unknown;
     prompt?: string;
     promptAttachments?: readonly (
@@ -374,6 +375,7 @@ export class AgentTranscriptProjector {
     this.currentTurn = {
       kind: 'turn',
       turnId,
+      triggerPromptId: event.promptId,
       ordinal: n,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
@@ -442,6 +444,7 @@ export class AgentTranscriptProjector {
       turnId,
       ordinal: event.turnId,
       state,
+      triggerPromptId: prev?.triggerPromptId,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
       attachmentIds: prev?.attachmentIds,
