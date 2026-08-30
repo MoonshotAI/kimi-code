@@ -44,7 +44,7 @@ export interface SystemPromptContextDeps {
 export interface SystemPromptCaches {
   frozenSkillListing: string | undefined;
   frozenPluginSections: string | undefined;
-  readonly emittedPluginBudgetWarnings: Set<string>;
+  emittedPluginBudgetWarnings: ReadonlySet<string>;
 }
 
 export async function buildSystemPromptContext(
@@ -165,7 +165,10 @@ async function resolvePluginSections(
   if (skipped.length > 0) {
     const newlySkipped = skipped.filter((id) => !caches.emittedPluginBudgetWarnings.has(id));
     if (newlySkipped.length > 0) {
-      for (const id of newlySkipped) caches.emittedPluginBudgetWarnings.add(id);
+      caches.emittedPluginBudgetWarnings = new Set([
+        ...caches.emittedPluginBudgetWarnings,
+        ...newlySkipped,
+      ]);
       warn(
         `Plugin system-prompt contributions from ${newlySkipped.map((id) => `"${id}"`).join(', ')} ` +
           `were skipped: the aggregate ${PLUGIN_SECTIONS_MAX_BYTES / 1024} KB budget is exhausted.`,

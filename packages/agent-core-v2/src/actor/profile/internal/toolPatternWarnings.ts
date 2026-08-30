@@ -17,10 +17,10 @@ export interface ToolPatternWarningDeps {
 
 export function publishToolPatternWarnings(
   deps: ToolPatternWarningDeps,
-  emitted: Set<string>,
+  emitted: ReadonlySet<string>,
   profile: ResolvedAgentProfile | undefined,
   warn: (message: string, code: string) => void,
-): void {
+): readonly string[] {
   const known = new Set<string>();
   for (const contribution of getAgentToolContributions()) known.add(contribution.options.name);
   for (const ref of deps.toolReferences) known.add(ref.name);
@@ -52,15 +52,17 @@ export function publishToolPatternWarnings(
     { context: 'the global [tools] config', field: 'enabled', patterns: global?.enabled },
     { context: 'the global [tools] config', field: 'disabled', patterns: global?.disabled },
   );
+  const newlyEmitted: string[] = [];
   for (const { context, field, patterns } of checks) {
     if (patterns === undefined) continue;
     for (const issue of findInactiveToolPatterns(patterns, (name) => known.has(name))) {
       const key = `${context}|${field}|${issue.pattern}`;
-      if (emitted.has(key)) continue;
-      emitted.add(key);
+      if (emitted.has(key) || newlyEmitted.includes(key)) continue;
+      newlyEmitted.push(key);
       warn(describeInactiveToolPattern(context, field, issue), 'tool-pattern-no-match');
     }
   }
+  return newlyEmitted;
 }
 
 function describeInactiveToolPattern(

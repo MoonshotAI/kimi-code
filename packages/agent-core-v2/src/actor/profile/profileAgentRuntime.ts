@@ -85,9 +85,9 @@ interface ProfileActorContext {
   ledger: ProfileState;
   activeToolNamesOverlay: ActiveToolsState;
   agentsMdWarning: string | undefined;
-  readonly emittedThinkingEffortWarnings: Set<string>;
-  readonly emittedToolPatternWarnings: Set<string>;
-  readonly emittedPluginBudgetWarnings: Set<string>;
+  emittedThinkingEffortWarnings: ReadonlySet<string>;
+  emittedToolPatternWarnings: ReadonlySet<string>;
+  emittedPluginBudgetWarnings: ReadonlySet<string>;
   frozenSkillListing: string | undefined;
   frozenPluginSections: string | undefined;
 }
@@ -102,7 +102,13 @@ interface ProfilePatchEvent {
   readonly patch: Partial<
     Pick<
       ProfileActorContext,
-      'activeToolNamesOverlay' | 'agentsMdWarning' | 'frozenSkillListing' | 'frozenPluginSections'
+      | 'activeToolNamesOverlay'
+      | 'agentsMdWarning'
+      | 'frozenSkillListing'
+      | 'frozenPluginSections'
+      | 'emittedThinkingEffortWarnings'
+      | 'emittedToolPatternWarnings'
+      | 'emittedPluginBudgetWarnings'
     >
   >;
 }
@@ -116,18 +122,25 @@ const profileToolPatternWatcher = fromCallback(
     const config = input.get(IConfigService);
     const subscription = config.onDidSectionChange(({ domain }) => {
       if (domain !== TOOLS_SECTION) return;
-      publishToolPatternWarnings(
+      const emitted = input.getLogicState<ProfileActorContext>().emittedToolPatternWarnings;
+      const newlyEmitted = publishToolPatternWarnings(
         {
           config,
           toolReferences: [],
           builtinProfiles: input.get(IBuiltinAgentProfileLoader),
         },
-        input.getLogicState<ProfileActorContext>().emittedToolPatternWarnings,
+        emitted,
         undefined,
         (message, code) => {
           void input.dispatch(new WarningIssued({ agentId: input.agent.agentId, message, code }));
         },
       );
+      if (newlyEmitted.length > 0) {
+        input.send({
+          type: 'profile.patch',
+          patch: { emittedToolPatternWarnings: new Set([...emitted, ...newlyEmitted]) },
+        });
+      }
     });
     return () => {
       subscription.dispose();
@@ -530,7 +543,7 @@ export class ProfileRuntime {
       if (warning === undefined) return;
       const emitted = this.logicState().emittedThinkingEffortWarnings;
       if (emitted.has(warning.key)) return;
-      emitted.add(warning.key);
+      this.patch({ emittedThinkingEffortWarnings: new Set([...emitted, warning.key]) });
       void this.context.dispatch(
         new WarningIssued({
           agentId: this.context.agent.agentId,
@@ -593,7 +606,12 @@ export class ProfileRuntime {
       set frozenPluginSections(value: string | undefined) {
         patch({ frozenPluginSections: value });
       },
-      emittedPluginBudgetWarnings: logicState().emittedPluginBudgetWarnings,
+      get emittedPluginBudgetWarnings() {
+        return logicState().emittedPluginBudgetWarnings;
+      },
+      set emittedPluginBudgetWarnings(value: ReadonlySet<string>) {
+        patch({ emittedPluginBudgetWarnings: value });
+      },
     };
     return buildSystemPromptContext(deps, caches, profile, options, (message, code) => {
       void this.context.dispatch(
@@ -629,13 +647,14 @@ export class ProfileRuntime {
   }
 
   private publishPatterns(profile?: ResolvedAgentProfile): void {
-    publishToolPatternWarnings(
+    const emitted = this.logicState().emittedToolPatternWarnings;
+    const newlyEmitted = publishToolPatternWarnings(
       {
         config: this.context.get(IConfigService),
         toolReferences: [],
         builtinProfiles: this.context.get(IBuiltinAgentProfileLoader),
       },
-      this.logicState().emittedToolPatternWarnings,
+      emitted,
       profile,
       (message, code) => {
         void this.context.dispatch(
@@ -643,6 +662,9 @@ export class ProfileRuntime {
         );
       },
     );
+    if (newlyEmitted.length > 0) {
+      this.patch({ emittedToolPatternWarnings: new Set([...emitted, ...newlyEmitted]) });
+    }
   }
 
   private assertBindable(requested: string): void {
