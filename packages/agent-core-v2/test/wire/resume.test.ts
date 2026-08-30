@@ -200,6 +200,26 @@ describe('Agent resume', () => {
     }
   });
 
+  it('persists prompt terminal events as durable records so replays can reconcile the queue', async () => {
+    const persistence = new RecordingAgentPersistence([resumeConfigRecord()]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        const types = persistence.appended.map((record) => record.type);
+        expect(types).toContain('prompt.accepted');
+        expect(types).toContain('prompt.completed');
+      });
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('replays persisted records without restarting turns, compactions, plan turns, or tools', async () => {
     const persistence = new RecordingAgentPersistence(resumeHistory() as unknown as WireRecord[]);
     const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute on resume'));

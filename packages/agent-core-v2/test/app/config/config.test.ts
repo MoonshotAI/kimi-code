@@ -418,6 +418,7 @@ describe('Agent config', () => {
       [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 102, "time": "<time>" }
       [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
       [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 102 }
+      [wire] prompt.completed               { "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed", "time": "<time>" }
       [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
       [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "time": "<time>" }
       [emit] prompt.accepted                { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ] }
