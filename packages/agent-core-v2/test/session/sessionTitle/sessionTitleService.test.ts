@@ -9,6 +9,8 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IOAuthService } from '#/app/auth/auth';
 import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
+import { SUBSCRIPTION_SECTION } from '#/app/subscription/configSection';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
@@ -147,6 +149,7 @@ describe('SessionTitleService', () => {
   let digestExcerpt: TitleDigestExcerpt;
   let tokenCalls: boolean[];
   let flagEnabled: boolean;
+  let subscriptionConfig: Record<string, boolean> | undefined;
 
   beforeEach(() => {
     tokenError = undefined;
@@ -158,6 +161,7 @@ describe('SessionTitleService', () => {
     digestExcerpt = { turns: [] };
     tokenCalls = [];
     flagEnabled = true;
+    subscriptionConfig = undefined;
     providers = { 'managed:kimi-code': MANAGED_PROVIDER };
     metadata = new FakeSessionMetadata();
     events = new FakeEventService();
@@ -222,6 +226,12 @@ describe('SessionTitleService', () => {
           thirdPartyHeaders: {},
         });
         reg.definePartialInstance(IFlagService, { enabled: () => flagEnabled });
+        reg.definePartialInstance(IConfigService, {
+          get: ((domain: string) =>
+            domain === SUBSCRIPTION_SECTION
+              ? subscriptionConfig
+              : undefined) as IConfigService['get'],
+        });
         reg.define(ISessionTitleService, SessionTitleService);
       },
     });
@@ -606,5 +616,23 @@ describe('SessionTitleService', () => {
   it('returns unavailable without calling the backend when no prompt was seen', async () => {
     await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('skips title generation without calling the backend when auto_session_title is disabled', async () => {
+    subscriptionConfig = { auto_session_title: false };
+    titlePrompts = ['hello'];
+
+    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('generates a title normally when auto_session_title is enabled', async () => {
+    subscriptionConfig = { auto_session_title: true };
+    titlePrompts = ['帮我看一下这个 Go 的 nil pointer 报错'];
+
+    const title = await ix.get(ISessionTitleService).generateTitle();
+
+    expect(title).toBe('生成的标题');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

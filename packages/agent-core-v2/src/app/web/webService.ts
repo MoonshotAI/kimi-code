@@ -16,6 +16,7 @@ import { LocalFetchURLProvider } from './providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from './providers/moonshot-fetch-url';
 import type { UrlFetcher } from './tools/fetch-url-types';
 import { IWebFetchService } from './web';
+import { isSubscriptionMethodEnabled } from '#/app/subscription/subscription';
 
 export class WebFetchService implements IWebFetchService {
   declare readonly _serviceBrand: undefined;
@@ -32,6 +33,7 @@ export class WebFetchService implements IWebFetchService {
   }
 
   getUrlFetcher(): UrlFetcher {
+    if (!isSubscriptionMethodEnabled(this.config, 'fetch_url')) return this.localFetcher;
     return this.fromServicesConfig() ?? this.fromManagedOAuth() ?? this.localFetcher;
   }
 

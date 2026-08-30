@@ -20,6 +20,8 @@ import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
+import { IConfigService } from '#/app/config/config';
+import { isSubscriptionMethodEnabled } from '#/app/subscription/subscription';
 
 import { IAgentTitlePromptSource } from './agentTitlePromptSource';
 import { AUTO_SESSION_TITLE_FLAG_ID } from './flag';
@@ -56,6 +58,7 @@ export class SessionTitleService implements ISessionTitleService {
     @IHostRequestHeaders private readonly hostHeaders: IHostRequestHeaders,
     @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   async generateTitle(opts?: {
@@ -78,6 +81,7 @@ export class SessionTitleService implements ISessionTitleService {
     source: SessionTitleSource,
   ): Promise<string | undefined> {
     if (!this.flags.enabled(AUTO_SESSION_TITLE_FLAG_ID)) return undefined;
+    if (!isSubscriptionMethodEnabled(this.config, 'auto_session_title')) return undefined;
     const current = await this.metadata.read();
     if (!force) {
       if (current.titleKind === 'custom') return undefined;
