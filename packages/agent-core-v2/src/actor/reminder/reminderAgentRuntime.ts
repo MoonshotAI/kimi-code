@@ -1,4 +1,4 @@
-import { fromCallback, setup } from 'xstate';
+import { assign, fromCallback, setup } from 'xstate';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -36,7 +36,8 @@ interface ReminderEntry {
 const REMINDER_VARIANT_PRIORITY = new Map<string, number>([['date_change', -1]]);
 
 interface ReminderActorContext {
-  readonly entries: Set<ReminderEntry>;
+  readonly entries: ReadonlySet<ReminderEntry>;
+  readonly compactionRearmPending: boolean;
   readonly runtime: AgentRuntimeContext<null>;
 }
 
@@ -50,7 +51,34 @@ interface ReminderUnregisterEvent {
   readonly entry: ReminderEntry;
 }
 
-type ReminderActorEvent = AgentRuntimeRestoreEvent | ReminderRegisterEvent | ReminderUnregisterEvent;
+interface ReminderRearmArmedEvent {
+  readonly type: 'reminder.rearmArmed';
+}
+
+interface ReminderRearmConsumedEvent {
+  readonly type: 'reminder.rearmConsumed';
+}
+
+type ReminderActorEvent =
+  | AgentRuntimeRestoreEvent
+  | ReminderRegisterEvent
+  | ReminderUnregisterEvent
+  | ReminderRearmArmedEvent
+  | ReminderRearmConsumedEvent;
+
+function setWith(set: ReadonlySet<ReminderEntry>, entry: ReminderEntry): ReadonlySet<ReminderEntry> {
+  if (set.has(entry)) return set;
+  const next = new Set(set);
+  next.add(entry);
+  return next;
+}
+
+function setWithout(set: ReadonlySet<ReminderEntry>, entry: ReminderEntry): ReadonlySet<ReminderEntry> {
+  if (!set.has(entry)) return set;
+  const next = new Set(set);
+  next.delete(entry);
+  return next;
+}
 
 function actorContext(runtime: AgentRuntimeContext<null>): ReminderActorContext {
   return runtime.getLogicState<ReminderActorContext>();
@@ -174,12 +202,17 @@ async function inject(runtime: AgentRuntimeContext<null>, isNewTurn: boolean): P
   for (const entry of entries) await injectEntry(runtime, entry, isNewTurn);
 }
 
-const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: AgentRuntimeContext<null> } }) => {
-  let compactionRearmPending = false;
+const reminderEffects = fromCallback(({
+  input,
+  sendBack,
+}: {
+  input: { readonly runtime: AgentRuntimeContext<null> };
+  sendBack: (event: ReminderActorEvent) => void;
+}) => {
   const loop = getLoopControl(input.runtime.agent);
   const takeCompactionRearm = (): boolean => {
-    const pending = compactionRearmPending;
-    compactionRearmPending = false;
+    const pending = actorContext(input.runtime).compactionRearmPending;
+    if (pending) sendBack({ type: 'reminder.rearmConsumed' });
     return pending;
   };
   const reconcileAroundStep = async (
@@ -200,12 +233,11 @@ const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: Ag
     hook = loop.hooks.onWillBeginStep.register('context-injector', reconcileAroundStep);
   }
   const splice = input.runtime.get(IAgentHostService).of(input.runtime.agent).eventBus.subscribe(ContextSpliced, (event) => {
-    if (isCompactionSplice(event)) compactionRearmPending = true;
+    if (isCompactionSplice(event)) sendBack({ type: 'reminder.rearmArmed' });
   });
   return () => {
     splice.dispose();
     hook.dispose();
-    actorContext(input.runtime).entries.clear();
   };
 });
 
@@ -217,7 +249,8 @@ const reminderActorLogic = setup({
   },
   actors: { reminderEffects },
 }).createMachine({
-  context: ({ input }) => ({ entries: new Set(), runtime: input }),
+  context: ({ input }) => ({ entries: new Set(), compactionRearmPending: false, runtime: input }),
+  exit: assign({ entries: () => new Set<ReminderEntry>() }),
   initial: 'beforeRestore',
   states: {
     beforeRestore: {
@@ -232,10 +265,16 @@ const reminderActorLogic = setup({
   },
   on: {
     'reminder.register': {
-      actions: ({ context, event }) => { context.entries.add(event.entry); },
+      actions: assign({ entries: ({ context, event }) => setWith(context.entries, event.entry) }),
     },
     'reminder.unregister': {
-      actions: ({ context, event }) => { context.entries.delete(event.entry); },
+      actions: assign({ entries: ({ context, event }) => setWithout(context.entries, event.entry) }),
+    },
+    'reminder.rearmArmed': {
+      actions: assign({ compactionRearmPending: true }),
+    },
+    'reminder.rearmConsumed': {
+      actions: assign({ compactionRearmPending: false }),
     },
   },
 });
