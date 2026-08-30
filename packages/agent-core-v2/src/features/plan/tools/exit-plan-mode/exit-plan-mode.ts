@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import type { AgentTool } from '#/tool/toolContract';
 
 export interface ExitPlanModeOption {
@@ -52,10 +51,7 @@ export interface ExitPlanModePlanSource {
   path?: string | undefined;
 }
 
-export interface IExitPlanModeTool extends AgentTool<ExitPlanModeInput> {
-  readonly _serviceBrand: undefined;
-}
-export const IExitPlanModeTool = createDecorator<IExitPlanModeTool>('exitPlanModeTool');
+export type IExitPlanModeTool = AgentTool<ExitPlanModeInput>;
 
 function hasUniqueOptionLabels(options: readonly ExitPlanModeOption[]): boolean {
   const labels = new Set<string>();

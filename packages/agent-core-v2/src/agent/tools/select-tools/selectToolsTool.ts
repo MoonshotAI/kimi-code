@@ -7,7 +7,7 @@ import {
 import { SELECT_TOOLS_TOOL_NAME } from '#/features/toolExecutor/toolSelection';
 
 import {
-  ISelectToolsTool,
+  type ISelectToolsTool,
   SelectToolsInputSchema,
   type SelectToolsInput,
 } from './select-tools';

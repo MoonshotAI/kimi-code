@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 import { type TodoStatus } from '#/features/todo/todoItem';
 
@@ -22,7 +21,4 @@ export const TodoListInputSchema: z.ZodType<TodoListInput> = z.object({
     ),
 });
 
-export interface ITodoListTool extends AgentTool<TodoListInput> {
-  readonly _serviceBrand: undefined;
-}
-export const ITodoListTool = createDecorator<ITodoListTool>('todoListTool');
+export type ITodoListTool = AgentTool<TodoListInput>;

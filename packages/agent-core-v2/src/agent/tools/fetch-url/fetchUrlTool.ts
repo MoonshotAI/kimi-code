@@ -11,7 +11,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 
 import { IWebFetchService } from '#/app/web/web';
 import { HttpFetchError } from '#/app/web/tools/fetch-url-types';
-import { FetchURLInputSchema, IFetchURLTool, type FetchURLInput } from './fetch-url';
+import { FetchURLInputSchema, type IFetchURLTool, type FetchURLInput } from './fetch-url';
 import DESCRIPTION from './fetch-url.md?raw';
 
 export class FetchURLTool implements IFetchURLTool {

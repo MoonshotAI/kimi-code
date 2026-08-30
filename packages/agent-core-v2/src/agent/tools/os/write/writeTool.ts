@@ -18,7 +18,7 @@ import {
 } from '#/tool/path-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
-import { IWriteTool, WriteInputSchema, type WriteInput } from './write';
+import { type IWriteTool, WriteInputSchema, type WriteInput } from './write';
 import WRITE_DESCRIPTION from './write.md?raw';
 
 export class WriteTool implements IWriteTool {

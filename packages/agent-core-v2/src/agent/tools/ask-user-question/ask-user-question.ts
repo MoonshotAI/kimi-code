@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 const QuestionOptionSchema = z.object({
@@ -88,7 +87,4 @@ export const AskUserQuestionInputSchema: z.ZodType<AskUserQuestionInput> =
     { message: QUESTION_UNIQUENESS_MESSAGE },
   );
 
-export interface IAskUserQuestionTool extends AgentTool<AskUserQuestionInput> {
-  readonly _serviceBrand: undefined;
-}
-export const IAskUserQuestionTool = createDecorator<IAskUserQuestionTool>('askUserQuestionTool');
+export type IAskUserQuestionTool = AgentTool<AskUserQuestionInput>;

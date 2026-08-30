@@ -14,7 +14,7 @@ import { goalForModel } from '#/features/goal/tools/serialize';
 import DESCRIPTION from './create-goal.md?raw';
 import {
   CreateGoalToolInputSchema,
-  ICreateGoalTool,
+  type ICreateGoalTool,
   type CreateGoalToolInput,
 } from './create-goal';
 

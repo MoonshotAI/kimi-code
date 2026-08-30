@@ -18,7 +18,7 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { EditInputSchema, IEditTool, type EditInput } from './edit';
+import { EditInputSchema, type IEditTool, type EditInput } from './edit';
 import editDescriptionTemplate from './edit.md?raw';
 
 export class EditTool implements IEditTool {

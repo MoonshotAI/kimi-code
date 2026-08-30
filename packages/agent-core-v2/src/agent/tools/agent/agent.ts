@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 import { DEFAULT_PROFILE_NAME } from '#/session/subagent/spawn';
 
@@ -86,8 +85,4 @@ export const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   'The subagent was stopped before it finished by user.';
 export const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
 
-export interface ISubagentTool extends AgentTool<SubagentToolInput> {
-  readonly _serviceBrand: undefined;
-}
-
-export const ISubagentTool = createDecorator<ISubagentTool>('subagentTool');
+export type ISubagentTool = AgentTool<SubagentToolInput>;

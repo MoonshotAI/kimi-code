@@ -6,7 +6,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import type { IAgentTaskService } from '#/agent/task/task';
 import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { formatTaskList } from '#/agent/task/tools/format';
-import { ITaskListTool, TaskListInputSchema, type TaskListInput } from './task-list';
+import { type ITaskListTool, TaskListInputSchema, type TaskListInput } from './task-list';
 import TASK_LIST_DESCRIPTION from './task-list.md?raw';
 
 export class TaskListTool implements ITaskListTool {

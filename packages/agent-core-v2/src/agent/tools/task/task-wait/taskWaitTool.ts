@@ -16,7 +16,7 @@ import { IFlagService } from '#/app/flag/flag';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortError, linkAbortSignal } from '#/_base/utils/abort';
 import { WAIT_FOR_FLAG_ID } from './flag';
-import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
+import { type IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait';
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;

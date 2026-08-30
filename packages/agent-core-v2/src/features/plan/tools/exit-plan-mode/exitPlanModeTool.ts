@@ -11,7 +11,7 @@ import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifec
 import DESCRIPTION from './exit-plan-mode.md?raw';
 import {
   ExitPlanModeInputSchema,
-  IExitPlanModeTool,
+  type IExitPlanModeTool,
   type ExitPlanModeInput,
   type ExitPlanModePlanSource,
 } from './exit-plan-mode';

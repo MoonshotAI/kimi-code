@@ -36,7 +36,7 @@ import globDescription from './glob.md?raw';
 import {
   type GlobInput,
   GlobInputSchema,
-  IGlobTool,
+  type IGlobTool,
   MAX_MATCHES,
   WINDOWS_PATH_HINT,
 } from './glob';

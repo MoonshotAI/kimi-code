@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const EditInputSchema = z.object({
@@ -28,7 +27,4 @@ export const EditInputSchema = z.object({
 
 export type EditInput = z.infer<typeof EditInputSchema>;
 
-export interface IEditTool extends AgentTool<EditInput> {
-  readonly _serviceBrand: undefined;
-}
-export const IEditTool = createDecorator<IEditTool>('editTool');
+export type IEditTool = AgentTool<EditInput>;

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const UpdateGoalToolInputSchema = z
@@ -15,5 +14,4 @@ export const UpdateGoalToolInputSchema = z
 
 export type UpdateGoalToolInput = z.infer<typeof UpdateGoalToolInputSchema>;
 
-export interface IUpdateGoalTool extends AgentTool<UpdateGoalToolInput> { readonly _serviceBrand: undefined }
-export const IUpdateGoalTool = createDecorator<IUpdateGoalTool>('updateGoalTool');
+export type IUpdateGoalTool = AgentTool<UpdateGoalToolInput>;

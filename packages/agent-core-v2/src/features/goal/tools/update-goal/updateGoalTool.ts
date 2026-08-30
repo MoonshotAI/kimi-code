@@ -13,7 +13,7 @@ import {
 import DESCRIPTION from './update-goal.md?raw';
 import {
   UpdateGoalToolInputSchema,
-  IUpdateGoalTool,
+  type IUpdateGoalTool,
   type UpdateGoalToolInput,
 } from './update-goal';
 

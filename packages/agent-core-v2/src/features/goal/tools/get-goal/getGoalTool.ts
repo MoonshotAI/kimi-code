@@ -8,7 +8,7 @@ import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifec
 import { goalResultForModel } from '#/features/goal/tools/serialize';
 
 import DESCRIPTION from './get-goal.md?raw';
-import { GetGoalToolInputSchema, IGetGoalTool, type GetGoalToolInput } from './get-goal';
+import { GetGoalToolInputSchema, type IGetGoalTool, type GetGoalToolInput } from './get-goal';
 
 export class GetGoalTool implements IGetGoalTool {
   declare readonly _serviceBrand: undefined;

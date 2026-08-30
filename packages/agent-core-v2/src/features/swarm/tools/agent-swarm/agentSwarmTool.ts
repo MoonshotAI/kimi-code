@@ -30,7 +30,7 @@ import {
 } from '#/session/subagent/configSection';
 import {
   AgentSwarmToolInputSchema,
-  IAgentSwarmTool,
+  type IAgentSwarmTool,
   MAX_AGENT_SWARM_SUBAGENTS,
   PROMPT_TEMPLATE_PLACEHOLDER,
   type AgentSwarmToolInput,

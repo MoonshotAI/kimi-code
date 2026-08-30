@@ -14,7 +14,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 
 import {
-  ISkillTool,
+  type ISkillTool,
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
   SkillToolInputSchema,

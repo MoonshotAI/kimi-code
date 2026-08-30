@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 import { DEFAULT_BACKGROUND_TIMEOUT_S } from '#/agent/tools/os/bash/bash';
 
@@ -25,5 +24,4 @@ export const WaitForInputSchema = z.object({
 
 export type WaitForInput = z.infer<typeof WaitForInputSchema>;
 
-export interface IWaitForTool extends AgentTool<WaitForInput> { readonly _serviceBrand: undefined }
-export const IWaitForTool = createDecorator<IWaitForTool>('waitForTool');
+export type IWaitForTool = AgentTool<WaitForInput>;

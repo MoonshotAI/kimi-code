@@ -21,7 +21,7 @@ import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndin
 import { decodeUtfText, detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
-  IReadTool,
+  type IReadTool,
   MAX_BYTES,
   MAX_LINE_LENGTH,
   MAX_LINES,

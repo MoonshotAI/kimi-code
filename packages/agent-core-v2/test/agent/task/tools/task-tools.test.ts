@@ -30,7 +30,7 @@ import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validato
 import { ProcessTask, type ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
-import { IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
+import { type IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
 import type { LoopControl } from '#/features/loop/internal/loop';
 import { registerLoopControl } from '#/features/loop/internal/access';
 import { executeTool } from '../../../tools/fixtures/execute-tool';

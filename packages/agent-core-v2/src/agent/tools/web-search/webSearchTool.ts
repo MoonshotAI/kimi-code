@@ -11,7 +11,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 
 import {
-  IWebSearchTool,
+  type IWebSearchTool,
   WebSearchInputSchema,
   type WebSearchInput,
 } from './web-search';

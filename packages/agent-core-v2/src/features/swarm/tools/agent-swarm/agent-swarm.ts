@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const PROMPT_TEMPLATE_PLACEHOLDER = '{{item}}';
@@ -59,5 +58,4 @@ export const AgentSwarmToolInputSchema = z
 
 export type AgentSwarmToolInput = z.infer<typeof AgentSwarmToolInputSchema>;
 
-export interface IAgentSwarmTool extends AgentTool<AgentSwarmToolInput> { readonly _serviceBrand: undefined }
-export const IAgentSwarmTool = createDecorator<IAgentSwarmTool>('agentSwarmTool');
+export type IAgentSwarmTool = AgentTool<AgentSwarmToolInput>;

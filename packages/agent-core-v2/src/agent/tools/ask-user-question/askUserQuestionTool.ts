@@ -25,7 +25,7 @@ import type {
 import {
   AskUserQuestionInputSchema,
   AskUserQuestionInputSchemaWithBackground,
-  IAskUserQuestionTool,
+  type IAskUserQuestionTool,
   questionUniquenessError,
   type AskUserQuestionInput,
 } from './ask-user-question';

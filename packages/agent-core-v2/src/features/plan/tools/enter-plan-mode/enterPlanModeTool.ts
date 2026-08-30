@@ -6,7 +6,7 @@ import type { IAgentPlanService } from '#/features/plan/plan';
 import DESCRIPTION from './enter-plan-mode.md?raw';
 import {
   EnterPlanModeInputSchema,
-  IEnterPlanModeTool,
+  type IEnterPlanModeTool,
   type EnterPlanModeInput,
 } from './enter-plan-mode';
 

@@ -6,7 +6,7 @@ import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import {
   AskUserQuestionInputSchema,
-  IAskUserQuestionTool,
+  type IAskUserQuestionTool,
   type AskUserQuestionInput,
 } from '#/agent/tools/ask-user-question/ask-user-question';
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';

@@ -27,7 +27,7 @@ import {
   BashInputSchema,
   DEFAULT_BACKGROUND_TIMEOUT_S,
   DEFAULT_TIMEOUT_S,
-  IBashTool,
+  type IBashTool,
   MAX_BACKGROUND_TIMEOUT_S,
   MAX_TIMEOUT_S,
 } from './bash';

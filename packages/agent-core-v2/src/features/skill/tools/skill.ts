@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { Error2, ErrorCodes } from '#/errors';
 import { type AgentTool } from '#/tool/toolContract';
 
@@ -41,5 +40,4 @@ export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
     ),
 });
 
-export interface ISkillTool extends AgentTool<SkillToolInput> { readonly _serviceBrand: undefined }
-export const ISkillTool = createDecorator<ISkillTool>('skillTool');
+export type ISkillTool = AgentTool<SkillToolInput>;

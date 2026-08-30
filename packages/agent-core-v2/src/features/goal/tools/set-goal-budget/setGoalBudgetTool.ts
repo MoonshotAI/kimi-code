@@ -10,7 +10,7 @@ import type { GoalBudgetLimits, GoalSnapshot } from '#/features/goal/types';
 import DESCRIPTION from './set-goal-budget.md?raw';
 import {
   SetGoalBudgetToolInputSchema,
-  ISetGoalBudgetTool,
+  type ISetGoalBudgetTool,
   type SetGoalBudgetToolInput,
 } from './set-goal-budget';
 

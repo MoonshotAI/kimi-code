@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export interface WebSearchResult {
@@ -27,7 +26,4 @@ export const WebSearchInputSchema = z.object({
 
 export type WebSearchInput = z.infer<typeof WebSearchInputSchema>;
 
-export interface IWebSearchTool extends AgentTool<WebSearchInput> {
-  readonly _serviceBrand: undefined;
-}
-export const IWebSearchTool = createDecorator<IWebSearchTool>('webSearchTool');
+export type IWebSearchTool = AgentTool<WebSearchInput>;

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const MAX_LINES: number = 1000;
@@ -42,5 +41,4 @@ export const ReadOutputSchema = z.object({
 export type ReadInput = z.infer<typeof ReadInputSchema>;
 export type ReadOutput = z.infer<typeof ReadOutputSchema>;
 
-export interface IReadTool extends AgentTool<ReadInput> { readonly _serviceBrand: undefined }
-export const IReadTool = createDecorator<IReadTool>('readTool');
+export type IReadTool = AgentTool<ReadInput>;

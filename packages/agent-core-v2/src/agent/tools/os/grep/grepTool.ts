@@ -38,7 +38,7 @@ import {
   type RunRgResult,
 } from '#/os/backends/node-local/tools/runRg';
 import GREP_DESCRIPTION from './grep.md?raw';
-import { type GrepInput, GrepInputSchema, IGrepTool } from './grep';
+import { type GrepInput, GrepInputSchema, type IGrepTool } from './grep';
 
 const RG_MAX_COLUMNS = 500;
 const DEFAULT_HEAD_LIMIT = 250;

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const SelectToolsInputSchema = z
@@ -14,5 +13,4 @@ export const SelectToolsInputSchema = z
 
 export type SelectToolsInput = z.infer<typeof SelectToolsInputSchema>;
 
-export interface ISelectToolsTool extends AgentTool<SelectToolsInput> { readonly _serviceBrand: undefined }
-export const ISelectToolsTool = createDecorator<ISelectToolsTool>('selectToolsTool');
+export type ISelectToolsTool = AgentTool<SelectToolsInput>;

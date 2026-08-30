@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 const BUDGET_UNITS = ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours'] as const;
@@ -14,5 +13,4 @@ export const SetGoalBudgetToolInputSchema = z
 
 export type SetGoalBudgetToolInput = z.infer<typeof SetGoalBudgetToolInputSchema>;
 
-export interface ISetGoalBudgetTool extends AgentTool<SetGoalBudgetToolInput> { readonly _serviceBrand: undefined }
-export const ISetGoalBudgetTool = createDecorator<ISetGoalBudgetTool>('setGoalBudgetTool');
+export type ISetGoalBudgetTool = AgentTool<SetGoalBudgetToolInput>;

@@ -11,7 +11,7 @@ import type {
 import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatPlainObject } from '#/agent/task/tools/format';
-import { ITaskOutputTool, TaskOutputInputSchema, type TaskOutputInput } from './task-output';
+import { type ITaskOutputTool, TaskOutputInputSchema, type TaskOutputInput } from './task-output';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;

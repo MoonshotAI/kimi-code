@@ -6,7 +6,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import type { IAgentTaskService } from '#/agent/task/task';
 import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
+import { type ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
 
 export class TaskStopTool implements ITaskStopTool {

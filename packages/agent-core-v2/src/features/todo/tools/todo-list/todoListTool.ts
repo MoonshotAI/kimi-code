@@ -11,7 +11,7 @@ import {
 } from '#/features/todo/todoItem';
 
 import {
-  ITodoListTool,
+  type ITodoListTool,
   TodoListInputSchema,
   type TodoListInput,
 } from './todo-list';

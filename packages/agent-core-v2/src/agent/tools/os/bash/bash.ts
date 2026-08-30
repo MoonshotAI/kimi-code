@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const DEFAULT_TIMEOUT_S = 60;
@@ -73,5 +72,4 @@ export const BashOutputSchema = z.object({
 export type BashInput = z.infer<typeof BashInputSchema>;
 export type BashOutput = z.infer<typeof BashOutputSchema>;
 
-export interface IBashTool extends AgentTool<BashInput> { readonly _serviceBrand: undefined }
-export const IBashTool = createDecorator<IBashTool>('bashTool');
+export type IBashTool = AgentTool<BashInput>;
