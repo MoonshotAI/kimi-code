@@ -31,6 +31,7 @@ export interface HistoryToolCall {
 }
 
 export interface HistoryMessage {
+  readonly id?: string;
   readonly role: string;
   readonly content?: readonly HistoryContentPart[];
   readonly toolCalls?: readonly HistoryToolCall[];
@@ -42,6 +43,7 @@ export interface HistoryMessage {
 interface TurnDraft {
   turnId: string;
   ordinal: number;
+  triggerPromptId?: string;
   origin: TurnOrigin;
   prompt?: string;
   attachmentIds?: string[];
@@ -192,12 +194,17 @@ export function groupMessagesIntoSnapshot(
     }
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+  const startTurn = (
+    origin: TurnOrigin,
+    prompt?: string,
+    attachmentIds?: string[],
+    triggerPromptId?: string,
+  ): TurnDraft => {
     flushSteeredLeftovers();
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
     pendingNotificationFrames = [];
-    turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
+    turn = { turnId: `t${ordinal}`, ordinal, triggerPromptId, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
   };
@@ -262,7 +269,7 @@ export function groupMessagesIntoSnapshot(
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
         if (opening !== undefined) {
-          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         }
         continue;
       }
@@ -294,11 +301,11 @@ export function groupMessagesIntoSnapshot(
         });
         const callerMessage = { ...message, content: parts.slice(bundled.length) };
         const opening = foldTurnOpeningInput(callerMessage);
-        startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         continue;
       }
       const opening = foldTurnOpeningInput(message);
-      startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
       continue;
     }
 
@@ -418,6 +425,18 @@ function isUserSlashPrompt(message: HistoryMessage): boolean {
   );
 }
 
+function triggerPromptIdOf(message: HistoryMessage): string | undefined {
+  if (typeof message.id !== 'string' || message.id.length === 0) return undefined;
+  const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
+  if (origin?.kind === undefined || origin.kind === 'user') return message.id;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  )
+    ? message.id
+    : undefined;
+}
+
 function mapOrigin(message: HistoryMessage): TurnOrigin {
   const origin = message.origin;
   switch (origin?.kind) {
@@ -509,6 +528,7 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
   return {
     kind: 'turn',
     turnId: draft.turnId,
+    triggerPromptId: draft.triggerPromptId,
     ordinal: draft.ordinal,
     state: 'completed',
     origin: draft.origin,

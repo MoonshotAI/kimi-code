@@ -98,6 +98,27 @@ function isUndoAnchorTurnOrigin(origin: unknown): boolean {
   );
 }
 
+function turnOriginKind(origin: unknown): TranscriptTurn['origin']['kind'] {
+  const payload = origin as { kind?: unknown; taskId?: unknown } | undefined;
+  switch (payload?.kind) {
+    case 'user':
+    case 'shell_command':
+      return 'user';
+    case 'cron_job':
+    case 'cron_missed':
+      return 'cron';
+    case 'task':
+    case 'background_task':
+      return typeof payload.taskId === 'string' ? 'task' : 'other';
+    case 'hook_result':
+      return 'hook';
+    case 'compaction_summary':
+      return 'compaction';
+    default:
+      return 'other';
+  }
+}
+
 function mapTaskKind(kind: unknown): TranscriptTask['kind'] {
   switch (kind) {
     case 'process':
@@ -191,6 +212,7 @@ export function foldWireRecordFacts(
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
   const turnPromptIds = new Map<number, string>();
+  const turnOrigins = new Map<number, unknown>();
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
@@ -459,6 +481,7 @@ export function foldWireRecordFacts(
         const turnId = nextTurnId;
         nextTurnId += 1;
         const payload = record as TurnPromptPayload;
+        turnOrigins.set(turnId, payload.origin);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
         if (isUndoAnchorTurnOrigin(payload.origin)) undoAnchorTurnIds.push(turnId);
         if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
@@ -475,37 +498,69 @@ export function foldWireRecordFacts(
     }
   }
 
-  const endedByOrdinal = new Map<number, HistoryWireRecord>();
-  for (const [turnId, record] of endedTurns) {
+  const baseTurns = base.items.filter((item): item is TranscriptTurn => item.kind === 'turn');
+  const ordinalByPromptId = new Map(
+    baseTurns.flatMap((turn) =>
+      turn.triggerPromptId === undefined ? [] : [[turn.triggerPromptId, turn.ordinal] as const],
+    ),
+  );
+  const claimedOrdinals = new Set<number>();
+  const ordinalByRawTurnId = new Map<number, number>();
+  let nextBaseOrdinal = 0;
+  const claimNextBaseOrdinal = (
+    predicate: (turn: TranscriptTurn) => boolean = () => true,
+  ): number | undefined => {
+    while (claimedOrdinals.has(nextBaseOrdinal)) nextBaseOrdinal += 1;
+    const turn = baseTurns.find(
+      (candidate) =>
+        candidate.ordinal >= nextBaseOrdinal &&
+        !claimedOrdinals.has(candidate.ordinal) &&
+        predicate(candidate),
+    );
+    if (turn === undefined) return undefined;
+    claimedOrdinals.add(turn.ordinal);
+    nextBaseOrdinal = turn.ordinal + 1;
+    return turn.ordinal;
+  };
+  const lastRawTurnId = Math.max(nextTurnId - 1, ...endedTurns.keys());
+  for (let turnId = 0; turnId <= lastRawTurnId; turnId++) {
     if (hiddenTurnIds.has(turnId)) continue;
-    let hidden = 0;
-    for (const id of hiddenTurnIds) if (id < turnId) hidden += 1;
-    endedByOrdinal.set(turnId - hidden, record);
+    const promptId = turnPromptIds.get(turnId);
+    const matchedOrdinal = promptId === undefined ? undefined : ordinalByPromptId.get(promptId);
+    if (matchedOrdinal !== undefined && !claimedOrdinals.has(matchedOrdinal)) {
+      claimedOrdinals.add(matchedOrdinal);
+      nextBaseOrdinal = Math.max(nextBaseOrdinal, matchedOrdinal + 1);
+      ordinalByRawTurnId.set(turnId, matchedOrdinal);
+      continue;
+    }
+    if (promptId !== undefined) continue;
+    const origin = turnOrigins.get(turnId);
+    const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    const fallbackOrdinal = strictOrigin
+      ? claimNextBaseOrdinal(
+          (candidate) =>
+            candidate.triggerPromptId === undefined &&
+            candidate.origin.kind === turnOriginKind(origin),
+        )
+      : claimNextBaseOrdinal();
+    if (fallbackOrdinal !== undefined) ordinalByRawTurnId.set(turnId, fallbackOrdinal);
   }
 
-  const promptIdByOrdinal = new Map<number, string>();
-  for (const [turnId, promptId] of turnPromptIds) {
-    if (hiddenTurnIds.has(turnId)) continue;
-    let hidden = 0;
-    for (const id of hiddenTurnIds) if (id < turnId) hidden += 1;
-    promptIdByOrdinal.set(turnId - hidden, promptId);
+  const endedByOrdinal = new Map<number, HistoryWireRecord>();
+  for (const [turnId, record] of endedTurns) {
+    const ordinal = ordinalByRawTurnId.get(turnId);
+    if (ordinal !== undefined) endedByOrdinal.set(ordinal, record);
   }
 
   const items =
-    endedByOrdinal.size > 0 || promptIdByOrdinal.size > 0
+    endedByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
           const record = endedByOrdinal.get(item.ordinal);
-          const triggerPromptId = promptIdByOrdinal.get(item.ordinal) ?? item.triggerPromptId;
-          if (record === undefined) {
-            return triggerPromptId === item.triggerPromptId
-              ? item
-              : { ...item, triggerPromptId };
-          }
+          if (record === undefined) return item;
           const payload = record as TurnEndedPayload;
           return {
             ...item,
-            triggerPromptId,
             state: mapTurnEndReason(payload.reason) ?? item.state,
             endedAt: recordTimeIso(record) ?? item.endedAt,
             durationMs:
