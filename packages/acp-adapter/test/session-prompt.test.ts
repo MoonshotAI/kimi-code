@@ -147,6 +147,62 @@ describe('AcpServer session/prompt', () => {
     expect(unsubscribeCount()).toBe(1);
   });
 
+  it('forwards agent.status.updated context tokens as deduped usage_update notifications', async () => {
+    const sessionId = 'sess-U';
+    const { session } = makeScriptedSession(sessionId, [
+      // Baseline pair → must be pushed.
+      { type: 'agent.status.updated', contextTokens: 1000, maxContextTokens: 200_000 } as Event,
+      // Same pair again (e.g. permission toggle re-emits status) → deduped.
+      { type: 'agent.status.updated', contextTokens: 1000, maxContextTokens: 200_000 } as Event,
+      // Subagent status → filtered out, never pushed.
+      {
+        type: 'agent.status.updated',
+        agentId: 'sub-1',
+        contextTokens: 999_999,
+        maxContextTokens: 200_000,
+      } as Event,
+      // Missing token fields (model-change status) → skipped.
+      { type: 'agent.status.updated', model: 'kimi-k2' } as Event,
+      // Token count moved → pushed.
+      { type: 'agent.status.updated', contextTokens: 5000, maxContextTokens: 200_000 } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+    expect(response.stopReason).toBe('end_turn');
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const usageUpdates = collecting.promptUpdates.filter(
+      (n) => (n.update as { sessionUpdate?: string }).sessionUpdate === 'usage_update',
+    );
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0]?.update).toMatchObject({
+      sessionUpdate: 'usage_update',
+      used: 1000,
+      size: 200_000,
+    });
+    expect(usageUpdates[1]?.update).toMatchObject({
+      sessionUpdate: 'usage_update',
+      used: 5000,
+      size: 200_000,
+    });
+    for (const note of usageUpdates) {
+      expect(note.sessionId).toBe(sessionId);
+    }
+  });
+
   it('resolves with cancelled stopReason when turn.ended reason is cancelled', async () => {
     const sessionId = 'sess-B';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
