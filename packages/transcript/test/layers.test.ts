@@ -1856,11 +1856,11 @@ describe('foldWireRecordFacts (cold facts)', () => {
     ]);
     const folded = foldWireRecordFacts(
       [
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, time: 1 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1 },
         { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
         { type: 'turn.prompt', input: [], origin: { kind: 'retry' }, time: 3 },
         { type: 'turn.ended', turnId: 1, reason: 'failed', error: { message: 'retry boom' }, time: 4 },
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, time: 5 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 5 },
         { type: 'turn.ended', turnId: 2, reason: 'cancelled', durationMs: 20, time: 6 },
       ],
       base,
@@ -1868,9 +1868,11 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const first = folded.items[0];
     if (first?.kind !== 'turn') throw new Error('expected turn');
     expect(first.state).toBe('completed');
+    expect(first.triggerPromptId).toBe('prompt-1');
     const second = folded.items[1];
     if (second?.kind !== 'turn') throw new Error('expected turn');
     expect(second.state).toBe('cancelled');
+    expect(second.triggerPromptId).toBe('prompt-2');
     expect(second.error).toBeUndefined();
     expect(second.durationMs).toBe(20);
   });
@@ -1887,7 +1889,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
         { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, time: 1 },
         { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
         { type: 'turn.cancel', turnId: 1, target: 'queued', time: 3 },
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, time: 4 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'two' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 4 },
         { type: 'turn.ended', turnId: 2, reason: 'failed', error: { message: 'boom' }, time: 5 },
       ],
       base,
@@ -1896,5 +1898,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
     if (second?.kind !== 'turn') throw new Error('expected turn');
     expect(second.state).toBe('failed');
     expect(second.error).toBe('boom');
+    expect(second.triggerPromptId).toBe('prompt-2');
   });
 });

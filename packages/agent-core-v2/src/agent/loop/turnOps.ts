@@ -33,7 +33,10 @@ const turnInputShape = {
   origin: z.custom<PromptOrigin>(),
 };
 
-const turnPromptSchema = z.object(turnInputShape);
+const turnPromptSchema = z.object({
+  ...turnInputShape,
+  promptId: z.string().min(1).optional(),
+});
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
@@ -44,6 +47,7 @@ export interface TurnPrompt {
   readonly agentId: string;
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly promptId?: string;
 }
 
 const turnSteerSchema = z.object(turnInputShape);

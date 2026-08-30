@@ -65,6 +65,7 @@ interface TurnEndedPayload {
 
 interface TurnPromptPayload {
   readonly origin?: unknown;
+  readonly promptId?: unknown;
 }
 interface TurnCancelPayload {
   readonly turnId?: unknown;
@@ -177,6 +178,7 @@ export function foldWireRecordFacts(
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
+  const turnPromptIds = new Map<number, string>();
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
@@ -422,7 +424,9 @@ export function foldWireRecordFacts(
         skipCancelledTurnIds();
         const turnId = nextTurnId;
         nextTurnId += 1;
-        if (!isVisibleTurnOrigin((record as TurnPromptPayload).origin)) hiddenTurnIds.add(turnId);
+        const payload = record as TurnPromptPayload;
+        if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
+        if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
         break;
       }
       default:
@@ -444,15 +448,29 @@ export function foldWireRecordFacts(
     endedByOrdinal.set(turnId - hidden, record);
   }
 
+  const promptIdByOrdinal = new Map<number, string>();
+  for (const [turnId, promptId] of turnPromptIds) {
+    if (hiddenTurnIds.has(turnId)) continue;
+    let hidden = 0;
+    for (const id of hiddenTurnIds) if (id < turnId) hidden += 1;
+    promptIdByOrdinal.set(turnId - hidden, promptId);
+  }
+
   const items =
-    endedByOrdinal.size > 0
+    endedByOrdinal.size > 0 || promptIdByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
           const record = endedByOrdinal.get(item.ordinal);
-          if (record === undefined) return item;
+          const triggerPromptId = promptIdByOrdinal.get(item.ordinal) ?? item.triggerPromptId;
+          if (record === undefined) {
+            return triggerPromptId === item.triggerPromptId
+              ? item
+              : { ...item, triggerPromptId };
+          }
           const payload = record as TurnEndedPayload;
           return {
             ...item,
+            triggerPromptId,
             state: mapTurnEndReason(payload.reason) ?? item.state,
             endedAt: recordTimeIso(record) ?? item.endedAt,
             durationMs:

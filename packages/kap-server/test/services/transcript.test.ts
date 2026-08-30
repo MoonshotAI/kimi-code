@@ -2595,12 +2595,14 @@ describe('AgentTranscriptProjector', () => {
         writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
       const user = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 };
       const assistant = { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] }, time: 2000 };
+      const boundary = { type: 'turn.prompt', input: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 500 };
 
-      await write([user, assistant, { type: 'turn.ended', turnId: 0, reason: 'completed', time: 3000 }]);
+      await write([boundary, user, assistant, { type: 'turn.ended', turnId: 0, reason: 'completed', time: 3000 }]);
       const ended = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
       expect(ended!.meta.activity).toBe('idle');
+      expect(ended!.items[0]).toMatchObject({ triggerPromptId: 'prompt-1' });
 
-      await write([user, assistant]);
+      await write([boundary, user, assistant]);
       const dangling = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
       expect(dangling!.meta.activity).toBe('idle');
     } finally {

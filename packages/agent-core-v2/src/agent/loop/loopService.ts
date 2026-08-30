@@ -465,7 +465,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private startTurn(job: TurnJob): void {
     const origin = job.seed.origin;
     void this.dispatcher.dispatch(
-      new TurnPrompt({ agentId: this.scopeContext.agentId, input: job.seed.input, origin }),
+      new TurnPrompt({
+        agentId: this.scopeContext.agentId,
+        input: job.seed.input,
+        origin,
+        promptId: job.seed.promptId,
+      }),
     );
     job.turn.state = 'running';
     this.activeTurnJob = job;
