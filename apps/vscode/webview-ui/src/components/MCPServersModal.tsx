@@ -222,7 +222,7 @@ function ServerForm({
         <>
           <div>
             <Label className="text-[10px] text-muted-foreground">URL</Label>
-            <Input value={data.url} onChange={(e) => set("url", e.target.value)} placeholder="https://..." className="h-7 text-xs font-mono" />
+            <Input value={data.url} onChange={(e) => set("url", e.target.value)} placeholder="https://…" className="h-7 text-xs font-mono" />
             <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer">
               <input type="checkbox" checked={data.requiresAuth} onChange={(e) => set("requiresAuth", e.target.checked)} className="rounded size-3" />
               <span className="text-xs text-muted-foreground">Requires OAuth</span>
@@ -580,7 +580,7 @@ export function MCPServersModal() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => { void handleDelete(); }} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {isDeleting ? "Deleting..." : "Delete"}
+              {isDeleting ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

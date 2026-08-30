@@ -634,7 +634,7 @@ async function installFromPanel(
   if (official) {
     panel.setInstalling(truncateForStatus(label));
   } else {
-    host.showStatus(`Installing or updating ${label} from marketplace...`);
+    host.showStatus(`Installing or updating ${label} from marketplace…`);
   }
   host.state.ui.requestRender();
   try {

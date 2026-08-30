@@ -397,7 +397,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
             onKeyDown={handleKeyDown}
             onSelect={handleSelect}
             onPaste={handlePaste}
-            placeholder={isStreaming ? "Add a follow-up..." : "Ask Kimi Code... (/ commands · @ files · Alt+K code)"}
+            placeholder={isStreaming ? "Add a follow-up…" : "Ask Kimi Code… (/ commands · @ files · Alt+K code)"}
             className={cn(
               "w-full min-h-12 max-h-35 px-2.5 py-1.5 text-xs leading-relaxed",
               "bg-transparent resize-none outline-none border-none overflow-y-auto",
