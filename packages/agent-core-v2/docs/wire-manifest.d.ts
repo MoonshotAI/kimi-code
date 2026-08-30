@@ -791,6 +791,7 @@ interface TurnPromptPayload {
   input: readonly ContentPart[];
   /** PromptOrigin */
   origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
+  promptId?: string;
 }
 
 /**

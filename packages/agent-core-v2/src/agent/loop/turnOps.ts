@@ -34,8 +34,10 @@ const turnInputShape = {
 };
 
 const turnPromptSchema = z.object({
-  ...turnInputShape,
-  promptId: z.string().min(1).optional(),
+  agentId: z.string(),
+  input: z.custom<readonly ContentPart[]>(),
+  origin: z.custom<PromptOrigin>(),
+  promptId: z.string().optional(),
 });
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
