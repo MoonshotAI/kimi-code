@@ -20,7 +20,7 @@ import { Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
-import type { AgentTaskInfo } from '#/agent/task/task';
+import type { AgentTaskInfo } from '#/features/task/types';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -118,7 +118,7 @@ import {
   IFileSystemStorageService,
   ISessionApprovalService,
   ISessionMetadata,
-  IAgentTaskService,
+  AgentTask,
   IBlobStore,
   BlobStoreService,
   IBootstrapService,
@@ -203,7 +203,6 @@ import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarm
 import { ISessionPlanService } from '#/features/plan/sessionPlanService';
 import { ISessionStaleGuardService } from '#/features/staleGuard/sessionStaleGuardService';
 import { ISessionAgentExternalHooksService } from '#/features/externalHooks/session/sessionAgentExternalHooksService';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionPluginCommandService } from '#/agent/pluginCommand/sessionPluginCommandService';
@@ -897,7 +896,6 @@ class TestAgentStateService extends AgentStateService {
 }
 
 const AGENT_VIEW_SHELL_TOKENS = new Map<ServiceIdentifier<unknown>, ServiceIdentifier<unknown>>([
-  [IAgentTaskService, ISessionTaskService],
   [IAgentUserToolService, ISessionUserToolService],
   [IAgentPluginCommandService, ISessionPluginCommandService],
   [IAgentShellCommandService, ISessionShellCommandService],
@@ -1421,7 +1419,6 @@ export class AgentTestContext {
     });
     const harnessAgentContext = agentScopeContext.agentContext;
     this.session.accessor.get(IAgentLifecycleService).attachRuntimes(harnessAgentContext);
-    this.session.accessor.get(ISessionTaskService).attach(harnessAgentContext);
     this.session.accessor.get(ISessionToolApprovalService).attach(harnessAgentContext);
     this.session.accessor.get(ISessionUserToolService).attach(harnessAgentContext);
     this.session.accessor.get(ISessionPluginCommandService).attach(harnessAgentContext);
@@ -1657,14 +1654,12 @@ export class AgentTestContext {
     const plan = this.get(IAgentPlanService);
     this.resolve(AgentTools);
     this.get(IAgentExternalHooksService);
-    const tasks = this.get(IAgentTaskService);
     const swarm = this.get(IAgentSwarmService);
 
     context.get();
     void swarm.isActive;
     tokenCounting.get();
     usage.status();
-    tasks.list(false);
     void permissionMode.mode();
     void permissionRules.rules();
     cron.list();
@@ -2307,14 +2302,14 @@ export class AgentTestContext {
       setActiveTools: (payload) =>
         this.resolve(AgentProfile).update({ activeToolNames: payload.names }),
       stopTask: (payload) => {
-        const tasks = this.get(IAgentTaskService);
+        const tasks = this.resolve(AgentTask);
         if (payload.reason === undefined) {
           void tasks.stopByUser(payload.taskId);
           return;
         }
         void tasks.stop(payload.taskId, payload.reason);
       },
-      detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
+      detachTask: (payload) => this.resolve(AgentTask).detach(payload.taskId),
       clearContext: () => this.resolve(AgentPrompt).clear(),
       createGoal: (payload) => this.resolve(AgentGoal).createGoal(payload),
       getGoal: () => this.resolve(AgentGoal).getGoal(),
@@ -2322,7 +2317,7 @@ export class AgentTestContext {
       resumeGoal: () => this.resolve(AgentGoal).resumeGoal(),
       cancelGoal: () => this.resolve(AgentGoal).cancelGoal(),
       getTaskOutput: (payload) =>
-        this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
+        this.resolve(AgentTask).readOutput(payload.taskId, payload.tail),
       getConfig: () => this.resolve(AgentProfile).data(),
       getPermission: () => ({
         mode: toWireMode(this.resolve(AgentPermissionMode).mode()),
@@ -2331,7 +2326,7 @@ export class AgentTestContext {
       getPlan: () => this.get(IAgentPlanService).status(),
       getUsage: () => this.usage.status(),
       getTasks: (payload) =>
-        this.get(IAgentTaskService).list(payload.activeOnly ?? false, payload.limit),
+        this.resolve(AgentTask).list(payload.activeOnly ?? false, payload.limit),
     };
   }
 
@@ -3033,7 +3028,7 @@ function cloneRecord<T extends WireRecord>(event: T): T {
   return structuredClone(event);
 }
 
-function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
+export function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
   if (events.length === 0 || events[0]?.type === 'metadata') return events;
   return [
     {

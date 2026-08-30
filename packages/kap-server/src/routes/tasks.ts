@@ -1,11 +1,11 @@
 import {
   ISessionIndex,
+  ISessionTaskView,
   getLiveSessionById,
   type AgentTaskInfo,
-  type IAgentTaskService,
   type Scope,
+  type SessionTaskEntry,
 } from '@moonshot-ai/agent-core-v2';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   cancelTaskResultSchema,
@@ -20,7 +20,6 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 const DEFAULT_TASK_OUTPUT_PREVIEW_BYTES = 32 * 1024;
@@ -78,8 +77,8 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const all = (resolved.tasks?.list(false) ?? []).map((info) =>
-        toWireTask(session_id, info),
+      const all = (resolved.tasks?.list(false) ?? []).map((entry) =>
+        toWireTask(session_id, entry),
       );
       const query = req.query as { status?: TaskStatus };
       const items =
@@ -112,7 +111,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const found = resolved.tasks?.getTask(task_id);
+      const found = resolved.tasks?.get(task_id);
       if (found === undefined) {
         reply.send(taskNotFound(session_id, task_id, req.id));
         return;
@@ -186,7 +185,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const found = resolved.tasks?.getTask(task_id);
+      const found = resolved.tasks?.get(task_id);
       if (found === undefined) {
         reply.send(taskNotFound(session_id, task_id, req.id));
         return;
@@ -207,7 +206,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
 
 type ResolvedTasks =
   | { readonly kind: 'not_found' }
-  | { readonly kind: 'resolved'; readonly tasks: IAgentTaskService | undefined };
+  | { readonly kind: 'resolved'; readonly tasks: ISessionTaskView | undefined };
 
 async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTasks> {
   const summary = await core.accessor.get(ISessionIndex).get(sid);
@@ -215,9 +214,7 @@ async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTa
 
   const session = getLiveSessionById(core.accessor, sid);
   if (session === undefined) return { kind: 'resolved', tasks: undefined };
-  const agent = await ensureMainAgent(session);
-  const tasks = session.accessor.get(ISessionTaskService).of(agent.context);
-  return { kind: 'resolved', tasks };
+  return { kind: 'resolved', tasks: session.accessor.get(ISessionTaskView) };
 }
 
 function mapKind(k: AgentTaskInfo['kind']): TaskKind {
@@ -260,9 +257,10 @@ function isTerminalStatus(status: TaskStatus): boolean {
 
 function toWireTask(
   sessionId: string,
-  info: AgentTaskInfo,
+  entry: SessionTaskEntry,
   output?: { preview: string; bytes: number },
 ): Task {
+  const info = entry.info;
   const status = mapStatus(info.status);
   const createdIso = new Date(info.startedAt).toISOString();
   const base: Task = {
@@ -273,6 +271,7 @@ function toWireTask(
     status,
     created_at: createdIso,
     started_at: createdIso,
+    owner_agent_id: entry.ownerAgentId,
   };
   if (info.endedAt !== null && info.endedAt !== undefined) {
     base.completed_at = new Date(info.endedAt).toISOString();

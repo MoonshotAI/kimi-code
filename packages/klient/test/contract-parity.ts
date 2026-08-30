@@ -202,6 +202,8 @@ import {
   tokenUsageSchema,
   usageStatusSchema,
 } from '../src/contract/agent/schemas.js';
+import { sessionTaskEntrySchema } from '../src/contract/agent/services.js';
+import type { SessionTaskEntry } from '@moonshot-ai/agent-core-v2/features/task/sessionTaskView';
 import {
   assistantDeltaEventSchema,
   compactionBlockedEventSchema,
@@ -704,6 +706,7 @@ const _getTasksPayload: AssertWire<typeof getTasksPayloadSchema, GetTasksPayload
 // declaration-merged `AgentTaskInfo` is structurally identical but depends on
 // tool-module augmentation, so parity is pinned to the protocol type.
 const _agentTaskInfo: AssertWire<typeof agentTaskInfoSchema, TaskInfo> = true;
+const _sessionTaskEntry: AssertWire<typeof sessionTaskEntrySchema, SessionTaskEntry> = true;
 const _stopTaskPayload: AssertWire<typeof stopTaskPayloadSchema, StopTaskPayload> = true;
 const _getTaskOutputPayload: AssertWire<typeof getTaskOutputPayloadSchema, GetTaskOutputPayload> =
   true;

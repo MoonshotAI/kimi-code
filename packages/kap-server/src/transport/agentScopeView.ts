@@ -11,7 +11,6 @@ import {
   IAgentShellCommandService,
   IAgentStateService,
   IAgentSwarmService,
-  IAgentTaskService,
   IAgentTelemetryContextService,
   IAgentTowerService,
   IEventBus,
@@ -25,7 +24,6 @@ import {
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionPlanService } from '@moonshot-ai/agent-core-v2/features/plan/sessionPlanService';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { ISessionCommandService } from '@moonshot-ai/agent-core-v2/agent/command/sessionCommandService';
 import { ISessionShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/sessionShellCommandService';
 import { ISessionTowerService } from '@moonshot-ai/agent-core-v2/features/tower/sessionTowerService';
@@ -67,8 +65,6 @@ function shellService(
   switch (id) {
     case IAgentPlanService:
       return session.accessor.get(ISessionPlanService).of(agent);
-    case IAgentTaskService:
-      return session.accessor.get(ISessionTaskService).of(agent);
     case IAgentCommandService:
       return session.accessor.get(ISessionCommandService).of(agent);
     case IAgentShellCommandService:

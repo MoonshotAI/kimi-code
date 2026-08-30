@@ -14,7 +14,7 @@ import { ISessionPermissionModeService } from '#/session/permissionMode/sessionP
 import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
@@ -76,7 +76,8 @@ describe('TowerSpawnTool', () => {
   let release: Mock<() => void>;
   let createAgent: Mock<IAgentLifecycleService['create']>;
   let runAgent: Mock<ISessionSubagentService['run']>;
-  let registerTask: Mock<IAgentTaskService['registerTask']>;
+  let registerTask: Mock<TaskRuntime['registerTask']>;
+  let tasks: TaskRuntime;
   let completion: Deferred<{ readonly summary: string }>;
   let secondaryFlagOn: boolean;
   let secondaryModel: { readonly model: string; readonly defaultEffort?: string } | undefined;
@@ -120,6 +121,7 @@ describe('TowerSpawnTool', () => {
         }) as unknown as AgentRunHandle,
     );
     registerTask = vi.fn(() => 'task-1');
+    tasks = { registerTask } as unknown as TaskRuntime;
 
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
@@ -169,7 +171,6 @@ describe('TowerSpawnTool', () => {
       hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
       notifyAgentTaskStopped: () => {},
     } as unknown as ISessionSubagentService);
-    ix.stub(IAgentTaskService, { registerTask } as unknown as IAgentTaskService);
     ix.stub(IConfigService, {
       get: ((domain: string) =>
         domain === SECONDARY_MODEL_SECTION
@@ -200,7 +201,7 @@ describe('TowerSpawnTool', () => {
       ix.get(IAgentLifecycleService),
       ix.get(IAgentHostService),
       ix.get(ISessionSubagentService),
-      ix.get(IAgentTaskService),
+      tasks,
       ix.get(IConfigService),
       ix.get(IFlagService),
       ix.get(IModelCatalog),

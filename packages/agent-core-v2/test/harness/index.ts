@@ -27,6 +27,7 @@ export {
   telemetryServices,
   testAgent,
   wireRecordPersistenceServices,
+  withMetadata,
   type TestAgentContext,
   type TestAgentOptions,
   type TestAgentServiceGroup,

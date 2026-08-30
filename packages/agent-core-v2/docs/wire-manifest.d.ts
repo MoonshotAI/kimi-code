@@ -61,9 +61,9 @@
 //   staleGuard.recorded                staleGuard                       src/features/staleGuard/staleGuardOps.ts
 //   swarm_mode.enter                   swarm                            src/features/swarm/swarmOps.ts
 //   swarm_mode.exit                    swarm                            src/features/swarm/swarmOps.ts
-//   task.started                       task                             src/agent/task/taskOps.ts
-//   task.terminated                    task                             src/agent/task/taskOps.ts
-//   task.waitDelivered                 task.notificationDelivery        src/agent/task/taskOps.ts
+//   task.started                       (none)                           src/features/task/taskOps.ts
+//   task.terminated                    (none)                           src/features/task/taskOps.ts
+//   task.waitDelivered                 task.notificationDelivery        src/features/task/taskOps.ts
 //   token_counting.measured            (none)                           src/features/tokenCounting/tokenCountingOps.ts
 //   token_counting.rebased             (none)                           src/features/tokenCounting/tokenCountingOps.ts
 //   token_counting.truncated           (none)                           src/features/tokenCounting/tokenCountingOps.ts
@@ -565,8 +565,8 @@ interface SwarmModeExitPayload {
 }
 
 /**
- * states: task
- * owner: src/agent/task/taskOps.ts
+ * states: (none)
+ * owner: src/features/task/taskOps.ts
  */
 interface TaskStartedPayload {
   _name: 'task.started';
@@ -576,8 +576,8 @@ interface TaskStartedPayload {
 }
 
 /**
- * states: task
- * owner: src/agent/task/taskOps.ts
+ * states: (none)
+ * owner: src/features/task/taskOps.ts
  */
 interface TaskTerminatedPayload {
   _name: 'task.terminated';
@@ -589,7 +589,7 @@ interface TaskTerminatedPayload {
 
 /**
  * states: task.notificationDelivery
- * owner: src/agent/task/taskOps.ts
+ * owner: src/features/task/taskOps.ts
  */
 interface TaskWaitDeliveredPayload {
   _name: 'task.waitDelivered';

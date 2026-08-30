@@ -18,7 +18,6 @@
 
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
-import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAuthSummaryService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
@@ -150,7 +149,7 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     ],
   },
   {
-    id: String(IAgentTaskService),
+    id: 'agentTaskService',
     label: 'AgentTaskService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'list'),

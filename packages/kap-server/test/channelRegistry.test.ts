@@ -2,7 +2,7 @@ import {
   createDecorator,
   Feature,
   IAgentPlanService,
-  IAgentTaskService,
+  ISessionTaskView,
   IAgentTowerService,
   IFeatureManager,
   LifecycleScope,
@@ -22,7 +22,7 @@ describe('channelRegistry', () => {
   it('resolves agent-granular wire names', () => {
     const core = createAppScope();
     expect(resolveAnyScopedServiceId(core, 'agentPlanService')).toBe(IAgentPlanService);
-    expect(resolveAnyScopedServiceId(core, 'agentTaskService')).toBe(IAgentTaskService);
+    expect(resolveAnyScopedServiceId(core, 'sessionTaskView')).toBe(ISessionTaskView);
     expect(resolveAnyScopedServiceId(core, 'agentTowerService')).toBe(IAgentTowerService);
     core.dispose();
   });

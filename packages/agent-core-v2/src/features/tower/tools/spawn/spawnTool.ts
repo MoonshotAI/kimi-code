@@ -7,7 +7,7 @@ import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentHostService } from '#/agent/host/agentHost';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import type { IAgentTaskService } from '#/agent/task/task';
+import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
 import {
   GitError,
   MISSIONS_DIR,
@@ -67,7 +67,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     private readonly agentLifecycle: IAgentLifecycleService,
     private readonly hosts: IAgentHostService,
     private readonly subagents: ISessionSubagentService,
-    private readonly tasks: IAgentTaskService,
+    private readonly tasks: TaskRuntime,
     private readonly config: IConfigService,
     private readonly flags: IFlagService,
     private readonly modelCatalog: IModelCatalog,

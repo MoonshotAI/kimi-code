@@ -1,6 +1,6 @@
 import type { ContentPart, Message } from '#/kosong/contract/message';
 
-import type { AgentTaskStatus } from '#/agent/task/task';
+import type { AgentTaskStatus } from '#/features/task/types';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 

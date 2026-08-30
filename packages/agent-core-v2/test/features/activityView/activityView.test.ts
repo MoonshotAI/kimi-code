@@ -6,10 +6,9 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import { IAgentTaskService } from '#/agent/task/task';
-import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
-import type { AgentTaskInfo } from '#/agent/task/types';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
+import { TaskStarted, TaskTerminatedNotice } from '#/features/task/taskOps';
+import type { AgentTaskInfo } from '#/features/task/types';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -133,14 +132,44 @@ describe('AgentActivityView', () => {
     expect(updates().at(-1)?.background).toHaveLength(0);
   });
 
-  it('seeds the background slice from the task registry on creation', () => {
-    const ctx = harness(
-      agentService(IAgentTaskService, {
-        list: () => [makeTaskInfo('bash-9')],
-      } as unknown as IAgentTaskService),
-    );
-    const { view } = track(ctx);
+  it('seeds the background slice from the task registry on creation', async () => {
+    const bus = new FakeBus();
+    const agent = stubAgentContext('main', 1);
+    const loop = {
+      status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+    } as unknown as LoopControl;
+    registerLoopControl(agent, loop, () => ({ nextTurnId: 1, cancelledTurnIds: [] }));
+    const accessor = {
+      get: (id: unknown): unknown => {
+        if (id === IAgentHostService) return { of: () => ({ eventBus: bus }) };
+        if (id === IAgentLifecycleService) {
+          return {
+            resolve: (_agent: unknown, definition: unknown) => {
+              if (definition === AgentFullCompaction) return { status: () => 'idle' };
+              if (definition === AgentTask) return { list: () => [makeTaskInfo('bash-9')] };
+              throw new Error(`unexpected runtime resolution: ${String(definition)}`);
+            },
+          };
+        }
+        throw new Error(`unexpected service resolution: ${String(id)}`);
+      },
+    };
+    const dispatcher = {
+      dispatch: (event: Event2) => {
+        bus.publish(event);
+        return Promise.resolve();
+      },
+    };
+    const runtimes = new AgentRuntimeSet(agent, accessor as never, () => dispatcher as never);
+    runtimes.apply({
+      definition: AgentActivityView,
+      provider: activityViewAgentRuntimeProvider,
+      generation: 1,
+      active: true,
+    });
+    const view = runtimes.resolve(AgentActivityView);
     expect(view.state().background).toEqual([{ kind: 'process', id: 'bash-9', since: 100 }]);
+    await runtimes.close();
   });
 
   it('seeds lastTurn from the wire turnKey when the view is built after restore', async () => {
@@ -202,11 +231,11 @@ describe('AgentActivityView', () => {
     const accessor = {
       get: (id: unknown): unknown => {
         if (id === IAgentHostService) return { of: () => ({ eventBus: bus }) };
-        if (id === ISessionTaskService) return { of: () => ({ list: () => [] }) };
         if (id === IAgentLifecycleService) {
           return {
             resolve: (_agent: unknown, definition: unknown) => {
               if (definition === AgentFullCompaction) return { status: () => 'running' };
+              if (definition === AgentTask) return { list: () => [] };
               throw new Error(`unexpected runtime resolution: ${String(definition)}`);
             },
           };

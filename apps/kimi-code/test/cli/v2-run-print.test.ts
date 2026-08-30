@@ -8,10 +8,11 @@ import {
   AgentCron,
   AgentPrompt,
   AgentGoal,
+  AgentTask,
+  IAgentHostService,
   IAgentLifecycleService,
   ISessionPermissionModeService,
   AgentProfile,
-  IAgentTaskService,
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
@@ -145,8 +146,6 @@ function makeFakeHarness() {
         }),
       },
     ],
-    
-    [IAgentTaskService, { list: vi.fn(() => []) }],
   ]);
   const goal = { createGoal: vi.fn(), getGoal: vi.fn() };
   const cron = { getNextFireTime: vi.fn(() => null) };
@@ -170,6 +169,7 @@ function makeFakeHarness() {
       if (capability === AgentCron) return cron;
       if (capability === AgentProfile) return profile;
       if (capability === AgentPrompt) return { enqueue: promptEnqueue };
+      if (capability === AgentTask) return { list: vi.fn(() => []) };
       throw new Error('unexpected capability');
     }),
   };
@@ -180,6 +180,21 @@ function makeFakeHarness() {
   const sessionServices = new Map<unknown, unknown>([
     // drain enumerates agents; empty → no background work to wait on.
     [IAgentLifecycleService, agentLifecycle],
+    [ISessionPermissionModeService, { mode: () => 'auto', setMode: vi.fn() }],
+    [IAuthSummaryService, { ensureReady: vi.fn(async () => {}) }],
+    [
+      IAgentHostService,
+      {
+        of: () => ({
+          eventBus: {
+            subscribe: (handler: (event: Event2<any>) => void) => {
+              eventListeners.add(handler);
+              return { dispose: () => eventListeners.delete(handler) };
+            },
+          },
+        }),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 

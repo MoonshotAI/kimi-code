@@ -13,7 +13,7 @@ import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reminderAgentRuntimeProvider, AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentTaskService } from '#/agent/task/task';
+import { AgentTask, taskAgentRuntimeProvider } from '#/features/task/taskAgentRuntime';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -25,6 +25,8 @@ import { IAgentShellCommandService } from '#/agent/shellCommand/shellCommand';
 import { ISessionBtwService } from '#/features/btw/btw';
 import { IHostClock } from '#/os/interface/hostClock';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionEventBus } from '#/app/event/eventBus';
@@ -41,7 +43,6 @@ import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import type { LoopControl } from '#/features/loop/internal/loop';
 import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionPluginCommandService } from '#/agent/pluginCommand/sessionPluginCommandService';
@@ -348,6 +349,12 @@ const adoptedRuntimeRecords: readonly AgentRuntimeDefinitionRecord[] = [
     active: true,
   },
   {
+    definition: AgentTask,
+    provider: taskAgentRuntimeProvider,
+    generation: 1,
+    active: true,
+  },
+  {
     definition: AgentInteraction,
     provider: interactionAgentRuntimeProvider,
     generation: 1,
@@ -582,19 +589,11 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
               enabledIds: () => [],
             }) as never;
           }
-          if (serviceId === IAgentTaskService) {
-            return live(serviceId, {
-              _serviceBrand: undefined,
+          if (serviceId === (AgentTask as unknown)) {
+            return live(AgentTask, {
               list: () => [],
               stopAllOnExit: async () => [],
             }) as never;
-          }
-          if (serviceId === ISessionTaskService) {
-            return {
-              _serviceBrand: undefined,
-              attach: () => {},
-              of: () => resolveService(IAgentTaskService),
-            } as never;
           }
           if (serviceId === IWebSearchProviderService) {
             return {
@@ -708,6 +707,27 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
               close: async () => {},
               acquire: () => noopDisposable(),
               drainRetirements: async () => {},
+            }) as never;
+          }
+          if (serviceId === IAtomicDocumentStore) {
+            return live(serviceId, {
+              get: async () => undefined,
+              set: async () => {},
+              delete: async () => {},
+              list: async () => [],
+            }) as never;
+          }
+          if (serviceId === IFileSystemStorageService) {
+            return live(serviceId, {
+              read: async () => undefined,
+              readStream: async function* () {},
+              write: async () => {},
+              writeStream: async () => {},
+              append: async () => {},
+              list: async () => [],
+              delete: async () => {},
+              flush: async () => {},
+              close: async () => {},
             }) as never;
           }
           if (serviceId === ISessionUsageService) {
@@ -941,6 +961,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       }
       if (definition === AgentFullCompaction) return stubFullCompactionRuntime();
       if (definition === AgentUndo) return stubUndoRuntime();
+      if (definition === AgentTask) return resolverByAgentId.get(agent.agentId)?.(AgentTask);
       if (definition === AgentLoop) {
         const state = getLoopControl(contextFor(agent.agentId))?.status?.().state;
         return { status: () => (state === 'running' ? 'running' : 'idle') };
@@ -1012,7 +1033,6 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
   lifecycle.realAccessor = (id) =>
     ctx.get(IInstantiationService).invokeFunction((accessor) => accessor.get(id));
   lifecycle.attachSessionAgentServices = (agent) => {
-    ctx.get(ISessionTaskService).attach(agent);
     ctx.get(ISessionToolApprovalService).attach(agent);
     ctx.get(ISessionUserToolService).attach(agent);
     ctx.get(ISessionPluginCommandService).attach(agent);
@@ -1043,7 +1063,7 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
       [ILogService, ctx.get(ILogService)],
       [IConfigService, ctx.get(IConfigService)],
       [IFlagService, ctx.get(IFlagService)],
-      [IAgentTaskService, ctx.get(IAgentTaskService)],
+      [AgentTask, ctx.resolve(AgentTask)],
     ]),
     ctx.scopeContext.agentContext,
   );
@@ -2799,7 +2819,7 @@ describe('Agent tool execution contract', () => {
     if (typeof result.output !== 'string') throw new TypeError('expected string output');
     const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
     expect(taskId).toBeDefined();
-    expect(context.get(IAgentTaskService).getTask(taskId!)).toMatchObject({
+    expect(context.resolve(AgentTask).getTask(taskId!)).toMatchObject({
       status: 'running',
       description: 'Find cause',
       timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
@@ -3045,7 +3065,7 @@ describe('Agent tool execution contract', () => {
       runCompletion: () => completion.promise,
     });
     const context = createAgentToolContext(lifecycle);
-    const tasks = context.get(IAgentTaskService);
+    const tasks = context.resolve(AgentTask);
 
     const running = executeAgentTool(context, {
       prompt: 'Investigate',
@@ -3084,7 +3104,7 @@ describe('Agent tool execution contract', () => {
     });
     const context = createAgentToolContext(lifecycle);
     context.resolve(AgentProfile).update({ activeToolNames: ['Agent'] });
-    const tasks = context.get(IAgentTaskService);
+    const tasks = context.resolve(AgentTask);
 
     const running = executeAgentTool(context, {
       prompt: 'Investigate',
@@ -3160,7 +3180,7 @@ describe('Agent tool execution contract', () => {
       controller.signal,
     );
     await vi.waitFor(() => {
-      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+      expect(context.resolve(AgentTask).list(false)).toHaveLength(1);
     });
     controller.abort(userCancellationReason());
     const result = await resultPromise;
@@ -3187,10 +3207,10 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
     await vi.waitFor(() => {
-      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+      expect(context.resolve(AgentTask).list(false)).toHaveLength(1);
     });
-    const [task] = context.get(IAgentTaskService).list(false);
-    await context.get(IAgentTaskService).stop(task!.taskId, 'Session closed');
+    const [task] = context.resolve(AgentTask).list(false);
+    await context.resolve(AgentTask).stop(task!.taskId, 'Session closed');
     const result = await resultPromise;
 
     expect(result.isError).toBe(true);
@@ -3221,7 +3241,7 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
     await vi.waitFor(() => {
-      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+      expect(context.resolve(AgentTask).list(false)).toHaveLength(1);
     });
     await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS);
     const result = await resultPromise;
@@ -3261,7 +3281,7 @@ describe('Agent tool execution contract', () => {
       description: 'Find cause',
     });
     await vi.waitFor(() => {
-      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+      expect(context.resolve(AgentTask).list(false)).toHaveLength(1);
     });
     await vi.advanceTimersByTimeAsync(1000);
     const result = await resultPromise;

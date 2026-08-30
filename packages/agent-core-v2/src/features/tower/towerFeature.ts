@@ -4,7 +4,7 @@ import type {
   AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentHostService } from '#/agent/host/agentHost';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
@@ -75,7 +75,7 @@ export const TOWER_TOOL_CONTRIBUTIONS: readonly TowerToolContribution[] = [
         ctx.get(IAgentLifecycleService),
         ctx.get(IAgentHostService),
         ctx.get(ISessionSubagentService),
-        ctx.get(ISessionTaskService).of(ctx.agent),
+        ctx.get(IAgentLifecycleService).resolve(ctx.agent, AgentTask),
         ctx.get(IConfigService),
         ctx.get(IFlagService),
         ctx.get(IModelCatalog),

@@ -1,4 +1,4 @@
-import type { AgentTaskInfo } from '#/agent/task/task';
+import type { AgentTaskInfo } from '#/features/task/types';
 import type { CompactionResult } from '#/features/fullCompaction/types';
 import type { AgentConfigData, AgentConfigUpdateData } from '#/features/profile/profile';
 import type { AgentContextData, ContextMessage } from '#/features/contextMemory/types';

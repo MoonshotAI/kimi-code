@@ -20,6 +20,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   AgentCron,
+  AgentTask,
   AgentPrompt,
   AgentGoal,
   IAgentLifecycleService,
@@ -66,7 +67,6 @@ import {
   type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/features/loop/turnOps';
@@ -903,9 +903,8 @@ function formatTurnEndingFailure(ending: PrintTurnEnding): string {
 function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   let count = 0;
   const agentManager = session.accessor.get(IAgentLifecycleService);
-  const tasks = session.accessor.get(ISessionTaskService);
   for (const agent of agentManager.list()) {
-    count += tasks.of(agent).list(true).length;
+    count += agentManager.resolve(agent, AgentTask).list(true).length;
   }
   return count;
 }
@@ -927,9 +926,8 @@ async function drainBackgroundTasks(
     const suppressions: Promise<void>[] = [];
     let activeCount = 0;
     const agentManager = session.accessor.get(IAgentLifecycleService);
-    const tasks = session.accessor.get(ISessionTaskService);
     for (const agent of agentManager.list()) {
-      const taskService = tasks.of(agent);
+      const taskService = agentManager.resolve(agent, AgentTask);
       for (const task of taskService.list(true)) {
         activeCount++;
         if (seen.has(task.taskId)) continue;

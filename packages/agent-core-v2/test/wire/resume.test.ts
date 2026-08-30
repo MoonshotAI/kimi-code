@@ -14,14 +14,15 @@ import {
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
-import { IAgentTaskService } from '#/agent/task/task';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { getLoopDurableState } from '#/features/loop/internal/access';
 import {
   createAgentTaskPersistence,
+  writeLegacyTaskFile,
   type TaskServiceTestManager,
-} from '../agent/task/stubs';
+} from '../features/task/stubs';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -537,7 +538,7 @@ describe('Agent resume', () => {
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
       const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
-      await backgroundPersistence.writeTask({
+      await writeLegacyTaskFile(homeDir, {
         taskId: 'agent-seen0000',
         kind: 'agent',
         description: 'already delivered',
@@ -556,7 +557,7 @@ describe('Agent resume', () => {
         ctx.context.get().some((message) => message.origin?.kind === 'task'),
       ).toBe(false);
 
-      const background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
+      const background = ctx.resolve(AgentTask) as TaskServiceTestManager;
       await background.loadFromDisk();
       await background.reconcile();
 
@@ -629,7 +630,7 @@ describe('Agent resume', () => {
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
       const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
-      await backgroundPersistence.writeTask({
+      await writeLegacyTaskFile(homeDir, {
         taskId: 'agent-new00000',
         kind: 'agent',
         description: 'newly delivered',

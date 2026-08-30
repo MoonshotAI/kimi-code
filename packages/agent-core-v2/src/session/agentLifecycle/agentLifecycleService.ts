@@ -25,7 +25,7 @@ import { ISessionPlanService } from '#/features/plan/sessionPlanService';
 import { ISessionStaleGuardService } from '#/features/staleGuard/sessionStaleGuardService';
 import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarmAgentService';
 import { ISessionAgentExternalHooksService } from '#/features/externalHooks/session/sessionAgentExternalHooksService';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionPluginCommandService } from '#/agent/pluginCommand/sessionPluginCommandService';
@@ -391,7 +391,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private attachSessionAgentServices(agent: AgentContext): void {
     this.instantiation.invokeFunction((accessor) => {
-      (accessor.get(ISessionTaskService) as ISessionTaskService | undefined)?.attach(agent);
       (accessor.get(ISessionToolApprovalService) as ISessionToolApprovalService | undefined)?.attach(agent);
       (accessor.get(ISessionUserToolService) as ISessionUserToolService | undefined)?.attach(agent);
       (accessor.get(ISessionPluginCommandService) as ISessionPluginCommandService | undefined)?.attach(agent);
@@ -416,10 +415,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (managed === undefined || managed.context !== agent || managed.closing) return;
     managed.closing = true;
     this.onWillCloseEmitter.fire(agent);
-    const tasks = this.instantiation.invokeFunction((accessor) =>
-      accessor.get(ISessionTaskService),
-    );
-    await tasks.of(agent).stopAllOnExit('Session closed');
+    await managed.runtimeSet.resolve(AgentTask).stopAllOnExit('Session closed');
     const loop = getLoopControl(agent);
     const compaction = managed.runtimeSet.resolve(AgentFullCompaction);
     const reason = abortError('Agent removed');

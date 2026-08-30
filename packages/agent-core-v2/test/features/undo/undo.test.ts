@@ -12,8 +12,9 @@ import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
-import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
-import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
+import { AgentTask, type TaskRuntime } from '#/features/task/taskAgentRuntime';
+import type { TaskExecution } from '#/features/task/types';
+import { taskNotificationDeliveryKey } from '#/features/task/notificationDelivery';
 import { ContextUndone } from '#/features/undo/undoEvents';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -529,10 +530,10 @@ describe('UndoRuntime', () => {
   it('re-delivers wait-reported task notifications after conversation undo', async () => {
     setup();
     const undo = ctx.resolve(AgentUndo);
-    const tasks = ctx.get(IAgentTaskService);
+    const tasks: TaskRuntime = ctx.resolve(AgentTask);
     ctx.appendTurnExchange('u1', 'a1');
 
-    const completingTask = (output: string): AgentTask => ({
+    const completingTask = (output: string): TaskExecution => ({
       idPrefix: 'test',
       kind: 'process',
       description: 'fake process task',

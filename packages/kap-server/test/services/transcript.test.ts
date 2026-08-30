@@ -9,9 +9,9 @@ import {
   AgentInteraction,
   AgentLoop,
   AgentPrompt,
+  AgentTask,
   IAgentHostService,
   IAgentLifecycleService,
-  IAgentTaskService,
   IEventBus,
   IFlagService,
   ISessionIndex,
@@ -36,7 +36,6 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { Emitter, Event } from '@moonshot-ai/agent-core-v2/_base/event';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
@@ -2389,6 +2388,9 @@ describe('bindSessionTranscript', () => {
       context: AgentContext,
       definition: Definition,
     ): RuntimeOf<Definition> {
+      if (definition === AgentTask) {
+        return { list: () => [] } as RuntimeOf<Definition>;
+      }
       if (definition !== AgentInteraction) throw new Error('unsupported runtime');
       for (const entry of this.entries.values()) {
         if (entry.context === context) return entry.kernel as RuntimeOf<Definition>;
@@ -2413,6 +2415,7 @@ describe('bindSessionTranscript', () => {
     private readonly handles = new Map<string, FakeAgentHandle>();
     private readonly buses = new Map<string, FakeBus>();
     private readonly loopStatuses = new Map<string, unknown>();
+    private readonly taskSeeds = new Map<string, readonly unknown[]>();
     private readonly kernels = new Map<
       string,
       { context: AgentContext; kernel: FakeInteractionKernel }
@@ -2474,6 +2477,9 @@ describe('bindSessionTranscript', () => {
       if (definition === AgentActivityView) {
         return { state: () => ({}) } as RuntimeOf<Definition>;
       }
+      if (definition === AgentTask) {
+        return { list: () => this.taskSeeds.get(context.agentId) ?? [] } as RuntimeOf<Definition>;
+      }
       if (definition !== AgentInteraction) throw new Error('unsupported runtime');
       for (const handle of this.handles.values()) {
         if (handle.context === context) return handle.kernel as RuntimeOf<Definition>;
@@ -2511,14 +2517,12 @@ describe('bindSessionTranscript', () => {
             if (token === AgentLoop) {
               return { status: () => (opts?.loopStatus as { state?: string })?.state === 'running' ? 'running' : 'idle' };
             }
-            if (token === IAgentTaskService) {
-              return { list: () => opts?.tasks ?? [] };
-            }
             return undefined;
           },
         },
       };
       this.loopStatuses.set(id, opts?.loopStatus);
+      if (opts?.tasks !== undefined) this.taskSeeds.set(id, opts.tasks);
       this.handles.set(id, handle);
       for (const cb of this.createHandlers) cb(handle.context);
       return handle;
@@ -2546,25 +2550,11 @@ describe('bindSessionTranscript', () => {
     const hosts = {
       of: (agent: AgentContext) => ({ eventBus: busFor(agent.agentId) }),
     };
-    const tasks = {
-      of: (agent: AgentContext) => ({
-        list: () => {
-          if (manager instanceof FakeAgents) {
-            const service = manager.handleOf(agent.agentId)?.accessor.get(IAgentTaskService) as
-              | { list(): unknown[] }
-              | undefined;
-            return service?.list() ?? [];
-          }
-          return [];
-        },
-      }),
-    };
     return {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLifecycleService) return manager;
           if (token === IAgentHostService) return hosts;
-          if (token === ISessionTaskService) return tasks;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },

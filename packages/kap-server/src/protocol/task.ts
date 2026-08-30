@@ -28,6 +28,7 @@ export const taskSchema = z.object({
   model: z.string().optional(),
   thinking_effort: z.string().optional(),
   agent_id: z.string().optional(),
+  owner_agent_id: z.string().optional(),
   subagent_type: z.string().optional(),
   parent_tool_call_id: z.string().optional(),
 });

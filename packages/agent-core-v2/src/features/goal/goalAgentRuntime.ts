@@ -35,7 +35,7 @@ import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApp
 import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
 
-import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
+import { WAIT_FOR_FLAG_ID } from '#/features/task/tools/task-wait/flag';
 import { type UsageRecordedContext } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';

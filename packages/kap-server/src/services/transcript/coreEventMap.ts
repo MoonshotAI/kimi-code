@@ -39,7 +39,7 @@ import type {
   TaskNotified,
   TaskStarted,
   TaskTerminatedNotice,
-} from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+} from '@moonshot-ai/agent-core-v2/features/task/taskOps';
 import type {
   ToolCallStarted,
   ToolProgress,

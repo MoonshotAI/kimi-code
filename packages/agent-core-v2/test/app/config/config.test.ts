@@ -75,8 +75,8 @@ import {
   resolveAgentTaskConfig,
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
-} from '#/agent/task/configSection';
-import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
+} from '#/features/task/configSection';
+import { applyPrintModeConfigDefaults } from '#/features/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,

@@ -8,8 +8,8 @@ import {
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
-import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import { TaskStarted, TaskTerminatedNotice } from '#/features/task/taskOps';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -138,8 +138,8 @@ const activityViewEffects = fromCallback(
       sendBack({ type: 'activityView.seedLastTurn' });
     }
     const taskRefs: BackgroundRef[] = input
-      .get(ISessionTaskService)
-      .of(agent)
+      .get(IAgentLifecycleService)
+      .resolve(agent, AgentTask)
       .list(true)
       .map((info) => ({ kind: info.kind, id: info.taskId, since: info.startedAt }));
     if (taskRefs.length > 0) {

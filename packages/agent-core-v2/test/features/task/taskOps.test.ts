@@ -1,0 +1,200 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
+import type { AgentTaskInfo } from '#/features/task/types';
+import {
+  TaskStarted,
+  TaskTerminated,
+  taskRegistryTransition,
+  type TaskModelState,
+} from '#/features/task/taskOps';
+import '#/features/task/taskAgentRuntime';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  stubAgentScopeContext,
+  testWireScope,
+} from '../../wire/stubs';
+
+const SCOPE = 'wire';
+const KEY = 'task-test';
+
+let disposables: DisposableStore;
+let dispatcher: IEventDispatcher;
+let registry: { current: TaskModelState };
+let log: IAppendLogStore;
+let eventBus: IEventBus;
+
+function buildHost(key: string): {
+  dispatcher: IEventDispatcher;
+  registry: { current: TaskModelState };
+  log: IAppendLogStore;
+  eventBus: IEventBus;
+} {
+  const ix = disposables.add(new TestInstantiationService());
+  ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(IEventBus, new SyncDescriptor(EventBusService));
+  const agentScope = stubAgentScopeContext(testWireScope(SCOPE, key));
+  registerTestAgentWire(ix, agentScope, {
+    log: ix.get(IAppendLogStore),
+    eventBus: ix.get(IEventBus),
+  });
+  const dispatcher = registerTestEventDispatcher(ix, agentScope);
+  const registry = { current: new Map<string, AgentTaskInfo>() as TaskModelState };
+  dispatcher.attach({
+    id: 'task',
+    events: [TaskStarted, TaskTerminated],
+    undoable: false,
+    transition: taskRegistryTransition,
+    getState: () => registry.current,
+    commit: (state) => {
+      registry.current = state;
+    },
+  });
+  return { dispatcher, registry, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
+}
+
+beforeEach(() => {
+  disposables = new DisposableStore();
+  const host = buildHost(KEY);
+  dispatcher = host.dispatcher;
+  registry = host.registry;
+  log = host.log;
+  eventBus = host.eventBus;
+});
+
+afterEach(() => disposables.dispose());
+
+async function readRecords(key = KEY): Promise<WireRecord[]> {
+  await dispatcher.flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
+    out.push(record);
+  }
+  return out;
+}
+
+function info(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
+  return {
+    taskId,
+    kind: 'process',
+    description: `task ${taskId}`,
+    status,
+    detached: true,
+    startedAt: 1000,
+    endedAt: status === 'running' ? null : 2000,
+  } as AgentTaskInfo;
+}
+
+describe('task ops (wire-backed)', () => {
+  it('started/terminated fold into the task map by id and persist to the journal', async () => {
+    expect(registry.current.size).toBe(0);
+
+    await dispatcher.dispatch(new TaskStarted({ agentId: 'test-agent', info: info('t1', 'running') }));
+    expect(registry.current.get('t1')?.status).toBe('running');
+
+    await dispatcher.dispatch(new TaskTerminated({ agentId: 'test-agent', info: info('t1', 'completed') }));
+    expect(registry.current.get('t1')?.status).toBe('completed');
+
+    await dispatcher.dispatch(new TaskStarted({ agentId: 'test-agent', info: info('t2', 'running') }));
+    expect(registry.current.size).toBe(2);
+
+    expect(await readRecords()).toEqual([
+      {
+        type: 'task.started',
+        agentId: 'test-agent',
+        info: info('t1', 'running'),
+        time: expect.any(Number),
+      },
+      {
+        type: 'task.terminated',
+        agentId: 'test-agent',
+        info: info('t1', 'completed'),
+        time: expect.any(Number),
+      },
+      {
+        type: 'task.started',
+        agentId: 'test-agent',
+        info: info('t2', 'running'),
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('task.terminated persists the optional outputTail snapshot (record-only, never in the state or the bus)', async () => {
+    const published: Record<string, unknown>[] = [];
+    disposables.add(
+      eventBus.subscribe((e) => {
+        published.push(Object.assign({}, e) as unknown as Record<string, unknown>);
+      }),
+    );
+    await dispatcher.dispatch(
+      new TaskTerminated({ agentId: 'test-agent', info: info('t1', 'completed'), outputTail: 'last lines' }),
+    );
+
+    expect(await readRecords()).toEqual([
+      {
+        type: 'task.terminated',
+        agentId: 'test-agent',
+        info: info('t1', 'completed'),
+        outputTail: 'last lines',
+        time: expect.any(Number),
+      },
+    ]);
+    expect(registry.current.get('t1')).toEqual(info('t1', 'completed'));
+    expect(published).toEqual([
+      {
+        type: 'task.terminated',
+        agentId: 'test-agent',
+        info: info('t1', 'completed'),
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('apply returns a new Map on change (the model is the restore seed)', async () => {
+    const before = registry.current;
+    await dispatcher.dispatch(new TaskStarted({ agentId: 'test-agent', info: info('t1', 'running') }));
+    const after = registry.current;
+    expect(after).not.toBe(before);
+    expect(after.get('t1')?.status).toBe('running');
+  });
+
+  it('replay rebuilds the task map from persisted task.* records silently', async () => {
+    const records: WireRecord[] = [
+      { type: 'task.started', info: info('t1', 'running') },
+      { type: 'task.terminated', info: info('t1', 'completed'), outputTail: 'tail' },
+      { type: 'task.started', info: info('t2', 'running') },
+    ] as unknown as WireRecord[];
+
+    const host = buildHost('task-replay');
+    const emissions: string[] = [];
+    host.eventBus.subscribe((e) => {
+      emissions.push(e.type);
+    });
+    await restoreTestEventDispatcher(
+      host.dispatcher,
+      host.log,
+      testWireScope(SCOPE, 'task-replay'),
+      records,
+    );
+    const model = host.registry.current;
+    expect(model.size).toBe(2);
+    expect(model.get('t1')?.status).toBe('completed');
+    expect(model.get('t2')?.status).toBe('running');
+    expect(emissions).toEqual([]);
+  });
+});

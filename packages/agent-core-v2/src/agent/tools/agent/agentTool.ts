@@ -7,10 +7,9 @@ import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import type {
-  IAgentTaskService,
   RegisterAgentTaskOptions,
-} from '#/agent/task/task';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+} from '#/features/task/types';
+import { AgentTask, type TaskRuntime } from '#/features/task/taskAgentRuntime';
 import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
 import {
   isToolActive as evaluateToolActive,
@@ -104,7 +103,7 @@ export class SubagentTool implements ISubagentTool {
     private readonly subagents: ISessionSubagentService,
     private readonly catalog: ISessionAgentProfileCatalog,
     private readonly scopeContext: IAgentScopeContext,
-    private readonly tasks: IAgentTaskService,
+    private readonly tasks: TaskRuntime,
     private readonly tools: AgentToolFactoryContext,
     private readonly sessionMetadata: ISessionMetadata,
     private readonly log: ILogService,
@@ -535,7 +534,7 @@ registerAgentToolService({
     context.get(ISessionSubagentService),
     context.get(ISessionAgentProfileCatalog),
     context.host.scopeContext,
-    context.get(ISessionTaskService).of(context.agent),
+    context.get(IAgentLifecycleService).resolve(context.agent, AgentTask),
     context,
     context.get(ISessionMetadata),
     context.get(ILogService),

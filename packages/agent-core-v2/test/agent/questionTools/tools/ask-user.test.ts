@@ -11,7 +11,7 @@ import {
 } from '#/agent/tools/ask-user-question/ask-user-question';
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTaskService } from '#/agent/task/task';
+import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   ISessionQuestionService,
@@ -94,14 +94,14 @@ function makeTool(
     additionalServices: (reg) => {
       reg.definePartialInstance(ISessionQuestionService, { request });
       reg.definePartialInstance(ITelemetryService, { track2: telemetryTrack });
-      reg.definePartialInstance(IAgentTaskService, { registerTask, getTask });
     },
     strict: true,
   });
+  const tasks = { registerTask, getTask } as unknown as TaskRuntime;
   const tool = new AskUserQuestionTool(
     ix.get(ISessionQuestionService),
     ix.get(ITelemetryService),
-    ix.get(IAgentTaskService),
+    tasks,
     { agentId: 'main' } as IAgentScopeContext,
     {
       agent: stubAgentContext('main', 0),

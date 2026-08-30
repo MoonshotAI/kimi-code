@@ -70,7 +70,7 @@
  *   with the v1 snapshot
  *   shape restored; `listBackgroundTasks` / `getBackgroundTaskOutput` → the
  *   `klient.session(id).agent(id)` facade; `stopBackgroundTask` /
- *   `detachBackgroundTask` → `ISessionTaskService` for the target agent
+ *   `detachBackgroundTask` → the target agent's `AgentTask` runtime
  *   (the facade's no-reason stop substitutes a user-cancellation reason v1
  *   never records); `waitForBackgroundTasksOnPrint` /
  *   `handlePrintMainTurnCompleted` → rebuilt over the v2 print-mode config
@@ -165,6 +165,7 @@ import {
   AgentReminder,
   AgentContextMemory,
   AgentCron,
+  AgentTask,
   AgentGoal,
   AgentUndo,
   AgentFullCompaction,
@@ -235,7 +236,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionPluginService } from '@moonshot-ai/agent-core-v2/agent/plugin/sessionPluginService';
 import { ISessionPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/sessionPluginCommandService';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import type { AgentHandle, Klient } from '@moonshot-ai/klient';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -2249,7 +2249,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the session shell (`ISessionTaskService.of(agent).stop`) — deliberately NOT the
+   * Through the target agent's `AgentTask` runtime — deliberately NOT the
    * facade's `stopTask`, whose no-reason path routes to `stopByUser` and
    * stamps a user-cancellation `stopReason` where v1's
    * `background.stop(taskId, reason)` records none. The direct call matches
@@ -2262,11 +2262,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
     const session = this.requireLiveSession(input.sessionId);
-    await session.accessor.get(ISessionTaskService).of(agent.context).stop(input.taskId, input.reason);
+    await session.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentTask).stop(input.taskId, input.reason);
   }
 
   /**
-   * Through the session shell (`ISessionTaskService.of(agent).detach`) — no klient facade
+   * Through the target agent's `AgentTask` runtime — no klient facade
    * exists. Same semantics as v1's `background.detach`: releases the
    * foreground tool-call waiter, returns the live info (or the ghost / live
    * info for an already-terminal task, `undefined` for an unknown id).
@@ -2276,7 +2276,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<BackgroundTaskInfo | undefined> {
     const agent = await this.agentScope(input.sessionId);
     const session = this.requireLiveSession(input.sessionId);
-    return session.accessor.get(ISessionTaskService).of(agent.context).detach(input.taskId) as
+    return session.accessor.get(IAgentLifecycleService).resolve(agent.context, AgentTask).detach(input.taskId) as
       | BackgroundTaskInfo
       | undefined;
   }
@@ -2358,7 +2358,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       let activeCount = 0;
       const agentLifecycle = session.accessor.get(IAgentLifecycleService);
       for (const agent of agentLifecycle.list()) {
-        const tasks = session.accessor.get(ISessionTaskService).of(agent);
+        const tasks = agentLifecycle.resolve(agent, AgentTask);
         for (const task of tasks.list(true)) {
           activeCount++;
           if (seen.has(task.taskId)) continue;
@@ -2387,7 +2387,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     let count = 0;
     const agentLifecycle = session.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
-      count += session.accessor.get(ISessionTaskService).of(agent).list(true).length;
+      count += agentLifecycle.resolve(agent, AgentTask).list(true).length;
     }
     return count;
   }

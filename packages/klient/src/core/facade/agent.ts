@@ -17,7 +17,8 @@ import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan
 import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
-import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import type { SessionTaskEntry } from '@moonshot-ai/agent-core-v2/features/task/sessionTaskView';
+import type { AgentTaskInfo as EngineAgentTaskInfo } from '@moonshot-ai/agent-core-v2/features/task/types';
 import type { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
@@ -41,7 +42,7 @@ export type AgentContextData = {
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
 export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
-export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
+export type AgentTaskInfo = EngineAgentTaskInfo;
 export type McpServerEntry = ReturnType<McpConnectionView['list']>[number];
 
 export interface AgentFacade {
@@ -158,20 +159,35 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,
     cancelPlan: (input) =>
       call(scope, 'agentPlanService', 'cancel', [input?.id]) as Promise<void>,
-    getTasks: (input) =>
-      call(scope, 'agentTaskService', 'list', [
+    getTasks: async (input) => {
+      const rows = await call(scope, 'agentTaskService', 'list', [
         input?.activeOnly ?? false,
         input?.limit,
-      ]) as Promise<readonly AgentTaskInfo[]>,
+      ]) as readonly SessionTaskEntry[];
+      return rows
+        .filter((row) => row.ownerAgentId === scope.agentId)
+        .map((row) => row.info) as readonly AgentTaskInfo[];
+    },
     stopTask: async (input) => {
+      const rows = await call(scope, 'agentTaskService', 'list', [false]) as readonly SessionTaskEntry[];
+      const owned = rows.some(
+        (row) => row.ownerAgentId === scope.agentId && row.info.taskId === input.taskId,
+      );
+      if (!owned) return;
       if (input.reason === undefined) {
         await call(scope, 'agentTaskService', 'stopByUser', [input.taskId]);
         return;
       }
       await call(scope, 'agentTaskService', 'stop', [input.taskId, input.reason]);
     },
-    getTaskOutput: (input) =>
-      call(scope, 'agentTaskService', 'readOutput', [input.taskId, input.tail]) as Promise<string>,
+    getTaskOutput: async (input) => {
+      const rows = await call(scope, 'agentTaskService', 'list', [false]) as readonly SessionTaskEntry[];
+      const owned = rows.some(
+        (row) => row.ownerAgentId === scope.agentId && row.info.taskId === input.taskId,
+      );
+      if (!owned) return '';
+      return call(scope, 'agentTaskService', 'readOutput', [input.taskId, input.tail]) as Promise<string>;
+    },
     getMcpServers: () =>
       call(scope, 'agentMcpService', 'list', []) as Promise<readonly McpServerEntry[]>,
     compact: (input) =>

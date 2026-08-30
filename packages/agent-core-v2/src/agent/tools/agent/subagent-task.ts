@@ -2,10 +2,10 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { isAbortError } from '#/_base/utils/abort';
 import {
-  type AgentTask,
+  type TaskExecution,
   type AgentTaskInfoBase,
   type AgentTaskSink,
-} from '#/agent/task/types';
+} from '#/features/task/types';
 
 type SubagentCompletion = {
   readonly result: string;
@@ -30,7 +30,7 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly thinkingEffort?: string;
 }
 
-declare module '#/agent/task/types' {
+declare module '#/features/task/types' {
   interface AgentTaskInfoByKind {
     readonly agent: SubagentTaskInfo;
   }
@@ -40,36 +40,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function createSubagentExecutor(
-  handle: SubagentHandle,
-  abortController: AbortController,
-): (signal: AbortSignal, output: (data: string) => void) => Promise<SubagentCompletion> {
-  return async (signal, output) => {
-    const requestAbort = (): void => {
-      abortController.abort(signal.reason);
-    };
-    if (signal.aborted) {
-      requestAbort();
-    } else {
-      signal.addEventListener('abort', requestAbort, { once: true });
-    }
-
-    try {
-      const outcome = await handle.completion;
-      output(outcome.result);
-      return outcome;
-    } catch (error: unknown) {
-      if (signal.aborted && (isAbortError(error) || error === signal.reason)) {
-        throw error;
-      }
-      throw error;
-    } finally {
-      signal.removeEventListener('abort', requestAbort);
-    }
-  };
-}
-
-export class SubagentTask implements AgentTask {
+export class SubagentTask implements TaskExecution {
   readonly kind = 'agent' as const;
   readonly idPrefix: string = 'agent';
   readonly agentId: string;

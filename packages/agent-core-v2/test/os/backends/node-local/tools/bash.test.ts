@@ -1,17 +1,20 @@
+import { readFileSync } from 'node:fs';
 import { PassThrough, Readable, type Writable } from 'node:stream';
+import { tmpdir } from 'node:os';
+import { join } from 'pathe';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  IAgentTaskService,
-  type AgentTask,
+  type TaskExecution,
   type AgentTaskInfo,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
   type ForegroundTaskReleaseReason,
   type RegisterAgentTaskOptions,
-} from '#/agent/task/task';
-import type { AgentTaskSettlement } from '#/agent/task/types';
+} from '#/features/task/types';
+import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
+import type { AgentTaskSettlement } from '#/features/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
@@ -24,6 +27,7 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import { killProcessGroup } from '#/agent/tools/os/bash/nohup-task';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 import { stubAgentContext } from '../../../../agent/agentContext/stubs';
@@ -316,7 +320,7 @@ interface ForegroundRelease {
 
 interface ManagedEntry {
   readonly taskId: string;
-  readonly task: AgentTask;
+  readonly task: TaskExecution;
   readonly startedDetached: boolean;
   readonly options: RegisterAgentTaskOptions;
   readonly outputChunks: string[];
@@ -348,8 +352,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const fakeOutputRoot = join(tmpdir(), 'kimi-bash-fake-task-output');
+
 function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
-  readonly service: IAgentTaskService;
+  readonly service: TaskRuntime;
   readonly tasks: Map<string, ManagedEntry>;
   readonly persisted: Set<string>;
 } {
@@ -465,13 +471,8 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
     return count;
   };
 
-  const service: IAgentTaskService = {
-    _serviceBrand: undefined,
-    track(): never {
-      throw new Error('fake IAgentTaskService.track is not implemented');
-    },
-
-    registerTask(task: AgentTask, registerOptions: RegisterAgentTaskOptions = {}): string {
+  const service = {
+    registerTask(task: TaskExecution, registerOptions: RegisterAgentTaskOptions = {}): string {
       const detached = registerOptions.detached ?? true;
       if (detached && options.maxRunningTasks !== undefined) {
         if (activeDetachedCount() >= options.maxRunningTasks) {
@@ -479,7 +480,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
         }
       }
 
-      const taskId = nextId(task.idPrefix);
+      const taskId = registerOptions.taskId ?? nextId(task.idPrefix);
       const abortController = new AbortController();
       const entry: ManagedEntry = {
         taskId,
@@ -663,7 +664,17 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
         entry.lifecyclePromise.then(() => 'terminal' as const),
       ]);
     },
-  };
+
+    reserveTaskId(idPrefix: string): string {
+      return nextId(idPrefix);
+    },
+
+    releaseTaskId(): void {},
+
+    taskOutputPath(taskId: string): string {
+      return join(fakeOutputRoot, taskId, 'output.log');
+    },
+  } as unknown as TaskRuntime;
 
   return { service, tasks, persisted };
 }
@@ -719,7 +730,7 @@ function bashTool(
   runner: IHostProcessService,
   env: IHostEnvironment = createTestEnv(),
   ctx: ISessionContext = createTestCtx(),
-  background: IAgentTaskService = createFakeTaskService().service,
+  background: TaskRuntime = createFakeTaskService().service,
   toolPolicy: AgentToolFactoryContext = stubToolPolicy(),
   config: IConfigService = stubConfig(),
 ): BashTool {
@@ -1797,5 +1808,147 @@ describe('BashTool prompt / runtime consistency', () => {
       expect(promptToolNames).toContain(name);
     }
     expect(errorToolNames.length).toBeGreaterThan(0);
+  });
+});
+
+describe('BashTool nohup background execution', () => {
+  function nohupTaskId(result: ExecutableToolResult): string {
+    const match = /task_id: (\S+)/.exec(result.output as string);
+    expect(match).not.toBeNull();
+    return match![1]!;
+  }
+
+  async function stopAndKill(service: TaskRuntime, taskId: string, pgid: number): Promise<void> {
+    await service.stop(taskId, 'test cleanup');
+    killProcessGroup(pgid, 'SIGKILL');
+  }
+
+  it('uses a detached nohup process for explicit background bash when keepAliveOnExit is set', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const fake = createFakeTaskService();
+    const tool = bashTool(
+      runner,
+      createTestEnv(),
+      createTestCtx(tmpdir()),
+      fake.service,
+      stubToolPolicy(),
+      stubConfig({ task: { keepAliveOnExit: true } }),
+    );
+
+    const result = await executeTool(
+      tool,
+      context({ command: 'sleep 30', run_in_background: true, description: 'nohup watch' }),
+    );
+
+    expect(result.isError ?? false).toBe(false);
+    expect(exec).not.toHaveBeenCalled();
+    const taskId = nohupTaskId(result);
+    const info = fake.service.getTask(taskId);
+    expect(info?.kind).toBe('process');
+    const nohup = info?.kind === 'process' ? info.nohup : undefined;
+    expect(nohup).toBeDefined();
+    expect(nohup?.pid).toBeGreaterThan(0);
+    expect(nohup?.pgid).toBe(nohup?.pid);
+    expect(nohup?.startEvidence).not.toBe('');
+    expect(nohup?.outputPath).toContain(taskId);
+    expect(() => process.kill(nohup!.pid, 0)).not.toThrow();
+
+    await stopAndKill(fake.service, taskId, nohup!.pgid);
+    await vi.waitFor(
+      () => {
+        expect(() => process.kill(nohup!.pid, 0)).toThrow();
+      },
+      { timeout: 15_000 },
+    );
+  });
+
+  it('completes a nohup background bash and persists output to the task log', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const fake = createFakeTaskService();
+    const tool = bashTool(
+      runner,
+      createTestEnv(),
+      createTestCtx(tmpdir()),
+      fake.service,
+      stubToolPolicy(),
+      stubConfig({ task: { keepAliveOnExit: true } }),
+    );
+
+    const result = await executeTool(
+      tool,
+      context({ command: 'echo nohup-happy', run_in_background: true, description: 'nohup echo' }),
+    );
+
+    expect(result.isError ?? false).toBe(false);
+    expect(exec).not.toHaveBeenCalled();
+    const taskId = nohupTaskId(result);
+    const info = await fake.service.wait(taskId, 10_000);
+    expect(info?.status).toBe('completed');
+    const nohup = info?.kind === 'process' ? info.nohup : undefined;
+    expect(info?.kind === 'process' ? info.exitCode : undefined).toBe(0);
+    expect(nohup).toBeDefined();
+    await vi.waitFor(
+      () => {
+        expect(readFileSync(nohup!.outputPath, 'utf-8')).toContain('nohup-happy');
+      },
+      { timeout: 15_000 },
+    );
+  }, 30_000);
+
+  it('does not use nohup when keepAliveOnExit is unset', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'plain\n' }));
+    const fake = createFakeTaskService();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), fake.service, stubToolPolicy());
+
+    const result = await executeTool(
+      tool,
+      context({ command: 'echo plain', run_in_background: true, description: 'plain bg' }),
+    );
+
+    expect(result.isError ?? false).toBe(false);
+    expect(exec).toHaveBeenCalled();
+    const info = fake.service.getTask(nohupTaskId(result));
+    expect(info?.kind === 'process' ? info.nohup : undefined).toBeUndefined();
+  });
+
+  it('does not use nohup for foreground bash when keepAliveOnExit is set', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'fg\n' }));
+    const fake = createFakeTaskService();
+    const tool = bashTool(
+      runner,
+      createTestEnv(),
+      createTestCtx(),
+      fake.service,
+      stubToolPolicy(),
+      stubConfig({ task: { keepAliveOnExit: true } }),
+    );
+
+    const result = await executeTool(tool, context({ command: 'echo fg' }));
+
+    expect(result.isError ?? false).toBe(false);
+    expect(exec).toHaveBeenCalled();
+  });
+
+  it('does not use nohup on Windows when keepAliveOnExit is set', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'win\n' }));
+    const fake = createFakeTaskService();
+    const tool = bashTool(
+      runner,
+      windowsBashEnv,
+      createTestCtx(),
+      fake.service,
+      stubToolPolicy(),
+      stubConfig({ task: { keepAliveOnExit: true } }),
+    );
+
+    const result = await executeTool(
+      tool,
+      context({ command: 'echo win', run_in_background: true, description: 'win bg' }),
+    );
+
+    expect(result.isError ?? false).toBe(false);
+    expect(exec).toHaveBeenCalled();
+    const info = fake.service.getTask(nohupTaskId(result));
+    expect(info?.kind === 'process' ? info.nohup : undefined).toBeUndefined();
   });
 });

@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  AgentTask,
   IAgentLifecycleService,
-  IAgentTaskService,
   getLiveSessionById,
   IModelCatalog,
-  type AgentTask,
+  type TaskExecution,
+  type TaskRuntime,
 } from '@moonshot-ai/agent-core-v2';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -37,6 +37,7 @@ interface TaskWire {
   output_preview?: string;
   output_bytes?: number;
   agent_id?: string;
+  owner_agent_id?: string;
   subagent_type?: string;
   parent_tool_call_id?: string;
 }
@@ -124,22 +125,26 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     return body.data.id;
   }
 
-  async function mainAgentTasks(sessionId: string): Promise<IAgentTaskService> {
+  async function agentTasks(sessionId: string, agentId = 'main'): Promise<TaskRuntime> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).get('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get(agentId);
     if (agent === undefined) {
-      await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-      agent = session.accessor.get(IAgentLifecycleService).get('main')!;
+      await session.accessor.get(IAgentLifecycleService).create({ agentId });
+      agent = session.accessor.get(IAgentLifecycleService).get(agentId)!;
     }
-    return session!.accessor.get(ISessionTaskService).of(agent);
+    return session!.accessor.get(IAgentLifecycleService).resolve(agent, AgentTask);
+  }
+
+  async function mainAgentTasks(sessionId: string): Promise<TaskRuntime> {
+    return agentTasks(sessionId, 'main');
   }
 
   async function flush(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
-  function fakeTask(kind: 'process' | 'agent' | 'question', output?: string): AgentTask {
+  function fakeTask(kind: 'process' | 'agent' | 'question', output?: string): TaskExecution {
     return {
       idPrefix: 'test',
       kind,
@@ -204,6 +209,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       status: 'running',
       description: 'fake process task',
       command: 'echo hi',
+      owner_agent_id: 'main',
     });
     expect(typeof process?.created_at).toBe('string');
 
@@ -232,6 +238,21 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(byId.get(questionId)?.subagent_type).toBeUndefined();
     expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
     expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
+  });
+
+  it('aggregates tasks from every agent with owner ids', async () => {
+    const id = await createSession();
+    const mainTasks = await mainAgentTasks(id);
+    const otherTasks = await agentTasks(id, 'agent-1');
+    const mainTaskId = mainTasks.registerTask(fakeTask('process'));
+    const otherTaskId = otherTasks.registerTask(fakeTask('process'));
+    await flush();
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${id}/tasks`);
+    expect(body.code).toBe(0);
+    const byId = new Map(body.data.items.map((t) => [t.id, t]));
+    expect(byId.get(mainTaskId)?.owner_agent_id).toBe('main');
+    expect(byId.get(otherTaskId)?.owner_agent_id).toBe('agent-1');
   });
 
   it('filters the list by wire status', async () => {

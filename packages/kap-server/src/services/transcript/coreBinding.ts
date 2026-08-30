@@ -11,7 +11,7 @@ import {
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import { IAgentHostService } from '@moonshot-ai/agent-core-v2';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
+import { AgentTask } from '@moonshot-ai/agent-core-v2';
 import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
 import type { AgentContext } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
@@ -93,7 +93,7 @@ export function bindSessionTranscript(
       });
       const agentContext = agents.get(agentId);
       if (agentContext !== undefined) {
-        const tasks = session.accessor.get(ISessionTaskService).of(agentContext).list();
+        const tasks = agents.resolve(agentContext, AgentTask).list();
         for (const info of tasks) {
           if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
             applyOps(

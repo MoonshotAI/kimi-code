@@ -96,9 +96,6 @@ export * from '#/os/interface/terminal';
 export * from '#/os/interface/terminalErrors';
 export * from '#/os/backends/node-local/hostTerminalService';
 export * from '#/session/terminal/terminalService';
-export * from '#/app/task/task';
-import '#/app/task/taskService';
-export { TaskService } from '#/app/task/taskService';
 import '#/app/event/eventBusService';
 import '#/app/event/eventService';
 import '#/app/event/fiberEventResolver';
@@ -410,25 +407,39 @@ import '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/evaluate';
 
-import '#/agent/task/configSection';
+import '#/features/task/configSection';
 export {
   resolveAgentTaskConfig,
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
   type PrintBackgroundMode,
-} from '#/agent/task/configSection';
-export * from '#/agent/task/printDefaults';
-export * from '#/agent/tools/task/task-list/task-list';
-import '#/agent/tools/task/task-list/taskListTool';
-export * from '#/agent/tools/task/task-output/task-output';
-import '#/agent/tools/task/task-output/taskOutputTool';
-export * from '#/agent/tools/task/task-stop/task-stop';
-import '#/agent/tools/task/task-stop/taskStopTool';
-export * from '#/agent/tools/task/task-wait/task-wait';
-import '#/agent/tools/task/task-wait/taskWaitTool';
-export * from '#/agent/task/task';
-export * from '#/agent/task/taskOps';
-export * from '#/agent/task/taskService';
+} from '#/features/task/configSection';
+export * from '#/features/task/printDefaults';
+export * from '#/features/task/types';
+export * from '#/features/task/taskOps';
+export * from '#/features/task/revive';
+export {
+  AgentTask,
+  TaskRuntime,
+} from '#/features/task/taskAgentRuntime';
+export {
+  ISessionTaskView,
+  SessionTaskViewService,
+  type SessionTaskEntry,
+} from '#/features/task/sessionTaskView';
+export {
+  isTaskOrigin,
+  notificationKey,
+  taskNotificationDeliveryKey,
+  taskNotificationId,
+  taskOriginFromMessage,
+  type TaskNotificationOrigin,
+} from '#/features/task/notificationDelivery';
+export * from '#/features/task/tools/task-list/task-list';
+export * from '#/features/task/tools/task-output/task-output';
+export * from '#/features/task/tools/task-stop/task-stop';
+export * from '#/features/task/tools/task-wait/task-wait';
+import '#/features/task/taskFeature';
 import '#/features/cron/configSection';
 export * from '#/features/cron/cronTask';
 export * from '#/features/cron/configSection';
@@ -772,7 +783,6 @@ export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/agentContext/agentContext';
 export * from '#/agent/scopeContext/scopeContext';
 import '#/agent/host/agentHostService';
-import '#/agent/task/sessionTaskService';
 import '#/agent/toolApproval/sessionToolApprovalService';
 import '#/agent/userTool/sessionUserToolService';
 import '#/agent/pluginCommand/sessionPluginCommandService';

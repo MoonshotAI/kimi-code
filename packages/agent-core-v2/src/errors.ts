@@ -1,7 +1,7 @@
 import { CoreErrors } from '#/_base/errors/codes';
 import { AgentLifecycleErrors } from '#/session/agentLifecycle/errors';
 import { AuthErrors } from '#/app/auth/errors';
-import { TaskErrors } from '#/agent/task/errors';
+import { TaskErrors } from '#/features/task/errors';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import { ConfigErrors } from '#/app/config/errors';
 import { CapabilityErrors } from '#/app/capability/errors';
@@ -38,7 +38,7 @@ export * from '#/_base/errors/serialize';
 export * from '#/_base/errors/unexpectedError';
 export { AgentLifecycleErrors } from '#/session/agentLifecycle/errors';
 export { AuthErrors } from '#/app/auth/errors';
-export { TaskErrors } from '#/agent/task/errors';
+export { TaskErrors } from '#/features/task/errors';
 export { ProtocolErrors } from '#/kosong/protocol/errors';
 export { ConfigErrors } from '#/app/config/errors';
 export { CapabilityErrors } from '#/app/capability/errors';

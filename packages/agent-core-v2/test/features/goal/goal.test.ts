@@ -14,7 +14,7 @@ import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAge
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
 import { GoalUpdated } from '#/features/goal/goalOps';
-import { IAgentTaskService } from '#/agent/task/task';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
@@ -2431,7 +2431,7 @@ describe('AgentGoalService WaitFor regression', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
-      const tasks = ctx.get(IAgentTaskService);
+      const tasks = ctx.resolve(AgentTask);
 
       const stdout = new PassThrough();
       let resolveWait!: (code: number) => void;
@@ -2608,7 +2608,7 @@ describe('AgentGoalService WaitFor background scenarios', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure();
-      const tasks = ctx.get(IAgentTaskService);
+      const tasks = ctx.resolve(AgentTask);
       let settle!: (value: { result: string }) => void;
       const completion = new Promise<{ result: string }>((resolve) => {
         settle = resolve;
@@ -2864,7 +2864,7 @@ describe('AgentGoalService WaitFor guidance gating', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
-      const tasks = ctx.get(IAgentTaskService);
+      const tasks = ctx.resolve(AgentTask);
       let settle!: (value: { result: string }) => void;
       const completion = new Promise<{ result: string }>((resolve) => {
         settle = resolve;

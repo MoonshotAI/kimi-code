@@ -66,8 +66,8 @@ import { SessionSubagentService } from '#/session/subagent/subagentService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
-import { IAgentTaskService } from '#/agent/task/task';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import { stubTaskRuntimeProvider } from '../../features/task/stubs';
+import type { AgentTaskInfo } from '#/features/task/types';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
 import { ICronDeleteTool } from '#/features/cron/tools/cron-delete/cron-delete';
@@ -235,7 +235,7 @@ describe('AgentLifecycleService', () => {
   let ix: TestInstantiationService;
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
-  let stopAllOnExit: ReturnType<typeof vi.fn>;
+  let stopAllOnExit: (reason: string) => Promise<AgentTaskInfo[]>;
   let loopActiveTurnId: number | undefined;
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<LoopControl['cancel']>>;
@@ -480,16 +480,13 @@ describe('AgentLifecycleService', () => {
       }),
       isBaselineServer: () => true,
     } satisfies ISessionMcpHandle);
-    stopAllOnExit = vi.fn(async () => []);
-    ix.stub(IAgentTaskService, {
-      _serviceBrand: undefined,
-      stopAllOnExit,
-    } as unknown as IAgentTaskService);
-    ix.stub(ISessionTaskService, {
-      _serviceBrand: undefined,
-      attach: () => {},
-      of: () => ({ stopAllOnExit }),
-    } as unknown as ISessionTaskService);
+    stopAllOnExit = vi.fn(async (_reason: string) => [] as AgentTaskInfo[]);
+    ix.fiberHost.addCollectionRecord(
+      AgentRuntimeContributionPoint,
+      'test-task',
+      new Ledger('test-task'),
+      stubTaskRuntimeProvider(() => ({ stopAllOnExit })),
+    );
     ix.fiberHost.addCollectionRecord(
       AgentRuntimeContributionPoint,
       'test-full-compaction',

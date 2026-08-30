@@ -1,11 +1,13 @@
 import {
   ErrorCodes,
   IAgentLifecycleService,
+  ISessionTaskView,
   Error2,
   getLiveSessionById,
   type AgentContext,
   type ContentPart,
   type IScopeHandle,
+  type ISessionScopeHandle,
   type PromptSubmitResult,
   type Scope,
   type ServiceIdentifier,
@@ -99,6 +101,24 @@ function agentActivityViewView(agent: IScopeHandle, agentContext: AgentContext):
   };
 }
 
+function agentTaskServiceView(session: ISessionScopeHandle): object {
+  const view = () => session.accessor.get(ISessionTaskView);
+  return {
+    list: (activeOnly?: boolean, limit?: number) => view().list(activeOnly, limit),
+    get: (taskId: string) => view().get(taskId),
+    readOutput: (taskId: string, tail?: number) => view().readOutput(taskId, tail),
+    stop: (taskId: string, reason?: string) => view().stop(taskId, reason),
+    stopByUser: (taskId: string) => view().stopByUser(taskId),
+    stopAll: async (reason?: string) => {
+      const active = view().list(true);
+      const results = await Promise.all(
+        active.map((entry) => view().stop(entry.info.taskId, reason)),
+      );
+      return results.filter((info) => info !== undefined);
+    },
+  };
+}
+
 export async function resolveService(
   core: Scope,
   scopeKind: ScopeKind,
@@ -132,6 +152,17 @@ export async function resolveService(
     const agentId = params['agent_id'] ?? MAIN_AGENT_ID;
     const agentContext = session.accessor.get(IAgentLifecycleService).get(agentId)!;
     return agentActivityViewView(scope as IScopeHandle, agentContext);
+  }
+  if (serviceName === 'agentTaskService') {
+    if (scopeKind !== 'agent' && scopeKind !== 'session') {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `service not available in ${scopeKind} scope: ${serviceName}`,
+      );
+    }
+    const sessionId = params['session_id'] ?? '';
+    const session = getLiveSessionById(core.accessor, sessionId)!;
+    return agentTaskServiceView(session);
   }
   if (scope === undefined) {
     throw new Error2(

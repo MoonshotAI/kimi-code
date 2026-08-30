@@ -31,9 +31,8 @@ import { registerLoopControl } from '#/features/loop/internal/access';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
 import { PromptQueued } from '#/features/prompt/promptEvents';
-import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { TaskStarted } from '#/agent/task/taskOps';
+import { TaskStarted } from '#/features/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -43,7 +42,7 @@ import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externa
 import { makeHookRunner } from './runner-stub';
 import { stubContextMemory } from '../contextMemory/stubs';
 import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import type { AgentTaskInfo } from '#/agent/task/task';
+import type { AgentTaskInfo } from '#/features/task/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -330,7 +329,6 @@ describe('IExternalHooksRunnerService integration', () => {
           ));
           registerAgentEventBus(reg);
           registerLoopControl(agentScope.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
-          reg.definePartialInstance(IAgentTaskService, {});
         },
       });
       activateAgentEventBus(ix, agentScope);
@@ -453,7 +451,6 @@ describe('IExternalHooksRunnerService integration', () => {
           ));
           registerAgentEventBus(reg);
           registerLoopControl(agentScope.agentContext, stubLoopWithHooks(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
-          reg.definePartialInstance(IAgentTaskService, {});
         },
       });
       activateAgentEventBus(ix, agentScope);
@@ -675,7 +672,6 @@ describe('IExternalHooksRunnerService integration', () => {
           ));
           registerAgentEventBus(reg);
           registerLoopControl(agentScope.agentContext, loop, () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
-          reg.definePartialInstance(IAgentTaskService, {});
           reg.define(IHostProcessService, HostProcessService);
           reg.defineInstance(IEventDispatcher, {
             _serviceBrand: undefined,
@@ -1226,7 +1222,6 @@ describe('IExternalHooksRunnerService integration', () => {
           ));
           registerAgentEventBus(reg);
           registerLoopControl(agentScope.agentContext, stubLoopWithHooks(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
-          reg.definePartialInstance(IAgentTaskService, {});
         },
       });
       activateAgentEventBus(ix, agentScope);

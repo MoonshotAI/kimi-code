@@ -124,10 +124,15 @@ export const agentFullCompactionContract = {
   begin: { input: z.tuple([fullCompactionInputSchema]), output: z.boolean() },
 } satisfies ServiceContract;
 
+export const sessionTaskEntrySchema = z.object({
+  ownerAgentId: z.string(),
+  info: agentTaskInfoSchema,
+});
+
 export const agentTaskContract = {
   list: {
     input: z.tuple([z.boolean().optional(), z.number().optional()]),
-    output: z.array(agentTaskInfoSchema),
+    output: z.array(sessionTaskEntrySchema),
   },
   stopByUser: { input: z.tuple([z.string()]), output: maybe(agentTaskInfoSchema) },
   stop: {

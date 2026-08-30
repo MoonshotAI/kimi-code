@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 35 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 30 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -72,12 +72,7 @@
 //     stepRetry.failedAttempts                src/features/loop/internal/stepRetry.ts
 //     stepRetry.lastFailedDriverId            src/features/loop/internal/stepRetry.ts
 //     swarm                                   src/features/swarm/swarmOps.ts
-//     task                                    src/agent/task/taskOps.ts
-//     task.activeTaskReminderPending          src/agent/task/taskService.ts
-//     task.deliveredNotificationKeys          src/agent/task/taskService.ts
-//     task.ghosts                             src/agent/task/taskService.ts
-//     task.notificationDelivery               src/agent/task/taskService.ts
-//     task.scheduledNotificationKeys          src/agent/task/taskService.ts
+//     task.notificationDelivery               src/features/task/notificationDelivery.ts
 //     toolSelect.pendingLoaded                src/features/toolExecutor/internal/selection.ts
 //     tower                                   src/features/tower/towerOps.ts
 //     tower.owner                             src/features/tower/towerOps.ts
@@ -721,102 +716,6 @@ export interface AgentStateSnapshot {
   };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
-  // src/agent/task/taskOps.ts
-  // replayable · durable — folds: TaskStarted, TaskTerminated
-  'task': /* TaskModelState — packages/agent-core-v2/src/agent/task/taskOps.ts */ Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
-    readonly kind: 'question';
-    readonly questionCount: number;
-    readonly toolCallId?: string;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly timeoutMs?: number;
-  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
-    readonly kind: 'agent';
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly parentToolCallId?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly timeoutMs?: number;
-  } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
-    readonly kind: 'process';
-    readonly command: string;
-    readonly pid: number;
-    readonly exitCode: number | null;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly timeoutMs?: number;
-  }>;
-  // src/agent/task/taskService.ts
-  'task.activeTaskReminderPending': boolean;
-  'task.deliveredNotificationKeys': Set<string>;
-  'task.ghosts': Map<string, /* AgentTaskInfo — packages/agent-core-v2/src/agent/task/types.ts */ /* QuestionTaskInfo — packages/agent-core-v2/src/agent/tools/ask-user-question/question-background-task.ts */ {
-    readonly kind: 'question';
-    readonly questionCount: number;
-    readonly toolCallId?: string;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly timeoutMs?: number;
-  } | /* SubagentTaskInfo — packages/agent-core-v2/src/agent/tools/agent/subagent-task.ts */ {
-    readonly kind: 'agent';
-    readonly agentId?: string;
-    readonly subagentType?: string;
-    readonly parentToolCallId?: string;
-    readonly model?: string;
-    readonly thinkingEffort?: string;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly timeoutMs?: number;
-  } | /* ProcessTaskInfo — packages/agent-core-v2/src/agent/tools/os/bash/process-task.ts */ {
-    readonly kind: 'process';
-    readonly command: string;
-    readonly pid: number;
-    readonly exitCode: number | null;
-    readonly taskId: string;
-    readonly description: string;
-    readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
-    readonly detached?: boolean;
-    readonly startedAt: number;
-    readonly endedAt: number | null;
-    readonly stopReason?: string;
-    readonly terminalNotificationSuppressed?: boolean;
-    readonly timeoutMs?: number;
-  }>;
-  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
-  'task.notificationDelivery': readonly string[];
-  'task.scheduledNotificationKeys': Set<string>;
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
@@ -848,7 +747,10 @@ export interface AgentStateSnapshot {
   'staleGuard': /* StaleGuardModelState — packages/agent-core-v2/src/features/staleGuard/staleGuardOps.ts */ Map<string, number>;
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
-  'swarm': 'task' | 'manual' | 'tool' | null;
+  'swarm': 'manual' | 'task' | 'tool' | null;
+  // src/features/task/notificationDelivery.ts
+  // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered
+  'task.notificationDelivery': readonly string[];
   // src/features/toolExecutor/internal/mcpToolProvider.ts
   'mcp.discoveryWritesReady': boolean;
   'mcp.mcpToolsByServer': Map<string, string[]>;

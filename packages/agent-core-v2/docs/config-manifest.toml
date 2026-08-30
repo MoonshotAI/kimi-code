@@ -9,7 +9,7 @@
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
 # Index (26 sections · 2 overlay(s))
-#   background               src/agent/task/configSection.ts
+#   background               src/features/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
 #   defaultPermissionMode    src/features/permissionMode/configSection.ts
@@ -31,7 +31,7 @@
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
 #   swarm                    src/features/swarm/configSection.ts
-#   task                     src/agent/task/configSection.ts
+#   task                     src/features/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tokenCounting            src/features/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
@@ -40,7 +40,7 @@
 
 # ##########################################################################
 # background
-#   owner: src/agent/task/configSection.ts
+#   owner: src/features/task/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:
@@ -396,7 +396,7 @@ timeout_ms = 7200000
 
 # ##########################################################################
 # task
-#   owner: src/agent/task/configSection.ts
+#   owner: src/features/task/configSection.ts
 #   scope: core
 #   hooks: stripEnv
 #   env:

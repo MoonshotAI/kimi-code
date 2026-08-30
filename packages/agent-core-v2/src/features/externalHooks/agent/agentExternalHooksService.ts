@@ -5,7 +5,7 @@ import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
+import { type AgentTaskInfo, type AgentTaskNotificationContext } from '#/features/task/types';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
 import {
@@ -22,7 +22,7 @@ import { TurnEnded } from '#/features/loop/turnOps';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import type { PromptSubmitContext } from '#/features/prompt/prompt';
 import { PromptQueued } from '#/features/prompt/promptEvents';
-import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
+import { TaskNotified, TaskStarted } from '#/features/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,

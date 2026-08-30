@@ -62,7 +62,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 
 import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/features/loop/internal/stepRetry';
-import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
+import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/features/task/types';
 import type {
   ToolCallStartedPayload,
   ToolProgressPayload,

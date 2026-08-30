@@ -1,13 +1,15 @@
-import type { IAgentTaskService } from '#/agent/task/task';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
-import { resolveAgentTaskConfig } from '#/agent/task/configSection';
+import { AgentTask, type TaskRuntime } from '#/features/task/taskAgentRuntime';
+import type { NohupTaskRecovery } from '#/features/task/types';
+import { resolveAgentTaskConfig } from '#/features/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import type { RuntimeLease } from '#/runtime/runtime';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
@@ -21,6 +23,7 @@ import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
+import { killProcessGroup, NohupTask, spawnNohupProcess } from './nohup-task';
 import { ProcessTask } from './process-task';
 import {
   type BashInput,
@@ -94,7 +97,7 @@ export class BashTool implements IBashTool {
     private readonly runtime: IAgentRuntimeService,
     private readonly ctx: ISessionContext,
     private readonly workspaceCtx: ISessionWorkspaceContext,
-    private readonly tasks: IAgentTaskService,
+    private readonly tasks: TaskRuntime,
     private readonly tools: AgentToolFactoryContext,
     private readonly config: IConfigService,
   ) {}
@@ -152,16 +155,90 @@ export class BashTool implements IBashTool {
     effectiveCwd: string,
     command: string,
   ): Promise<IHostProcess> {
+    return processService.spawn(env.shellPath, ['-c', this.shellCommand(env, effectiveCwd, command)], {
+      env: this.noninteractiveEnv(env),
+    });
+  }
+
+  private shellCommand(env: HostEnvironmentInfo, effectiveCwd: string, command: string): string {
     const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
-    const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
-    const noninteractiveEnv: Record<string, string> = {
+    return `cd ${shellQuote(shellCwd)} && ${command}`;
+  }
+
+  private noninteractiveEnv(env: HostEnvironmentInfo): Record<string, string> {
+    return {
       NO_COLOR: '1',
       TERM: 'dumb',
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: env.shellPath,
     };
+  }
 
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+  private keepAliveOnExit(): boolean {
+    return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
+  }
+
+  private useNohupSpawn(args: BashInput, env: HostEnvironmentInfo): boolean {
+    return (
+      args.run_in_background === true &&
+      env.osKind !== 'Windows' &&
+      this.keepAliveOnExit()
+    );
+  }
+
+  private async nohupExecution(
+    env: HostEnvironmentInfo,
+    command: string,
+    effectiveCwd: string,
+    description: string,
+    timeoutMs: number | undefined,
+    lease: RuntimeLease,
+  ): Promise<ExecutableToolResult> {
+    const taskId = this.tasks.reserveTaskId('bash');
+    const outputPath = this.tasks.taskOutputPath(taskId);
+    let spawned;
+    try {
+      spawned = await spawnNohupProcess({
+        shellPath: env.shellPath,
+        command: this.shellCommand(env, effectiveCwd, command),
+        env: this.noninteractiveEnv(env),
+        outputPath,
+      });
+    } catch (error) {
+      this.tasks.releaseTaskId(taskId);
+      lease.dispose();
+      return {
+        isError: true,
+        output: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const recovery: NohupTaskRecovery = {
+      pid: spawned.pid,
+      pgid: spawned.pgid,
+      startedAt: Date.now(),
+      outputPath,
+      startEvidence: spawned.startEvidence,
+    };
+    try {
+      this.tasks.registerTask(
+        new NohupTask(spawned.child, command, description, recovery, () => {
+          lease.dispose();
+        }),
+        { taskId, detached: true, timeoutMs },
+      );
+    } catch (error) {
+      this.tasks.releaseTaskId(taskId);
+      killProcessGroup(recovery.pgid, 'SIGKILL');
+      lease.dispose();
+      return {
+        isError: true,
+        output: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return this.backgroundStartedResult(taskId, spawned.pid, description, {
+      title: 'Background task started',
+      brief: `Started ${taskId}`,
+    });
   }
 
   private async execution(
@@ -186,6 +263,10 @@ export class BashTool implements IBashTool {
         ? undefined
         : normalizeTimeoutMs(args.timeout, true)
       : foregroundTimeoutMs;
+
+    if (this.useNohupSpawn(args, env)) {
+      return this.nohupExecution(env, command, effectiveCwd, description, timeoutMs, lease);
+    }
 
     const builder = new ToolResultBuilder();
     let proc: IHostProcess;
@@ -241,7 +322,7 @@ export class BashTool implements IBashTool {
     if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
     if (startsInBackground) {
-      return this.backgroundStartedResult(taskId, proc, description, {
+      return this.backgroundStartedResult(taskId, proc.pid, description, {
         title: 'Background task started',
         brief: `Started ${taskId}`,
       });
@@ -263,7 +344,7 @@ export class BashTool implements IBashTool {
               };
         return this.backgroundStartedResult(
           taskId,
-          proc,
+          proc.pid,
           description,
           labels,
           builder,
@@ -357,7 +438,7 @@ export class BashTool implements IBashTool {
 
   private backgroundStartedResult(
     taskId: string,
-    proc: IHostProcess,
+    pid: number,
     description: string,
     labels: { title: string; brief: string },
     builder = new ToolResultBuilder(),
@@ -366,7 +447,7 @@ export class BashTool implements IBashTool {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
     const metadata =
       `task_id: ${taskId}\n` +
-      `pid: ${String(proc.pid)}\n` +
+      `pid: ${String(pid)}\n` +
       `description: ${description}\n` +
       `status: ${status}\n` +
       `automatic_notification: true\n` +
@@ -421,7 +502,7 @@ registerAgentToolService({
     context.host.agentRuntime,
     context.get(ISessionContext),
     context.get(ISessionWorkspaceContext),
-    context.get(ISessionTaskService).of(context.agent),
+    context.get(IAgentLifecycleService).resolve(context.agent, AgentTask),
     context,
     context.get(IConfigService),
   ),

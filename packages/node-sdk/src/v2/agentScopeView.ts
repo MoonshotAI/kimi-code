@@ -15,8 +15,6 @@ import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { ISessionPlanService } from '@moonshot-ai/agent-core-v2/features/plan/sessionPlanService';
-import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import { ISessionCommandService } from '@moonshot-ai/agent-core-v2/agent/command/sessionCommandService';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
@@ -63,8 +61,6 @@ function shellService(
   switch (id) {
     case IAgentPlanService:
       return session.accessor.get(ISessionPlanService).of(agent);
-    case IAgentTaskService:
-      return session.accessor.get(ISessionTaskService).of(agent);
     case IAgentCommandService:
       return session.accessor.get(ISessionCommandService).of(agent);
     case IAgentShellCommandService:

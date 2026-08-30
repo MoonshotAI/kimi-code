@@ -2,8 +2,9 @@ import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
-import type { IAgentTaskService } from '#/agent/task/task';
-import { ISessionTaskService } from '#/agent/task/sessionTaskService';
+import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
+import { AgentTask } from '#/features/task/taskAgentRuntime';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { AgentToolFactoryContext } from '#/agent/toolRegistry/toolContribution';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -53,7 +54,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
   constructor(
     private readonly question: ISessionQuestionService,
     private readonly telemetry: ITelemetryService,
-    private readonly tasks: IAgentTaskService,
+    private readonly tasks: TaskRuntime,
     private readonly scopeContext: IAgentScopeContext,
     private readonly tools: AgentToolFactoryContext,
   ) {}
@@ -218,7 +219,7 @@ registerAgentToolService({
   create: (context) => new AskUserQuestionTool(
     context.get(ISessionQuestionService),
     context.host.telemetry,
-    context.get(ISessionTaskService).of(context.agent),
+    context.get(IAgentLifecycleService).resolve(context.agent, AgentTask),
     context.host.scopeContext,
     context,
   ),

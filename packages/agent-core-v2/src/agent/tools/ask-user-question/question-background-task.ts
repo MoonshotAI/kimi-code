@@ -1,9 +1,9 @@
 import { isAbortError } from '#/_base/utils/abort';
 import {
-  type AgentTask,
+  type TaskExecution,
   type AgentTaskInfoBase,
   type AgentTaskSink,
-} from '#/agent/task/types';
+} from '#/features/task/types';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 export interface QuestionTaskInfo extends AgentTaskInfoBase {
@@ -12,7 +12,7 @@ export interface QuestionTaskInfo extends AgentTaskInfoBase {
   readonly toolCallId?: string;
 }
 
-declare module '#/agent/task/types' {
+declare module '#/features/task/types' {
   interface AgentTaskInfoByKind {
     readonly question: QuestionTaskInfo;
   }
@@ -22,7 +22,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export class QuestionBackgroundTask implements AgentTask {
+export class QuestionBackgroundTask implements TaskExecution {
   readonly kind = 'question' as const;
   readonly idPrefix: string = 'question';
   private readonly questionCount: number;
