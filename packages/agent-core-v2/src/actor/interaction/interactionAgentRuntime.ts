@@ -30,18 +30,14 @@ interface PendingEntry {
   readonly resolve: (response: unknown) => void;
 }
 
-interface InteractionEffectState {
-  readonly pending: Map<string, PendingEntry>;
-  readonly recentlyResolved: Map<string, number>;
-  nextId: number;
-  readonly changeEmitter: Emitter<InteractionPendingChangedEvent>;
-  readonly resolveEmitter: Emitter<InteractionResolution>;
-}
-
 interface InteractionActorContext {
   readonly records: InteractionModelState;
-  readonly effects: InteractionEffectState;
   readonly runtime: AgentRuntimeContext<InteractionModelState>;
+  readonly pending: ReadonlyMap<string, PendingEntry>;
+  readonly recentlyResolved: ReadonlyMap<string, number>;
+  readonly nextId: number;
+  readonly changeEmitter: Emitter<InteractionPendingChangedEvent>;
+  readonly resolveEmitter: Emitter<InteractionResolution>;
 }
 
 interface InteractionCommitEvent {
@@ -49,19 +45,70 @@ interface InteractionCommitEvent {
   readonly records: InteractionModelState;
 }
 
+interface InteractionParkedEvent {
+  readonly type: 'interaction.parked';
+  readonly entry: PendingEntry;
+  readonly allocatedId: boolean;
+}
+
+interface InteractionSettledEvent {
+  readonly type: 'interaction.settled';
+  readonly id: string;
+  readonly at: number;
+}
+
+type InteractionActorEvent = InteractionCommitEvent | InteractionParkedEvent | InteractionSettledEvent;
+
 type InteractionActorSnapshot = Snapshot<unknown> & { readonly context: InteractionActorContext };
 
-function rememberResolved(effects: InteractionEffectState, id: string): void {
-  const now = Date.now();
-  for (const [key, resolvedAt] of effects.recentlyResolved) {
-    if (now - resolvedAt > RECENTLY_RESOLVED_TTL_MS) effects.recentlyResolved.delete(key);
+function pendingWith(
+  pending: ReadonlyMap<string, PendingEntry>,
+  entry: PendingEntry,
+): ReadonlyMap<string, PendingEntry> {
+  const next = new Map(pending);
+  next.set(entry.interaction.id, entry);
+  return next;
+}
+
+function pendingWithout(
+  pending: ReadonlyMap<string, PendingEntry>,
+  id: string,
+): ReadonlyMap<string, PendingEntry> {
+  const next = new Map(pending);
+  next.delete(id);
+  return next;
+}
+
+function foldRecentlyResolved(
+  recentlyResolved: ReadonlyMap<string, number>,
+  id: string,
+  at: number,
+): ReadonlyMap<string, number> {
+  const next = new Map(recentlyResolved);
+  for (const [key, resolvedAt] of next) {
+    if (at - resolvedAt > RECENTLY_RESOLVED_TTL_MS) next.delete(key);
   }
-  while (effects.recentlyResolved.size >= RECENTLY_RESOLVED_MAX) {
-    const oldest = effects.recentlyResolved.keys().next().value;
+  while (next.size >= RECENTLY_RESOLVED_MAX) {
+    const oldest = next.keys().next().value;
     if (oldest === undefined) break;
-    effects.recentlyResolved.delete(oldest);
+    next.delete(oldest);
   }
-  effects.recentlyResolved.set(id, now);
+  next.set(id, at);
+  return next;
+}
+
+function contextOf(runtime: AgentRuntimeContext<InteractionModelState>): InteractionActorContext {
+  return runtime.getLogicState<InteractionActorContext>();
+}
+
+function tryContextOf(
+  runtime: AgentRuntimeContext<InteractionModelState>,
+): InteractionActorContext | undefined {
+  try {
+    return runtime.getLogicState<InteractionActorContext>();
+  } catch {
+    return undefined;
+  }
 }
 
 function recordResolved(runtime: AgentRuntimeContext<InteractionModelState>, id: string, response: unknown): void {
@@ -74,103 +121,111 @@ function recordResolved(runtime: AgentRuntimeContext<InteractionModelState>, id:
   );
 }
 
+function parkInteraction(
+  runtime: AgentRuntimeContext<InteractionModelState>,
+  req: InteractionRequest<unknown>,
+  resolve: (response: unknown) => void,
+): Interaction {
+  const context = contextOf(runtime);
+  const allocatedId = req.id === undefined;
+  const id = req.id ?? `${runtime.agent.agentId}:interaction-${context.nextId}`;
+  if (context.pending.has(id)) throw new Error(`Interaction "${id}" is already pending`);
+  const interaction: Interaction = {
+    id,
+    kind: req.kind,
+    payload: req.payload,
+    origin: req.origin ?? {},
+    createdAt: Date.now(),
+  };
+  runtime.send({ type: 'interaction.parked', entry: { interaction, resolve }, allocatedId });
+  void runtime.dispatch(
+    new InteractionRequestEvent({
+      agentId: runtime.agent.agentId,
+      id: interaction.id,
+      kind: interaction.kind,
+      toolCallId: readPayloadToolCallId(interaction.payload),
+      request: interaction.payload,
+    }),
+  );
+  context.changeEmitter.fire({ pending: [...contextOf(runtime).pending.keys()] });
+  return interaction;
+}
+
+function respondInteraction(
+  runtime: AgentRuntimeContext<InteractionModelState>,
+  id: string,
+  response: unknown,
+): boolean {
+  const context = tryContextOf(runtime);
+  const entry = context?.pending.get(id);
+  if (context === undefined || entry === undefined) return false;
+  runtime.send({ type: 'interaction.settled', id, at: Date.now() });
+  entry.resolve(response);
+  recordResolved(runtime, id, response);
+  context.changeEmitter.fire({ pending: [...contextOf(runtime).pending.keys()] });
+  context.resolveEmitter.fire({ id, response });
+  return true;
+}
+
 function cancelTurnPending(
   runtime: AgentRuntimeContext<InteractionModelState>,
-  effects: InteractionEffectState,
   turnId: number,
 ): void {
+  const context = tryContextOf(runtime);
+  if (context === undefined) return;
   let changed = false;
-  for (const [id, entry] of effects.pending) {
+  for (const entry of context.pending.values()) {
     if (entry.interaction.origin?.turnId !== turnId) continue;
-    effects.pending.delete(id);
-    rememberResolved(effects, id);
+    const id = entry.interaction.id;
     const response = { cancelled: true, reason: 'turn_ended' };
+    runtime.send({ type: 'interaction.settled', id, at: Date.now() });
     entry.resolve(response);
     recordResolved(runtime, id, response);
-    effects.resolveEmitter.fire({ id, response });
+    context.resolveEmitter.fire({ id, response });
     changed = true;
   }
-  if (changed) effects.changeEmitter.fire({ pending: [...effects.pending.keys()] });
+  if (changed) context.changeEmitter.fire({ pending: [...contextOf(runtime).pending.keys()] });
 }
 
 export class InteractionRuntime {
-  private readonly effects: InteractionEffectState;
-
   readonly onDidChangePending: Event<InteractionPendingChangedEvent>;
   readonly onDidResolve: Event<InteractionResolution>;
 
   constructor(private readonly runtime: AgentRuntimeContext<InteractionModelState>) {
-    this.effects = runtime.getLogicState<InteractionActorContext>().effects;
-    this.onDidChangePending = this.effects.changeEmitter.event;
-    this.onDidResolve = this.effects.resolveEmitter.event;
+    const context = contextOf(runtime);
+    this.onDidChangePending = context.changeEmitter.event;
+    this.onDidResolve = context.resolveEmitter.event;
   }
 
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse> {
     return new Promise<TResponse>((resolve) => {
-      this.park(req, resolve as (response: unknown) => void);
+      parkInteraction(this.runtime, req, resolve as (response: unknown) => void);
     });
   }
 
   enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction {
-    return this.park(req, () => {});
+    return parkInteraction(this.runtime, req, () => {});
   }
 
   respond(id: string, response: unknown): boolean {
-    const entry = this.effects.pending.get(id);
-    if (entry === undefined) return false;
-    this.effects.pending.delete(id);
-    rememberResolved(this.effects, id);
-    entry.resolve(response);
-    recordResolved(this.runtime, id, response);
-    this.effects.changeEmitter.fire({ pending: [...this.effects.pending.keys()] });
-    this.effects.resolveEmitter.fire({ id, response });
-    return true;
+    return respondInteraction(this.runtime, id, response);
   }
 
   listPending(kind?: InteractionKind): readonly Interaction[] {
-    const all = [...this.effects.pending.values()].map((p) => p.interaction);
+    const pending = tryContextOf(this.runtime)?.pending;
+    if (pending === undefined) return [];
+    const all = [...pending.values()].map((p) => p.interaction);
     return kind === undefined ? all : all.filter((i) => i.kind === kind);
   }
 
   isRecentlyResolved(id: string): boolean {
-    const resolvedAt = this.effects.recentlyResolved.get(id);
+    const resolvedAt = tryContextOf(this.runtime)?.recentlyResolved.get(id);
     if (resolvedAt === undefined) return false;
-    if (Date.now() - resolvedAt > RECENTLY_RESOLVED_TTL_MS) {
-      this.effects.recentlyResolved.delete(id);
-      return false;
-    }
-    return true;
+    return Date.now() - resolvedAt <= RECENTLY_RESOLVED_TTL_MS;
   }
 
   cancelPendingForTurn(turnId: number): void {
-    cancelTurnPending(this.runtime, this.effects, turnId);
-  }
-
-  private park<TPayload>(
-    req: InteractionRequest<TPayload>,
-    resolve: (response: unknown) => void,
-  ): Interaction {
-    const id = req.id ?? `${this.runtime.agent.agentId}:interaction-${this.effects.nextId++}`;
-    if (this.effects.pending.has(id)) throw new Error(`Interaction "${id}" is already pending`);
-    const interaction: Interaction<TPayload> = {
-      id,
-      kind: req.kind,
-      payload: req.payload,
-      origin: req.origin ?? {},
-      createdAt: Date.now(),
-    };
-    this.effects.pending.set(id, { interaction, resolve });
-    void this.runtime.dispatch(
-      new InteractionRequestEvent({
-        agentId: this.runtime.agent.agentId,
-        id: interaction.id,
-        kind: interaction.kind,
-        toolCallId: readPayloadToolCallId(interaction.payload),
-        request: interaction.payload,
-      }),
-    );
-    this.effects.changeEmitter.fire({ pending: [...this.effects.pending.keys()] });
-    return interaction;
+    cancelTurnPending(this.runtime, turnId);
   }
 }
 
@@ -183,22 +238,19 @@ function readPayloadToolCallId(payload: unknown): string | undefined {
 const interactionEffects = fromCallback(({
   input,
 }: {
-  input: {
-    readonly runtime: AgentRuntimeContext<InteractionModelState>;
-    readonly effects: InteractionEffectState;
-  };
+  input: AgentRuntimeContext<InteractionModelState>;
 }) => {
-  const subscription = input.runtime.get(IAgentHostService).of(input.runtime.agent).eventBus.subscribe(TurnEnded, (e) => {
-    cancelTurnPending(input.runtime, input.effects, e.turnId);
+  const subscription = input.get(IAgentHostService).of(input.agent).eventBus.subscribe(TurnEnded, (e) => {
+    cancelTurnPending(input, e.turnId);
   });
   return () => {
     subscription.dispose();
-    for (const entry of input.effects.pending.values()) {
+    const context = contextOf(input);
+    for (const entry of context.pending.values()) {
       entry.resolve({ cancelled: true, reason: 'agent_closed' });
     }
-    input.effects.pending.clear();
-    input.effects.changeEmitter.dispose();
-    input.effects.resolveEmitter.dispose();
+    context.changeEmitter.dispose();
+    context.resolveEmitter.dispose();
   };
 });
 
@@ -206,28 +258,41 @@ const interactionActorLogic = setup({
   types: {} as {
     context: InteractionActorContext;
     input: AgentRuntimeContext<InteractionModelState>;
-    events: InteractionCommitEvent;
+    events: InteractionActorEvent;
   },
   actors: { interactionEffects },
 }).createMachine({
   context: ({ input }) => ({
     records: new Map(),
-    effects: {
-      pending: new Map(),
-      recentlyResolved: new Map(),
-      nextId: 0,
-      changeEmitter: new Emitter(),
-      resolveEmitter: new Emitter(),
-    },
     runtime: input,
+    pending: new Map(),
+    recentlyResolved: new Map(),
+    nextId: 0,
+    changeEmitter: new Emitter(),
+    resolveEmitter: new Emitter(),
   }),
   invoke: {
     src: 'interactionEffects',
-    input: ({ context }) => ({ runtime: context.runtime, effects: context.effects }),
+    input: ({ context }) => context.runtime,
   },
   on: {
     'interaction.commit': {
       actions: assign({ records: ({ event }) => event.records }),
+    },
+    'interaction.parked': {
+      actions: assign(({ context, event }) => ({
+        pending: pendingWith(context.pending, event.entry),
+        nextId: event.allocatedId ? context.nextId + 1 : context.nextId,
+      })),
+    },
+    'interaction.settled': {
+      actions: assign(({ context, event }) => {
+        if (!context.pending.has(event.id)) return {};
+        return {
+          pending: pendingWithout(context.pending, event.id),
+          recentlyResolved: foldRecentlyResolved(context.recentlyResolved, event.id, event.at),
+        };
+      }),
     },
   },
 });
