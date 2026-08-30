@@ -60,6 +60,7 @@ import {
   type RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IActorHostService } from '#/lifecycle/actorHost';
 
 import { ManagedAgent } from './managedAgent';
 import {
@@ -92,6 +93,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
   get onDidClose() {
     return this.onDidCloseEmitter.event;
+  }
+
+  private actorHosts(): IActorHostService | undefined {
+    return this.instantiation.invokeFunction((accessor) => accessor.get(IActorHostService));
   }
 
   constructor(
@@ -234,6 +239,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       managed = new ManagedAgent(agent, host, this.hostAccessor, this.activeRecords());
       this.roster.set(agentId, managed);
       managed.runtimeSet.resolve(AgentLoop);
+      const prompt = managed.runtimeSet.resolve(AgentPrompt);
+      this.actorHosts()?.createAgent(this.ctx.sessionId, agent, (input) => prompt.enqueue(input));
       this.attachSessionAgentServices(agent);
       managed.active = true;
       await host.wire.seal();
@@ -425,6 +432,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     loop.cancel(undefined, reason);
     await Promise.all([loop.settled(), compaction.cancel(), prompt.drain(reason)]);
+    await this.actorHosts()?.closeAgent(this.ctx.sessionId, agent.agentId);
     await managed.runtimeSet.close();
     await managed.host.dispose();
     if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);

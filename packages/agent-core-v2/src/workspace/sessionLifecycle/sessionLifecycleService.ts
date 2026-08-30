@@ -74,6 +74,7 @@ import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkil
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
+import { IActorHostService } from '#/lifecycle/actorHost';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';
@@ -170,6 +171,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ) {
     super();
     if (onDispose !== undefined) this._register({ dispose: onDispose });
+  }
+
+  private actorHosts(): IActorHostService | undefined {
+    return this.instantiation.invokeFunction((accessor) => accessor.get(IActorHostService));
   }
 
   private get workspaceId(): string {
@@ -287,6 +292,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw error;
     }
     this.sessions.set(opts.sessionId, handle);
+    this.actorHosts()?.createSession(opts.sessionId);
     return handle;
   }
 
@@ -387,6 +393,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.appendLogStore.drainRetirements();
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
+    await this.actorHosts()?.closeSession(sessionId);
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
@@ -408,6 +415,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
+    await this.actorHosts()?.closeSession(sessionId);
     void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });

@@ -796,6 +796,8 @@ import '#/agent/interruptionReminder/sessionInterruptionReminderService';
 import '#/agent/media/sessionMediaService';
 import '#/features/tower/sessionTowerService';
 export * from '#/agent/host/agentHost';
+import '#/lifecycle/actorHost';
+export * from '#/lifecycle/actorHost';
 export * from '#/features/sessionInit/sessionInit';
 export * from '#/features/sessionInit/sessionInitService';
 export * from '#/features/sessionInit/profile/init';
