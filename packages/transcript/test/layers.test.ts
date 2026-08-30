@@ -1870,6 +1870,52 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(live.error).toBe('later failure');
   });
 
+  it('recovers legacy boundary identity past a context-only blocked prompt', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
+      { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'run' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed later' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 1 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'run' }], origin: { kind: 'user' }, time: 2 },
+        { type: 'context.append_message', message: { id: 'prompt-real', role: 'user', origin: { kind: 'user' } }, time: 3 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'legacy failure' }, time: 4 },
+      ],
+      base,
+    );
+    const blocked = folded.items[0];
+    const real = folded.items[1];
+    if (blocked?.kind !== 'turn' || real?.kind !== 'turn') throw new Error('expected turns');
+    expect(blocked.error).toBeUndefined();
+    expect(real.triggerPromptId).toBe('prompt-real');
+    expect(real.state).toBe('failed');
+    expect(real.error).toBe('legacy failure');
+  });
+
+  it('retires an unmatched legacy empty boundary before a later blocked prompt', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'assistant', content: [{ type: 'text', text: 'partial' }], toolCalls: [] },
+      { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [], origin: { kind: 'user' }, time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'empty failure' }, time: 2 },
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 3 },
+      ],
+      base,
+    );
+    const empty = folded.items[0];
+    const blocked = folded.items[1];
+    if (empty?.kind !== 'turn' || blocked?.kind !== 'turn') throw new Error('expected turns');
+    expect(empty.state).toBe('failed');
+    expect(empty.error).toBe('empty failure');
+    expect(blocked.triggerPromptId).toBe('prompt-blocked');
+    expect(blocked.error).toBeUndefined();
+  });
+
   it('folds terminal facts for an empty prompt turn without a context identity', () => {
     const base = groupMessagesIntoSnapshot([
       { role: 'assistant', content: [{ type: 'text', text: 'partial' }], toolCalls: [] },

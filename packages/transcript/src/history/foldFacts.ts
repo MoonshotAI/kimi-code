@@ -467,6 +467,13 @@ export function foldWireRecordFacts(
               : typeof message.id !== 'string'
                 ? pendingUndoAnchorTurnIds.shift()
                 : undefined;
+        if (
+          matchedTurnId !== undefined &&
+          !turnPromptIds.has(matchedTurnId) &&
+          typeof message.id === 'string'
+        ) {
+          turnPromptIds.set(matchedTurnId, message.id);
+        }
         undoAnchors.push({ firstRawTurnId: matchedTurnId ?? nextTurnId });
         break;
       }
@@ -505,7 +512,11 @@ export function foldWireRecordFacts(
       }
       case 'turn.ended': {
         const payload = record as TurnEndedPayload;
-        if (typeof payload.turnId === 'number') endedTurns.set(payload.turnId, record);
+        if (typeof payload.turnId === 'number') {
+          endedTurns.set(payload.turnId, record);
+          const pendingIndex = pendingUndoAnchorTurnIds.indexOf(payload.turnId);
+          if (pendingIndex >= 0) pendingUndoAnchorTurnIds.splice(pendingIndex, 1);
+        }
         break;
       }
       case 'turn.prompt': {
