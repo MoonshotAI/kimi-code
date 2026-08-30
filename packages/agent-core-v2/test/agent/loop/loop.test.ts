@@ -172,7 +172,7 @@ describe('Agent loop', () => {
     });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const turn = loop.activeTurn();
     expect(turn).toBeDefined();
 
     await ctx.untilTurnEnd();
@@ -204,7 +204,7 @@ describe('Agent loop', () => {
     });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const turn = loop.activeTurn();
     expect(turn).toBeDefined();
 
     await ctx.untilTurnEnd();
@@ -540,7 +540,7 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'This step should not run.' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const turn = loop.activeTurn();
     await ctx.untilApproval(true);
     await ctx.untilTurnEnd();
 
@@ -568,7 +568,7 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'This continuation should not run.' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    const turn = (loop as unknown as { activeTurnJob?: { turn: Turn } }).activeTurnJob?.turn;
+    const turn = loop.activeTurn();
     await ctx.untilTurnEnd();
 
     expect(ctx.llmCalls).toHaveLength(1);

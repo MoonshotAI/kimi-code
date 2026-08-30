@@ -57,6 +57,7 @@ export class AgentStepRetry extends Disposable {
     private readonly dispatcher: IEventDispatcher,
     private readonly scopeContext: IAgentScopeContext,
     private readonly states: IAgentStateService,
+    private readonly onRetrying?: () => void,
   ) {
     super();
     this.states.contributeState(stepRetryLastFailedDriverIdKey);
@@ -134,6 +135,7 @@ export class AgentStepRetry extends Disposable {
         ...retryErrorFields(error),
       }),
     );
+    this.onRetrying?.();
     await sleepForRetry(delayMs, context.signal);
 
     if (context.currentStep?.signal.aborted === true) return false;

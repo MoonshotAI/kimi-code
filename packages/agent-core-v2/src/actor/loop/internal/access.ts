@@ -2,7 +2,6 @@ import type { AgentRuntimeContext } from '#/actor/agentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { LoopControl } from './loop';
-import type { AgentLoopLogic } from './loopLogic';
 
 export interface LoopDurableState {
   readonly nextTurnId: number;
@@ -19,7 +18,7 @@ const durableStates = new WeakMap<object, () => LoopDurableState>();
 
 export function registerLoopControl(
   agent: AgentContext,
-  control: LoopControl | AgentLoopLogic,
+  control: LoopControl,
   getDurableState: () => LoopDurableState,
 ): void {
   controls.set(agent, control);

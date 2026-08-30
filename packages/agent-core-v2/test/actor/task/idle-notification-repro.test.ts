@@ -11,6 +11,8 @@ import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type { LoopControl } from '#/actor/loop/internal/loop';
 import { getLoopControl } from '#/actor/loop/internal/access';
+import { TurnStarted } from '#/actor/loop/turnEvents';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
   createTestAgent,
@@ -359,7 +361,10 @@ describe('task notification → main agent (real Agent instance)', () => {
 
     it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
 
-      const launchSpy = vi.spyOn(loop as unknown as { startTurn: () => unknown }, 'startTurn');
+      const startedTurnIds: number[] = [];
+      const startedSubscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        startedTurnIds.push(event.turnId);
+      });
 
       await background.loadFromDisk();
       await background.reconcile();
@@ -372,7 +377,8 @@ describe('task notification → main agent (real Agent instance)', () => {
         expect(flatContext).toContain('agent-prev0000');
       });
 
-      expect(launchSpy).not.toHaveBeenCalled();
+      startedSubscription.dispose();
+      expect(startedTurnIds).toEqual([]);
       expect(ctx.llmCalls.length).toBe(0);
       expect(loop.status().activeTurnId).toBeUndefined();
 

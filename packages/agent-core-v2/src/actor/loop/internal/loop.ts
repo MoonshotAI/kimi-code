@@ -1,4 +1,5 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
+import type { Event } from '#/_base/event';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { TokenUsage } from '#/kosong/contract/usage';
@@ -135,12 +136,23 @@ export interface StepEnqueueOptions {
   readonly at?: 'head' | 'tail';
 }
 
+export type LoopPhase = 'idle' | 'working' | 'streaming' | 'toolCalling' | 'retrying';
+
+export type LoopStreamKind = 'assistant' | 'thinking' | 'tool_call';
+
+export interface LoopPhaseState {
+  readonly phase: LoopPhase;
+  readonly stream?: LoopStreamKind;
+}
+
 export interface LoopControl {
   enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
 
   run(options: LoopRunOptions): Promise<LoopRunResult>;
 
   status(): AgentLoopStatus;
+
+  activeTurn(): Turn | undefined;
 
   cancel(turnId?: number, reason?: unknown): boolean;
 
@@ -156,6 +168,10 @@ export interface LoopControl {
     handler: LoopErrorHandler,
     options?: LoopErrorHandlerRegistrationOptions,
   ): IDisposable;
+
+  phase(): LoopPhaseState;
+
+  readonly onDidChangePhase: Event<LoopPhaseState>;
 
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
