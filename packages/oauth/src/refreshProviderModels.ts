@@ -16,6 +16,7 @@ import {
   type ManagedKimiOAuthRef,
 } from './managed-kimi-code';
 import { isManagedKimiCodeBaseUrl } from './managed-usage';
+import { fetchOpenAIProviderModels } from './openai-compatible';
 import {
   applyOpenPlatformConfig,
   fetchOpenPlatformModels,
@@ -394,6 +395,11 @@ function pickDefaultModel(
  *     aliases are merged; the provider record is user-owned and never
  *     rewritten.
  *  3. Custom registries (models.dev-style, keyed by `provider.source`).
+ *  3.5. OpenAI-compatible providers (`type: 'openai'` / `'openai_responses'`)
+ *     with a `baseUrl` and API key but no custom-registry `source`; refreshed
+ *     from the provider's own `{baseUrl}/models` endpoint. This is what brings
+ *     plain OpenAI-compatible gateways (e.g. opencode, kilo) into the refresh
+ *     loop instead of silently skipping them.
  *
  * Each branch diffs old vs new and only writes when something actually changed
  * (`removeProvider` then `setConfig`). Failures are collected per-provider and
@@ -789,6 +795,78 @@ export async function refreshProviderModels(
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3.5. OpenAI-compatible providers (type: 'openai' / 'openai_responses')
+  // ---------------------------------------------------------------------------
+  // Plain OpenAI-compatible gateways (e.g. opencode, kilo) carry a `baseUrl`
+  // and API key but no custom-registry `source`, so branches 1–3 skip them and
+  // they previously vanished from the refresh loop entirely. Refresh them from
+  // their own `{baseUrl}/models` endpoint so failures surface as "skipped"
+  // entries instead of being silently ignored.
+  const openAiCompatibleTypes = new Set(['openai', 'openai_responses']);
+  for (const providerId of Object.keys(config.providers)) {
+    if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
+    if (isOpenPlatformId(providerId)) continue;
+    if (targetId !== undefined && targetId !== providerId) continue;
+    const provider = readProvider(config, providerId);
+    if (provider === undefined) continue;
+    if (!openAiCompatibleTypes.has(provider.type ?? '')) continue;
+    // Custom-registry providers (branch 3) and managed-api-key providers
+    // (branch 2.5) own this id already; don't double-refresh.
+    if (readCustomRegistrySource(provider) !== undefined) continue;
+    if (provider.baseUrl === undefined || provider.baseUrl.length === 0) continue;
+    const apiKey = resolveProviderApiKey(provider);
+    if (apiKey === undefined) continue;
+
+    try {
+      const models = await fetchOpenAIProviderModels(provider.baseUrl, apiKey, {
+        userAgent: host.userAgent,
+      });
+      if (models.length === 0) continue;
+
+      config = await rebaseSelectionAfterFetch(host, config);
+      const aliasPrefix = `${providerId}/`;
+      const next = structuredClone(config);
+      applyManagedApiKeyProviderModels(next, providerId, models, aliasPrefix);
+      const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
+      restoreProviderAliases(
+        next,
+        preserveUserProviderAliases(config, providerId, refreshedAliasKeys),
+      );
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
+      clampDanglingDefault(next);
+      clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+
+      if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+        unchanged.push(providerId);
+      } else {
+        const { added, removed } = computeChanges(
+          collectModelIdsForAliases(config, refreshedAliasKeys),
+          collectModelIdsForAliases(next, refreshedAliasKeys),
+        );
+        await host.removeProvider(providerId);
+        config = await host.setConfig({
+          providers: next.providers,
+          models: next.models,
+          defaultModel: next.defaultModel,
+          thinking: next.thinking,
+          defaultProvider: next['defaultProvider'],
+        });
+        changed.push({
+          providerId,
+          providerName: providerId,
+          added,
+          removed,
+        });
+      }
+    } catch (error) {
+      failed.push({
+        provider: providerId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

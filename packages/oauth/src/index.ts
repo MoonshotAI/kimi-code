@@ -209,6 +209,11 @@ export type {
   RefreshProviderScope,
   RefreshResult,
 } from './refreshProviderModels';
+export {
+  fetchOpenAIProviderModels,
+  OPENAI_COMPATIBLE_DEFAULT_CONTEXT,
+} from './openai-compatible';
+export type { FetchOpenAIProviderModelsOptions } from './openai-compatible';
 
 export type { OAuthTokenTransactionOptions } from './oauth-token-transaction';
 export { OAuthTokenTransaction } from './oauth-token-transaction';
