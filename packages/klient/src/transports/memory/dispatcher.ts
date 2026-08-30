@@ -30,8 +30,6 @@ import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/a
 import { ISessionCommandService } from '@moonshot-ai/agent-core-v2/agent/command/sessionCommandService';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import { ISessionShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/sessionShellCommandService';
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
-import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
 import { IAgentTowerService } from '@moonshot-ai/agent-core-v2/features/tower/tower';
 import { ISessionTowerService } from '@moonshot-ai/agent-core-v2/features/tower/sessionTowerService';
 import { IAgentPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
@@ -44,6 +42,7 @@ import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
 import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
 import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
 import { AgentFullCompaction } from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionAgentRuntime';
+import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
 import type { PromptSubmitResult } from '@moonshot-ai/agent-core-v2/features/prompt/prompt';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
@@ -139,8 +138,6 @@ function shellService(
       return session.accessor.get(ISessionCommandService).of(agent);
     case IAgentShellCommandService:
       return session.accessor.get(ISessionShellCommandService).of(agent);
-    case IAgentActivityView:
-      return session.accessor.get(ISessionActivityViewService).of(agent);
     case IAgentTowerService:
       return session.accessor.get(ISessionTowerService).of(agent);
     case IAgentPluginCommandService:
@@ -462,6 +459,18 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
           const already = runtime.status() === 'running';
           return runtime.begin(input).then(() => !already);
         },
+      };
+    }
+    if (service === 'agentActivityView') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      const agent = resolved.like as AgentScopeLike;
+      const runtime = agent.accessor
+        .get(IAgentLifecycleService)
+        .resolve(agent.context, AgentActivityView);
+      return {
+        state: () => runtime.state(),
       };
     }
     if (service === 'agentMcpService') {

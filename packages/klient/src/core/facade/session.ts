@@ -7,7 +7,7 @@
  * wire).
  */
 
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/features/activityView/types';
 import type {
   ApprovalRequest,
   ApprovalResponse,

@@ -161,6 +161,7 @@ import {
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
+  AgentActivityView,
   AgentReminder,
   AgentContextMemory,
   AgentCron,
@@ -232,7 +233,6 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
-import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
 import { ISessionPluginService } from '@moonshot-ai/agent-core-v2/agent/plugin/sessionPluginService';
 import { ISessionPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/sessionPluginCommandService';
 import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
@@ -1450,7 +1450,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         for (const agent of agentLifecycle.list()) {
           const agentHandle = agentLifecycle.get(agent.agentId);
           if (agentHandle === undefined) continue;
-          if (live.accessor.get(ISessionActivityViewService).of(agentHandle).state().turn !== undefined) {
+          if (agentLifecycle.resolve(agentHandle, AgentActivityView).state().turn !== undefined) {
             throw new KimiError(
               ErrorCodes.TURN_AGENT_BUSY,
               `Session "${sessionId}" cannot be reloaded while a turn is running`,

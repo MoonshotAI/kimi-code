@@ -11,7 +11,7 @@ import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/
 import { Emitter, Event } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { AgentActivityUpdated } from '#/features/activityView/activityViewEvents';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';

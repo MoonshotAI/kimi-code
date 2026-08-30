@@ -20,7 +20,7 @@ import type {
   BackgroundRef,
   ToolCallRef,
   TurnPhase,
-} from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+} from '@moonshot-ai/agent-core-v2/features/activityView/types';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/features/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';

@@ -16,7 +16,6 @@
  * every Service.
  */
 
-import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
@@ -134,7 +133,7 @@ export const SESSION_PANELS: readonly ServicePanelDef[] = [
 
 export const AGENT_PANELS: readonly ServicePanelDef[] = [
   {
-    id: String(IAgentActivityView),
+    id: 'agentActivityView',
     label: 'AgentActivityView',
     scope: 'agent',
     fetch: (svc) => call(svc, 'state'),

@@ -18,7 +18,6 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
@@ -43,7 +42,6 @@ import type { LoopControl } from '#/features/loop/internal/loop';
 import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
 import { ISessionTaskService } from '#/agent/task/sessionTaskService';
-import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionPluginCommandService } from '#/agent/pluginCommand/sessionPluginCommandService';
@@ -662,12 +660,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
               notifyConfigChanged: () => {},
             }) as never;
           }
-          if (serviceId === IAgentActivityView) {
-            return live(serviceId, {
-              _serviceBrand: undefined,
-              state: () => ({ lifecycle: 'ready', background: [] }),
-            }) as never;
-          }
           if (serviceId === IAgentCommandService) {
             return live(serviceId, {
               _serviceBrand: undefined,
@@ -1021,7 +1013,6 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
     ctx.get(IInstantiationService).invokeFunction((accessor) => accessor.get(id));
   lifecycle.attachSessionAgentServices = (agent) => {
     ctx.get(ISessionTaskService).attach(agent);
-    ctx.get(ISessionActivityViewService).attach(agent);
     ctx.get(ISessionToolApprovalService).attach(agent);
     ctx.get(ISessionUserToolService).attach(agent);
     ctx.get(ISessionPluginCommandService).attach(agent);
@@ -4443,8 +4434,8 @@ describe('Agent tools', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-        [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
         [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 176, "time": "<time>" }
+        [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
         [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 176 }
         [wire] tools.unregister_user_tool     { "agentId": "main", "name": "Lookup", "time": "<time>" }
         [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }

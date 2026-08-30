@@ -1,5 +1,4 @@
 import {
-  IAgentActivityView,
   IAgentBlobService,
   IAgentCommandService,
   IAgentContextProjectorService,
@@ -29,7 +28,6 @@ import { ISessionPlanService } from '@moonshot-ai/agent-core-v2/features/plan/se
 import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { ISessionCommandService } from '@moonshot-ai/agent-core-v2/agent/command/sessionCommandService';
 import { ISessionShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/sessionShellCommandService';
-import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
 import { ISessionTowerService } from '@moonshot-ai/agent-core-v2/features/tower/sessionTowerService';
 import { ISessionPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/sessionPluginCommandService';
 import { ISessionSwarmAgentService } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmAgentService';
@@ -75,8 +73,6 @@ function shellService(
       return session.accessor.get(ISessionCommandService).of(agent);
     case IAgentShellCommandService:
       return session.accessor.get(ISessionShellCommandService).of(agent);
-    case IAgentActivityView:
-      return session.accessor.get(ISessionActivityViewService).of(agent);
     case IAgentTowerService:
       return session.accessor.get(ISessionTowerService).of(agent);
     case IAgentPluginCommandService:

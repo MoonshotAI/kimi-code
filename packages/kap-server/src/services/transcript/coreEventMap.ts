@@ -1,4 +1,4 @@
-import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewEvents';
 import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {

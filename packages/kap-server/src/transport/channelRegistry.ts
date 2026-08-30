@@ -1,7 +1,6 @@
 import {
   Disposable,
   getScopedServiceDescriptors,
-  IAgentActivityView,
   IAgentBlobService,
   IAgentCommandService,
   IAgentContextProjectorService,
@@ -60,7 +59,6 @@ const AGENT_GRANULAR_TOKENS: readonly ServiceIdentifier<unknown>[] = [
   IAgentTaskService,
   IAgentCommandService,
   IAgentShellCommandService,
-  IAgentActivityView,
   IAgentTowerService,
   IAgentPluginCommandService,
   IAgentSwarmService,

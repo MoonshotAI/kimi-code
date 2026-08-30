@@ -29,7 +29,7 @@ import { IModelService } from '#/kosong/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
+import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
 
 import { ISessionLegacyService } from './sessionLegacy';
 
@@ -110,10 +110,9 @@ export class SessionLegacyService implements ISessionLegacyService {
     if (handle === undefined) return false;
     const agents = handle.accessor.get(IAgentLifecycleService);
     const hosts = handle.accessor.get(IAgentHostService);
-    const activityViews = handle.accessor.get(ISessionActivityViewService);
     for (const agent of agents.list()) {
       if (hosts.tryOf(agent) === undefined) continue;
-      const state = activityViews.of(agent).state();
+      const state = agents.resolve(agent, AgentActivityView).state();
       if (state.turn !== undefined || state.background.length > 0) return true;
     }
     return false;

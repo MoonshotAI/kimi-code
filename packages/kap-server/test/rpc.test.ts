@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   AgentGoal,
   ErrorCodes,
-  IAgentActivityView,
   IAgentLifecycleService,
   IAgentPluginCommandService,
   IAgentRuntimeBindingService,
@@ -349,7 +348,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     await createMainAgent(id);
     const { body } = await call<{ lifecycle: string }>(
       'POST',
-      rpc('agent', IAgentActivityView, 'state', { sid: id, aid: 'main' }),
+      rpc('agent', 'agentActivityView', 'state', { sid: id, aid: 'main' }),
     );
     expect(body.code).toBe(0);
     expect(body.data.lifecycle).toBe('ready');

@@ -321,8 +321,6 @@ export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';
 export * from '#/app/flag/flagService';
 
-export * from '#/agent/activityView/activityView';
-import '#/agent/activityView/activityViewService';
 export * from '#/features/btw/btw';
 export * from '#/features/btw/btwService';
 import '#/features/btw/btwFeature';
@@ -762,13 +760,19 @@ export {
 } from '#/features/undo/undoAgentRuntime';
 export * from '#/features/undo/undoEvents';
 import '#/features/undo/undoFeature';
+export {
+  AgentActivityView,
+  ActivityViewRuntime,
+} from '#/features/activityView/activityViewAgentRuntime';
+export * from '#/features/activityView/activityViewEvents';
+export * from '#/features/activityView/types';
+import '#/features/activityView/activityViewFeature';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/agentContext/agentContext';
 export * from '#/agent/scopeContext/scopeContext';
 import '#/agent/host/agentHostService';
 import '#/agent/task/sessionTaskService';
-import '#/agent/activityView/sessionActivityViewService';
 import '#/agent/toolApproval/sessionToolApprovalService';
 import '#/agent/userTool/sessionUserToolService';
 import '#/agent/pluginCommand/sessionPluginCommandService';

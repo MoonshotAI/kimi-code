@@ -69,7 +69,7 @@ import {
   IWorkspaceAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
+import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
 import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
@@ -468,10 +468,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (sourceHandle !== undefined) {
       const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
       const sourceHosts = sourceHandle.accessor.get(IAgentHostService);
-      const activityViews = sourceHandle.accessor.get(ISessionActivityViewService);
       for (const agent of sourceAgents.list()) {
         if (sourceHosts.tryOf(agent) === undefined) continue;
-        if (activityViews.of(agent).state().turn !== undefined) {
+        if (sourceAgents.resolve(agent, AgentActivityView).state().turn !== undefined) {
           throw new Error2(
             ErrorCodes.SESSION_FORK_ACTIVE_TURN,
             `Session "${sourceId}" cannot be forked while a turn is running`,

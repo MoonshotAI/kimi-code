@@ -410,8 +410,8 @@ describe('Agent config', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start a fresh turn' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
       [wire] token_counting.turn_recorded   { "agentId": "main", "turnId": 0, "length": 5, "tokens": 102, "time": "<time>" }
+      [emit] agent.activity.updated         { "time": "<time>", "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [], "agentId": "main" }
       [emit] agent.status.updated           { "time": "<time>", "agentId": "main", "contextTokens": 102 }
       [emit] prompt.completed               { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
       [wire] prompt.accepted                { "agentId": "main", "promptId": "<msg-2>", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "time": "<time>" }

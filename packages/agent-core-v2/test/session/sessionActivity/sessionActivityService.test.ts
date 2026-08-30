@@ -16,12 +16,9 @@ import type {
   AgentRuntimeDefinition,
   RuntimeOf,
 } from '#/agent/runtime/agentRuntime';
-import {
-  AgentActivityUpdated,
-  IAgentActivityView,
-  type AgentActivityState,
-} from '#/agent/activityView/activityView';
-import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
+import { AgentActivityUpdated } from '#/features/activityView/activityViewEvents';
+import type { AgentActivityState } from '#/features/activityView/types';
+import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -136,7 +133,7 @@ class FakeAgentHandle {
     this.accessor = {
       get: (token: unknown) => {
         if (token === IEventBus) return this.bus;
-        if (token === IAgentActivityView) return this.view;
+        if (token === AgentActivityView) return this.view;
         if (token === IAgentStateService) return this.state;
         return undefined;
       },
@@ -185,26 +182,6 @@ class FakeAgentHosts extends Disposable {
   release(): void {}
 }
 
-class FakeSessionActivityViewService extends Disposable implements ISessionActivityViewService {
-  declare readonly _serviceBrand: undefined;
-
-  constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
-  ) {
-    super();
-  }
-
-  attach(): void {}
-
-  of(agent: AgentContext): IAgentActivityView {
-    const handle = (this.lifecycle as unknown as FakeAgentLifecycle).handles.find(
-      (h) => h.context === agent,
-    );
-    if (handle === undefined) throw new Error(`fake activity view for ${agent.agentId} unavailable`);
-    return handle.view as IAgentActivityView;
-  }
-}
-
 class FakeAgentLifecycle implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly createEmitter = new Emitter<AgentContext>();
@@ -248,6 +225,11 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     agent: AgentContext,
     definition: Definition,
   ): RuntimeOf<Definition> {
+    if (definition === AgentActivityView) {
+      const handle = this.handles.find((h) => h.context === agent);
+      if (handle === undefined) throw new Error(`unknown agent ${agent.agentId}`);
+      return handle.view as RuntimeOf<Definition>;
+    }
     if (definition !== AgentInteraction) throw new Error('not implemented');
     const handle = this.handles.find((h) => h.context === agent);
     if (handle === undefined) throw new Error(`unknown agent ${agent.agentId}`);
@@ -306,7 +288,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     registerScopedService(LifecycleScope.Session, ISessionStateService, SessionStateService, ScopeActivation.OnScopeCreated, 'state');
     registerScopedService(LifecycleScope.Session, IAgentLifecycleService, FakeAgentLifecycle, ScopeActivation.OnDemand, 'agentLifecycle');
     registerScopedService(LifecycleScope.Session, ISessionActivityView, SessionActivityView, ScopeActivation.OnScopeCreated, 'sessionActivity');
-    registerScopedService(LifecycleScope.Session, ISessionActivityViewService, FakeSessionActivityViewService, ScopeActivation.OnDemand, 'sessionActivityView');
     registerScopedService(LifecycleScope.Session, IAgentHostService, FakeAgentHosts, ScopeActivation.OnDemand, 'agentHost');
 
     disposables = new DisposableStore();

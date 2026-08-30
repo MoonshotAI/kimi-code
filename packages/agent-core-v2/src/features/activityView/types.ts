@@ -1,8 +1,5 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { PromptOrigin } from '#/features/contextMemory/types';
 import type { TurnEndReason } from '#/features/loop/turnEvents';
-import { AgentEvent2, type AgentDomainTrait } from '#/app/event/event2';
 
 export type TurnPhase = 'running' | 'streaming' | 'tool_call' | 'retrying';
 
@@ -61,21 +58,4 @@ export interface AgentActivityState {
   readonly turn?: ActivityTurnState;
   readonly lastTurn?: ActivityLastTurnState;
   readonly background: readonly BackgroundRef[];
-}
-
-export interface IAgentActivityView {
-  readonly _serviceBrand: undefined;
-
-  state(): AgentActivityState;
-}
-
-export const IAgentActivityView: ServiceIdentifier<IAgentActivityView> =
-  createDecorator<IAgentActivityView>('agentActivityView');
-
-export class AgentActivityUpdated extends AgentEvent2<AgentActivityState & AgentDomainTrait> {
-  static override readonly type = 'agent.activity.updated';
-  static override readonly observable = true;
-}
-export interface AgentActivityUpdated extends AgentActivityState {
-  readonly agentId: string;
 }

@@ -11,6 +11,7 @@ import {
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
+import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
 
 import type { ScopeKind } from './channel';
 import { resolveAnyScopedServiceId } from './channelRegistry';
@@ -90,6 +91,14 @@ function agentPromptServiceView(agent: IScopeHandle, agentContext: AgentContext)
   };
 }
 
+function agentActivityViewView(agent: IScopeHandle, agentContext: AgentContext): object {
+  const view = () =>
+    agent.accessor.get(IAgentLifecycleService).resolve(agentContext, AgentActivityView);
+  return {
+    state: () => view().state(),
+  };
+}
+
 export async function resolveService(
   core: Scope,
   scopeKind: ScopeKind,
@@ -110,6 +119,19 @@ export async function resolveService(
     const agentId = params['agent_id'] ?? MAIN_AGENT_ID;
     const agentContext = session.accessor.get(IAgentLifecycleService).get(agentId)!;
     return agentPromptServiceView(scope as IScopeHandle, agentContext);
+  }
+  if (serviceName === 'agentActivityView') {
+    if (scopeKind !== 'agent') {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `service not available in ${scopeKind} scope: ${serviceName}`,
+      );
+    }
+    const sessionId = params['session_id'] ?? '';
+    const session = getLiveSessionById(core.accessor, sessionId)!;
+    const agentId = params['agent_id'] ?? MAIN_AGENT_ID;
+    const agentContext = session.accessor.get(IAgentLifecycleService).get(agentId)!;
+    return agentActivityViewView(scope as IScopeHandle, agentContext);
   }
   if (scope === undefined) {
     throw new Error2(

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+  AgentActivityView,
   AgentInteraction,
   AgentLoop,
   AgentPrompt,
@@ -35,7 +36,6 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { Emitter, Event } from '@moonshot-ai/agent-core-v2/_base/event';
-import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
 import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
 import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
@@ -2471,6 +2471,9 @@ describe('bindSessionTranscript', () => {
         const loopStatus = this.loopStatuses.get(context.agentId) as { state?: string } | undefined;
         return { status: () => loopStatus?.state === 'running' ? 'running' : 'idle' } as RuntimeOf<Definition>;
       }
+      if (definition === AgentActivityView) {
+        return { state: () => ({}) } as RuntimeOf<Definition>;
+      }
       if (definition !== AgentInteraction) throw new Error('unsupported runtime');
       for (const handle of this.handles.values()) {
         if (handle.context === context) return handle.kernel as RuntimeOf<Definition>;
@@ -2556,16 +2559,12 @@ describe('bindSessionTranscript', () => {
         },
       }),
     };
-    const activityViews = {
-      of: () => ({ state: () => ({}) }),
-    };
     return {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLifecycleService) return manager;
           if (token === IAgentHostService) return hosts;
           if (token === ISessionTaskService) return tasks;
-          if (token === ISessionActivityViewService) return activityViews;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
           return undefined;
         },

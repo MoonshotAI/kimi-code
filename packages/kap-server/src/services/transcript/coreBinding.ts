@@ -12,7 +12,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IAgentHostService } from '@moonshot-ai/agent-core-v2';
 import { ISessionTaskService } from '@moonshot-ai/agent-core-v2/agent/task/sessionTaskService';
-import { ISessionActivityViewService } from '@moonshot-ai/agent-core-v2/agent/activityView/sessionActivityViewService';
+import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
 import type { AgentContext } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
@@ -86,8 +86,7 @@ export function bindSessionTranscript(
         stepOrdinal: (turnId) => {
           const agent = agents.get(agentId);
           if (agent === undefined) return undefined;
-          const view = session.accessor.get(ISessionActivityViewService).of(agent);
-          const turn = view.state().turn;
+          const turn = agents.resolve(agent, AgentActivityView).state().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),

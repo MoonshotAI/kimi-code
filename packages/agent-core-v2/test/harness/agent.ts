@@ -114,7 +114,6 @@ import {
   WIRE_PROTOCOL_VERSION,
   FileStorageService,
   InMemoryStorageService,
-  IAgentActivityView,
   IAppendLogStore,
   IFileSystemStorageService,
   ISessionApprovalService,
@@ -205,7 +204,6 @@ import { ISessionPlanService } from '#/features/plan/sessionPlanService';
 import { ISessionStaleGuardService } from '#/features/staleGuard/sessionStaleGuardService';
 import { ISessionAgentExternalHooksService } from '#/features/externalHooks/session/sessionAgentExternalHooksService';
 import { ISessionTaskService } from '#/agent/task/sessionTaskService';
-import { ISessionActivityViewService } from '#/agent/activityView/sessionActivityViewService';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionPluginCommandService } from '#/agent/pluginCommand/sessionPluginCommandService';
@@ -899,7 +897,6 @@ class TestAgentStateService extends AgentStateService {
 }
 
 const AGENT_VIEW_SHELL_TOKENS = new Map<ServiceIdentifier<unknown>, ServiceIdentifier<unknown>>([
-  [IAgentActivityView, ISessionActivityViewService],
   [IAgentTaskService, ISessionTaskService],
   [IAgentUserToolService, ISessionUserToolService],
   [IAgentPluginCommandService, ISessionPluginCommandService],
@@ -1425,7 +1422,6 @@ export class AgentTestContext {
     const harnessAgentContext = agentScopeContext.agentContext;
     this.session.accessor.get(IAgentLifecycleService).attachRuntimes(harnessAgentContext);
     this.session.accessor.get(ISessionTaskService).attach(harnessAgentContext);
-    this.session.accessor.get(ISessionActivityViewService).attach(harnessAgentContext);
     this.session.accessor.get(ISessionToolApprovalService).attach(harnessAgentContext);
     this.session.accessor.get(ISessionUserToolService).attach(harnessAgentContext);
     this.session.accessor.get(ISessionPluginCommandService).attach(harnessAgentContext);
@@ -1445,7 +1441,6 @@ export class AgentTestContext {
     this.installInteractionBridge(harnessAgentContext);
 
     this.initializeRestorableServices();
-    this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(

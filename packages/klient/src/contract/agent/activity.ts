@@ -1,6 +1,6 @@
 /**
  * `agentActivityView` — the agent's folded activity snapshot. Mirrors
- * `agent-core-v2/agent/activityView/activityView.ts`. The `turn.origin`
+ * `agent-core-v2/features/activityView/types.ts`. The `turn.origin`
  * deep `PromptOrigin` union is mirrored as `unknown` (parity pins the
  * engine → wire direction only, like `agentContextData.history`).
  */

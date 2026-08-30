@@ -19,8 +19,8 @@ import type {
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  AgentActivityView,
   AgentInteraction,
-  IAgentActivityView,
   LifecycleScope,
   IAgentHostService,
   IAgentLifecycleService,
@@ -289,7 +289,7 @@ class FakeLifecycle {
   }
   addAgent(id: string): FakeAgentHandle {
     const handle = new FakeAgentHandle(id);
-    handle.set(IAgentActivityView, {
+    handle.set(AgentActivityView, {
       state: () => ({ lifecycle: 'ready', background: [] }),
     });
     const onTurnStarted = handle.bus.subscribe('turn.started', (e) => {
@@ -379,7 +379,7 @@ class FakeSessionActivityView {
 
   private attach(handle: FakeAgentHandle): void {
     if (this.folds.has(handle.id)) return;
-    const view = handle.accessor.get(IAgentActivityView) as
+    const view = handle.accessor.get(AgentActivityView) as
       | { state(): AgentActivityState }
       | undefined;
     this.folds.set(handle.id, this.foldOf(handle.id, view?.state()));

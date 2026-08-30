@@ -2,7 +2,7 @@ import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentHostService } from '#/agent/host/agentHost';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
+import { AgentActivityUpdated } from '#/features/activityView/activityViewEvents';
 import { TurnStarted } from '#/features/loop/turnEvents';
 import { TurnEnded } from '#/features/loop/turnOps';
 import {
