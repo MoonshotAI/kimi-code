@@ -1950,25 +1950,11 @@ describe('AgentTranscriptProjector', () => {
         userMessageId: 'm2',
         status: 'queued',
         content: [{ type: 'text', text: 'second' }],
-        origin: {
-          kind: 'user',
-          skillActivations: [
-            { activationId: 'act-review', skillName: 'review', skillArgs: 'src/app.ts' },
-          ],
-        },
         createdAt: '2026-01-01T00:00:01.000Z',
       }),
     );
     expect(tx.getPrompt('p1')).toMatchObject({ status: 'running', userMessageId: 'm1' });
-    expect(tx.getPrompt('p2')).toMatchObject({
-      status: 'queued',
-      origin: {
-        kind: 'user',
-        skillActivations: [
-          { activationId: 'act-review', skillName: 'review', skillArgs: 'src/app.ts' },
-        ],
-      },
-    });
+    expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });
 
     feed(ev({ type: 'prompt.started', promptId: 'p2' }));
     expect(tx.getPrompt('p2')).toMatchObject({
@@ -2107,6 +2093,7 @@ describe('AgentTranscriptProjector', () => {
       role: 'user',
       text: 'steered in',
       promptIds: ['p2'],
+      origin: { kind: 'user' },
     });
   });
 
@@ -2141,13 +2128,27 @@ describe('AgentTranscriptProjector', () => {
       ev({
         type: 'turn.steer',
         input: [
+          { type: 'text', text: '<skill-loaded name="deploy">private instructions</skill-loaded>' },
+          { type: 'text', text: '<skill-loaded name="review">private instructions</skill-loaded>' },
           { type: 'text', text: 'look at this' },
           {
             type: 'image_url',
             imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png' },
           },
         ],
-        origin: { kind: 'user' },
+        origin: {
+          kind: 'user',
+          skillActivations: [
+            { activationId: 'a1', skillName: 'deploy', skillPath: '/private/deploy/SKILL.md' },
+            { activationId: 'a2', skillName: 'review', skillArgs: 'strict', skillPath: '/private/review/SKILL.md' },
+          ],
+          attachments: [{
+            name: 'secret.txt',
+            mediaType: 'text/plain',
+            size: 12,
+            path: '/private/secret.txt',
+          }],
+        },
       }),
     );
 
@@ -2156,7 +2157,20 @@ describe('AgentTranscriptProjector', () => {
       attachment: { mediaType: 'image/*', source: { kind: 'session_media', fileId: 'f_img9' } },
     });
     const frame = turnOps('t4', tx.getItems()).steps[0]?.frames[0];
-    expect(frame).toMatchObject({ kind: 'text', role: 'user', text: 'look at this', promptIds: ['p2', 'p3'] });
+    expect(frame).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'look at this',
+      promptIds: ['p2', 'p3'],
+      origin: {
+        kind: 'user',
+        skillActivations: [
+          { skillName: 'deploy' },
+          { skillName: 'review', skillArgs: 'strict' },
+        ],
+      },
+    });
+    expect(JSON.stringify(frame)).not.toContain('/private/');
     expect(frame?.kind === 'text' ? frame.attachmentIds : undefined).toEqual([
       attachmentOp?.op === 'attachment.upsert' ? attachmentOp.attachment.attachmentId : undefined,
     ]);
@@ -2225,6 +2239,52 @@ describe('AgentTranscriptProjector', () => {
       role: 'user',
       text: 'last word',
       promptIds: ['p2'],
+      origin: { kind: 'user' },
+    });
+  });
+
+  it('flushes a pending steer into a user-only step when the turn ends before its first step', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 7, origin: { kind: 'user' }, prompt: 'active' }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'last word' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.steer',
+        input: [
+          { type: 'text', text: '<skill-loaded name="review">private instructions</skill-loaded>' },
+          { type: 'text', text: 'last word' },
+        ],
+        origin: {
+          kind: 'user',
+          skillActivations: [{ activationId: 'a1', skillName: 'review', skillArgs: 'strict' }],
+        },
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 7, reason: 'cancelled', interruptReason: 'user_cancelled' }));
+
+    const turn = turnOps('t7', tx.getItems());
+    expect(turn.steps).toHaveLength(1);
+    expect(turn.steps[0]).toMatchObject({ state: 'interrupted' });
+    expect(turn.steps[0]?.frames[0]).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'last word',
+      promptIds: ['p2'],
+      origin: {
+        kind: 'user',
+        skillActivations: [{ skillName: 'review', skillArgs: 'strict' }],
+      },
     });
   });
 
@@ -2260,7 +2320,13 @@ describe('AgentTranscriptProjector', () => {
     expect(frameOp).toMatchObject({
       turnId: 't3',
       stepId: 't3.2',
-      frame: { kind: 'text', role: 'user', text: 'steered mid-attach', promptIds: ['p2'] },
+      frame: {
+        kind: 'text',
+        role: 'user',
+        text: 'steered mid-attach',
+        promptIds: ['p2'],
+        origin: { kind: 'user' },
+      },
     });
   });
 
@@ -2597,7 +2663,62 @@ describe('AgentTranscriptProjector', () => {
         kind: 'text',
         role: 'user',
         text: 'steered in',
+        origin: { kind: 'user' },
       });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot preserves safe bundled skill provenance before the first step', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-bundled-steer-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const origin = {
+        kind: 'user',
+        skillActivations: [
+          { activationId: 'a1', skillName: 'deploy', skillPath: '/private/deploy/SKILL.md' },
+          { activationId: 'a2', skillName: 'review', skillArgs: 'strict', skillPath: '/private/review/SKILL.md' },
+        ],
+        attachments: [{
+          name: 'secret.txt',
+          mediaType: 'text/plain',
+          size: 12,
+          path: '/private/secret.txt',
+        }],
+      };
+      const content = [
+        { type: 'text', text: '<skill-loaded name="deploy">private instructions</skill-loaded>' },
+        { type: 'text', text: '<skill-loaded name="review">private instructions</skill-loaded>' },
+        { type: 'text', text: 'steered in' },
+      ];
+      const records = [
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
+        { type: 'turn.steer', input: content, origin, time: 3000 },
+        { type: 'context.append_message', message: { role: 'user', content, toolCalls: [], origin }, time: 3001 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turn = snapshot?.items.find((item) => item.kind === 'turn');
+      if (turn?.kind !== 'turn') throw new Error('expected turn');
+      const frame = turn.steps.flatMap((step) => step.frames).find(
+        (candidate) => candidate.kind === 'text' && candidate.role === 'user',
+      );
+      expect(frame).toMatchObject({
+        kind: 'text',
+        role: 'user',
+        text: 'steered in',
+        origin: {
+          kind: 'user',
+          skillActivations: [
+            { skillName: 'deploy' },
+            { skillName: 'review', skillArgs: 'strict' },
+          ],
+        },
+      });
+      expect(JSON.stringify(frame)).not.toContain('/private/');
     } finally {
       await rm(home, { recursive: true, force: true });
     }

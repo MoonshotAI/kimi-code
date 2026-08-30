@@ -13,7 +13,6 @@ export interface TranscriptPrompt {
   readonly status: TranscriptPromptStatus;
   readonly userMessageId?: string;
   readonly content?: unknown;
-  readonly origin?: unknown;
   readonly createdAt: string;
   readonly finishedAt?: string;
   readonly steeredAt?: string;

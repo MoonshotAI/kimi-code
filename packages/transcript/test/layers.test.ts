@@ -372,6 +372,34 @@ describe('contract schemas', () => {
     }
   });
 
+  it('accepts provenance only on user text frames', () => {
+    const base = {
+      op: 'frame.upsert',
+      turnId: 't1',
+      stepId: 't1.1',
+    } as const;
+    expect(transcriptOperationSchema.safeParse({
+      ...base,
+      frame: {
+        kind: 'text',
+        frameId: 't1.1.f1',
+        role: 'user',
+        text: 'steered in',
+        origin: { kind: 'user', skillActivations: [{ skillName: 'review', skillArgs: 'strict' }] },
+      },
+    }).success).toBe(true);
+    expect(transcriptOperationSchema.safeParse({
+      ...base,
+      frame: {
+        kind: 'text',
+        frameId: 't1.1.f2',
+        role: 'assistant',
+        text: 'reply',
+        origin: { kind: 'user' },
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects mutually exclusive cursors and bad grades', () => {
     expect(() => transcriptGradeSpecSchema.parse({ '*': 'stream' })).toThrow();
     const ok = transcriptResponseSchema.safeParse({

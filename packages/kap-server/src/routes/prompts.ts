@@ -335,13 +335,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 user_message_id: result.prompt_id,
                 status: result.state,
                 content: projectPromptContentParts(parts),
-                origin: {
-                  kind: 'user',
-                  skillActivations: req.body.skills.map((skill) => ({
-                    skillName: skill.name,
-                    skillArgs: skill.args,
-                  })),
-                },
                 created_at: result.created_at,
               },
               req.id,
@@ -498,9 +491,6 @@ export function projectPromptSnapshot(prompt: PromptQueueSnapshot['pending'][num
     user_message_id: prompt.userMessageId,
     status,
     content: projectPromptContentParts(content),
-    ...(origin?.kind === 'user' && (origin.skillActivations?.length ?? 0) > 0
-      ? { origin }
-      : {}),
     created_at: prompt.createdAt,
   };
 }

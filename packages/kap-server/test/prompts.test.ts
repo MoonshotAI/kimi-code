@@ -41,7 +41,6 @@ interface PromptItemWire {
   user_message_id: string;
   status: 'running' | 'queued';
   content: unknown;
-  origin?: unknown;
   created_at: string;
 }
 
@@ -380,13 +379,6 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
     expect(['running', 'queued']).toContain(submitted.body.data.status);
     expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
-    expect(submitted.body.data.origin).toEqual({
-      kind: 'user',
-      skillActivations: [
-        { skillName: 'update-config' },
-        { skillName: 'check-kimi-code-docs' },
-      ],
-    });
 
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
@@ -420,10 +412,6 @@ describe('server-v2 /api/v1 prompts', () => {
       },
     });
     expect(projected.content).toEqual([{ type: 'text', text: 'Review this change.' }]);
-    expect(projected.origin).toEqual({
-      kind: 'user',
-      skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
-    });
     const plain = projectPromptSnapshot({
       id: 'msg_2',
       userMessageId: 'msg_2',
@@ -437,7 +425,6 @@ describe('server-v2 /api/v1 prompts', () => {
       },
     });
     expect(plain.content).toEqual([{ type: 'text', text: 'plain question' }]);
-    expect(plain.origin).toBeUndefined();
   });
 
   it('honors a client-chosen prompt_id on submit', async () => {
