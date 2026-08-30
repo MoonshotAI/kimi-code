@@ -46,6 +46,7 @@ export interface FullCompactionRuntime {
   begin(input?: FullCompactionBeginInput): Promise<FullCompactionTask>;
   cancel(): Promise<void>;
   status(): FullCompactionStatus;
+  runningSince(): number | undefined;
   readonly onDidFinish: Event<FullCompactionTask>;
   registerBeforeCompactHook(
     name: string,
@@ -66,6 +67,10 @@ export class AgentFullCompactionRuntime implements FullCompactionRuntime {
 
   status(): FullCompactionStatus {
     return fullCompactionStatusOf(compactionContextOf(this.context));
+  }
+
+  runningSince(): number | undefined {
+    return compactionContextOf(this.context).active?.startedAt;
   }
 
   get onDidFinish(): Event<FullCompactionTask> {

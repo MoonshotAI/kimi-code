@@ -37,6 +37,12 @@ import {
   type TurnInterruptReason,
 } from '#/actor/loop/turnEvents';
 import { TurnEnded } from '#/actor/loop/turnOps';
+import type {
+  LoopInterruptReason,
+  LoopRetryActivity,
+  LoopStreamKind,
+  LoopTurnPhase,
+} from '../loop';
 import { LOOP_CONTROL_SECTION, type LoopControl as LoopControlConfig } from '../configSection';
 import {
   createMaxStepsExceededError,
@@ -45,7 +51,6 @@ import {
   type LoopControl,
   type LoopErrorContext,
   type LoopErrorHandler,
-  type LoopPhaseState,
   type LoopRunOptions,
   type LoopRunResult,
   type Step,
@@ -57,7 +62,7 @@ import {
 import type { StepRequest, TurnSeed } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
 
-export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
+export type { LoopInterruptReason } from '../loop';
 
 export type ControlledPromise<T> = ReturnType<typeof createControlledPromise<T>>;
 
@@ -76,8 +81,15 @@ export interface LoopTraceSlot {
   current: LLMRequestTrace | undefined;
 }
 
+export interface LoopPhaseUpdate {
+  readonly phase: LoopTurnPhase;
+  readonly stream?: LoopStreamKind;
+  readonly step?: number;
+  readonly retry?: LoopRetryActivity;
+}
+
 export interface LoopPhaseSlot {
-  last: LoopPhaseState | undefined;
+  last: LoopPhaseUpdate | undefined;
 }
 
 export interface TurnJobHandle {
@@ -117,6 +129,7 @@ export interface LoopProcessDeps {
     get(): string | undefined;
     set(value: string | undefined): void;
   };
+  readonly notifyStepInterrupted?: (turnId: number, reason: LoopInterruptReason) => void;
 }
 
 export interface TurnReleasedNotice {
@@ -129,26 +142,42 @@ export interface LoopPumpNotice {
   readonly type: 'loop.pump';
 }
 
-export interface LoopPhaseNotice {
+export interface LoopPhaseNotice extends LoopPhaseUpdate {
   readonly type: 'loop.phase';
-  readonly phase: LoopPhaseState['phase'];
-  readonly stream?: LoopPhaseState['stream'];
 }
 
-export type TurnProcessNotice = TurnReleasedNotice | LoopPumpNotice | LoopPhaseNotice;
+export interface LoopStepInterruptedNotice {
+  readonly type: 'loop.stepInterrupted';
+  readonly turnId: number;
+  readonly reason: LoopInterruptReason;
+}
 
-export type NotifyPhase = (phase: LoopPhaseState['phase'], stream?: LoopPhaseState['stream']) => void;
+export type TurnProcessNotice =
+  | TurnReleasedNotice
+  | LoopPumpNotice
+  | LoopPhaseNotice
+  | LoopStepInterruptedNotice;
+
+export type NotifyPhase = (update: LoopPhaseUpdate) => void;
 
 export function notifyPhaseFor(
   handle: TurnJobHandle,
   send: (notice: TurnProcessNotice) => void,
 ): NotifyPhase {
-  return (phase, stream) => {
+  return (update) => {
     if (handle.finished) return;
     const last = handle.phaseSlot.last;
-    if (last !== undefined && last.phase === phase && last.stream === stream) return;
-    handle.phaseSlot.last = { phase, stream };
-    send({ type: 'loop.phase', phase, stream });
+    if (
+      last !== undefined &&
+      last.phase === update.phase &&
+      last.stream === update.stream &&
+      (update.step === undefined || last.step === update.step) &&
+      last.retry?.nextAttempt === update.retry?.nextAttempt
+    ) {
+      return;
+    }
+    handle.phaseSlot.last = { ...update, step: update.step ?? last?.step };
+    send({ type: 'loop.phase', ...update });
   };
 }
 
@@ -349,7 +378,7 @@ export async function runLoop(
   jobOverride?: TurnJobHandle,
   notifyPhase?: NotifyPhase,
 ): Promise<LoopRunResult> {
-  const notify: NotifyPhase = notifyPhase ?? (() => {});
+  const notify: NotifyPhase = notifyPhase ?? ((_update) => {});
   const runtime = createLoopRuntimeBag(deps, options, jobOverride);
   try {
     while (true) {
@@ -642,7 +671,7 @@ function beginStep(
   notify: NotifyPhase,
 ): () => void {
   signal.throwIfAborted();
-  notify('working');
+  notify({ phase: 'working', step: currentStep });
   void deps.dispatcher.dispatch(
     new TurnStepStarted({
       agentId: deps.agentId,
@@ -721,7 +750,7 @@ async function executeStepTools(
   }
   const toolCallUuids = new Map<string, string>();
   let stopTurn = false;
-  notify('toolCalling');
+  notify({ phase: 'toolCalling' });
   for await (const toolResult of deps.toolExecutor().execute(response.message.toolCalls, {
     signal,
     turnId,
@@ -752,7 +781,7 @@ async function executeStepTools(
     });
     if (result.stopTurn === true) stopTurn = true;
   }
-  notify('working');
+  notify({ phase: 'working' });
   finishReason = stopTurn ? 'completed' : 'tool_calls';
   return finishReason;
 }
@@ -847,13 +876,14 @@ function emitStepCompleted(
 }
 
 export function emitStepInterrupted(
-  deps: Pick<LoopProcessDeps, 'agentId' | 'dispatcher'>,
+  deps: Pick<LoopProcessDeps, 'agentId' | 'dispatcher' | 'notifyStepInterrupted'>,
   turnId: number,
   activeStep: number | undefined,
   reason: LoopInterruptReason,
   message?: string,
 ): void {
   if (activeStep === undefined) return;
+  deps.notifyStepInterrupted?.(turnId, reason);
   void deps.dispatcher.dispatch(
     new TurnStepInterrupted({
       agentId: deps.agentId,
@@ -886,7 +916,7 @@ function createStreamPartHandler(
       switch (part.type) {
         case 'text':
           onResponseEvent();
-          notify('streaming', 'assistant');
+          notify({ phase: 'streaming', stream: 'assistant' });
           accumulate(part);
           void deps.dispatcher.dispatch(
             new AssistantDelta({ agentId: deps.agentId, turnId, delta: part.text }),
@@ -894,7 +924,7 @@ function createStreamPartHandler(
           return;
         case 'think':
           onResponseEvent();
-          notify('streaming', 'thinking');
+          notify({ phase: 'streaming', stream: 'thinking' });
           accumulate(part);
           void deps.dispatcher.dispatch(
             new ThinkingDelta({ agentId: deps.agentId, turnId, delta: part.think }),
@@ -906,7 +936,7 @@ function createStreamPartHandler(
           return;
         case 'function': {
           onResponseEvent();
-          notify('streaming', 'tool_call');
+          notify({ phase: 'streaming', stream: 'tool_call' });
           forceContentPartBoundary = true;
           callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
           void deps.dispatcher.dispatch(
@@ -925,7 +955,7 @@ function createStreamPartHandler(
           const toolCall = callsByIndex.get(part.index);
           if (toolCall === undefined) return;
           onResponseEvent();
-          notify('streaming', 'tool_call');
+          notify({ phase: 'streaming', stream: 'tool_call' });
           void deps.dispatcher.dispatch(
             new ToolCallDelta({
               agentId: deps.agentId,

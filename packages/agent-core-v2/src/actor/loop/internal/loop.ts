@@ -5,6 +5,7 @@ import type { FinishReason } from '#/kosong/contract/provider';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import type { Hooks } from '#/hooks';
 import { LoopErrors } from '#/actor/loop/internal/errors';
+import type { LoopActivity } from '../loop';
 import type { StepRequest } from './stepRequest';
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
@@ -136,15 +137,6 @@ export interface StepEnqueueOptions {
   readonly at?: 'head' | 'tail';
 }
 
-export type LoopPhase = 'idle' | 'working' | 'streaming' | 'toolCalling' | 'retrying';
-
-export type LoopStreamKind = 'assistant' | 'thinking' | 'tool_call';
-
-export interface LoopPhaseState {
-  readonly phase: LoopPhase;
-  readonly stream?: LoopStreamKind;
-}
-
 export interface LoopControl {
   enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
 
@@ -169,9 +161,9 @@ export interface LoopControl {
     options?: LoopErrorHandlerRegistrationOptions,
   ): IDisposable;
 
-  phase(): LoopPhaseState;
+  activity(): LoopActivity;
 
-  readonly onDidChangePhase: Event<LoopPhaseState>;
+  readonly onDidChangeActivity: Event<LoopActivity>;
 
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;

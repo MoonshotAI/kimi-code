@@ -18,6 +18,7 @@ type CompactionTelemetryProperties = Pick<
 
 export interface ActiveCompaction {
   readonly id: string;
+  readonly startedAt: number;
   readonly abortController: AbortController;
   readonly promise: Promise<CompactionResult>;
   readonly trigger: CompactionSource;

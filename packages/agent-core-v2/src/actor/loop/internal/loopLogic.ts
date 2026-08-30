@@ -22,14 +22,18 @@ import {
 } from '#/actor/loop/turnEvents';
 import { TurnCancel, TurnPrompt } from '#/actor/loop/turnOps';
 import { registerLoopControl, type LoopDurableState } from './access';
-import type { LoopResult } from '../loop';
+import type {
+  LoopActivity,
+  LoopLastTurnActivity,
+  LoopResult,
+  LoopTurnActivity,
+} from '../loop';
 import {
   type AgentLoopStatus,
   type EnqueueReceipt,
   type LoopControl,
   type LoopErrorHandler,
   type LoopErrorHandlerRegistrationOptions,
-  type LoopPhaseState,
   type LoopRunOptions,
   type LoopRunResult,
   type StepAssignment,
@@ -52,6 +56,7 @@ import {
   type LoopPhaseNotice,
   type LoopProcessDeps,
   type LoopPumpNotice,
+  type LoopStepInterruptedNotice,
   type LoopTraceSlot,
   type MutableTurn,
   type TurnJobHandle,
@@ -80,7 +85,7 @@ export interface LoopMachineContext {
   readonly errorHandlers: LoopErrorHandler[];
   readonly startEmitter: Emitter<number>;
   readonly endEmitter: Emitter<{ readonly turnId: number; readonly result: TurnResult }>;
-  readonly phaseEmitter: Emitter<LoopPhaseState>;
+  readonly activityEmitter: Emitter<LoopActivity>;
   readonly standaloneQueue: StepRequestQueue;
   readonly pendingAssignments: Map<StepRequest, ControlledPromise<StepAssignment>>;
   readonly settleWaiters: Array<() => void>;
@@ -90,7 +95,7 @@ export interface LoopMachineContext {
   heldAdmissions: readonly HeldAdmission[];
   activeTurn: TurnJobHandle | undefined;
   lastResult: LoopResult;
-  phase: LoopPhaseState;
+  activity: LoopActivity;
 }
 
 interface LoopCommitEvent {
@@ -190,6 +195,9 @@ function createLoopProcessDeps(
       set: (value) => {
         host.state.set(loopLastRequestTraceIdKey, value);
       },
+    },
+    notifyStepInterrupted: (turnId, reason) => {
+      runtime.send({ type: 'loop.stepInterrupted', turnId, reason } satisfies LoopStepInterruptedNotice);
     },
   };
 }
@@ -457,7 +465,38 @@ function loopResultOf(result: TurnResult): LoopResult {
 
 function phaseChanged(context: LoopMachineContext, event: LoopMachineEvent): boolean {
   const e = event as LoopPhaseNotice;
-  return context.phase.phase !== e.phase || context.phase.stream !== e.stream;
+  const turn = context.activity.turn;
+  if (turn === undefined) return false;
+  return (
+    turn.phase !== e.phase ||
+    turn.stream !== e.stream ||
+    (e.step !== undefined && turn.step !== e.step) ||
+    turn.retry?.nextAttempt !== e.retry?.nextAttempt
+  );
+}
+
+function turnActivityFor(job: TurnJobHandle): LoopTurnActivity {
+  return {
+    turnId: job.turn.id,
+    origin: job.seed.origin,
+    since: Date.now(),
+    step: 0,
+    phase: 'working',
+  };
+}
+
+function lastTurnActivityFor(
+  turnId: number,
+  result: TurnResult | undefined,
+  since: number | undefined,
+): LoopLastTurnActivity {
+  const at = Date.now();
+  return {
+    turnId,
+    reason: result?.type ?? 'failed',
+    durationMs: since === undefined ? undefined : at - since,
+    at,
+  };
 }
 
 const turnProcess = fromCallback(({ input }: { input: TurnProcessInput }) => {
@@ -526,10 +565,10 @@ const loopEffects = fromCallback(
       host.dispatcher,
       host.scopeContext,
       host.state,
-      () => {
+      (retry) => {
         const active = machineOf(runtime).activeTurn;
         if (active === undefined) return;
-        notifyPhaseFor(active, (notice) => runtime.send(notice))('retrying');
+        notifyPhaseFor(active, (notice) => runtime.send(notice))({ phase: 'retrying', retry });
       },
     );
     const continuation = new AgentLoopContinuation(control);
@@ -611,7 +650,7 @@ export const loopActorLogic = setup({
     popNextTurn: assign(({ context }) => ({
       pendingTurns: context.pendingTurns.slice(1),
       activeTurn: context.pendingTurns[0],
-      phase: { phase: 'working' } as LoopPhaseState,
+      activity: { turn: turnActivityFor(context.pendingTurns[0]!) },
     })),
     startTurnEffects: ({ context }) => {
       const job = context.activeTurn!;
@@ -632,18 +671,37 @@ export const loopActorLogic = setup({
           promptAttachments: turnPromptAttachments(job.seed.input),
         }),
       );
-      context.phaseEmitter.fire(context.phase);
+      context.activityEmitter.fire(context.activity);
     },
     settleIfIdle: ({ context }) => {
       maybeSettleWith(context);
     },
-    applyPhase: assign(({ event }) => {
+    applyPhase: assign(({ context, event }) => {
       const e = event as LoopPhaseNotice;
-      return { phase: { phase: e.phase, stream: e.stream } as LoopPhaseState };
+      const turn = context.activity.turn;
+      if (turn === undefined) return {};
+      return {
+        activity: {
+          ...context.activity,
+          turn: {
+            ...turn,
+            phase: e.phase,
+            stream: e.stream,
+            step: e.step ?? turn.step,
+            retry: e.phase === 'retrying' ? e.retry : undefined,
+          },
+        },
+      };
     }),
-    firePhase: ({ context }) => {
-      context.phaseEmitter.fire(context.phase);
+    fireActivity: ({ context }) => {
+      context.activityEmitter.fire(context.activity);
     },
+    applyInterrupting: assign(({ context, event }) => {
+      const e = event as LoopStepInterruptedNotice;
+      const turn = context.activity.turn;
+      if (turn === undefined || turn.turnId !== e.turnId) return {};
+      return { activity: { ...context.activity, turn: { ...turn, interrupting: e.reason } } };
+    }),
     releaseTurnHandle: ({ event }) => {
       const e = event as TurnReleasedNotice;
       const handle = e.handle;
@@ -657,18 +715,26 @@ export const loopActorLogic = setup({
       const e = event as TurnReleasedNotice;
       return {
         activeTurn: undefined,
-        phase: { phase: 'idle' } as LoopPhaseState,
+        activity: {
+          lastTurn: lastTurnActivityFor(e.handle.turn.id, e.result, context.activity.turn?.since),
+        },
         lastResult: e.result === undefined ? context.lastResult : loopResultOf(e.result),
       };
     }),
     afterTurnReleased: ({ context }) => {
-      context.phaseEmitter.fire(context.phase);
+      context.activityEmitter.fire(context.activity);
       maybeSettleWith(context);
     },
-    markStaleTurnReleased: ({ event }) => {
+    markStaleTurnReleased: enqueueActions(({ context, event, enqueue }) => {
       const e = event as TurnReleasedNotice;
       e.handle.turn.state = e.result?.type ?? 'failed';
-    },
+      enqueue.assign({
+        activity: {
+          ...context.activity,
+          lastTurn: lastTurnActivityFor(e.handle.turn.id, e.result, undefined),
+        },
+      });
+    }),
     handleCancel: enqueueActions(({ context, event, enqueue }) => {
       const e = event as LoopCancelEvent;
       const effects: MachineEffects = {
@@ -694,6 +760,21 @@ export const loopActorLogic = setup({
       };
       e.reply.value = abortRequestIn(context, effects, e.request, e.reason);
     }),
+    seedLastTurnOnRestore: enqueueActions(({ context, enqueue }) => {
+      if (context.activity.turn !== undefined || context.activity.lastTurn !== undefined) return;
+      const lastEnded = context.state.lastEnded;
+      if (lastEnded === undefined) return;
+      const activity: LoopActivity = {
+        lastTurn: {
+          turnId: lastEnded.turnId,
+          reason: lastEnded.reason,
+          durationMs: lastEnded.durationMs,
+          at: Date.now(),
+        },
+      };
+      enqueue.assign({ activity });
+      context.activityEmitter.fire(activity);
+    }),
   },
   guards: {
     hasQueuedTurn: ({ context }) =>
@@ -712,6 +793,11 @@ export const loopActorLogic = setup({
       (event as LoopPhaseNotice).phase === 'retrying' && phaseChanged(context, event),
     phaseWorking: ({ context, event }) =>
       (event as LoopPhaseNotice).phase === 'working' && phaseChanged(context, event),
+    interruptingChanged: ({ context, event }) => {
+      const e = event as LoopStepInterruptedNotice;
+      const turn = context.activity.turn;
+      return turn !== undefined && turn.turnId === e.turnId && turn.interrupting !== e.reason;
+    },
   },
 }).createMachine({
   context: ({ input }) => {
@@ -738,7 +824,7 @@ export const loopActorLogic = setup({
       errorHandlers,
       startEmitter: new Emitter<number>(),
       endEmitter,
-      phaseEmitter: new Emitter<LoopPhaseState>(),
+      activityEmitter: new Emitter<LoopActivity>(),
       standaloneQueue,
       pendingAssignments: new Map(),
       settleWaiters: [],
@@ -748,7 +834,7 @@ export const loopActorLogic = setup({
       heldAdmissions: [],
       activeTurn: undefined,
       lastResult: { status: 'idle' },
-      phase: { phase: 'idle' },
+      activity: {},
     };
   },
   invoke: {
@@ -807,18 +893,22 @@ export const loopActorLogic = setup({
         'loop.enqueue': { actions: 'handleEnqueue' },
         'loop.admit': { actions: 'handleAdmit' },
         'loop.phase': [
-          { guard: 'phaseStreaming', target: '.streaming', actions: ['applyPhase', 'firePhase'] },
-          { guard: 'phaseToolCalling', target: '.toolCalling', actions: ['applyPhase', 'firePhase'] },
-          { guard: 'phaseRetrying', target: '.retrying', actions: ['applyPhase', 'firePhase'] },
-          { guard: 'phaseWorking', target: '.working', actions: ['applyPhase', 'firePhase'] },
+          { guard: 'phaseStreaming', target: '.streaming', actions: ['applyPhase', 'fireActivity'] },
+          { guard: 'phaseToolCalling', target: '.toolCalling', actions: ['applyPhase', 'fireActivity'] },
+          { guard: 'phaseRetrying', target: '.retrying', actions: ['applyPhase', 'fireActivity'] },
+          { guard: 'phaseWorking', target: '.working', actions: ['applyPhase', 'fireActivity'] },
         ],
+        'loop.stepInterrupted': {
+          guard: 'interruptingChanged',
+          actions: ['applyInterrupting', 'fireActivity'],
+        },
         'loop.turnReleased': [
           {
             guard: 'turnReleasedMatches',
             target: 'settling',
             actions: ['releaseTurnHandle', 'clearActiveTurn', 'afterTurnReleased'],
           },
-          { actions: 'markStaleTurnReleased' },
+          { actions: ['markStaleTurnReleased', 'fireActivity'] },
         ],
       },
     },
@@ -846,7 +936,7 @@ export const loopActorLogic = setup({
     'loop.commit': { actions: 'commitState' },
     'loop.cancel': { actions: 'handleCancel' },
     'loop.abortRequest': { actions: 'handleAbortRequest' },
-    'runtime.restore': {},
+    'runtime.restore': { actions: 'seedLastTurnOnRestore' },
   },
 });
 
@@ -865,12 +955,12 @@ export class MachineLoopControl implements LoopControl {
     return this.machine.hooks;
   }
 
-  get onDidChangePhase(): Event<LoopPhaseState> {
-    return this.machine.phaseEmitter.event;
+  get onDidChangeActivity(): Event<LoopActivity> {
+    return this.machine.activityEmitter.event;
   }
 
-  phase(): LoopPhaseState {
-    return this.machine.phase;
+  activity(): LoopActivity {
+    return this.machine.activity;
   }
 
   onDidStartTurn(listener: (turnId: number) => void): IDisposable {

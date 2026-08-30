@@ -605,6 +605,15 @@ export class ToolExecutorPipeline {
     options: ToolExecutorExecuteOptions,
     displayFields?: ToolCallDisplayFields,
   ): void {
+    this.runtime.send({
+      type: 'toolExecutor.callStarted',
+      call: {
+        toolCallId: call.toolCall.id,
+        name: call.toolName,
+        turnId: options.turnId,
+        since: Date.now(),
+      },
+    });
     void this.runtime.dispatch(
       new ToolCallStarted({
         agentId: this.runtime.agent.agentId,
@@ -628,6 +637,7 @@ export class ToolExecutorPipeline {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): void {
+    this.runtime.send({ type: 'toolExecutor.callSettled', toolCallId: call.toolCall.id });
     void this.runtime.dispatch(
       new ToolResultEvent({
         agentId: this.runtime.agent.agentId,

@@ -1,4 +1,4 @@
-import { setup } from 'xstate';
+import { assign, setup } from 'xstate';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
@@ -14,6 +14,7 @@ import type { Tool } from '#/kosong/contract/tool';
 import type { ContextMessage } from '#/actor/contextMemory/types';
 import type { LoadToolsResult, ShapedToolEntry } from '#/actor/toolExecutor/toolSelection';
 import type {
+  ActiveToolCall,
   MissingToolDescriber,
   ToolCallGuard,
   ToolDidExecuteHook,
@@ -33,23 +34,53 @@ import {
 interface ToolExecutorActorContext {
   readonly runtime: AgentRuntimeContext<unknown>;
   readonly domain: ToolExecutorDomain;
+  readonly activeCalls: readonly ActiveToolCall[];
+}
+
+export interface ToolCallStartedInternalEvent {
+  readonly type: 'toolExecutor.callStarted';
+  readonly call: ActiveToolCall;
+}
+
+export interface ToolCallSettledInternalEvent {
+  readonly type: 'toolExecutor.callSettled';
+  readonly toolCallId: string;
 }
 
 const toolExecutorActorLogic = setup({
   types: {} as {
     context: ToolExecutorActorContext;
     input: AgentRuntimeContext<unknown>;
-    events: AgentRuntimeRestoreEvent;
+    events: AgentRuntimeRestoreEvent | ToolCallStartedInternalEvent | ToolCallSettledInternalEvent;
   },
   actors: { toolExecutorEffects },
 }).createMachine({
   context: ({ input }) => ({
     runtime: input,
     domain: new ToolExecutorDomain(input),
+    activeCalls: [],
   }),
   invoke: {
     src: 'toolExecutorEffects',
     input: ({ context }) => context.domain,
+  },
+  on: {
+    'toolExecutor.callStarted': {
+      actions: assign({
+        activeCalls: ({ context, event }) => [
+          ...context.activeCalls.filter(
+            (call) => call.turnId === event.call.turnId && call.toolCallId !== event.call.toolCallId,
+          ),
+          event.call,
+        ],
+      }),
+    },
+    'toolExecutor.callSettled': {
+      actions: assign({
+        activeCalls: ({ context, event }) =>
+          context.activeCalls.filter((call) => call.toolCallId !== event.toolCallId),
+      }),
+    },
   },
 });
 
@@ -66,6 +97,10 @@ export class AgentToolsRuntime {
 
   activeTools(): readonly ToolInfo[] {
     return this.availableTools().filter((tool) => this.domain.policy.isActive(tool.name, tool.source));
+  }
+
+  activeCalls(): readonly ActiveToolCall[] {
+    return this.context.getLogicState<ToolExecutorActorContext>().activeCalls;
   }
 
   get onDidChange(): Event<void> {

@@ -8,7 +8,7 @@ import { getLoopControl, type LoopDurableState } from './internal/access';
 import type { LoopControl } from './internal/loop';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '#/actor/loop/turnOps';
 import { AgentLoop, type LoopRuntime } from './loop';
-import type { LoopResult, LoopStatus, TurnEndedEvent, TurnStartedEvent } from './loop';
+import type { LoopActivity, LoopResult, LoopStatus, TurnEndedEvent, TurnStartedEvent } from './loop';
 
 class AgentLoopRuntime implements LoopRuntime {
   private readonly control: LoopControl;
@@ -69,6 +69,14 @@ class AgentLoopRuntime implements LoopRuntime {
   status(): LoopStatus {
     if (this.control.status().state === 'running') return 'running';
     return this.machine.lastResult.status;
+  }
+
+  activity(): LoopActivity {
+    return this.machine.activity;
+  }
+
+  get onDidChangeActivity(): Event<LoopActivity> {
+    return this.machine.activityEmitter.event;
   }
 
   async waitUntilSettled(): Promise<LoopResult> {

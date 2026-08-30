@@ -13,6 +13,7 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import { unwrapErrorCause } from '#/errors';
+import type { LoopRetryActivity } from '#/actor/loop/loop';
 import type { LoopControl, LoopErrorContext } from '#/actor/loop/internal/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl as LoopControlConfig } from '#/actor/loop/configSection';
 import { TurnStarted } from '#/actor/loop/turnEvents';
@@ -57,7 +58,7 @@ export class AgentStepRetry extends Disposable {
     private readonly dispatcher: IEventDispatcher,
     private readonly scopeContext: IAgentScopeContext,
     private readonly states: IAgentStateService,
-    private readonly onRetrying?: () => void,
+    private readonly onRetrying?: (retry: LoopRetryActivity) => void,
   ) {
     super();
     this.states.contributeState(stepRetryLastFailedDriverIdKey);
@@ -122,6 +123,7 @@ export class AgentStepRetry extends Disposable {
     const error = unwrapErrorCause(context.error);
     const delayMs =
       readRetryAfterMs(error) ?? retryBackoffDelays(maxAttempts)[this.failedAttempts - 1] ?? 0;
+    const errorFields = retryErrorFields(error);
     void this.dispatcher.dispatch(
       new TurnStepRetrying({
         agentId: this.scopeContext.agentId,
@@ -132,10 +134,17 @@ export class AgentStepRetry extends Disposable {
         nextAttempt: this.failedAttempts + 1,
         maxAttempts,
         delayMs,
-        ...retryErrorFields(error),
+        ...errorFields,
       }),
     );
-    this.onRetrying?.();
+    this.onRetrying?.({
+      failedAttempt: this.failedAttempts,
+      nextAttempt: this.failedAttempts + 1,
+      maxAttempts,
+      delayMs,
+      errorName: errorFields.errorName,
+      statusCode: errorFields.statusCode,
+    });
     await sleepForRetry(delayMs, context.signal);
 
     if (context.currentStep?.signal.aborted === true) return false;

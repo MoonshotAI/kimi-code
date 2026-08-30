@@ -27,6 +27,13 @@ export interface ToolExecutionResult {
   readonly result: ToolResult;
 }
 
+export interface ActiveToolCall {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly turnId: number;
+  readonly since: number;
+}
+
 export interface ToolExecutionFinishedEvent {
   readonly turnId: number;
   readonly toolCall: ToolCall;

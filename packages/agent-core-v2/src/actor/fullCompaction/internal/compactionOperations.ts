@@ -211,6 +211,7 @@ function createCompactionHandle(
   void promise.catch(() => undefined);
   return {
     id: newCompactionId(),
+    startedAt: Date.now(),
     abortController,
     promise,
     trigger: data.source,
