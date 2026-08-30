@@ -6,21 +6,35 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { PromptRuntime } from '#/features/prompt/prompt';
+import type { AgentRuntimeHost } from '#/lifecycle/internal/agentRuntimeHost';
 
-export interface AgentActorContract {
-  readonly agent: AgentContext;
-  readonly prompt: PromptRuntime['enqueue'];
+export type AgentLifecycleState = 'active' | 'closing' | 'closed';
+
+export interface AgentDomainContract {
+  readonly agentId: string;
+  prompt(input: Parameters<PromptRuntime['enqueue']>[0]): ReturnType<PromptRuntime['enqueue']>;
+  cancel(reason?: string): Promise<void>;
+  state(): AgentLifecycleState;
   close(): Promise<void>;
 }
 
+export interface AgentActorContract extends AgentDomainContract {
+  readonly agent: AgentContext;
+}
+
+type AgentCreation = Promise<{ agent: AgentContext; host: AgentRuntimeHost }>;
+
 export interface SessionActorContract {
   readonly sessionId: string;
-  createAgent(agent: AgentContext, prompt: PromptRuntime['enqueue']): AgentActorContract;
+  createAgent(agentId: string, operation: () => AgentCreation): Promise<AgentActorContract>;
+  getAgent(agentId: string): AgentDomainContract | undefined;
+  closeAgent(agentId: string): Promise<void>;
   close(): Promise<void>;
 }
 
 export interface AppActorContract {
   createSession(sessionId: string): SessionActorContract;
+  getSession(sessionId: string): SessionActorContract | undefined;
   close(): Promise<void>;
 }
 
@@ -28,11 +42,8 @@ export interface IActorHostService {
   readonly _serviceBrand: undefined;
   readonly app: AppActorContract;
   createSession(sessionId: string): SessionActorContract;
-  createAgent(
-    sessionId: string,
-    agent: AgentContext,
-    prompt: PromptRuntime['enqueue'],
-  ): AgentActorContract;
+  createAgent(sessionId: string, agentId: string, operation: () => AgentCreation): Promise<AgentActorContract>;
+  getAgent(sessionId: string, agentId: string): AgentDomainContract | undefined;
   closeAgent(sessionId: string, agentId: string): Promise<void>;
   closeSession(sessionId: string): Promise<void>;
 }
@@ -52,44 +63,105 @@ const lifecycleMachine = createMachine({
   },
 });
 
-class AgentActorHost implements AgentActorContract {
-  private readonly actor: StateActor = createActor(lifecycleMachine);
-  private closed = false;
+class AgentActor {
+  private readonly ref: StateActor = createActor(lifecycleMachine);
+
+  constructor() {
+    this.ref.start();
+  }
+
+  state(): AgentLifecycleState {
+    return this.ref.getSnapshot().value as AgentLifecycleState;
+  }
+
+  closing(): void {
+    this.ref.send({ type: 'CLOSE' });
+  }
+
+  closed(): void {
+    this.ref.send({ type: 'CLOSED' });
+    this.ref.stop();
+  }
+}
+
+class AgentDomain implements AgentActorContract {
+  private readonly actor = new AgentActor();
+  private closing: Promise<void> | undefined;
 
   constructor(
     readonly agent: AgentContext,
-    private readonly onClose: () => Promise<void>,
-    readonly prompt: PromptRuntime['enqueue'],
-  ) {
-    this.actor.start();
+    private readonly host: AgentRuntimeHost,
+  ) {}
+
+  get agentId(): string {
+    return this.agent.agentId;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    this.actor.send({ type: 'CLOSE' });
-    await this.onClose();
-    this.actor.send({ type: 'CLOSED' });
-    this.actor.stop();
+  prompt(input: Parameters<PromptRuntime['enqueue']>[0]): ReturnType<PromptRuntime['enqueue']> {
+    this.assertActive('prompt');
+    return this.host.prompt(input);
+  }
+
+  cancel(reason?: string): Promise<void> {
+    this.assertActive('cancel');
+    return this.host.cancel(reason);
+  }
+
+  state(): AgentLifecycleState {
+    return this.actor.state();
+  }
+
+  close(): Promise<void> {
+    if (this.closing !== undefined) return this.closing;
+    this.actor.closing();
+    this.closing = this.host.close().finally(() => this.actor.closed());
+    return this.closing;
+  }
+
+  private assertActive(operation: string): void {
+    if (this.state() !== 'active') {
+      throw new Error(`Agent '${this.agentId}' is ${this.state()} and cannot ${operation}`);
+    }
   }
 }
 
 class SessionActorHost implements SessionActorContract {
   private readonly actor: StateActor = createActor(lifecycleMachine);
-  private readonly agents = new Map<string, AgentActorHost>();
+  private readonly agents = new Map<string, AgentDomain>();
+  private readonly creating = new Map<string, Promise<AgentActorContract>>();
   private closed = false;
+  private closing: Promise<void> | undefined;
 
   constructor(readonly sessionId: string, private readonly onClose: () => Promise<void>) {
     this.actor.start();
   }
 
-  createAgent(agent: AgentContext, prompt: PromptRuntime['enqueue']): AgentActorContract {
+  async createAgent(agentId: string, operation: () => AgentCreation): Promise<AgentActorContract> {
     if (this.closed) throw new Error(`Session actor '${this.sessionId}' is closed`);
-    const existing = this.agents.get(agent.agentId);
+    const existing = this.agents.get(agentId);
     if (existing !== undefined) return existing;
-    const child = new AgentActorHost(agent, async () => undefined, prompt);
-    this.agents.set(agent.agentId, child);
-    return child;
+    const inflight = this.creating.get(agentId);
+    if (inflight !== undefined) return inflight;
+    const promise = operation().then(({ agent, host }) => {
+      if (this.closed) {
+        return host.close().then(() => {
+          throw new Error(`Session actor '${this.sessionId}' is closed`);
+        });
+      }
+      const domain = new AgentDomain(agent, host);
+      this.agents.set(agentId, domain);
+      return domain;
+    });
+    this.creating.set(agentId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.creating.delete(agentId);
+    }
+  }
+
+  getAgent(agentId: string): AgentDomainContract | undefined {
+    return this.agents.get(agentId);
   }
 
   async closeAgent(agentId: string): Promise<void> {
@@ -100,14 +172,18 @@ class SessionActorHost implements SessionActorContract {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closing !== undefined) return this.closing;
     this.closed = true;
-    this.actor.send({ type: 'CLOSE' });
-    for (const agent of [...this.agents.values()].reverse()) await agent.close();
-    this.agents.clear();
-    await this.onClose();
-    this.actor.send({ type: 'CLOSED' });
-    this.actor.stop();
+    this.closing = (async () => {
+      this.actor.send({ type: 'CLOSE' });
+      await Promise.allSettled(this.creating.values());
+      for (const agent of [...this.agents.values()].reverse()) await agent.close();
+      this.agents.clear();
+      await this.onClose();
+      this.actor.send({ type: 'CLOSED' });
+      this.actor.stop();
+    })();
+    return this.closing;
   }
 }
 
@@ -124,7 +200,10 @@ class AppActorHost implements AppActorContract {
     if (this.closed) throw new Error('App actor is closed');
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return existing;
-    const child = new SessionActorHost(sessionId, async () => undefined);
+    let child: SessionActorHost;
+    child = new SessionActorHost(sessionId, async () => {
+      if (this.sessions.get(sessionId) === child) this.sessions.delete(sessionId);
+    });
     this.sessions.set(sessionId, child);
     return child;
   }
@@ -157,18 +236,24 @@ export class ActorHostService extends Disposable implements IActorHostService {
     return this.app.createSession(sessionId);
   }
 
-  createAgent(sessionId: string, agent: AgentContext, prompt: PromptRuntime['enqueue']): AgentActorContract {
-    return this.app.createSession(sessionId).createAgent(agent, prompt);
+  createAgent(
+    sessionId: string,
+    agentId: string,
+    operation: () => AgentCreation,
+  ): Promise<AgentActorContract> {
+    return this.app.createSession(sessionId).createAgent(agentId, operation);
+  }
+
+  getAgent(sessionId: string, agentId: string): AgentDomainContract | undefined {
+    return this.app.getSession(sessionId)?.getAgent(agentId);
   }
 
   closeAgent(sessionId: string, agentId: string): Promise<void> {
-    const session = (this.app as AppActorHost).getSession(sessionId);
-    return session?.closeAgent(agentId) ?? Promise.resolve();
+    return this.app.getSession(sessionId)?.closeAgent(agentId) ?? Promise.resolve();
   }
 
   closeSession(sessionId: string): Promise<void> {
-    const session = (this.app as AppActorHost).getSession(sessionId);
-    return session?.close() ?? Promise.resolve();
+    return this.app.getSession(sessionId)?.close() ?? Promise.resolve();
   }
 }
 

@@ -4,7 +4,6 @@ import { IInstantiationService, type ServicesAccessor } from '#/_base/di/instant
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
 import { Emitter } from '#/_base/event';
-import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Error2, ErrorCodes } from '#/errors';
 import { LifecycleScope } from '#/app/scopes';
 import {
@@ -25,7 +24,6 @@ import { ISessionPlanService } from '#/features/plan/sessionPlanService';
 import { ISessionStaleGuardService } from '#/features/staleGuard/sessionStaleGuardService';
 import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarmAgentService';
 import { ISessionAgentExternalHooksService } from '#/features/externalHooks/session/sessionAgentExternalHooksService';
-import { AgentTask } from '#/features/task/taskAgentRuntime';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
 import { ISessionPluginCommandService } from '#/agent/pluginCommand/sessionPluginCommandService';
@@ -43,11 +41,8 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentLoop } from '#/features/loop/loop';
-import { getLoopControl } from '#/features/loop/internal/access';
-import { abortError } from '#/_base/utils/abort';
 import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
 import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
-import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
 import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
 import {
   AgentRuntimeContributionPoint,
@@ -130,7 +125,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     this._register(
       toDisposable(() => {
         for (const managed of this.roster.values()) {
-          void managed.runtimeSet.close().catch((error: unknown) => onUnexpectedError(error));
+          void managed.runtimeHost.close().catch(() => undefined);
         }
         this.roster.clear();
       }),
@@ -191,7 +186,18 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (existing !== undefined && !existing.closing) return existing.context;
     }
     const agentId = opts.agentId ?? (await this.nextAvailableAgentId());
-    const promise = this.doCreate(agentId, opts);
+    const actorHosts = this.actorHosts();
+    const promise = actorHosts === undefined
+      ? this.doCreate(agentId, opts)
+      : actorHosts
+          .createAgent(this.ctx.sessionId, agentId, async () => {
+            const agent = await this.doCreate(agentId, opts);
+            return {
+              agent,
+              host: this.requireManaged(agent).runtimeHost,
+            };
+          })
+          .then((actor) => actor.agent);
     this.creating.set(agentId, promise);
     try {
       return await promise;
@@ -236,11 +242,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         scopeContext,
         binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
       });
-      managed = new ManagedAgent(agent, host, this.hostAccessor, this.activeRecords());
+      managed = new ManagedAgent(agent, host, this.hostAccessor, this.activeRecords(), {
+        onWillClose: () => {
+          managed!.closing = true;
+          this.onWillCloseEmitter.fire(agent);
+        },
+        onDidClose: () => {
+          if (this.roster.get(agentId) === managed) this.roster.delete(agentId);
+          this.onDidCloseEmitter.fire(agent);
+          eventBus?.deactivateAgent(agent);
+        },
+      });
       this.roster.set(agentId, managed);
       managed.runtimeSet.resolve(AgentLoop);
-      const prompt = managed.runtimeSet.resolve(AgentPrompt);
-      this.actorHosts()?.createAgent(this.ctx.sessionId, agent, (input) => prompt.enqueue(input));
+      managed.runtimeSet.resolve(AgentPrompt);
       this.attachSessionAgentServices(agent);
       managed.active = true;
       await host.wire.seal();
@@ -340,6 +355,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     return managed.context;
   }
 
+  domain(agentId: string) {
+    return this.actorHosts()?.getAgent(this.ctx.sessionId, agentId);
+  }
+
   list(filter?: AgentListFilter): readonly AgentContext[] {
     const all = [...this.roster.values()]
       .filter((managed) => managed.active && !managed.closing)
@@ -384,7 +403,19 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     let managed = this.roster.get(agent.agentId);
     if (managed === undefined) {
       const host = this.hosts.of(agent);
-      managed = new ManagedAgent(agent, host, this.hostAccessor, this.activeRecords());
+      managed = new ManagedAgent(agent, host, this.hostAccessor, this.activeRecords(), {
+        onWillClose: () => {
+          managed!.closing = true;
+          this.onWillCloseEmitter.fire(agent);
+        },
+        onDidClose: () => {
+          if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
+          this.onDidCloseEmitter.fire(agent);
+          this.instantiation.invokeFunction((accessor) =>
+            (accessor.get(ISessionEventBus) as ISessionEventBus | undefined)?.deactivateAgent(agent),
+          );
+        },
+      });
       this.roster.set(agent.agentId, managed);
     }
     managed.runtimeSet.resolve(AgentLoop);
@@ -418,29 +449,18 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   async remove(agent: AgentContext): Promise<void> {
-    const managed = this.roster.get(agent.agentId);
-    if (managed === undefined || managed.context !== agent || managed.closing) return;
-    managed.closing = true;
-    this.onWillCloseEmitter.fire(agent);
-    await managed.runtimeSet.resolve(AgentTask).stopAllOnExit('Session closed');
-    const loop = getLoopControl(agent);
-    const compaction = managed.runtimeSet.resolve(AgentFullCompaction);
-    const reason = abortError('Agent removed');
-    const prompt = managed.runtimeSet.resolve(AgentPrompt);
-    for (const turnId of loop.status().pendingTurnIds) {
-      loop.cancel(turnId, reason);
+    const actorHosts = this.actorHosts();
+    if (actorHosts !== undefined) {
+      await actorHosts.closeAgent(this.ctx.sessionId, agent.agentId);
+      return;
     }
-    loop.cancel(undefined, reason);
-    await Promise.all([loop.settled(), compaction.cancel(), prompt.drain(reason)]);
-    await this.actorHosts()?.closeAgent(this.ctx.sessionId, agent.agentId);
-    await managed.runtimeSet.close();
-    await managed.host.dispose();
-    if (this.roster.get(agent.agentId) === managed) this.roster.delete(agent.agentId);
-    this.onDidCloseEmitter.fire(agent);
-    const eventBus = this.instantiation.invokeFunction((accessor) =>
-      accessor.get(ISessionEventBus) as ISessionEventBus | undefined,
-    );
-    eventBus?.deactivateAgent(agent);
+    await this.removeManaged(agent);
+  }
+
+  private async removeManaged(agent: AgentContext): Promise<void> {
+    const managed = this.roster.get(agent.agentId);
+    if (managed === undefined || managed.context !== agent) return;
+    await managed.runtimeHost.close();
   }
 
   private managedFor(agent: AgentContext): ManagedAgent | undefined {

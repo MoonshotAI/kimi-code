@@ -212,7 +212,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
-      await this.drainAgents(handle).catch(() => {});
+      await this.closeAgents(handle, sessionId).catch(() => {});
       void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
@@ -389,11 +389,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined) return;
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
-    await this.drainAgents(handle);
+    await this.closeAgents(handle, sessionId);
     await this.appendLogStore.drainRetirements();
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
-    await this.actorHosts()?.closeSession(sessionId);
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
@@ -404,7 +403,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined) return;
     const meta = handle.accessor.get(ISessionMetadata);
     await meta.setArchived(true);
-    await this.drainAgents(handle);
+    await this.closeAgents(handle, sessionId);
     await this.appendLogStore.drainRetirements();
     this.event.publish(
       new SessionArchived({
@@ -415,7 +414,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.delete(sessionId);
     await drainSessionMetadataWrites();
     await this.indexMirror.drain();
-    await this.actorHosts()?.closeSession(sessionId);
     void handle.dispose();
     await drainLogCloses();
     this._onDidArchiveSession.fire({ sessionId });
@@ -455,7 +453,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this._onWillCloseSession.fireAsync(event, NO_ABORT);
   }
 
-  private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
+  private async closeAgents(handle: ISessionScopeHandle, sessionId: string): Promise<void> {
+    const actorHosts = this.actorHosts();
+    if (actorHosts !== undefined) {
+      await actorHosts.closeSession(sessionId);
+      return;
+    }
     const agentLifecycle = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
       await agentLifecycle.remove(agent);

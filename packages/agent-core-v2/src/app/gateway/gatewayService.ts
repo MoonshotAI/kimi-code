@@ -47,14 +47,17 @@ export class RestGateway implements IRestGateway {
   ): Promise<{ readonly turn_id: number } | undefined> {
     const agent = this.agent(sessionId, agentId);
     const session = this.liveSession(sessionId)!;
-    const handle = await session.accessor.get(IAgentLifecycleService).resolve(agent, AgentPrompt).enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: input }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
-    });
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const domain = lifecycle.domain?.(agentId);
+    const message = {
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text: input }],
+      toolCalls: [],
+      origin: { kind: 'user' as const },
+    };
+    const handle = await (domain === undefined
+      ? lifecycle.resolve(agent, AgentPrompt).enqueue({ message })
+      : domain.prompt({ message }));
     const turn = await handle.launched;
     return turn === undefined ? undefined : { turn_id: turn.id };
   }
@@ -76,6 +79,11 @@ export class RestGateway implements IRestGateway {
     return turn === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
+    const session = this.liveSession(sessionId);
+    if (session === undefined) return Promise.resolve();
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const domain = lifecycle.domain?.(agentId);
+    if (domain !== undefined) return domain.cancel(reason);
     getLoopControl(this.agent(sessionId, agentId)).cancel(undefined, reason);
     return Promise.resolve();
   }

@@ -8,6 +8,7 @@ import type {
 } from '#/agent/runtime/agentRuntime';
 import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
 import type { BindAgentInput } from '#/features/profile/profile';
+import type { AgentDomainContract } from '#/lifecycle/actorHost';
 
 export const MAIN_AGENT_ID = 'main';
 
@@ -41,6 +42,7 @@ export interface IAgentLifecycleService {
   fork(source: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext>;
 
   get(agentId: string): AgentContext | undefined;
+  domain?(agentId: string): AgentDomainContract | undefined;
   list(filter?: AgentListFilter): readonly AgentContext[];
   resolve<Definition extends AgentRuntimeDefinition<any, any>>(
     agent: AgentContext,
