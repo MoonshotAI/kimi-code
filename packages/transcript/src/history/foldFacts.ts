@@ -538,43 +538,64 @@ export function foldWireRecordFacts(
   );
   const claimedOrdinals = new Set<number>();
   const ordinalByRawTurnId = new Map<number, number>();
-  let nextBaseOrdinal = 0;
-  const claimNextBaseOrdinal = (
+  const claimBaseOrdinal = (
     predicate: (turn: TranscriptTurn) => boolean = () => true,
   ): number | undefined => {
-    while (claimedOrdinals.has(nextBaseOrdinal)) nextBaseOrdinal += 1;
     const turn = baseTurns.find(
       (candidate) =>
-        candidate.ordinal >= nextBaseOrdinal &&
         !claimedOrdinals.has(candidate.ordinal) &&
         predicate(candidate),
     );
     if (turn === undefined) return undefined;
     claimedOrdinals.add(turn.ordinal);
-    nextBaseOrdinal = turn.ordinal + 1;
     return turn.ordinal;
   };
   const lastRawTurnId = Math.max(nextTurnId - 1, ...endedTurns.keys());
-  for (let turnId = 0; turnId <= lastRawTurnId; turnId++) {
-    if (hiddenTurnIds.has(turnId)) continue;
+  const rawTurnIds = Array.from(
+    { length: lastRawTurnId + 1 },
+    (_, turnId) => turnId,
+  ).filter((turnId) => !hiddenTurnIds.has(turnId));
+  for (const turnId of rawTurnIds) {
     const promptId = turnPromptIds.get(turnId);
     const matchedOrdinal = promptId === undefined ? undefined : ordinalByPromptId.get(promptId);
     if (matchedOrdinal !== undefined && !claimedOrdinals.has(matchedOrdinal)) {
       claimedOrdinals.add(matchedOrdinal);
-      nextBaseOrdinal = Math.max(nextBaseOrdinal, matchedOrdinal + 1);
       ordinalByRawTurnId.set(turnId, matchedOrdinal);
-      continue;
     }
+  }
+  for (const turnId of rawTurnIds) {
+    if (ordinalByRawTurnId.has(turnId)) continue;
     const origin = turnOrigins.get(turnId);
     const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
-    if (promptId !== undefined && !strictOrigin) continue;
-    const fallbackOrdinal = strictOrigin
-      ? claimNextBaseOrdinal(
+    if (!strictOrigin) continue;
+    const fallbackOrdinal = claimBaseOrdinal(
           (candidate) =>
             candidate.triggerPromptId === undefined &&
             candidate.origin.kind === turnOriginKind(origin),
-        )
-      : claimNextBaseOrdinal();
+        );
+    if (fallbackOrdinal !== undefined) ordinalByRawTurnId.set(turnId, fallbackOrdinal);
+  }
+  for (const turnId of rawTurnIds) {
+    if (ordinalByRawTurnId.has(turnId)) continue;
+    const promptId = turnPromptIds.get(turnId);
+    const origin = turnOrigins.get(turnId);
+    const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    if (promptId === undefined || strictOrigin) continue;
+    const emptyPromptOrdinal = claimBaseOrdinal(
+      (candidate) =>
+        candidate.triggerPromptId === undefined && candidate.origin.kind === 'other',
+    );
+    if (emptyPromptOrdinal !== undefined) {
+      ordinalByRawTurnId.set(turnId, emptyPromptOrdinal);
+    }
+  }
+  for (const turnId of rawTurnIds) {
+    if (ordinalByRawTurnId.has(turnId)) continue;
+    const promptId = turnPromptIds.get(turnId);
+    const origin = turnOrigins.get(turnId);
+    const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    if (promptId !== undefined || strictOrigin) continue;
+    const fallbackOrdinal = claimBaseOrdinal();
     if (fallbackOrdinal !== undefined) ordinalByRawTurnId.set(turnId, fallbackOrdinal);
   }
 

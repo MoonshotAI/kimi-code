@@ -1870,6 +1870,46 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(live.error).toBe('later failure');
   });
 
+  it('folds terminal facts for an empty prompt turn without a context identity', () => {
+    const base = groupMessagesIntoSnapshot([
+      { role: 'assistant', content: [{ type: 'text', text: 'partial' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [], origin: { kind: 'user' }, promptId: 'prompt-empty', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'empty failure' }, time: 2 },
+      ],
+      base,
+    );
+    const turn = folded.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.triggerPromptId).toBeUndefined();
+    expect(turn.state).toBe('failed');
+    expect(turn.error).toBe('empty failure');
+  });
+
+  it('does not let an empty prompt claim a later system continuation turn', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'internal-prompt', role: 'user', content: [{ type: 'text', text: 'continue' }], toolCalls: [], origin: { kind: 'system_trigger', name: 'goal_continuation' } as { kind: string } },
+      { role: 'assistant', content: [{ type: 'text', text: 'stopped' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [], origin: { kind: 'user' }, promptId: 'prompt-empty', time: 1 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'empty failure' }, time: 2 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, promptId: 'internal-prompt', time: 3 },
+        { type: 'turn.ended', turnId: 1, reason: 'cancelled', durationMs: 10, time: 4 },
+      ],
+      base,
+    );
+    const system = folded.items[0];
+    if (system?.kind !== 'turn') throw new Error('expected turn');
+    expect(system.triggerPromptId).toBeUndefined();
+    expect(system.state).toBe('cancelled');
+    expect(system.durationMs).toBe(10);
+    expect(system.error).toBeUndefined();
+  });
+
   it('matches a system turn with internal prompt identity past a context-only blocked prompt', () => {
     const base = groupMessagesIntoSnapshot([
       { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
