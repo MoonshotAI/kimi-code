@@ -580,10 +580,10 @@ export function foldWireRecordFacts(
     const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
     if (!strictOrigin) continue;
     const fallbackOrdinal = claimBaseOrdinal(
-          (candidate) =>
-            candidate.triggerPromptId === undefined &&
-            candidate.origin.kind === turnOriginKind(origin),
-        );
+      (candidate) =>
+        candidate.triggerPromptId === undefined &&
+        candidate.origin.kind === turnOriginKind(origin),
+    );
     if (fallbackOrdinal !== undefined) ordinalByRawTurnId.set(turnId, fallbackOrdinal);
   }
   for (const turnId of rawTurnIds) {
