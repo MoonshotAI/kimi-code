@@ -61,7 +61,10 @@ import {
   type PreparedTurnRequestConfig,
 } from '#/actor/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import type { ToolCallIdResponseNormalizer } from '#/actor/llmRequester/internal/toolCallIdNormalizer';
+import {
+  collectToolCallIds,
+  ToolCallIdResponseNormalizer,
+} from '#/actor/llmRequester/internal/toolCallIdNormalizer';
 import {
   LlmRequest,
   LlmToolsSnapshot,
@@ -193,22 +196,23 @@ export class LlmRequestExecutor {
   }
 
   private set lastConfigLogSignature(value: string | undefined) {
-    this.runtime.send({ type: 'llmRequester.patch', patch: { lastConfigLogSignature: value } });
+    if (value === undefined) return;
+    this.runtime.send({ type: 'llmRequester.configLogSignature', signature: value });
   }
 
-  private get turnConfigs(): Map<number, TurnRequestConfig> {
+  private get turnConfigs(): ReadonlyMap<number, TurnRequestConfig> {
     return this.logic().turnConfigs;
   }
 
-  private get mediaDegradedTurns(): Set<number> {
+  private get mediaDegradedTurns(): ReadonlySet<number> {
     return this.logic().mediaDegradedTurns;
   }
 
-  private get mediaStrippedTurns(): Map<number, MediaStripSnapshot> {
+  private get mediaStrippedTurns(): ReadonlyMap<number, MediaStripSnapshot> {
     return this.logic().mediaStrippedTurns;
   }
 
-  private get emittedThinkingEffortWarnings(): Set<string> {
+  private get emittedThinkingEffortWarnings(): ReadonlySet<string> {
     return this.logic().emittedThinkingEffortWarnings;
   }
 
@@ -328,7 +332,12 @@ export class LlmRequestExecutor {
     signal: AbortSignal | undefined,
     onRequestTrace: (traceId: string | undefined) => void,
   ): Promise<AgentLLMRequestFinish> {
-    this.logic().toolCallIdNormalizer.seedFrom(this.context.get());
+    if (!this.logic().toolCallIdsSeeded) {
+      this.runtime.send({
+        type: 'llmRequester.toolCallIdsSeeded',
+        ids: collectToolCallIds(this.context.get()),
+      });
+    }
     const shaped = this.tools.shapeHistory(request.messages);
     const recoveredStrip = this.mediaStripSnapshotForTurn(request.source);
     let policy: ProjectionPolicy | undefined =
@@ -378,59 +387,60 @@ export class LlmRequestExecutor {
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
-      const toolCallIds = this.logic().toolCallIdNormalizer.beginResponse();
+      const toolCallIds = new ToolCallIdResponseNormalizer(this.logic().seenToolCallIds);
 
       const setTraceId = (traceId: string | null | undefined): void => {
         const normalized = traceId ?? undefined;
         onRequestTrace(normalized);
       };
 
-      try {
-        for await (const event of request.requester.request(input, signal, {
-          ...request.params,
-          onTraceId: setTraceId,
-        })) {
-          switch (event.type) {
-            case 'part':
-              await onPart(this.normalizeStreamPart(toolCallIds, event.part));
-              break;
-            case 'usage':
-              usage = event.usage;
-              break;
-            case 'finish':
-              finish = event;
-              message = event.message;
-              setTraceId(event.traceId);
-              break;
-            case 'timing': {
-              const { type: _type, ...streamTiming } = event;
-              timing = streamTiming;
-              break;
-            }
+      for await (const event of request.requester.request(input, signal, {
+        ...request.params,
+        onTraceId: setTraceId,
+      })) {
+        switch (event.type) {
+          case 'part':
+            await onPart(this.normalizeStreamPart(toolCallIds, event.part));
+            break;
+          case 'usage':
+            usage = event.usage;
+            break;
+          case 'finish':
+            finish = event;
+            message = event.message;
+            setTraceId(event.traceId);
+            break;
+          case 'timing': {
+            const { type: _type, ...streamTiming } = event;
+            timing = streamTiming;
+            break;
           }
         }
+      }
 
-        if (message === undefined || finish === undefined) {
-          throw new Error2(
-            ErrorCodes.PROVIDER_API_ERROR,
-            'LLM request stream ended without a finish event.',
-          );
-        }
+      if (message === undefined || finish === undefined) {
+        throw new Error2(
+          ErrorCodes.PROVIDER_API_ERROR,
+          'LLM request stream ended without a finish event.',
+        );
+      }
 
-        const finalizedCalls = toolCallIds.remapFinalizedCalls(message.toolCalls);
-        if (finalizedCalls !== message.toolCalls) {
-          message = { ...message, toolCalls: finalizedCalls };
-        }
-        for (const { raw, assigned } of toolCallIds.remapped) {
-          this.log.warn('Rewrote a duplicate provider tool call id into an agent-unique one.', {
-            raw,
-            assigned,
-            model: request.modelAlias,
-          });
-        }
-      } catch (error) {
-        toolCallIds.rollback();
-        throw error;
+      const finalizedCalls = toolCallIds.remapFinalizedCalls(message.toolCalls);
+      if (finalizedCalls !== message.toolCalls) {
+        message = { ...message, toolCalls: finalizedCalls };
+      }
+      for (const { raw, assigned } of toolCallIds.remapped) {
+        this.log.warn('Rewrote a duplicate provider tool call id into an agent-unique one.', {
+          raw,
+          assigned,
+          model: request.modelAlias,
+        });
+      }
+      if (toolCallIds.claimedIds.length > 0) {
+        this.runtime.send({
+          type: 'llmRequester.toolCallIdsClaimed',
+          ids: [...toolCallIds.claimedIds],
+        });
       }
 
       void this.usage.record(
@@ -521,7 +531,7 @@ export class LlmRequestExecutor {
           model: request.model.name,
           ...request.logFields,
         });
-        this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
+        this.markMediaDegradedTurn(request.source);
         return { ...policy, media: 'degraded' };
       }
       this.log.warn(
@@ -581,7 +591,7 @@ export class LlmRequestExecutor {
 
     const key = [code, request.modelAlias, request.model.name, effort, knownEfforts].join('\u0000');
     if (this.emittedThinkingEffortWarnings.has(key)) return;
-    this.emittedThinkingEffortWarnings.add(key);
+    this.runtime.send({ type: 'llmRequester.thinkingWarningEmitted', key });
     try {
       this.log.warn(message, {
         modelAlias: request.modelAlias,
@@ -616,18 +626,16 @@ export class LlmRequestExecutor {
     source: AgentLLMRequestSource | undefined,
   ): void {
     if (source?.type !== 'turn') return;
-    for (const id of this.mediaStrippedTurns.keys()) {
-      if (id < source.turnId) this.mediaStrippedTurns.delete(id);
-    }
-    this.mediaStrippedTurns.set(source.turnId, snapshot);
+    this.runtime.send({
+      type: 'llmRequester.mediaStripCaptured',
+      turnId: source.turnId,
+      snapshot,
+    });
   }
 
-  private markRecoveryTurn(set: Set<number>, source: AgentLLMRequestSource | undefined): void {
+  private markMediaDegradedTurn(source: AgentLLMRequestSource | undefined): void {
     if (source?.type !== 'turn') return;
-    for (const id of set) {
-      if (id < source.turnId) set.delete(id);
-    }
-    set.add(source.turnId);
+    this.runtime.send({ type: 'llmRequester.mediaDegradedMarked', turnId: source.turnId });
   }
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
@@ -670,18 +678,14 @@ export class LlmRequestExecutor {
   }
 
   private getOrCreateTurnConfig(turnId: number): TurnRequestConfig {
-    for (const id of this.turnConfigs.keys()) {
-      if (id < turnId) this.turnConfigs.delete(id);
-    }
-    let snapshot = this.turnConfigs.get(turnId);
-    if (snapshot === undefined) {
-      snapshot = {
-        resolved: this.profile.modelContext(),
-        params: this.profile.requestParams(),
-        systemPrompt: this.profile.systemPrompt(),
-      };
-      this.turnConfigs.set(turnId, snapshot);
-    }
+    const existing = this.turnConfigs.get(turnId);
+    if (existing !== undefined) return existing;
+    const snapshot: TurnRequestConfig = {
+      resolved: this.profile.modelContext(),
+      params: this.profile.requestParams(),
+      systemPrompt: this.profile.systemPrompt(),
+    };
+    this.runtime.send({ type: 'llmRequester.turnConfigCached', turnId, config: snapshot });
     return snapshot;
   }
 

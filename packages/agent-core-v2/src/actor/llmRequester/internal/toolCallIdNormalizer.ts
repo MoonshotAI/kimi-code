@@ -1,30 +1,28 @@
 import type { Message, ToolCall } from '#/kosong/contract/message';
 
-export class ToolCallIdNormalizer {
-  private readonly seen = new Set<string>();
-  private seeded = false;
-
-  seedFrom(messages: readonly Message[]): void {
-    if (this.seeded) return;
-    this.seeded = true;
-    for (const message of messages) {
-      for (const call of message.toolCalls) this.seen.add(call.id);
-      if (message.toolCallId !== undefined) this.seen.add(message.toolCallId);
-    }
+export function collectToolCallIds(messages: readonly Message[]): readonly string[] {
+  const ids: string[] = [];
+  for (const message of messages) {
+    for (const call of message.toolCalls) ids.push(call.id);
+    if (message.toolCallId !== undefined) ids.push(message.toolCallId);
   }
-
-  beginResponse(): ToolCallIdResponseNormalizer {
-    return new ToolCallIdResponseNormalizer(this.seen);
-  }
+  return ids;
 }
 
 export class ToolCallIdResponseNormalizer {
+  private readonly seen: Set<string>;
   private readonly assignedByIndex = new Map<number | string, string>();
   private readonly occurrencesByRawId = new Map<string, string[]>();
   private readonly claimed: string[] = [];
   readonly remapped: { raw: string; assigned: string }[] = [];
 
-  constructor(private readonly seen: Set<string>) {}
+  constructor(seen: ReadonlySet<string>) {
+    this.seen = new Set(seen);
+  }
+
+  get claimedIds(): readonly string[] {
+    return this.claimed;
+  }
 
   remapStreamedId(rawId: string, streamIndex: number | string | undefined): string {
     if (streamIndex !== undefined) {
@@ -52,10 +50,6 @@ export class ToolCallIdResponseNormalizer {
       return { ...call, id: assigned };
     });
     return changed ? result : toolCalls;
-  }
-
-  rollback(): void {
-    for (const id of this.claimed) this.seen.delete(id);
   }
 
   private claim(rawId: string, occurrence: number): string {

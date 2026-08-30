@@ -20,24 +20,55 @@ import {
 } from '#/actor/llmRequester/llmRequesterOps';
 import {
   type LlmRequesterActorContext,
+  type LlmRequesterActorEvent,
   type LlmRequesterActorSnapshot,
-  type LlmRequesterCommitEvent,
-  type LlmRequesterPatchEvent,
 } from '#/actor/llmRequester/internal/actorContext';
 import { LlmRequestExecutor } from '#/actor/llmRequester/internal/requestExecutor';
-import { ToolCallIdNormalizer } from '#/actor/llmRequester/internal/toolCallIdNormalizer';
+
+function setWithAll(set: ReadonlySet<string>, values: readonly string[]): ReadonlySet<string> {
+  if (values.length === 0) return set;
+  const next = new Set(set);
+  for (const value of values) next.add(value);
+  return next;
+}
+
+function setWith(set: ReadonlySet<string>, value: string): ReadonlySet<string> {
+  if (set.has(value)) return set;
+  const next = new Set(set);
+  next.add(value);
+  return next;
+}
+
+function turnMapWith<V>(map: ReadonlyMap<number, V>, turnId: number, value: V): ReadonlyMap<number, V> {
+  const next = new Map<number, V>();
+  for (const [id, existing] of map) {
+    if (id >= turnId) next.set(id, existing);
+  }
+  next.set(turnId, value);
+  return next;
+}
+
+function turnSetWith(set: ReadonlySet<number>, turnId: number): ReadonlySet<number> {
+  const next = new Set<number>();
+  for (const id of set) {
+    if (id >= turnId) next.add(id);
+  }
+  next.add(turnId);
+  return next;
+}
 
 const llmRequesterActorLogic = setup({
   types: {} as {
     context: LlmRequesterActorContext;
     input: AgentRuntimeContext<LlmRequestTraceState>;
-    events: LlmRequesterCommitEvent | LlmRequesterPatchEvent | AgentRuntimeRestoreEvent;
+    events: LlmRequesterActorEvent | AgentRuntimeRestoreEvent;
   },
 }).createMachine({
   context: ({ input }) => ({
     runtime: input,
     ledger: { seenToolsHashes: [] },
-    toolCallIdNormalizer: new ToolCallIdNormalizer(),
+    seenToolCallIds: new Set(),
+    toolCallIdsSeeded: false,
     turnConfigs: new Map(),
     mediaDegradedTurns: new Set(),
     mediaStrippedTurns: new Map(),
@@ -48,8 +79,44 @@ const llmRequesterActorLogic = setup({
     'llmRequester.commit': {
       actions: assign({ ledger: ({ event }) => event.ledger }),
     },
-    'llmRequester.patch': {
-      actions: assign(({ context, event }) => ({ ...context, ...event.patch })),
+    'llmRequester.toolCallIdsSeeded': {
+      actions: assign(({ context, event }) => {
+        if (context.toolCallIdsSeeded) return {};
+        return {
+          toolCallIdsSeeded: true,
+          seenToolCallIds: setWithAll(context.seenToolCallIds, event.ids),
+        };
+      }),
+    },
+    'llmRequester.toolCallIdsClaimed': {
+      actions: assign({
+        seenToolCallIds: ({ context, event }) => setWithAll(context.seenToolCallIds, event.ids),
+      }),
+    },
+    'llmRequester.turnConfigCached': {
+      actions: assign({
+        turnConfigs: ({ context, event }) => turnMapWith(context.turnConfigs, event.turnId, event.config),
+      }),
+    },
+    'llmRequester.mediaDegradedMarked': {
+      actions: assign({
+        mediaDegradedTurns: ({ context, event }) => turnSetWith(context.mediaDegradedTurns, event.turnId),
+      }),
+    },
+    'llmRequester.mediaStripCaptured': {
+      actions: assign({
+        mediaStrippedTurns: ({ context, event }) =>
+          turnMapWith(context.mediaStrippedTurns, event.turnId, event.snapshot),
+      }),
+    },
+    'llmRequester.thinkingWarningEmitted': {
+      actions: assign({
+        emittedThinkingEffortWarnings: ({ context, event }) =>
+          setWith(context.emittedThinkingEffortWarnings, event.key),
+      }),
+    },
+    'llmRequester.configLogSignature': {
+      actions: assign({ lastConfigLogSignature: ({ event }) => event.signature }),
     },
   },
 });
