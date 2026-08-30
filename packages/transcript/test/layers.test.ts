@@ -1870,15 +1870,15 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(live.error).toBe('later failure');
   });
 
-  it('matches a promptless system turn past a context-only blocked prompt', () => {
+  it('matches a system turn with internal prompt identity past a context-only blocked prompt', () => {
     const base = groupMessagesIntoSnapshot([
       { id: 'prompt-blocked', role: 'user', content: [{ type: 'text', text: 'blocked' }], toolCalls: [], origin: { kind: 'user' } },
-      { role: 'user', content: [{ type: 'text', text: 'continue' }], toolCalls: [], origin: { kind: 'system_trigger', name: 'goal_continuation' } as { kind: string } },
+      { id: 'internal-prompt', role: 'user', content: [{ type: 'text', text: 'continue' }], toolCalls: [], origin: { kind: 'system_trigger', name: 'goal_continuation' } as { kind: string } },
       { role: 'assistant', content: [{ type: 'text', text: 'continuation failed' }], toolCalls: [] },
     ]);
     const folded = foldWireRecordFacts(
       [
-        { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, time: 1 },
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, promptId: 'internal-prompt', time: 1 },
         { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'system failure' }, time: 2 },
       ],
       base,

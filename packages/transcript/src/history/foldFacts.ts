@@ -533,9 +533,9 @@ export function foldWireRecordFacts(
       ordinalByRawTurnId.set(turnId, matchedOrdinal);
       continue;
     }
-    if (promptId !== undefined) continue;
     const origin = turnOrigins.get(turnId);
     const strictOrigin = turnOrigins.has(turnId) && !isUndoAnchorTurnOrigin(origin);
+    if (promptId !== undefined && !strictOrigin) continue;
     const fallbackOrdinal = strictOrigin
       ? claimNextBaseOrdinal(
           (candidate) =>
