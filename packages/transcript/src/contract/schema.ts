@@ -91,6 +91,13 @@ export const toolFrameProgressSchema = z.object({
   customData: z.unknown().optional(),
 });
 
+export const toolFrameFileEditSchema = z.object({
+  path: z.string(),
+  before: z.string().nullable().optional(),
+  after: z.string().optional(),
+  truncated: z.boolean().optional(),
+});
+
 export const toolCallFrameSchema = z.object({
   kind: z.literal('tool'),
   frameId: frameIdSchema,
@@ -108,6 +115,7 @@ export const toolCallFrameSchema = z.object({
   approvalId: z.string().optional(),
   todoId: z.string().optional(),
   agentRefs: z.array(agentRefSchema).optional(),
+  edit: toolFrameFileEditSchema.optional(),
 });
 
 export const interactionSchema = z.object({

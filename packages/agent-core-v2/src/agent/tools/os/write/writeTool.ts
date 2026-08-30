@@ -12,6 +12,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
+import { buildFileSnapshot } from '#/agent/tools/fileSnapshot';
 import {
   resolvePathAccessPath,
   type WorkspaceConfig,
@@ -54,7 +55,10 @@ export class WriteTool implements IWriteTool {
       operation: 'write',
     });
     return {
-      accesses: ToolAccesses.writeFile(path),
+      accesses:
+        (args.mode ?? 'overwrite') === 'append'
+          ? ToolAccesses.writeFile(path)
+          : ToolAccesses.readWriteFile(path),
       description: `Writing ${args.path}`,
       display: { kind: 'file_io', operation: 'write', path, content: args.content },
       approvalRule: literalRulePattern(this.name, path),
@@ -78,14 +82,25 @@ export class WriteTool implements IWriteTool {
     };
   }
 
+  private async existingContent(fs: IHostFileSystem, safePath: string): Promise<string | null | undefined> {
+    try {
+      return await fs.readText(safePath, { errors: 'strict' });
+    } catch (error) {
+      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
+      return code === 'ENOENT' ? null : undefined;
+    }
+  }
+
   private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string): Promise<ExecutableToolResult> {
     const parentError = await this.ensureParentDirectory(fs, safePath);
     if (parentError !== undefined) {
       return { isError: true, output: parentError };
     }
 
+    const mode = args.mode ?? 'overwrite';
+    const before = mode === 'append' ? undefined : await this.existingContent(fs, safePath);
+
     try {
-      const mode = args.mode ?? 'overwrite';
       if (mode === 'append') {
         await fs.appendText(safePath, args.content);
       } else {
@@ -94,6 +109,7 @@ export class WriteTool implements IWriteTool {
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        fileSnapshot: before === undefined ? undefined : buildFileSnapshot(args.path, before, args.content),
       };
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;

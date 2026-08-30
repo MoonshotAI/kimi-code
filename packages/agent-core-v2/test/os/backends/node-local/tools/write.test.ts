@@ -151,6 +151,22 @@ describe('WriteTool', () => {
     });
   });
 
+  it('declares readwrite access for overwrite mode and write-only access for append mode', () => {
+    const { tool } = makeTool();
+    const overwrite = tool.resolveExecution({ path: '/tmp/out.txt', content: 'hello' });
+    const append = tool.resolveExecution({ path: '/tmp/out.txt', content: 'hello', mode: 'append' });
+    if (overwrite.isError === true || append.isError === true) {
+      throw new TypeError('expected runnable execution');
+    }
+
+    expect(overwrite.accesses).toEqual([
+      { kind: 'file', operation: 'readwrite', path: '/tmp/out.txt', recursive: undefined },
+    ]);
+    expect(append.accesses).toEqual([
+      { kind: 'file', operation: 'write', path: '/tmp/out.txt', recursive: undefined },
+    ]);
+  });
+
   it('matches permission args with negated glob path semantics', () => {
     const { tool } = makeTool({}, stubWorkspaceContext('/workspace'));
     const insideSrc = tool.resolveExecution({ path: './src/a.ts', content: 'x' });
@@ -170,6 +186,35 @@ describe('WriteTool', () => {
 
     expect(writeText).toHaveBeenCalledWith('/tmp/new.txt', 'hello');
     expect(result.output).toContain('Wrote 5 bytes');
+  });
+
+  it('reports a real fileSnapshot for an overwrite, with before:null for a new file', async () => {
+    const { tool } = makeTool();
+
+    const result = await execute(tool, { path: '/tmp/new.txt', content: 'hello' });
+
+    expect(result.fileSnapshot).toEqual({ path: '/tmp/new.txt', before: null, after: 'hello' });
+  });
+
+  it('reports the true prior content as fileSnapshot.before when overwriting an existing file', async () => {
+    const { tool } = makeTool({ readText: async () => 'old content' });
+
+    const result = await execute(tool, { path: '/tmp/existing.txt', content: 'new content' });
+
+    expect(result.fileSnapshot).toEqual({
+      path: '/tmp/existing.txt',
+      before: 'old content',
+      after: 'new content',
+    });
+  });
+
+  it('ships no fileSnapshot for an append — the tool never reads to build one', async () => {
+    const { tool, readText } = makeTool();
+
+    const result = await execute(tool, { path: '/tmp/existing.txt', content: '\nhello', mode: 'append' });
+
+    expect(readText).not.toHaveBeenCalled();
+    expect(result.fileSnapshot).toBeUndefined();
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {

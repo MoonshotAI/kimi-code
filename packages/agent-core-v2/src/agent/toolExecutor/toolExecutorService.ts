@@ -1,5 +1,8 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
+import { FileEditSnapshot, FileEditSnapshotRecorded } from '#/app/edit/fileEditEvents';
+import { writeFileEditSnapshotBlobs } from '#/app/edit/fileEditSnapshotBlobs';
+import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
@@ -157,6 +160,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IBlobStore private readonly blobs?: IBlobStore,
     @ILogService private readonly log?: ILogService,
   ) {
     this.states.contributeState(toolExecutorToolCallDupTypesKey);
@@ -301,7 +305,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       prepared.resolvedAccesses,
     );
 
-    this.dispatchToolResult(call, finalized, options);
+    void this.dispatchToolResult(call, finalized, options);
     this.trackToolCall(call, finalized, timedResult.durationMs, options);
 
     return {
@@ -564,6 +568,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       approvalRule: execution?.approvalRule,
       stopBatchAfterThis: normalized.stopBatchAfterThis ?? execution?.stopBatchAfterThis,
       delivery: coerced.delivery,
+      fileSnapshot: coerced.fileSnapshot,
     };
   }
 
@@ -591,11 +596,11 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     });
   }
 
-  private dispatchToolResult(
+  private async dispatchToolResult(
     call: PreflightedToolCall,
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
-  ): void {
+  ): Promise<void> {
     void this.dispatcher.dispatch(
       new ToolResultEvent({
         agentId: this.scopeContext.agentId,
@@ -603,6 +608,37 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         toolCallId: call.toolCall.id,
         output: result.output,
         isError: result.isError,
+      }),
+    );
+    const isDeduplicatedCall = this.toolCallDupTypes.has(call.toolCall.id);
+    if (result.fileSnapshot === undefined || isDeduplicatedCall) return;
+    void this.dispatcher.dispatch(
+      new FileEditSnapshot({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        path: result.fileSnapshot.path,
+        before: result.fileSnapshot.before,
+        after: result.fileSnapshot.after,
+        truncated: result.fileSnapshot.truncated,
+      }),
+    );
+    if (this.blobs === undefined) return;
+    const refs = await writeFileEditSnapshotBlobs(
+      this.blobs,
+      this.scopeContext.scope(),
+      result.fileSnapshot.before,
+      result.fileSnapshot.after,
+    );
+    void this.dispatcher.dispatch(
+      new FileEditSnapshotRecorded({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        path: result.fileSnapshot.path,
+        before: refs.before,
+        after: refs.after,
+        truncated: result.fileSnapshot.truncated,
       }),
     );
   }
@@ -671,6 +707,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
       delivery: coercedResult.delivery,
+      fileSnapshot: coercedResult.fileSnapshot,
     };
     return this.resultTruncation.truncateForModel({
       toolName: call.toolName,

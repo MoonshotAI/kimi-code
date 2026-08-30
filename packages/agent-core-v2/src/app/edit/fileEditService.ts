@@ -31,7 +31,7 @@ export class FileEditService implements IFileEditService {
         return { ok: false, error: result.error };
       }
       await fs.writeText(input.path, result.rawContent);
-      return { ok: true, count: result.count };
+      return { ok: true, count: result.count, before: raw, after: result.rawContent };
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'EISDIR') {

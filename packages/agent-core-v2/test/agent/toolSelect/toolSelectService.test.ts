@@ -30,6 +30,10 @@ import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IBlobStore } from '#/persistence/interface/blobStore';
+import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -383,6 +387,8 @@ function createExecutorHarness(): ExecutorHarness {
       registerSharedServices(reg, contextMemory, loop, eventBus);
       reg.defineInstance(ITelemetryService, recordingTelemetry([]));
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+      reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+      reg.define(IBlobStore, BlobStoreService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       registerToolResultTruncationServices(reg);
     },

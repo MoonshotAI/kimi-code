@@ -4,17 +4,21 @@ import { readFile } from 'node:fs/promises';
 import {
   IAgentLifecycleService,
   IAgentPromptService,
+  IBlobStore,
   IFlagService,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
   TOWER_FLAG_ID,
+  agentScopeOf,
   followSessionLifecycles,
   getLiveSessionById,
   isTowerFeatureAssembled,
   isUndoAnchor,
   reduceContextTranscript,
+  sessionScopeOf,
+  workspacePersistenceScope,
   type ContextMessage,
   type IDisposable,
   type Scope,
@@ -41,6 +45,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import { readWireRecords, type ContextRecord } from './wireRecords';
+import { resolveColdFileEditSnapshots } from './fileEditSnapshot/resolveColdFileEditSnapshots';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
@@ -525,7 +530,17 @@ export class TranscriptService {
       ?.accessor.get(IAgentLoopService)
       .status();
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
+    const withActivity = { ...folded, meta: { ...folded.meta, activity } };
+    const scope = agentScopeOf(
+      sessionScopeOf(workspacePersistenceScope(SESSIONS_ROOT, summary.workspaceId), sessionId),
+      agentId,
+    );
+    const snapshot = await resolveColdFileEditSnapshots(
+      withActivity,
+      records,
+      this.deps.core.accessor.get(IBlobStore),
+      scope,
+    );
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);
     if (
