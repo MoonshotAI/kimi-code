@@ -70,6 +70,13 @@ interface TurnPromptPayload {
 interface ContextUndoPayload {
   readonly count?: unknown;
 }
+interface ContextAppendMessagePayload {
+  readonly message?: {
+    readonly id?: unknown;
+    readonly role?: unknown;
+    readonly origin?: unknown;
+  };
+}
 interface TurnCancelPayload {
   readonly turnId?: unknown;
   readonly target?: unknown;
@@ -216,7 +223,8 @@ export function foldWireRecordFacts(
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
   const hiddenTurnIds = new Set<number>();
-  const undoAnchorTurnIds: number[] = [];
+  const undoAnchors: { firstRawTurnId: number }[] = [];
+  const pendingUndoAnchorTurnIds: number[] = [];
   let undoAnchorFloor = 0;
   const skipCancelledTurnIds = (): void => {
     while (cancelledTurnIds.delete(nextTurnId)) {
@@ -422,9 +430,9 @@ export function foldWireRecordFacts(
         const count = (record as ContextUndoPayload).count;
         if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) break;
         let firstUndoneTurnId: number | undefined;
-        for (let i = 0; i < count && undoAnchorTurnIds.length > undoAnchorFloor; i++) {
-          const turnId = undoAnchorTurnIds.pop();
-          if (turnId !== undefined) firstUndoneTurnId = turnId;
+        for (let i = 0; i < count && undoAnchors.length > undoAnchorFloor; i++) {
+          const anchor = undoAnchors.pop();
+          if (anchor !== undefined) firstUndoneTurnId = anchor.firstRawTurnId;
         }
         if (firstUndoneTurnId !== undefined) {
           for (let turnId = firstUndoneTurnId; turnId < nextTurnId; turnId++) {
@@ -435,7 +443,31 @@ export function foldWireRecordFacts(
       }
       case 'context.clear':
       case 'context.apply_compaction': {
-        undoAnchorFloor = undoAnchorTurnIds.length;
+        undoAnchorFloor = undoAnchors.length;
+        break;
+      }
+      case 'context.append_message': {
+        const message = (record as ContextAppendMessagePayload).message;
+        if (message?.role !== 'user' || !isUndoAnchorTurnOrigin(message.origin)) break;
+        const matchingIndex =
+          typeof message.id === 'string'
+            ? pendingUndoAnchorTurnIds.findIndex(
+                (turnId) => turnPromptIds.get(turnId) === message.id,
+              )
+            : -1;
+        const legacyIndex =
+          matchingIndex < 0 && typeof message.id === 'string'
+            ? pendingUndoAnchorTurnIds.findIndex((turnId) => !turnPromptIds.has(turnId))
+            : -1;
+        const matchedTurnId =
+          matchingIndex >= 0
+            ? pendingUndoAnchorTurnIds.splice(matchingIndex, 1)[0]
+            : legacyIndex >= 0
+              ? pendingUndoAnchorTurnIds.splice(legacyIndex, 1)[0]
+              : typeof message.id !== 'string'
+                ? pendingUndoAnchorTurnIds.shift()
+                : undefined;
+        undoAnchors.push({ firstRawTurnId: matchedTurnId ?? nextTurnId });
         break;
       }
       case 'interaction.request': {
@@ -483,7 +515,7 @@ export function foldWireRecordFacts(
         const payload = record as TurnPromptPayload;
         turnOrigins.set(turnId, payload.origin);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
-        if (isUndoAnchorTurnOrigin(payload.origin)) undoAnchorTurnIds.push(turnId);
+        if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
         if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
         break;
       }

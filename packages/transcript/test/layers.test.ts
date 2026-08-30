@@ -1957,8 +1957,10 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const folded = foldWireRecordFacts(
       [
         { type: 'turn.prompt', input: [{ type: 'text', text: 'one' }], origin: { kind: 'user' }, promptId: 'prompt-1', time: 1 },
+        { type: 'context.append_message', message: { id: 'prompt-1', role: 'user', origin: { kind: 'user' } }, time: 1.5 },
         { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2 },
         { type: 'turn.prompt', input: [{ type: 'text', text: 'undone' }], origin: { kind: 'user' }, promptId: 'prompt-2', time: 3 },
+        { type: 'context.append_message', message: { id: 'prompt-2', role: 'user', origin: { kind: 'user' } }, time: 3.5 },
         { type: 'turn.ended', turnId: 1, reason: 'completed', time: 4 },
         { type: 'turn.prompt', input: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' }, time: 5 },
         { type: 'turn.ended', turnId: 2, reason: 'completed', time: 6 },
@@ -1973,5 +1975,48 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(replacement.triggerPromptId).toBe('prompt-3');
     expect(replacement.state).toBe('failed');
     expect(replacement.error).toBe('replacement failed');
+  });
+
+  it('counts context-only blocked prompts as undo anchors', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'real' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'real' }], origin: { kind: 'user' }, promptId: 'prompt-real', time: 1 },
+        { type: 'context.append_message', message: { id: 'prompt-real', role: 'user', origin: { kind: 'user' } }, time: 2 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'real failure' }, time: 3 },
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 4 },
+        { type: 'context.undo', count: 1, time: 5 },
+      ],
+      base,
+    );
+    const real = folded.items[0];
+    if (real?.kind !== 'turn') throw new Error('expected turn');
+    expect(real.triggerPromptId).toBe('prompt-real');
+    expect(real.state).toBe('failed');
+    expect(real.error).toBe('real failure');
+  });
+
+  it('does not consume a pending identity boundary for a different context-only anchor', () => {
+    const base = groupMessagesIntoSnapshot([
+      { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'real' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'failed' }], toolCalls: [] },
+    ]);
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'real' }], origin: { kind: 'user' }, promptId: 'prompt-real', time: 1 },
+        { type: 'context.append_message', message: { id: 'prompt-blocked', role: 'user', origin: { kind: 'user' } }, time: 2 },
+        { type: 'context.undo', count: 1, time: 3 },
+        { type: 'context.append_message', message: { id: 'prompt-real', role: 'user', origin: { kind: 'user' } }, time: 4 },
+        { type: 'turn.ended', turnId: 0, reason: 'failed', error: { message: 'real failure' }, time: 5 },
+      ],
+      base,
+    );
+    const real = folded.items[0];
+    if (real?.kind !== 'turn') throw new Error('expected turn');
+    expect(real.state).toBe('failed');
+    expect(real.error).toBe('real failure');
   });
 });
