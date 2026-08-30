@@ -1,7 +1,7 @@
-import { assign, setup } from 'xstate';
+import { enqueueActions, setup } from 'xstate';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
-import type { Event } from '#/_base/event';
+import { Emitter, type Event } from '#/_base/event';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
@@ -35,6 +35,7 @@ interface ToolExecutorActorContext {
   readonly runtime: AgentRuntimeContext<unknown>;
   readonly domain: ToolExecutorDomain;
   readonly activeCalls: readonly ActiveToolCall[];
+  readonly activeCallsEmitter: Emitter<readonly ActiveToolCall[]>;
 }
 
 export interface ToolCallStartedInternalEvent {
@@ -59,6 +60,7 @@ const toolExecutorActorLogic = setup({
     runtime: input,
     domain: new ToolExecutorDomain(input),
     activeCalls: [],
+    activeCallsEmitter: new Emitter<readonly ActiveToolCall[]>(),
   }),
   invoke: {
     src: 'toolExecutorEffects',
@@ -66,19 +68,22 @@ const toolExecutorActorLogic = setup({
   },
   on: {
     'toolExecutor.callStarted': {
-      actions: assign({
-        activeCalls: ({ context, event }) => [
+      actions: enqueueActions(({ context, event, enqueue }) => {
+        const next = [
           ...context.activeCalls.filter(
             (call) => call.turnId === event.call.turnId && call.toolCallId !== event.call.toolCallId,
           ),
           event.call,
-        ],
+        ];
+        enqueue.assign({ activeCalls: next });
+        context.activeCallsEmitter.fire(next);
       }),
     },
     'toolExecutor.callSettled': {
-      actions: assign({
-        activeCalls: ({ context, event }) =>
-          context.activeCalls.filter((call) => call.toolCallId !== event.toolCallId),
+      actions: enqueueActions(({ context, event, enqueue }) => {
+        const next = context.activeCalls.filter((call) => call.toolCallId !== event.toolCallId);
+        if (next.length === context.activeCalls.length) return;
+        enqueue.assign({ activeCalls: next });
       }),
     },
   },
@@ -101,6 +106,10 @@ export class AgentToolsRuntime {
 
   activeCalls(): readonly ActiveToolCall[] {
     return this.context.getLogicState<ToolExecutorActorContext>().activeCalls;
+  }
+
+  get onDidChangeActiveCalls(): Event<readonly ActiveToolCall[]> {
+    return this.context.getLogicState<ToolExecutorActorContext>().activeCallsEmitter.event;
   }
 
   get onDidChange(): Event<void> {

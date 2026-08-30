@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Service } from '#/_base/di/service';
+import { Emitter, type Event } from '#/_base/event';
 import { abortable, isUserCancellation } from '#/_base/utils/abort';
 import type {
   ApprovalResponse,
@@ -25,7 +26,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import { IAgentToolApprovalService } from './toolApproval';
+import { IAgentToolApprovalService, type PendingToolApproval } from './toolApproval';
 
 export interface PermissionApprovalRequestedPayload {
   readonly id?: string;
@@ -62,6 +63,10 @@ export interface PermissionApprovalResolved extends PermissionApprovalResolvedPa
 export class AgentToolApprovalService extends Service implements IAgentToolApprovalService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly pending = new Map<string, PendingToolApproval>();
+  private readonly pendingEmitter = this._register(new Emitter<void>());
+  readonly onDidChangePending: Event<void> = this.pendingEmitter.event;
+
   constructor(
     private readonly scopeContext: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
@@ -77,6 +82,20 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     return toWireMode(
       this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentPermissionMode).mode(),
     );
+  }
+
+  pendingApprovals(): readonly PendingToolApproval[] {
+    return [...this.pending.values()];
+  }
+
+  private trackPending(entry: PendingToolApproval): void {
+    this.pending.set(entry.approvalId, entry);
+    this.pendingEmitter.fire();
+  }
+
+  private untrackPending(approvalId: string): void {
+    if (!this.pending.delete(approvalId)) return;
+    this.pendingEmitter.fire();
   }
 
   async resolvePermissionResolution(
@@ -140,6 +159,11 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       response = { decision: 'approved' };
     } else {
       void this.dispatcher.dispatch(new PermissionApprovalRequested(approvalContext));
+      this.trackPending({
+        approvalId: approvalRequest.id,
+        toolCallId: context.toolCall.id,
+        since: startedAt,
+      });
       try {
         response = await abortable(
           approvalService.request(approvalRequest),
@@ -147,7 +171,10 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
         );
         context.signal.throwIfAborted();
       } catch (error) {
-        if (isUserCancellation(error)) throw error;
+        if (isUserCancellation(error)) {
+          this.untrackPending(approvalRequest.id);
+          throw error;
+        }
         this.telemetry.track2('permission_approval_result', {
           turn_id: context.turnId,
           tool_call_id: context.toolCall.id,
@@ -168,6 +195,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
             error: error instanceof Error ? error.message : String(error),
           }),
         );
+        this.untrackPending(approvalRequest.id);
         const resolved = result.resolveError?.(error);
         if (resolved !== undefined) {
           return this.resolvePermissionResolution(resolved, context, origin);
@@ -187,6 +215,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
           ...response,
         }),
       );
+      this.untrackPending(approvalRequest.id);
     }
     void this.agentLifecycle
       .resolve(this.scopeContext.agentContext, AgentPermissionRules)

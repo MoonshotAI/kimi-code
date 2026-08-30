@@ -100,7 +100,7 @@ import { permissionRulesAgentRuntimeProvider } from '#/actor/permissionRules/per
 import type { ToolExecutorDomain } from '#/actor/toolExecutor/internal/domain';
 import type { ResolvedToolExecutionHookContext } from '#/actor/toolExecutor/toolHooks';
 import type { LoopControl } from '#/actor/loop/internal/loop';
-import { AgentLoop, type LoopRuntime, type TurnEndedEvent, type TurnStartedEvent } from '#/actor/loop/loop';
+import { AgentLoop, type LoopActivity, type LoopRuntime, type TurnEndedEvent, type TurnStartedEvent } from '#/actor/loop/loop';
 import { getLoopControl, registerLoopControl } from '#/actor/loop/internal/access';
 import { AgentPrompt, promptAgentRuntimeProvider } from '#/actor/prompt/promptAgentRuntime';
 import type { PromptRuntime } from '#/actor/prompt/prompt';
@@ -224,6 +224,8 @@ const stubAgentLoopRuntimeProvider = defineAgentRuntimeProvider(AgentLoop, {
     cancelByUser: async () => {},
     status: () => 'idle',
     waitUntilSettled: async () => ({ status: 'idle' }),
+    activity: () => ({}),
+    onDidChangeActivity: Event.None as Event<LoopActivity>,
     onDidStartTurn: Event.None as Event<TurnStartedEvent>,
     onDidEndTurn: Event.None as Event<TurnEndedEvent>,
   }),

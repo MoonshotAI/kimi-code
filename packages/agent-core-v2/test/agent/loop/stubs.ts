@@ -80,8 +80,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     tryAcquireQuiescence: () => toDisposable(() => {}),
     hasPendingRequests: () => queue.hasPendingRequests(), registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(),
-    phase: () => ({ phase: active !== undefined ? 'working' : 'idle' }),
-    onDidChangePhase: () => toDisposable(() => {}),
+    activity: () => (active === undefined ? {} : { turn: { turnId: active.id, origin: { kind: 'user' }, since: 0, step: 0, phase: 'working' } }),
+    onDidChangeActivity: () => toDisposable(() => {}),
     activeTurn: () => active,
     drainNextBatch(context) { const batch = queue.takeNextBatch(); if (!batch) return undefined; materialize(batch.driver, context); for (const r of batch.merged) materialize(r, context); return batch; },
   };

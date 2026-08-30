@@ -1,4 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,
@@ -9,8 +10,18 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/actor/toolExecutor/toolHooks';
 
+export interface PendingToolApproval {
+  readonly approvalId: string;
+  readonly toolCallId?: string;
+  readonly since: number;
+}
+
 export interface IAgentToolApprovalService {
   readonly _serviceBrand: undefined;
+
+  pendingApprovals(): readonly PendingToolApproval[];
+
+  readonly onDidChangePending: Event<void>;
 
   resolvePermissionResolution(
     result: PermissionPolicyResolution,

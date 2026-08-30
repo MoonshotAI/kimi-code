@@ -759,6 +759,8 @@ describe('AgentGoalService goal-start review', () => {
   function approvalStub(): IAgentToolApprovalService {
     return {
       _serviceBrand: undefined,
+      pendingApprovals: () => [],
+      onDidChangePending: Event.None as Event<void>,
       resolvePermissionResolution: async () => undefined,
       requestToolApproval: async (_context, result, origin) => {
         approvalCalls.push({ result, origin });

@@ -14,7 +14,6 @@ import {
   CompactionCompleted,
   CompactionStarted,
 } from '#/actor/fullCompaction/fullCompactionEvents';
-import { AgentInteraction } from '#/actor/interaction/interactionAgentRuntime';
 import {
   AgentLoop,
   type LoopActivity,
@@ -24,7 +23,7 @@ import {
 import { AgentTask } from '#/actor/task/taskAgentRuntime';
 import { TaskStarted, TaskTerminatedNotice } from '#/actor/task/taskOps';
 import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
-import { ToolCallStarted, ToolResultEvent } from '#/actor/toolExecutor/toolExecutorEvents';
+import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { AgentActivityUpdated } from './activityViewEvents';
@@ -50,13 +49,14 @@ function projectTurn(
   turn: LoopTurnActivity,
 ): ActivityTurnState {
   const agent = context.agent;
-  const pendingApprovals = lifecycle
-    .resolve(agent, AgentInteraction)
-    .listPending('approval')
-    .map((interaction) => ({
-      approvalId: interaction.id,
-      toolCallId: (interaction.payload as { readonly toolCallId?: string }).toolCallId,
-      since: interaction.createdAt,
+  const pendingApprovals = context
+    .get(ISessionToolApprovalService)
+    .of(agent)
+    .pendingApprovals()
+    .map((approval) => ({
+      approvalId: approval.approvalId,
+      toolCallId: approval.toolCallId,
+      since: approval.since,
     }));
   const activeToolCalls = lifecycle
     .resolve(agent, AgentTools)
@@ -144,9 +144,8 @@ const activityViewEffects = fromCallback(
       lifecycle.resolve(agent, AgentLoop).onDidChangeActivity((loopActivity) => {
         sendBack({ type: 'activityView.refresh', loopActivity });
       }),
-      lifecycle.resolve(agent, AgentInteraction).onDidChangePending(refresh),
-      eventBus.subscribe(ToolCallStarted, refresh),
-      eventBus.subscribe(ToolResultEvent, refresh),
+      input.get(ISessionToolApprovalService).of(agent).onDidChangePending(refresh),
+      lifecycle.resolve(agent, AgentTools).onDidChangeActiveCalls(refresh),
       eventBus.subscribe(TaskStarted, refresh),
       eventBus.subscribe(TaskTerminatedNotice, refresh),
       eventBus.subscribe(CompactionStarted, refresh),

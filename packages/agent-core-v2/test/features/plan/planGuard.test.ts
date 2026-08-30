@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
@@ -152,6 +153,8 @@ describe('AgentPlanService plan-guard listener', () => {
 
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
+      pendingApprovals: () => [],
+      onDidChangePending: Event.None as Event<void>,
       resolvePermissionResolution: async () => {
         throw new Error('resolvePermissionResolution is not used by the plan-guard listener');
       },

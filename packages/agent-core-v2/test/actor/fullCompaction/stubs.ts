@@ -21,6 +21,7 @@ export function stubFullCompactionRuntime(
       Promise.resolve({ id: 'compaction-1', status: 'idle' }),
     cancel: () => Promise.resolve(),
     status: (): FullCompactionStatus => 'idle',
+    runningSince: () => undefined,
     onDidFinish: Event.None as FullCompactionRuntime['onDidFinish'],
     registerBeforeCompactHook: () => toDisposable(() => {}),
   };

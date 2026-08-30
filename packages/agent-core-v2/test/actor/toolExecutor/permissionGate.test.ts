@@ -82,6 +82,8 @@ describe('ToolExecutionPermissionGatePolicy', () => {
   function make(): ToolExecutionPermissionGatePolicy {
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
+      pendingApprovals: () => [],
+      onDidChangePending: Event.None as Event<void>,
       resolvePermissionResolution,
       requestToolApproval,
       formatDenyMessage: (message) => message,

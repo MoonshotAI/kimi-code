@@ -264,7 +264,6 @@ export async function runTurnProcess(input: TurnProcessInput): Promise<TurnResul
   } finally {
     settleTurnReady(ready, result);
     handle.finished = true;
-    send({ type: 'loop.turnReleased', handle, result });
     const traceId =
       result?.type === 'completed'
         ? deps.lastRequestTraceId.get()
@@ -302,6 +301,7 @@ export async function runTurnProcess(input: TurnProcessInput): Promise<TurnResul
         turnTelemetry.track2('turn_interrupted', interrupted);
       }
     }
+    send({ type: 'loop.turnReleased', handle, result });
     const ended: TurnEndedTelemetryEvent = {
       turn_id: turn.id,
       reason: result?.type ?? 'failed',
@@ -635,6 +635,7 @@ async function executeLoopStep(
       notify,
     );
     finishStep(deps, turnId, signal, currentStep, stepUuid, response, finishReason, markStepStarted);
+    notify({ phase: 'working' });
     stepEndAppended = true;
     const hookStopTurn = await runAfterStep(
       deps,
@@ -671,7 +672,6 @@ function beginStep(
   notify: NotifyPhase,
 ): () => void {
   signal.throwIfAborted();
-  notify({ phase: 'working', step: currentStep });
   void deps.dispatcher.dispatch(
     new TurnStepStarted({
       agentId: deps.agentId,
@@ -680,6 +680,7 @@ function beginStep(
       stepId: stepUuid,
     }),
   );
+  notify({ phase: 'working', step: currentStep });
   appendLoopEvent(deps, {
     type: 'step.begin',
     uuid: stepUuid,
@@ -750,12 +751,12 @@ async function executeStepTools(
   }
   const toolCallUuids = new Map<string, string>();
   let stopTurn = false;
-  notify({ phase: 'toolCalling' });
   for await (const toolResult of deps.toolExecutor().execute(response.message.toolCalls, {
     signal,
     turnId,
     trace,
     onToolCall: ({ toolCallId, name, args }) => {
+      notify({ phase: 'toolCalling' });
       const callUuid = randomUUID();
       toolCallUuids.set(toolCallId, callUuid);
       const extras = response.message.toolCalls.find((t) => t.id === toolCallId)?.extras;
@@ -883,7 +884,6 @@ export function emitStepInterrupted(
   message?: string,
 ): void {
   if (activeStep === undefined) return;
-  deps.notifyStepInterrupted?.(turnId, reason);
   void deps.dispatcher.dispatch(
     new TurnStepInterrupted({
       agentId: deps.agentId,
@@ -893,6 +893,7 @@ export function emitStepInterrupted(
       message,
     }),
   );
+  deps.notifyStepInterrupted?.(turnId, reason);
 }
 
 function createStreamPartHandler(
@@ -916,19 +917,19 @@ function createStreamPartHandler(
       switch (part.type) {
         case 'text':
           onResponseEvent();
-          notify({ phase: 'streaming', stream: 'assistant' });
           accumulate(part);
           void deps.dispatcher.dispatch(
             new AssistantDelta({ agentId: deps.agentId, turnId, delta: part.text }),
           );
+          notify({ phase: 'streaming', stream: 'assistant' });
           return;
         case 'think':
           onResponseEvent();
-          notify({ phase: 'streaming', stream: 'thinking' });
           accumulate(part);
           void deps.dispatcher.dispatch(
             new ThinkingDelta({ agentId: deps.agentId, turnId, delta: part.think }),
           );
+          notify({ phase: 'streaming', stream: 'thinking' });
           return;
         case 'image_url':
         case 'audio_url':
@@ -936,7 +937,6 @@ function createStreamPartHandler(
           return;
         case 'function': {
           onResponseEvent();
-          notify({ phase: 'streaming', stream: 'tool_call' });
           forceContentPartBoundary = true;
           callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
           void deps.dispatcher.dispatch(
@@ -948,6 +948,7 @@ function createStreamPartHandler(
               argumentsPart: part.arguments ?? undefined,
             }),
           );
+          notify({ phase: 'streaming', stream: 'tool_call' });
           return;
         }
         case 'tool_call_part': {
@@ -955,7 +956,6 @@ function createStreamPartHandler(
           const toolCall = callsByIndex.get(part.index);
           if (toolCall === undefined) return;
           onResponseEvent();
-          notify({ phase: 'streaming', stream: 'tool_call' });
           void deps.dispatcher.dispatch(
             new ToolCallDelta({
               agentId: deps.agentId,
@@ -965,6 +965,7 @@ function createStreamPartHandler(
               argumentsPart: part.argumentsPart,
             }),
           );
+          notify({ phase: 'streaming', stream: 'tool_call' });
           return;
         }
         default: {

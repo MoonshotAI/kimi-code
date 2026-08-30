@@ -17,13 +17,13 @@ import {
 import { AgentActivityUpdated } from '#/actor/activityView/activityViewEvents';
 import type { AgentActivityState } from '#/actor/activityView/types';
 import { AgentFullCompaction } from '#/actor/fullCompaction/fullCompactionAgentRuntime';
-import { AgentInteraction } from '#/actor/interaction/interactionAgentRuntime';
-import type { Interaction } from '#/actor/interaction/interaction';
 import { AgentLoop, type LoopActivity } from '#/actor/loop/loop';
 import { getLoopControl } from '#/actor/loop/internal/access';
 import { MessageStepRequest } from '#/actor/loop/internal/stepRequest';
 import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import type { ActiveToolCall } from '#/actor/toolExecutor/toolExecutor';
+import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
+import type { PendingToolApproval } from '#/agent/toolApproval/toolApproval';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 
@@ -60,7 +60,7 @@ class FakeBus {
 interface ProjectionWorld {
   loopActivity: LoopActivity;
   readonly loopEmitter: Emitter<LoopActivity>;
-  pending: Interaction[];
+  pending: PendingToolApproval[];
   activeCalls: ActiveToolCall[];
   tasks: AgentTaskInfo[];
   compactionSince: number | undefined;
@@ -73,12 +73,13 @@ interface ProjectionWorld {
 function createProjectionWorld(): ProjectionWorld {
   const bus = new FakeBus();
   const loopEmitter = new Emitter<LoopActivity>();
-  const pendingEmitter = new Emitter<unknown>();
+  const pendingEmitter = new Emitter<void>();
+  const callsEmitter = new Emitter<readonly ActiveToolCall[]>();
   const agent = stubAgentContext('main', 1);
   const world = {
     loopActivity: {} as LoopActivity,
     loopEmitter,
-    pending: [] as Interaction[],
+    pending: [] as PendingToolApproval[],
     activeCalls: [] as ActiveToolCall[],
     tasks: [] as AgentTaskInfo[],
     compactionSince: undefined as number | undefined,
@@ -86,6 +87,14 @@ function createProjectionWorld(): ProjectionWorld {
   const accessor = {
     get: (id: unknown): unknown => {
       if (id === IAgentHostService) return { of: () => ({ eventBus: bus }) };
+      if (id === ISessionToolApprovalService) {
+        return {
+          of: () => ({
+            pendingApprovals: () => world.pending,
+            onDidChangePending: pendingEmitter.event,
+          }),
+        };
+      }
       if (id === IAgentLifecycleService) {
         return {
           resolve: (_agent: unknown, definition: unknown) => {
@@ -95,13 +104,12 @@ function createProjectionWorld(): ProjectionWorld {
                 onDidChangeActivity: loopEmitter.event,
               };
             }
-            if (definition === AgentInteraction) {
+            if (definition === AgentTools) {
               return {
-                listPending: () => world.pending,
-                onDidChangePending: pendingEmitter.event,
+                activeCalls: () => world.activeCalls,
+                onDidChangeActiveCalls: callsEmitter.event,
               };
             }
-            if (definition === AgentTools) return { activeCalls: () => world.activeCalls };
             if (definition === AgentTask) return { list: () => world.tasks };
             if (definition === AgentFullCompaction) {
               return { runningSince: () => world.compactionSince };
@@ -215,9 +223,7 @@ describe('AgentActivityView projection', () => {
       { toolCallId: 'tc-1', name: 'Bash', turnId: 1, since: 60 },
       { toolCallId: 'tc-stale', name: 'Bash', turnId: 0, since: 10 },
     ];
-    world.pending = [
-      { id: 'approval_1', kind: 'approval', payload: { toolCallId: 'tc-1' }, createdAt: 70 },
-    ];
+    world.pending = [{ approvalId: 'approval_1', toolCallId: 'tc-1', since: 70 }];
     world.loopEmitter.fire(world.loopActivity);
     expect(world.view.state().turn).toEqual({
       turnId: 1,
