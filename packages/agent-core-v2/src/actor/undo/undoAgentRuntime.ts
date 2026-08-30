@@ -1,11 +1,14 @@
-import type { IDisposable } from '#/_base/di/lifecycle';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { isValidUndoCount } from '#/actor/contextMemory/conversationTime';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
   type AgentRuntimeContext,
 } from '#/actor/agentRuntime';
+import { BugIndicatingError, ErrorCodes, Error2 } from '#/errors';
 
-import { UndoDomain } from './internal/undoDomain';
+import { undoActorLogic, type UndoActorContext } from './internal/undoMachine';
+import { undoAvailability } from './internal/undoOperations';
 
 export interface UndoAvailability {
   readonly canUndo: boolean;
@@ -27,22 +30,38 @@ export interface UndoRuntime {
 }
 
 export class AgentUndoRuntime implements UndoRuntime {
-  private readonly domain: UndoDomain;
-
-  constructor(context: AgentRuntimeContext<null>) {
-    this.domain = new UndoDomain(context);
-  }
+  constructor(private readonly context: AgentRuntimeContext<null>) {}
 
   availability(): UndoAvailability {
-    return this.domain.availability();
+    return undoAvailability(this.context);
   }
 
-  undo(count: number): Promise<UndoResult> {
-    return this.domain.undo(count);
+  async undo(count: number): Promise<UndoResult> {
+    if (!isValidUndoCount(count)) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'Undo count must be a positive safe integer',
+        { details: { field: 'count' } },
+      );
+    }
+    return new Promise<UndoResult>((resolve, reject) => {
+      this.context.send({ type: 'undo.requested', request: { count, resolve, reject } });
+    });
   }
 
   registerUndoParticipant(participant: AgentConversationUndoParticipant): IDisposable {
-    return this.domain.registerParticipant(participant);
+    const participants = this.context.getLogicState<UndoActorContext>().participants;
+    if (participants.has(participant.id)) {
+      throw new BugIndicatingError(
+        `Conversation undo participant "${participant.id}" is already registered`,
+      );
+    }
+    this.context.send({ type: 'undo.participantRegistered', participant });
+    return toDisposable(() => {
+      try {
+        this.context.send({ type: 'undo.participantUnregistered', id: participant.id, participant });
+      } catch {}
+    });
   }
 }
 
@@ -50,5 +69,6 @@ export const AgentUndo = defineAgentRuntimeContract<UndoRuntime>('undo');
 
 export const undoAgentRuntimeProvider = defineAgentRuntimeProvider<null, UndoRuntime>(AgentUndo, {
   id: 'undo',
+  logic: undoActorLogic,
   createApi: (context) => new AgentUndoRuntime(context),
 });
