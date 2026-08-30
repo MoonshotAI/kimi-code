@@ -399,9 +399,15 @@ export function foldWireRecordFacts(
       case 'context.undo': {
         const count = (record as ContextUndoPayload).count;
         if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) break;
+        let firstUndoneTurnId: number | undefined;
         for (let i = 0; i < count && undoAnchorTurnIds.length > undoAnchorFloor; i++) {
           const turnId = undoAnchorTurnIds.pop();
-          if (turnId !== undefined) hiddenTurnIds.add(turnId);
+          if (turnId !== undefined) firstUndoneTurnId = turnId;
+        }
+        if (firstUndoneTurnId !== undefined) {
+          for (let turnId = firstUndoneTurnId; turnId < nextTurnId; turnId++) {
+            hiddenTurnIds.add(turnId);
+          }
         }
         break;
       }
