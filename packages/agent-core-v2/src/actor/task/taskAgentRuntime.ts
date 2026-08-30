@@ -4,8 +4,32 @@ import {
   type AgentRuntimeContext,
 } from '#/actor/agentRuntime';
 
-import { taskActorLogic, type TaskActorContext, type TaskActorSnapshot } from './internal/taskActor';
-import type { TaskLifecycle } from './internal/taskLifecycle';
+import {
+  loadTasksFromDisk,
+  reconcileTasks,
+  taskActorLogic,
+  type TaskMachineSnapshot,
+} from './internal/taskMachine';
+import {
+  detachTask,
+  getTask,
+  listTasks,
+  markTasksDeliveredViaWait,
+  persistTaskOutput,
+  readTaskOutput,
+  registerTask,
+  releaseTaskId,
+  reserveTaskId,
+  stopAllTasks,
+  stopAllTasksOnExit,
+  stopTask,
+  stopTaskByUser,
+  suppressTaskTerminalNotification,
+  taskOutputPath,
+  taskOutputSnapshot,
+  waitForForegroundRelease,
+  waitForTask,
+} from './internal/taskOperations';
 import { TaskStarted, TaskTerminated, taskRegistryTransition, type TaskModelState } from './taskOps';
 import type {
   AgentTaskInfo,
@@ -19,88 +43,84 @@ import type {
 export class TaskRuntime {
   constructor(private readonly context: AgentRuntimeContext<TaskModelState>) {}
 
-  private get lifecycle(): TaskLifecycle {
-    return this.context.getLogicState<TaskActorContext>().lifecycle;
-  }
-
   registerTask(task: TaskExecution, options: RegisterAgentTaskOptions = {}): string {
-    return this.lifecycle.registerTask(task, options);
+    return registerTask(this.context, task, options);
   }
 
   getTask(taskId: string): AgentTaskInfo | undefined {
-    return this.lifecycle.getTask(taskId);
+    return getTask(this.context, taskId);
   }
 
   list(activeOnly = true, limit?: number): readonly AgentTaskInfo[] {
-    return this.lifecycle.list(activeOnly, limit);
+    return listTasks(this.context, activeOnly, limit);
   }
 
   persistOutput(taskId: string): void {
-    this.lifecycle.persistOutput(taskId);
+    persistTaskOutput(this.context, taskId);
   }
 
   loadFromDisk(options: { readonly replace?: boolean } = {}): Promise<void> {
-    return this.lifecycle.loadFromDisk(options);
+    return loadTasksFromDisk(this.context, options);
   }
 
   reconcile(): Promise<readonly AgentTaskInfo[]> {
-    return this.lifecycle.reconcile();
+    return reconcileTasks(this.context);
   }
 
   getOutputSnapshot(taskId: string, maxPreviewBytes: number): Promise<AgentTaskOutputSnapshot> {
-    return this.lifecycle.getOutputSnapshot(taskId, maxPreviewBytes);
+    return taskOutputSnapshot(this.context, taskId, maxPreviewBytes);
   }
 
   readOutput(taskId: string, tail?: number): Promise<string> {
-    return this.lifecycle.readOutput(taskId, tail);
+    return readTaskOutput(this.context, taskId, tail);
   }
 
   suppressTerminalNotification(taskId: string): Promise<void> {
-    return this.lifecycle.suppressTerminalNotification(taskId);
+    return suppressTaskTerminalNotification(this.context, taskId);
   }
 
   markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void {
-    this.lifecycle.markTasksDeliveredViaWait(tasks);
+    markTasksDeliveredViaWait(this.context, tasks);
   }
 
   detach(taskId: string): AgentTaskInfo | undefined {
-    return this.lifecycle.detach(taskId);
+    return detachTask(this.context, taskId);
   }
 
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined> {
-    return this.lifecycle.stop(taskId, reason);
+    return stopTask(this.context, taskId, reason);
   }
 
   stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
-    return this.lifecycle.stopByUser(taskId);
+    return stopTaskByUser(this.context, taskId);
   }
 
   stopAll(reason?: string): Promise<readonly AgentTaskInfo[]> {
-    return this.lifecycle.stopAll(reason);
+    return stopAllTasks(this.context, reason);
   }
 
   stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
-    return this.lifecycle.stopAllOnExit(reason);
+    return stopAllTasksOnExit(this.context, reason);
   }
 
   wait(taskId: string, timeoutMs?: number, signal?: AbortSignal): Promise<AgentTaskInfo | undefined> {
-    return this.lifecycle.wait(taskId, timeoutMs, signal);
+    return waitForTask(this.context, taskId, timeoutMs, signal);
   }
 
   waitForForegroundRelease(taskId: string): Promise<ForegroundTaskReleaseReason | undefined> {
-    return this.lifecycle.waitForForegroundRelease(taskId);
+    return waitForForegroundRelease(this.context, taskId);
   }
 
   reserveTaskId(idPrefix: string): string {
-    return this.lifecycle.reserveTaskId(idPrefix);
+    return reserveTaskId(this.context, idPrefix);
   }
 
   releaseTaskId(taskId: string): void {
-    this.lifecycle.releaseTaskId(taskId);
+    releaseTaskId(this.context, taskId);
   }
 
   taskOutputPath(taskId: string): string {
-    return this.lifecycle.taskOutputPath(taskId);
+    return taskOutputPath(this.context, taskId);
   }
 }
 
@@ -115,14 +135,14 @@ export const taskAgentRuntimeProvider = defineAgentRuntimeProvider<TaskModelStat
       events: [TaskStarted, TaskTerminated],
       undoable: false,
       transition: taskRegistryTransition,
-      read: (snapshot) => (snapshot as TaskActorSnapshot).context.registry,
+      read: (snapshot) => (snapshot as TaskMachineSnapshot).context.registry,
       commit: (actor, registry) => {
         actor.send({ type: 'task.commit', registry });
       },
     },
     createApi: (context) => new TaskRuntime(context),
     inspect: (snapshot) => ({
-      tasks: [...(snapshot as TaskActorSnapshot).context.registry.values()],
+      tasks: [...(snapshot as TaskMachineSnapshot).context.registry.values()],
     }),
   },
 );

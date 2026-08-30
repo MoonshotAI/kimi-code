@@ -20,7 +20,6 @@ import {
 } from '#/actor/task/types';
 import type { TaskRuntime } from '#/actor/task/taskAgentRuntime';
 import { renderNotificationXml } from '#/actor/task/internal/notificationXml';
-import { TaskLifecycle } from '#/actor/task/internal/taskLifecycle';
 import { taskNotificationDeliveryKey } from '#/actor/task/notificationDelivery';
 import {
   TaskStarted,
@@ -61,8 +60,9 @@ import { stubContextMemory, type StubContextMemory } from '../contextMemory/stub
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
+import { createTaskRuntimeForTest, TestTaskRuntime } from './stubs';
 
-const ITaskLifecycle = createDecorator<TaskLifecycle>('testTaskLifecycle');
+const ITaskLifecycle = createDecorator<TestTaskRuntime>('testTaskLifecycle');
 
 function attachTaskRegistry(
   dispatcher: IEventDispatcher,
@@ -84,29 +84,18 @@ function attachTaskRegistry(
 function registerTaskLifecycle(
   ix: TestInstantiationService,
   agentScope: IAgentScopeContext,
-  contextMemory: StubContextMemory,
   dispatcher: IEventDispatcher,
   disposables: DisposableStore,
-): TaskLifecycle {
-  const lifecycle = new TaskLifecycle({
-    agent: agentScope.agentContext,
-    scopeContext: agentScope,
-    telemetry: ix.get(ITelemetryService),
-    config: ix.get(IConfigService),
-    atomicDocs: ix.get(IAtomicDocumentStore),
-    byteStore: ix.get(IFileSystemStorageService),
-    session: ix.get(ISessionContext),
-    eventBus: ix.get(IEventBus),
+): TestTaskRuntime {
+  const runtime = createTaskRuntimeForTest({
+    ix,
+    agentScope,
     dispatcher,
-    manager: ix.get(IAgentLifecycleService),
-    log: ix.get(ILogService),
-    states: ix.get(IAgentStateService),
-    context: contextMemory as never,
     registry: attachTaskRegistry(dispatcher),
   });
-  disposables.add(toDisposable(() => lifecycle.shutdown()));
-  ix.set(ITaskLifecycle, lifecycle);
-  return lifecycle;
+  disposables.add(toDisposable(() => runtime.shutdown()));
+  ix.set(ITaskLifecycle, runtime);
+  return runtime;
 }
 
 function fakeProcessTask(): TaskExecution {
@@ -157,28 +146,18 @@ describe('TaskLifecycle', () => {
   let injectionProviders: Map<string, ContextInjectionProvider>;
   let contextMemory: StubContextMemory;
   let dispatcherInstance: IEventDispatcher | undefined;
-  let taskInstance: TaskLifecycle | undefined;
+  let taskInstance: TestTaskRuntime | undefined;
 
   function dispatcher(): IEventDispatcher {
     return (dispatcherInstance ??= registerTestEventDispatcher(ix, agentScope));
   }
 
-  function taskService(): TaskLifecycle {
+  function taskService(): TestTaskRuntime {
     if (taskInstance === undefined) {
-      taskInstance = new TaskLifecycle({
-        agent: agentScope.agentContext,
-        scopeContext: agentScope,
-        telemetry: ix.get(ITelemetryService),
-        config: ix.get(IConfigService),
-        atomicDocs: ix.get(IAtomicDocumentStore),
-        byteStore: ix.get(IFileSystemStorageService),
-        session: ix.get(ISessionContext),
-        eventBus: ix.get(IEventBus),
+      taskInstance = createTaskRuntimeForTest({
+        ix,
+        agentScope,
         dispatcher: dispatcher(),
-        manager: ix.get(IAgentLifecycleService),
-        log: ix.get(ILogService),
-        states: ix.get(IAgentStateService),
-        context: contextMemory as never,
         registry: attachTaskRegistry(dispatcher()),
       });
       disposables.add(toDisposable(() => taskInstance?.shutdown()));
@@ -805,7 +784,7 @@ describe('TaskLifecycle', () => {
     registerAgentEventBus(ix, disposables, agentScope);
     ix.set(IAgentStateService, new AgentStateService());
     const dispatcher = registerTestEventDispatcher(ix, agentScope);
-    registerTaskLifecycle(ix, agentScope, contextMemory, dispatcher, disposables);
+    registerTaskLifecycle(ix, agentScope, dispatcher, disposables);
     return ix;
   }
 
@@ -851,7 +830,7 @@ describe('TaskLifecycle', () => {
     ix.set(IWireService, new WireService(agentScope, ix.get(IAppendLogStore), ix.get(IAgentBlobService)));
     ix.set(IAgentStateService, new AgentStateService());
     const dispatcher = registerTestEventDispatcher(ix, agentScope);
-    registerTaskLifecycle(ix, agentScope, context, dispatcher, disposables);
+    registerTaskLifecycle(ix, agentScope, dispatcher, disposables);
     return ix;
   }
 
@@ -1132,7 +1111,7 @@ describe('TaskLifecycle', () => {
   }
 
   async function waitForTerminal(
-    svc: TaskLifecycle,
+    svc: TestTaskRuntime,
     taskId: string,
     timeoutMs = 30_000,
   ): Promise<AgentTaskInfo | undefined> {
@@ -1154,7 +1133,7 @@ describe('TaskLifecycle', () => {
   }
 
   function serviceWithAppendCounter(): {
-    svc: TaskLifecycle;
+    svc: TestTaskRuntime;
     persistedChars: () => number;
   } {
     let persistedChars = 0;
