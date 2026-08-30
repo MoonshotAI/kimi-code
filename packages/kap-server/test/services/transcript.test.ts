@@ -8,6 +8,7 @@ import {
   AgentInteraction,
   IAgentLifecycleService,
   IAgentLoopService,
+  IAgentPromptService,
   IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
@@ -3223,7 +3224,7 @@ describe('bindSessionTranscript', () => {
       this.closeHandlers.add(cb);
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[] }): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: unknown; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
       const bus = new FakeBus();
       const scope = makeAgentScopeContext({
         agentId: id,
@@ -3242,6 +3243,27 @@ describe('bindSessionTranscript', () => {
             if (token === IEventBus) return bus;
             if (token === IAgentLoopService) {
               return { status: () => opts?.loopStatus ?? { state: 'idle' } };
+            }
+            if (token === IAgentPromptService) {
+              return {
+                list: () => ({
+                  active: opts?.activePromptId === undefined
+                    ? undefined
+                    : {
+                        id: opts.activePromptId,
+                        userMessageId: opts.activePromptId,
+                        createdAt: '2026-01-01T00:00:00.000Z',
+                        state: 'running',
+                        message: {
+                          role: 'user',
+                          content: [{ type: 'text', text: 'hi' }],
+                          toolCalls: [],
+                          origin: { kind: 'user' },
+                        },
+                      },
+                  pending: [],
+                }),
+              };
             }
             if (token === IAgentTaskService) {
               return { list: () => opts?.tasks ?? [] };
@@ -3782,7 +3804,10 @@ describe('bindSessionTranscript', () => {
     const home = await seedWireHome();
     try {
       const agents = new FakeAgents();
-      agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      agents.add('main', {
+        loopStatus: { state: 'running', activeTurnId: 0 },
+        activePromptId: 'prompt-1',
+      });
       const service = new TranscriptService({
         homeDir: home,
         core: fakeCoreWithAgents(agents),
@@ -3791,6 +3816,7 @@ describe('bindSessionTranscript', () => {
       await service.whenReady('s1');
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
         state: 'running',
+        triggerPromptId: 'prompt-1',
         prompt: 'hi',
       });
       service.dropSession('s1');
