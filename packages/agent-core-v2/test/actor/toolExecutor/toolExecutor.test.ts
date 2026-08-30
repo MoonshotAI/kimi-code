@@ -24,47 +24,47 @@ import {
   ToolProgress,
   ToolResultEvent,
 } from '#/actor/toolExecutor/toolExecutorEvents';
-import { ToolExecutorPipeline } from '#/actor/toolExecutor/internal/executor';
-import type { AgentRuntimeContext } from '#/actor/agentRuntime';
-import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { Event } from '#/_base/event';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentHostService } from '#/agent/host/agentHost';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
+import { IGitService } from '#/app/git/git';
+import { IFlagService } from '#/app/flag/flag';
 import { IEventBus } from '#/app/event/eventBus';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import { registerLoopControl } from '#/actor/loop/internal/access';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices, stubAgentHostService } from '../../wire/stubs';
+import { stubLoopWithHooks } from '../../agent/loop/stubs';
+import {
+  createMachineExecutorHarness,
+  stubExecutorHarnessLifecycle,
+  stubSessionMcpHandle,
+  stubToolContributionSource,
+  type MachineExecutorHarness,
+  type MachineToolRegistry,
+} from './stubs';
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
 
 type ProtocolEvent = ToolCallStarted | ToolProgress | ToolResultEvent;
 
-class TestToolCatalog {
-  private readonly tools = new Map<string, { readonly tool: ExecutableTool; readonly source: 'builtin' | 'mcp' | 'user' }>();
-  register(tool: ExecutableTool, options: { readonly source?: 'builtin' | 'mcp' | 'user' } = {}): { dispose: () => void } {
-    this.tools.set(tool.name, { tool, source: options.source ?? 'builtin' });
-    return { dispose: () => this.tools.delete(tool.name) };
-  }
-  resolve(name: string): ExecutableTool | undefined {
-    return this.tools.get(name)?.tool;
-  }
-  list(): readonly { readonly name: string; readonly source: 'builtin' | 'mcp' | 'user' }[] {
-    return [...this.tools.values()].map(({ tool, source }) => ({ name: tool.name, source }));
-  }
-}
-
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
-let pipeline: ToolExecutorPipeline;
-let registry: TestToolCatalog;
+let harness: MachineExecutorHarness;
+let executor: AgentToolsRuntime;
+let registry: MachineToolRegistry;
 let events: ToolExecutorEvent[];
 let protocolEvents: ProtocolEvent[];
 let telemetryEvents: TelemetryRecord[];
@@ -76,10 +76,10 @@ beforeEach(() => {
   protocolEvents = [];
   telemetryEvents = [];
   truncateForModel = async (input) => input.result;
+  const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '', generation: 1 });
   ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerStateServices(reg);
-      const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
       registerTestAgentWireServices(reg, 'wire/tool-executor', agentScope);
       reg.defineInstance(IAgentHostService, stubAgentHostService((id) => ix.get(id as never), agentScope));
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
@@ -100,37 +100,49 @@ beforeEach(() => {
         },
         subscribe: (..._args: unknown[]) => ({ dispose: () => {} }),
       } as unknown as IEventBus);
+      reg.defineInstance(IAgentLifecycleService, stubExecutorHarnessLifecycle());
+      reg.defineInstance(ISessionMcpHandle, stubSessionMcpHandle());
+      reg.defineInstance(IAgentToolContributionSource, stubToolContributionSource());
+      reg.defineInstance(IFlagService, {
+        _serviceBrand: undefined,
+        enabled: () => false,
+      } as unknown as IFlagService);
+      reg.defineInstance(ISessionContext, {
+        _serviceBrand: undefined,
+        sessionId: 'session-1',
+        workspaceId: 'workspace-1',
+        sessionDir: '/tmp/tool-executor-session',
+        metaScope: 'sessions/workspace-1/session-1',
+        cwd: '/tmp/tool-executor-session',
+        scope: (sub?: string): string =>
+          sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
+      } satisfies ISessionContext);
+      reg.defineInstance(ISessionWorkspaceContext, {} as unknown as ISessionWorkspaceContext);
+      reg.defineInstance(IGitService, {} as unknown as IGitService);
       registerLogServices(reg);
     },
     strict: true,
   });
-  const context: AgentRuntimeContext<unknown> = {
-    agent: { agentId: 'main', generation: 1 } as AgentContext,
-    get: (id) => ix.get(id as never),
-    getState: () => {
-      throw new Error('no durable state');
-    },
-    getLogicState: () => {
-      throw new Error('no logic state');
-    },
-    dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
-    send: () => {},
-    onDidChange: Event.None,
-  };
-  registry = new TestToolCatalog();
-  pipeline = new ToolExecutorPipeline(context, registry as never);
+  registerLoopControl(agentScope.agentContext, stubLoopWithHooks(), () => ({
+    nextTurnId: 0,
+    cancelledTurnIds: [],
+  }));
+  harness = createMachineExecutorHarness({ ix, agentContext: agentScope.agentContext });
+  executor = harness.executor;
+  registry = harness.registry;
 });
 
 let hookSeq = 0;
 function onBeforeExecuteTool(listener: (event: BeforeToolExecuteEvent) => void | Promise<void>): void {
-  pipeline.beforeExecuteBus.register(`test-hook-${(hookSeq += 1)}`, listener);
+  executor.participateExecution(`test-hook-${(hookSeq += 1)}`, listener);
 }
 
 afterEach(() => {
+  harness.dispose();
   disposables.dispose();
 });
 
-describe('ToolExecutorPipeline', () => {
+describe('AgentTools execute', () => {
   it('resolves by interface and routes a successful tool call through execute', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
@@ -167,8 +179,8 @@ describe('ToolExecutorPipeline', () => {
   it('rejects by policy before dynamic availability when a tool-call guard denies it', async () => {
     const tool = new TestTool('blocked');
     registry.register(tool, { source: 'mcp' });
-    pipeline.registerUnavailableToolDescriber(() => 'Tool "blocked" is not loaded');
-    pipeline.registerToolCallGuard(({ name, source }) =>
+    executor.registerUnavailableToolDescriber(() => 'Tool "blocked" is not loaded');
+    executor.registerToolCallGuard(({ name, source }) =>
       name === 'blocked' && source === 'mcp' ? 'Tool "blocked" is disabled' : undefined,
     );
 
@@ -188,7 +200,7 @@ describe('ToolExecutorPipeline', () => {
     registry.register(tool);
     let tag = true;
     onBeforeExecuteTool((event) => {
-      if (tag && event.toolCall.id === 'call_dup') pipeline.recordDupType('call_dup', 'cross_step');
+      if (tag && event.toolCall.id === 'call_dup') harness.recordDupType('call_dup', 'cross_step');
     });
 
     await execute([
@@ -568,7 +580,7 @@ describe('ToolExecutorPipeline', () => {
 
     const yielded: string[] = [];
     const execution = (async () => {
-      for await (const item of pipeline.execute(
+      for await (const item of executor.execute(
         [
           toolCall('call_slow', 'slow', {}),
           toolCall('call_fast', 'fast', {}),
@@ -693,7 +705,7 @@ describe('ToolExecutorPipeline', () => {
     const outcomes = new Map<string, ToolExecutionOutcome>();
     registry.register(first);
     registry.register(second);
-    pipeline.didExecuteHooks.register('capture-outcomes', async (ctx, next) => {
+    executor.registerDidExecuteHook('capture-outcomes', async (ctx, next) => {
       outcomes.set(ctx.toolCall.id, ctx.outcome);
       await next();
     });
@@ -772,7 +784,7 @@ describe('ToolExecutorPipeline', () => {
   it('onDidExecuteTool failures replace the raw output with a hook error', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    pipeline.didExecuteHooks.register('fail-finalize', async () => {
+    executor.registerDidExecuteHook('fail-finalize', async () => {
       throw new Error('finalize crashed');
     });
 
@@ -791,7 +803,7 @@ describe('ToolExecutorPipeline', () => {
   it('onDidExecuteTool can stop the turn without marking the tool failed', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    pipeline.didExecuteHooks.register('stop', async (ctx) => {
+    executor.registerDidExecuteHook('stop', async (ctx) => {
       ctx.stopTurn = true;
     });
 
@@ -808,7 +820,7 @@ describe('ToolExecutorPipeline', () => {
   it('onDidExecuteTool can replace the final tool result', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    pipeline.didExecuteHooks.register('replace-result', async (ctx) => {
+    executor.registerDidExecuteHook('replace-result', async (ctx) => {
       ctx.result = { output: 'hook output', isError: true };
     });
 
@@ -993,7 +1005,7 @@ describe('onWillExecuteTool', () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     const gate = deferred<void>();
-    pipeline.onWillExecute((event) => {
+    executor.onWillExecute((event) => {
       event.waitUntil(gate.promise);
     });
 
@@ -1011,7 +1023,7 @@ describe('onWillExecuteTool', () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     const willListener = vi.fn();
-    pipeline.onWillExecute(willListener);
+    executor.onWillExecute(willListener);
     onBeforeExecuteTool((event) => {
       event.veto({ output: 'nope', isError: true });
     });
@@ -1059,7 +1071,7 @@ async function execute(
   trace?: LLMRequestTrace,
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
-  for await (const item of pipeline.execute(calls, {
+  for await (const item of executor.execute(calls, {
     turnId: 0,
     signal: signal ?? new AbortController().signal,
     trace,

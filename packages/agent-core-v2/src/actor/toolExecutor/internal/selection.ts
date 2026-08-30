@@ -1,20 +1,16 @@
-import { Disposable } from '#/_base/di/lifecycle';
 import type { AgentRuntimeContext } from '#/actor/agentRuntime';
 import { defineState } from '#/state/state';
 import { IFlagService } from '#/app/flag/flag';
 import type { Tool } from '#/kosong/contract/tool';
 import { AgentContextMemory, ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
-import { ContextSpliced } from '#/actor/contextMemory/contextEvents';
 import type { ContextMessage } from '#/actor/contextMemory/types';
-import { CompactionCompleted } from '#/actor/fullCompaction/fullCompactionEvents';
 import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { ToolCatalog } from '#/actor/toolExecutor/internal/catalog';
+import type { CatalogView } from '#/actor/toolExecutor/internal/catalog';
 import type { AgentToolsPolicy } from '#/actor/toolExecutor/internal/toolPolicy';
-import type { ToolExecutorPipeline } from '#/actor/toolExecutor/internal/executor';
 import {
   collectLoadedDynamicToolNames,
   foldAnnouncedToolNames,
@@ -33,38 +29,25 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
   () => new Set(),
 );
 
-export class AgentToolsSelection extends Disposable {
-  private readonly context: ContextMemoryRuntime;
+export class AgentToolsSelection {
   private readonly manager: IAgentLifecycleService;
   private readonly flags: IFlagService;
   private readonly states: IAgentStateService;
 
   constructor(
     private readonly runtime: AgentRuntimeContext<unknown>,
-    private readonly toolRegistry: ToolCatalog,
+    private readonly toolRegistry: CatalogView,
     private readonly toolPolicy: AgentToolsPolicy,
-    pipeline: ToolExecutorPipeline,
   ) {
-    super();
     this.manager = runtime.get(IAgentLifecycleService);
     this.flags = runtime.get(IFlagService);
     const host = runtime.get(IAgentHostService).of(runtime.agent);
     this.states = host.state;
-    this.context = this.manager.resolve(runtime.agent, AgentContextMemory);
     this.states.contributeState(toolSelectPendingLoadedKey);
-    this._register(pipeline.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)));
-    this._register(pipeline.registerMissingToolDescriber((name) => this.describeMissingTool(name)));
-    this._register(
-      host.eventBus.subscribe(CompactionCompleted, () => {
-        this.pendingLoaded.clear();
-      }),
-    );
-    this._register(
-      host.eventBus.subscribe(ContextSpliced, (splice) => {
-        if (splice.deleteCount === 0 || splice.messages.length > 0) return;
-        this.dropPendingLoadedNotLanded();
-      }),
-    );
+  }
+
+  private get context(): ContextMemoryRuntime {
+    return this.manager.resolve(this.runtime.agent, AgentContextMemory);
   }
 
   private get pendingLoaded(): Set<string> {
@@ -75,7 +58,11 @@ export class AgentToolsSelection extends Disposable {
     return this.manager.resolve(this.runtime.agent, AgentProfile);
   }
 
-  private dropPendingLoadedNotLanded(): void {
+  clearPendingLoaded(): void {
+    this.pendingLoaded.clear();
+  }
+
+  dropPendingLoadedNotLanded(): void {
     if (this.pendingLoaded.size === 0) return;
     const landed = collectLoadedDynamicToolNames(this.context.get());
     for (const name of this.pendingLoaded) {
@@ -173,13 +160,13 @@ export class AgentToolsSelection extends Disposable {
     return !this.activeLoadedToolNames().has(name);
   }
 
-  private describeUnavailableTool(name: string): string | undefined {
+  describeUnavailableTool(name: string): string | undefined {
     if (this.isInactiveLoadedTool(name)) return inactiveLoadedToolOutput(name);
     if (!this.shouldIntercept(name)) return undefined;
     return notLoadedToolOutput(name);
   }
 
-  private describeMissingTool(name: string): string | undefined {
+  describeMissingTool(name: string): string | undefined {
     if (!this.enabled()) return undefined;
     if (this.toolRegistry.resolve(name) !== undefined) return undefined;
     if (!this.loadedToolNames().has(name)) return undefined;

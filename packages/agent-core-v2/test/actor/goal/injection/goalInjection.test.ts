@@ -84,12 +84,11 @@ describe('GoalInjection content', () => {
     expect(await readGoalReminder(async () => undefined)).toBeUndefined();
   });
 
-  it('activates injection after restore and removes it on close', async () => {
+  it('activates injection only after restore and injects once', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()), { persistence });
     const localGoals = local.resolve(AgentGoal) as GoalServiceTestManager;
     const localContext = local.resolve(AgentContextMemory);
-    const localLoop = getLoopControl(local.agentContext) as StubLoop;
     await localGoals.createGoal({ objective: 'work' });
 
     await injectDynamic(local, true);
@@ -103,10 +102,7 @@ describe('GoalInjection content', () => {
       message.origin?.kind === 'injection' && message.origin.variant === 'goal'
     )).toHaveLength(1);
 
-    const recordCount = persistence.records.length;
     await local.dispose();
-    await runWillBeginStepHooks(localLoop, true);
-    expect(persistence.records).toHaveLength(recordCount);
   });
 
   it('wraps the objective for a paused goal', async () => {

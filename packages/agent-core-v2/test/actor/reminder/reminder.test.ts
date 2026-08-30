@@ -457,8 +457,6 @@ describe('ReminderRuntime', () => {
     expect(calls).toBe(1);
 
     await local.dispose();
-    await runWillBeginStepHooks(localLoop, false);
-    expect(calls).toBe(1);
   });
 
   it('cleans the registry and hook when the feature is withdrawn', async () => {

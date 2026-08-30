@@ -64,7 +64,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
-import type { ToolExecutorDomain } from '#/actor/toolExecutor/internal/domain';
+import { fireBeforeExecuteOf } from '../toolExecutor/stubs';
 import type { BeforeExecuteDecision } from '#/actor/toolExecutor/toolHooks';
 import { stubAgentSwarm } from './stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -812,8 +812,7 @@ describe('AgentGoalService goal-start review', () => {
     hookCtx: ResolvedToolExecutionHookContext,
   ): Promise<BeforeExecuteDecision | undefined> {
     const runtime = agentCtx.resolve(AgentTools);
-    const domain = (runtime as unknown as { domain: ToolExecutorDomain }).domain;
-    return domain.pipeline.beforeExecuteBus.fireBeforeExecute(hookCtx);
+    return fireBeforeExecuteOf(runtime)(hookCtx);
   }
 
   it('routes a goal_start CreateGoal through toolApproval and applies the mode switch', async () => {

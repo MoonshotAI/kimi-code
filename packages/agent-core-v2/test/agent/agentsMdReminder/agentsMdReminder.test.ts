@@ -4,7 +4,7 @@ import { join, normalize, basename, dirname } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IBashParserService } from '#/app/bashParser/bashParser';
@@ -29,10 +29,6 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { ToolExecutorPipeline } from '#/actor/toolExecutor/internal/executor';
-import { ToolDedupePolicy } from '#/actor/toolExecutor/internal/toolDedupe';
-import type { AgentRuntimeContext } from '#/actor/agentRuntime';
-import { Event } from '#/_base/event';
 import { AgentTools, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
@@ -45,7 +41,11 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { LoopControl } from '#/actor/loop/internal/loop';
-import { getLoopControl, registerLoopControl } from '#/actor/loop/internal/access';
+import { registerLoopControl } from '#/actor/loop/internal/access';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IGitService } from '#/app/git/git';
+import { IFlagService } from '#/app/flag/flag';
 import type { PromptOrigin } from '#/actor/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
@@ -61,11 +61,14 @@ import {
 import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import {
+  createMachineExecutorHarness,
   lifecycleWithToolExecutor,
-  runtimeFromPipeline,
+  stubSessionMcpHandle,
+  stubToolContributionSource,
   stubToolExecutorEvents,
   type ToolExecutorEventStubs,
 } from '../../actor/toolExecutor/stubs';
+import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -95,6 +98,7 @@ interface CapturedReminder {
 interface Harness {
   readonly ix: TestInstantiationService;
   readonly executor: AgentToolsRuntime;
+  readonly registry: { register(tool: ExecutableTool): unknown };
   readonly events: ToolExecutorEventStubs;
   readonly reminder: IAgentAgentsMdReminderService;
   readonly dispatcher: IEventDispatcher;
@@ -136,10 +140,27 @@ function createHarness(
           publish: () => {},
           subscribe: () => ({ dispose: () => {} }),
         });
+        let host: unknown;
         reg.defineInstance(IAgentHostService, {
           _serviceBrand: undefined,
-          of: () => ({ telemetry: ix.get(ITelemetryService) }),
+          of: () =>
+            (host ??= {
+              scopeContext: agentScope,
+              telemetry: ix.get(ITelemetryService),
+              eventBus: ix.get(IEventBus),
+              state: ix.get(IAgentStateService),
+              dispatcher: ix.get(IEventDispatcher),
+              agentRuntime: ix.get(IAgentRuntimeService),
+            }),
         } as unknown as IAgentHostService);
+        reg.defineInstance(ISessionMcpHandle, stubSessionMcpHandle());
+        reg.defineInstance(IAgentToolContributionSource, stubToolContributionSource());
+        reg.defineInstance(IFlagService, {
+          _serviceBrand: undefined,
+          enabled: () => false,
+        } as unknown as IFlagService);
+        reg.defineInstance(ISessionWorkspaceContext, {} as unknown as ISessionWorkspaceContext);
+        reg.defineInstance(IGitService, {} as unknown as IGitService);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
@@ -247,48 +268,27 @@ function createHarness(
         ITelemetryService,
         options.telemetry ?? recordingTelemetry(telemetryEvents),
       );
-      if (options.withDedupe === true) {
+      if (options.withRealExecutor === true || options.withDedupe === true) {
         registerLoopControl(agentContext, stubLoopWithHooks(), () => ({ nextTurnId: 0, cancelledTurnIds: [] }));
       }
     },
     strict: true,
   });
   let executorRuntime: AgentToolsRuntime = events.executor;
+  let registry: Harness['registry'] = {
+    register: () => {
+      throw new Error('registry requires withRealExecutor');
+    },
+  };
   if (options.withRealExecutor === true) {
-    const context: AgentRuntimeContext<unknown> = {
-      agent: agentContext,
-      get: (id) => ix.get(id as never),
-      getState: () => {
-        throw new Error('no durable state');
-      },
-      getLogicState: () => {
-        throw new Error('no logic state');
-      },
-      dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
-      send: () => {},
-      onDidChange: Event.None,
-    };
-    const tools = new Map<string, ExecutableTool>();
-    const catalog = {
-      resolve: (name: string) => tools.get(name),
-      list: () => [...tools.values()].map((tool) => ({ name: tool.name, source: 'builtin' as const })),
-    };
-    const pipeline = new ToolExecutorPipeline(context, catalog as never);
-    if (options.withDedupe === true) {
-      const loop = getLoopControl(agentScope.agentContext);
-      const dedupe = new ToolDedupePolicy(context, pipeline);
-      loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
-        dedupe.beginStep(ctx.turnId, ctx.step);
-        await next();
-      });
-      loop.hooks.onDidFinishStep.register('toolDedupe', async (_ctx, next) => {
-        dedupe.endStep();
-        await next();
-      });
-      pipeline.beforeExecuteBus.register('toolDedupe', dedupe.checkExecution);
-      pipeline.registerDidExecuteHook('toolDedupe', dedupe.finalizeExecution);
-    }
-    executorRuntime = runtimeFromPipeline(pipeline, tools);
+    const machineHarness = createMachineExecutorHarness({
+      ix,
+      agentContext,
+      realDedupe: options.withDedupe === true,
+    });
+    disposables.add(toDisposable(() => machineHarness.dispose()));
+    executorRuntime = machineHarness.executor;
+    registry = machineHarness.registry;
   }
   ix.stub(
     IAgentLifecycleService,
@@ -308,7 +308,7 @@ function createHarness(
   );
   ix.set(IAgentAgentsMdReminderService, reminder);
   const dispatcher = ix.get(IEventDispatcher);
-  return { ix, executor: executorRuntime, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
+  return { ix, executor: executorRuntime, registry, events, reminder, dispatcher, telemetryEvents, reminders, instructionsChange };
 }
 
 function didCtx(
@@ -673,7 +673,7 @@ describe('agentsMdReminder duplicate calls', () => {
         };
       }
     }
-    (h.executor as unknown as { register: (tool: ExecutableTool) => unknown }).register(new ReadTool());
+    h.registry.register(new ReadTool());
 
     const args = { path: join(workDir, 'packages', 'kap-server', 'index.ts') };
     const calls: ToolCall[] = [
@@ -1000,7 +1000,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         };
       }
     }
-    (h.executor as unknown as { register: (tool: ExecutableTool) => unknown }).register(new BigTool());
+    h.registry.register(new BigTool());
 
     const toolCall: ToolCall = {
       type: 'function',
@@ -1042,7 +1042,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         };
       }
     }
-    (h.executor as unknown as { register: (tool: ExecutableTool) => unknown }).register(new ResolvedReadTool());
+    h.registry.register(new ResolvedReadTool());
 
     const results = [];
     for await (const item of h.executor.execute(
@@ -1088,7 +1088,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         };
       }
     }
-    (h.executor as unknown as { register: (tool: ExecutableTool) => unknown }).register(new ReadTool());
+    h.registry.register(new ReadTool());
     h.executor.participateExecution('test-deny', (event) => {
       event.veto({ output: 'permission denied', isError: true });
     });
@@ -1167,8 +1167,8 @@ describe('agentsMdReminder cancellation outcomes', () => {
       }
     }
 
-    (h.executor as unknown as { register: (tool: ExecutableTool) => unknown }).register(new BlockingBash());
-    (h.executor as unknown as { register: (tool: ExecutableTool) => unknown }).register(new ReadTool());
+    h.registry.register(new BlockingBash());
+    h.registry.register(new ReadTool());
     const controller = new AbortController();
     const calls: ToolCall[] = [
       {

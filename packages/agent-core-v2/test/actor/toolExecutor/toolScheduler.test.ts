@@ -1,160 +1,234 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ToolAccesses } from '#/tool/toolContract';
-import { ToolScheduler, type ToolCallTask } from '#/actor/toolExecutor/internal/toolScheduler';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { registerLoopControl } from '#/actor/loop/internal/access';
+import type { ToolCall } from '#/kosong/contract/message';
+import {
+  ToolAccesses,
+  type ExecutableTool,
+  type ExecutableToolResult,
+  type ToolExecution,
+  type ToolResult,
+} from '#/tool/toolContract';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubLoopWithHooks } from '../../agent/loop/stubs';
+import {
+  createMachineExecutorHarness,
+  registerMachineExecutorTestServices,
+  type MachineExecutorHarness,
+} from './stubs';
 
-describe('ToolScheduler', () => {
+let disposables: DisposableStore;
+let ix: TestInstantiationService;
+let harness: MachineExecutorHarness;
+let executor: AgentToolsRuntime;
+let telemetryEvents: TelemetryRecord[];
+let started: string[];
+
+beforeEach(() => {
+  disposables = new DisposableStore();
+  telemetryEvents = [];
+  started = [];
+  const agentScope = makeAgentScopeContext({ agentId: 'main', agentScope: '', generation: 1 });
+  ix = createServices(disposables, {
+    additionalServices: (reg) => {
+      registerMachineExecutorTestServices(reg, (id) => ix.get(id as never), agentScope, {
+        telemetry: recordingTelemetry(telemetryEvents),
+        wireScope: 'wire/tool-scheduling',
+      });
+    },
+    strict: true,
+  });
+  registerLoopControl(agentScope.agentContext, stubLoopWithHooks(), () => ({
+    nextTurnId: 0,
+    cancelledTurnIds: [],
+  }));
+  harness = createMachineExecutorHarness({ ix, agentContext: agentScope.agentContext });
+  executor = harness.executor;
+});
+
+afterEach(() => {
+  harness.dispose();
+  disposables.dispose();
+});
+
+interface ControlledTool {
+  readonly tool: ExecutableTool;
+  resolve(): void;
+  fail(error: unknown): void;
+}
+
+function controlled(name: string, accesses: ToolAccesses): ControlledTool {
+  let release!: () => void;
+  let fail!: (error: unknown) => void;
+  const gate = new Promise<void>((resolve, reject) => {
+    release = resolve;
+    fail = reject;
+  });
+  const tool: ExecutableTool<Record<string, unknown>> = {
+    name,
+    description: 'Controlled access tool.',
+    parameters: { type: 'object', additionalProperties: true },
+    resolveExecution: (): ToolExecution => ({
+      approvalRule: name,
+      accesses,
+      execute: async (): Promise<ExecutableToolResult> => {
+        started.push(name);
+        await gate;
+        return { output: name };
+      },
+    }),
+  };
+  return { tool, resolve: release, fail };
+}
+
+function startBatch(tools: readonly ControlledTool[]): Promise<ToolResult[]> {
+  const calls: ToolCall[] = tools.map(({ tool }, index) => ({
+    type: 'function',
+    id: `call_${index}_${tool.name}`,
+    name: tool.name,
+    arguments: '{}',
+  }));
+  for (const { tool } of tools) harness.registry.register(tool);
+  return (async () => {
+    const results: ToolResult[] = [];
+    for await (const item of executor.execute(calls, {
+      turnId: 0,
+      signal: new AbortController().signal,
+    })) {
+      results.push(item.result);
+    }
+    return results;
+  })();
+}
+
+async function waitOneMacrotask(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe('tool execution scheduling', () => {
   it('starts read accesses on the same path concurrently', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const first = makeControlledTask('first', readPath('/repo/a.ts'), started);
-    const second = makeControlledTask('second', readPath('/repo/a.ts'), started);
+    const first = controlled('first', ToolAccesses.readFile('/repo/a.ts'));
+    const second = controlled('second', ToolAccesses.readFile('/repo/a.ts'));
 
-    scheduler.add(first.task);
-    scheduler.add(second.task);
-
+    const done = startBatch([first, second]);
+    await waitOneMacrotask();
     expect(started).toEqual(['first', 'second']);
+
     second.resolve();
     first.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['first', 'second']);
+    await done;
   });
 
   it('waits when read and write accesses intersect', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const writer = makeControlledTask('writer', writePath('/repo/a.ts'), started);
-    const reader = makeControlledTask('reader', readPath('/repo/a.ts'), started);
+    const writer = controlled('writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const reader = controlled('reader', ToolAccesses.readFile('/repo/a.ts'));
 
-    scheduler.add(writer.task);
-    scheduler.add(reader.task);
+    const done = startBatch([writer, reader]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['writer']);
+
     writer.resolve();
     await waitOneMacrotask();
     expect(started).toEqual(['writer', 'reader']);
 
     reader.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['writer', 'reader']);
+    await done;
   });
 
   it('serializes write accesses on the same path', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const firstWriter = makeControlledTask('first-writer', writePath('/repo/a.ts'), started);
-    const secondWriter = makeControlledTask('second-writer', writePath('/repo/a.ts'), started);
+    const firstWriter = controlled('first-writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const secondWriter = controlled('second-writer', ToolAccesses.writeFile('/repo/a.ts'));
 
-    scheduler.add(firstWriter.task);
-    scheduler.add(secondWriter.task);
+    const done = startBatch([firstWriter, secondWriter]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['first-writer']);
+
     firstWriter.resolve();
     await waitOneMacrotask();
     expect(started).toEqual(['first-writer', 'second-writer']);
 
     secondWriter.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['first-writer', 'second-writer']);
+    await done;
   });
 
   it('serializes path accesses that differ only by case', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const writer = makeControlledTask('writer', writePath('C:\\Repo\\a.ts'), started);
-    const reader = makeControlledTask('reader', readPath('c:/repo/A.ts'), started);
+    const writer = controlled('writer', ToolAccesses.writeFile('C:\\Repo\\a.ts'));
+    const reader = controlled('reader', ToolAccesses.readFile('c:/repo/A.ts'));
 
-    scheduler.add(writer.task);
-    scheduler.add(reader.task);
+    const done = startBatch([writer, reader]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['writer']);
+
     writer.resolve();
     await waitOneMacrotask();
     expect(started).toEqual(['writer', 'reader']);
 
     reader.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['writer', 'reader']);
+    await done;
   });
 
   it('does not block non-intersecting path accesses', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const writer = makeControlledTask('writer', writePath('/repo/a.ts'), started);
-    const reader = makeControlledTask('reader', readPath('/repo/b.ts'), started);
+    const writer = controlled('writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const reader = controlled('reader', ToolAccesses.readFile('/repo/b.ts'));
 
-    scheduler.add(writer.task);
-    scheduler.add(reader.task);
-
+    const done = startBatch([writer, reader]);
+    await waitOneMacrotask();
     expect(started).toEqual(['writer', 'reader']);
+
     reader.resolve();
     writer.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['writer', 'reader']);
+    await done;
   });
 
   it('treats recursive path accesses as covering descendants', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const treeReader = makeControlledTask('tree-reader', readTree('/repo/src'), started);
-    const childWriter = makeControlledTask('child-writer', writePath('/repo/src/a.ts'), started);
+    const treeReader = controlled('tree-reader', ToolAccesses.readTree('/repo/src'));
+    const childWriter = controlled('child-writer', ToolAccesses.writeFile('/repo/src/a.ts'));
 
-    scheduler.add(treeReader.task);
-    scheduler.add(childWriter.task);
+    const done = startBatch([treeReader, childWriter]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['tree-reader']);
+
     treeReader.resolve();
     await waitOneMacrotask();
     expect(started).toEqual(['tree-reader', 'child-writer']);
 
     childWriter.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['tree-reader', 'child-writer']);
+    await done;
   });
 
-  it('releases conflicting accesses when a task result rejects', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const writer = makeControlledTask('writer', writePath('/repo/a.ts'), started);
-    const reader = makeControlledTask('reader', readPath('/repo/a.ts'), started);
+  it('releases conflicting accesses when a tool fails', async () => {
+    const writer = controlled('writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const reader = controlled('reader', ToolAccesses.readFile('/repo/a.ts'));
 
-    scheduler.add(writer.task);
-    scheduler.add(reader.task);
+    const done = startBatch([writer, reader]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['writer']);
-    writer.reject(new Error('boom'));
+
+    writer.fail(new Error('boom'));
     await waitOneMacrotask();
     expect(started).toEqual(['writer', 'reader']);
 
     reader.resolve();
-    await scheduler.allSettled();
+    const results = await done;
+    expect(results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ output: 'Tool "writer" failed: boom', isError: true }),
+        expect.objectContaining({ output: 'reader' }),
+      ]),
+    );
   });
 
-  it('starts later independent accesses while an earlier task is queued', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const firstWriter = makeControlledTask('first-writer', writePath('/repo/a.ts'), started);
-    const secondWriter = makeControlledTask('second-writer', writePath('/repo/a.ts'), started);
-    const reader = makeControlledTask('reader', readPath('/repo/b.ts'), started);
+  it('starts later independent accesses while an earlier conflicting call is queued', async () => {
+    const firstWriter = controlled('first-writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const secondWriter = controlled('second-writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const reader = controlled('reader', ToolAccesses.readFile('/repo/b.ts'));
 
-    scheduler.add(firstWriter.task);
-    scheduler.add(secondWriter.task);
-    scheduler.add(reader.task);
+    const done = startBatch([firstWriter, secondWriter, reader]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['first-writer', 'reader']);
 
     reader.resolve();
@@ -163,23 +237,16 @@ describe('ToolScheduler', () => {
     expect(started).toEqual(['first-writer', 'reader', 'second-writer']);
 
     secondWriter.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['first-writer', 'second-writer', 'reader']);
+    await done;
   });
 
   it('does not start later tasks that conflict with queued accesses', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const writer = makeControlledTask('writer', writePath('/repo/a.ts'), started);
-    const exclusive = makeControlledTask('exclusive', ToolAccesses.all(), started);
-    const reader = makeControlledTask('reader', readPath('/repo/b.ts'), started);
+    const writer = controlled('writer', ToolAccesses.writeFile('/repo/a.ts'));
+    const exclusive = controlled('exclusive', ToolAccesses.all());
+    const reader = controlled('reader', ToolAccesses.readFile('/repo/b.ts'));
 
-    scheduler.add(writer.task);
-    scheduler.add(exclusive.task);
-    scheduler.add(reader.task);
+    const done = startBatch([writer, exclusive, reader]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['writer']);
 
     writer.resolve();
@@ -191,117 +258,22 @@ describe('ToolScheduler', () => {
     expect(started).toEqual(['writer', 'exclusive', 'reader']);
 
     reader.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['writer', 'exclusive', 'reader']);
+    await done;
   });
 
   it('serializes all-resource access against file access', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const reader = makeControlledTask('reader', readPath('/repo/a.ts'), started);
-    const exclusive = makeControlledTask('exclusive', ToolAccesses.all(), started);
+    const reader = controlled('reader', ToolAccesses.readFile('/repo/a.ts'));
+    const exclusive = controlled('exclusive', ToolAccesses.all());
 
-    scheduler.add(reader.task);
-    scheduler.add(exclusive.task);
+    const done = startBatch([reader, exclusive]);
     await waitOneMacrotask();
-
     expect(started).toEqual(['reader']);
+
     reader.resolve();
     await waitOneMacrotask();
     expect(started).toEqual(['reader', 'exclusive']);
 
     exclusive.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['reader', 'exclusive']);
-  });
-
-  it('dispatches submitted results in provider order', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const first = makeControlledTask('first', ToolAccesses.none(), started);
-    const second = makeControlledTask('second', ToolAccesses.none(), started);
-
-    scheduler.add(first.task);
-    scheduler.add(second.task);
-    second.resolve();
-    first.resolve();
-    await scheduler.collectResults();
-
-    expect(drained).toEqual(['first', 'second']);
+    await done;
   });
 });
-
-interface ControlledTask {
-  readonly task: ToolCallTask<string>;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-}
-
-function makeScheduler(drained: string[]): {
-  readonly add: (task: ToolCallTask<string>) => void;
-  readonly collectResults: () => Promise<void>;
-  readonly allSettled: () => Promise<void>;
-} {
-  const scheduler = new ToolScheduler<string>();
-  const results: Array<Promise<string>> = [];
-  return {
-    add: (task) => {
-      results.push(scheduler.add(task));
-    },
-    collectResults: async () => {
-      for (const task of results) {
-        drained.push(await task);
-      }
-    },
-    allSettled: async () => {
-      await Promise.allSettled(results);
-    },
-  };
-}
-
-function makeControlledTask(
-  name: string,
-  accesses: ToolAccesses,
-  startedNames: string[],
-): ControlledTask {
-  let resolveResult: (value: string) => void = () => {};
-  let rejectResult: (error: unknown) => void = () => {};
-  const result = new Promise<string>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
-  });
-
-  return {
-    task: {
-      accesses,
-      start: async () => {
-        startedNames.push(name);
-        return { result };
-      },
-    },
-    resolve: () => {
-      resolveResult(name);
-    },
-    reject: (error) => {
-      rejectResult(error);
-    },
-  };
-}
-
-function readPath(path: string): ToolAccesses {
-  return ToolAccesses.readFile(path);
-}
-
-function readTree(path: string): ToolAccesses {
-  return ToolAccesses.readTree(path);
-}
-
-function writePath(path: string): ToolAccesses {
-  return ToolAccesses.writeFile(path);
-}
-
-async function waitOneMacrotask(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}

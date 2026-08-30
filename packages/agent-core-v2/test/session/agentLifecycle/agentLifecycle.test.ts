@@ -97,7 +97,7 @@ import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { AgentTools, type AgentToolsRuntime, agentToolsRuntimeProvider } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
 import { permissionRulesAgentRuntimeProvider } from '#/actor/permissionRules/permissionRulesAgentRuntime';
-import type { ToolExecutorDomain } from '#/actor/toolExecutor/internal/domain';
+import { fireBeforeExecuteOf } from '../../actor/toolExecutor/stubs';
 import type { ResolvedToolExecutionHookContext } from '#/actor/toolExecutor/toolHooks';
 import type { LoopControl } from '#/actor/loop/internal/loop';
 import { AgentLoop, type LoopActivity, type LoopRuntime, type TurnEndedEvent, type TurnStartedEvent } from '#/actor/loop/loop';
@@ -754,7 +754,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
     const runtime: AgentToolsRuntime = svc.resolve(main, AgentTools);
-    const domain = (runtime as unknown as { domain: ToolExecutorDomain }).domain;
+    const fireBeforeExecute = fireBeforeExecuteOf(runtime);
     const makeCtx = (id: string): ResolvedToolExecutionHookContext => {
       const toolCall = {
         type: 'function' as const,
@@ -771,8 +771,8 @@ describe('AgentLifecycleService', () => {
         execution: { approvalRule: 'Read', execute: async () => ({ output: '' }) },
       };
     };
-    const first = await domain.pipeline.beforeExecuteBus.fireBeforeExecute(makeCtx('c1'));
-    const second = await domain.pipeline.beforeExecuteBus.fireBeforeExecute(makeCtx('c2'));
+    const first = await fireBeforeExecute(makeCtx('c1'));
+    const second = await fireBeforeExecute(makeCtx('c2'));
     expect(first).toBeUndefined();
     expect(second?.veto).toBeDefined();
   });

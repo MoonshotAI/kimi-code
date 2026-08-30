@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
@@ -8,6 +8,12 @@ import { type ToolCall } from '#/kosong/contract/message';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
+import { IGitService } from '#/app/git/git';
+import { IFlagService } from '#/app/flag/flag';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentHostService } from '#/agent/host/agentHost';
@@ -18,17 +24,17 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/actor/toolExecutor/toolHooks';
-import { ToolDedupePolicy, __testing as toolDedupeTesting, type ToolDedupeResult } from '#/actor/toolExecutor/internal/toolDedupe';
-import { ToolExecutorPipeline } from '#/actor/toolExecutor/internal/executor';
+import { __testing as toolDedupeTesting, type ToolDedupeResult } from '#/actor/toolExecutor/internal/toolDedupe';
 import type { ToolExecutionResult } from '#/actor/toolExecutor/toolExecutor';
-import type { AgentRuntimeContext } from '#/actor/agentRuntime';
-import { Event } from '#/_base/event';
-import { IEventDispatcher } from '#/state/eventDispatcher';
-import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../../agent/loop/stubs';
-import { stubToolExecutorEvents } from './stubs';
+import {
+  createMachineExecutorHarness,
+  stubExecutorHarnessLifecycle,
+  stubSessionMcpHandle,
+  stubToolContributionSource,
+} from './stubs';
 import { registerToolResultTruncationServices } from '../../agent/toolResultTruncation/stubs';
 import { registerTestAgentWireServices, stubAgentHostService } from '../../wire/stubs';
 import { createTestAgent, execEnvServices, telemetryServices } from '../../harness';
@@ -37,20 +43,6 @@ import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
 const ZERO_USAGE = emptyUsage();
-
-class TestToolCatalog {
-  private readonly tools = new Map<string, ExecutableTool>();
-  register(tool: ExecutableTool): { dispose: () => void } {
-    this.tools.set(tool.name, tool);
-    return { dispose: () => this.tools.delete(tool.name) };
-  }
-  resolve(name: string): ExecutableTool | undefined {
-    return this.tools.get(name);
-  }
-  list(): readonly { readonly name: string; readonly source: 'builtin' }[] {
-    return [...this.tools.values()].map((tool) => ({ name: tool.name, source: 'builtin' as const }));
-  }
-}
 
 let disposables: DisposableStore;
 let telemetryEvents: TelemetryRecord[];
@@ -68,11 +60,19 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
+interface HarnessExecutor {
+  execute(
+    calls: ToolCall[],
+    options: { readonly turnId: number; readonly signal: AbortSignal; readonly trace?: { readonly traceId?: string } },
+  ): AsyncIterable<ToolExecutionResult>;
+  readonly didExecuteHooks: { run(context: ToolDidExecuteContext): Promise<void> };
+}
+
 interface Harness {
   readonly ix: TestInstantiationService;
   readonly loop: LoopControl;
-  readonly executor: ToolExecutorPipeline;
-  readonly registry: TestToolCatalog;
+  readonly executor: HarnessExecutor;
+  readonly registry: { register(tool: ExecutableTool): { dispose(): void } };
   readonly fireBefore: (
     ctx: ResolvedToolExecutionHookContext,
   ) => Promise<BeforeExecuteDecision | undefined>;
@@ -80,10 +80,8 @@ interface Harness {
 
 function createHarness(
   telemetry: ITelemetryService = recordingTelemetry(telemetryEvents),
-  options: { readonly executorEvents?: boolean } = {},
 ): Harness {
   const loop = stubLoopWithHooks();
-  const events = options.executorEvents === true ? stubToolExecutorEvents() : undefined;
   const agentContext = stubAgentContext('main', 0);
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
@@ -113,56 +111,37 @@ function createHarness(
         homeDir: homedir,
       } as unknown as IBootstrapService);
       reg.defineInstance(IAgentStateService, new AgentStateService());
+      reg.defineInstance(IAgentLifecycleService, stubExecutorHarnessLifecycle());
+      reg.defineInstance(ISessionMcpHandle, stubSessionMcpHandle());
+      reg.defineInstance(IAgentToolContributionSource, stubToolContributionSource());
+      reg.defineInstance(IFlagService, {
+        _serviceBrand: undefined,
+        enabled: () => false,
+      } as unknown as IFlagService);
+      reg.defineInstance(ISessionWorkspaceContext, {} as unknown as ISessionWorkspaceContext);
+      reg.defineInstance(IGitService, {} as unknown as IGitService);
       registerToolResultTruncationServices(reg);
       registerLogServices(reg);
     },
     strict: true,
   });
-  const context: AgentRuntimeContext<unknown> = {
-    agent: agentContext,
-    get: (id) => ix.get(id as never),
-    getState: () => {
-      throw new Error('no durable state');
-    },
-    getLogicState: () => {
-      throw new Error('no logic state');
-    },
-    dispatch: (event) => ix.get(IEventDispatcher).dispatch(event),
-    send: () => {},
-    onDidChange: Event.None,
-  };
-  const registry = new TestToolCatalog();
-  const executor = new ToolExecutorPipeline(context, registry as never);
-  const dedupe = new ToolDedupePolicy(context, executor);
-  loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
-    dedupe.beginStep(ctx.turnId, ctx.step);
-    await next();
-  });
-  loop.hooks.onDidFinishStep.register('toolDedupe', async (_ctx, next) => {
-    dedupe.endStep();
-    await next();
-  });
-  if (events !== undefined) {
-    events.beforeBus.register('toolDedupe', dedupe.checkExecution, 'postPolicy');
-    events.didExecuteSlot.register('toolDedupe', dedupe.finalizeExecution);
-  } else {
-    executor.beforeExecuteBus.register('toolDedupe', dedupe.checkExecution, 'postPolicy');
-    executor.didExecuteHooks.register('toolDedupe', dedupe.finalizeExecution);
-  }
+  const machineHarness = createMachineExecutorHarness({ ix, agentContext, realDedupe: true });
+  disposables.add(toDisposable(() => machineHarness.dispose()));
   return {
     ix,
     loop,
-    executor:
-      events !== undefined
-        ? ({ didExecuteHooks: events.didExecuteSlot } as unknown as ToolExecutorPipeline)
-        : executor,
-    registry,
-    fireBefore: (ctx) => {
-      if (events === undefined) {
-        throw new Error('createHarness was not built with executorEvents');
-      }
-      return events.fireBeforeExecute(ctx);
+    executor: {
+      execute: (calls, options) =>
+        machineHarness.executor.execute(
+          calls,
+          options as Parameters<typeof machineHarness.executor.execute>[1],
+        ),
+      get didExecuteHooks() {
+        return machineHarness.machine().didHooks.hooks;
+      },
     },
+    registry: machineHarness.registry,
+    fireBefore: (ctx) => machineHarness.machine().vetoBus.fireBeforeExecute(ctx),
   };
 }
 
@@ -305,7 +284,7 @@ function didCtx(
 describe('AgentToolDedupeService', () => {
   describe('same-step dedupe', () => {
     it('returns a placeholder synchronously and resolves to the real result on finalize', async () => {
-      const h = createHarness(undefined, { executorEvents: true });
+      const h = createHarness();
       await beforeStep(h, 1, 1);
 
       const b1 = await h.fireBefore(willCtx('c1', 'Read', { path: '/a' }));
@@ -324,7 +303,7 @@ describe('AgentToolDedupeService', () => {
     });
 
     it('propagates error results to same-step dups', async () => {
-      const h = createHarness(undefined, { executorEvents: true });
+      const h = createHarness();
       await beforeStep(h, 1, 1);
 
       await h.fireBefore(willCtx('c1', 'Bash', { cmd: 'x' }));
@@ -548,7 +527,7 @@ describe('AgentToolDedupeService', () => {
 
   describe('key canonicalization', () => {
     it('treats argument objects with different key order as the same call', async () => {
-      const h = createHarness(undefined, { executorEvents: true });
+      const h = createHarness();
       await beforeStep(h, 1, 1);
 
       const b1 = await h.fireBefore(willCtx('c1', 'Read', { a: 1, b: 2 }));
@@ -567,7 +546,7 @@ describe('AgentToolDedupeService', () => {
 
   describe('arg rewrite between checkSameStep and finalize', () => {
     it('resolves the dup deferred even when the original call args are rewritten before finalize', async () => {
-      const h = createHarness(undefined, { executorEvents: true });
+      const h = createHarness();
       await beforeStep(h, 1, 1);
 
       const b1 = await h.fireBefore(willCtx('c1', 'Read', { path: '/a' }));
@@ -594,7 +573,7 @@ describe('AgentToolDedupeService', () => {
 
   describe('beginStep cleanup', () => {
     it('resolves leaked deferreds from a prior aborted step with an error result', async () => {
-      const h = createHarness(undefined, { executorEvents: true });
+      const h = createHarness();
       await beforeStep(h, 1, 1);
       const b1 = await h.fireBefore(willCtx('leaked', 'Read', { p: 1 }));
       expect(b1).toBeUndefined();
@@ -995,7 +974,7 @@ describe('AgentToolDedupeService', () => {
     });
 
     it('does not double-register a call that already went through onBeforeExecuteTool', async () => {
-      const h = createHarness(undefined, { executorEvents: true });
+      const h = createHarness();
       for (let i = 0; i < 2; i += 1) {
         await beforeStep(h, 1, i + 1);
         const callId = `c${String(i)}`;
