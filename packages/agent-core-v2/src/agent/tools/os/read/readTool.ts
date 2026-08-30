@@ -2,7 +2,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { type IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { ISessionSkillCatalog } from '#/actor/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,

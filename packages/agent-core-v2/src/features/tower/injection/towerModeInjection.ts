@@ -1,7 +1,7 @@
 import { Service } from '#/_base/di/service';
-import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ReminderRuntime } from '#/actor/reminder/reminderAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import TOWER_MODE_EXIT_REMINDER from './tower-mode-exit-reminder.md?raw';

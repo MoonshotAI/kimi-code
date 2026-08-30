@@ -9,7 +9,7 @@ import { type IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeCon
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
@@ -25,7 +25,7 @@ import {
   type TelemetryRecord,
 } from '../../../app/telemetry/stubs';
 
-import { stubPermissionModeRuntime } from '../../permissionMode/stubs';
+import { stubPermissionModeRuntime } from '../../../actor/permissionMode/stubs';
 
 const ACTIVE_PLAN: NonNullable<PlanData> = {
   id: 'test-plan',

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 

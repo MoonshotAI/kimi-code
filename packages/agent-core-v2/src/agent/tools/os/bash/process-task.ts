@@ -10,7 +10,7 @@ import type {
   AgentTaskSink,
   AgentTaskSettlement,
   NohupTaskRecovery,
-} from '#/features/task/types';
+} from '#/actor/task/types';
 
 export interface ProcessTaskInfo extends AgentTaskInfoBase {
   readonly kind: 'process';
@@ -20,7 +20,7 @@ export interface ProcessTaskInfo extends AgentTaskInfoBase {
   readonly nohup?: NohupTaskRecovery;
 }
 
-declare module '#/features/task/types' {
+declare module '#/actor/task/types' {
   interface AgentTaskInfoByKind {
     readonly process: ProcessTaskInfo;
   }

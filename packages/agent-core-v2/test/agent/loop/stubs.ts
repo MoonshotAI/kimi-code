@@ -1,12 +1,12 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
-import type { LoopControl, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/features/loop/internal/loop';
-import type { StepRequest } from '#/features/loop/internal/stepRequest';
-import { StepRequestQueue, type StepRequestBatch } from '#/features/loop/internal/stepRequestQueue';
-import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { stubToolExecutorEvents } from '../../features/toolExecutor/stubs';
+import type { LoopControl, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, Step, Turn, TurnResult } from '#/actor/loop/internal/loop';
+import type { StepRequest } from '#/actor/loop/internal/stepRequest';
+import { StepRequestQueue, type StepRequestBatch } from '#/actor/loop/internal/stepRequestQueue';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
+import { stubToolExecutorEvents } from '../../actor/toolExecutor/stubs';
 import { OrderedHookSlot } from '#/hooks';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 

@@ -1,7 +1,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { type Event, type IWaitUntil } from '#/_base/event';
-import type { BindAgentInput } from '#/features/profile/profile';
+import type { BindAgentInput } from '#/actor/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type SessionCreateSource = 'startup' | 'resume' | 'fork';

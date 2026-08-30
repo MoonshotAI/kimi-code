@@ -68,21 +68,21 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
-import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
-import type { TurnEnded } from '@moonshot-ai/agent-core-v2/features/loop/turnOps';
+import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/actor/goal/goalOps';
+import type { TurnEnded } from '@moonshot-ai/agent-core-v2/actor/loop/turnOps';
 import type {
   AssistantDelta,
   ThinkingDelta,
   ToolCallDelta,
-} from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/features/loop/internal/stepRetry';
+} from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/actor/loop/internal/stepRetry';
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   ToolCallStarted,
   ToolProgress,
   ToolResultEvent,
-} from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
+} from '@moonshot-ai/agent-core-v2/actor/toolExecutor/toolExecutorEvents';
 import { resolve } from 'pathe';
 
 import {

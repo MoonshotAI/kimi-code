@@ -1,10 +1,10 @@
-import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
-} from '#/features/prompt/promptMetadataText';
+} from '#/actor/prompt/promptMetadataText';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

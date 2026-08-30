@@ -1,6 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { WirePermissionMode } from '#/features/permissionMode/permissionModeOps';
+import type { WirePermissionMode } from '#/actor/permissionMode/permissionModeOps';
 
 export interface ISessionPermissionModeService {
   readonly _serviceBrand: undefined;

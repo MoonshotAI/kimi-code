@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
 import type {
   BundledSkillActivation,
   CompactionSummaryOrigin,
@@ -17,15 +17,15 @@ import type {
   SystemTriggerOrigin,
   TaskOrigin,
   UserPromptOrigin,
-} from '@moonshot-ai/agent-core-v2/features/contextMemory/types';
+} from '@moonshot-ai/agent-core-v2/actor/contextMemory/types';
 import { messageContentSchema } from './message';
 import type { HookResultPayload } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlockedPayload,
   CompactionCompletedPayload,
   CompactionStartedPayload,
-} from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionEvents';
-import type { CompactionResult } from '@moonshot-ai/agent-core-v2/features/fullCompaction/types';
+} from '@moonshot-ai/agent-core-v2/actor/fullCompaction/fullCompactionEvents';
+import type { CompactionResult } from '@moonshot-ai/agent-core-v2/actor/fullCompaction/types';
 import type {
   GoalActor,
   GoalBudgetLimits,
@@ -44,7 +44,7 @@ import type {
   TurnStepCompletedPayload,
   TurnStepInterruptedPayload,
   TurnStepStartedPayload,
-} from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
+} from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
 import type {
   McpServerStatusEventPayload,
   McpServerStatusPayload,
@@ -52,8 +52,8 @@ import type {
   ToolListUpdatedReason,
 } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
-import type { WarningIssuedPayload as WarningEvent } from '@moonshot-ai/agent-core-v2/features/profile/profileOps';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/actor/toolExecutor/permissionTypes';
+import type { WarningIssuedPayload as WarningEvent } from '@moonshot-ai/agent-core-v2/actor/profile/profileOps';
 import type { PluginCommandActivatedPayload } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type {
   ShellCompletedPayload,
@@ -61,13 +61,13 @@ import type {
   ShellStartedPayload,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 
-import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/features/loop/internal/stepRetry';
-import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/features/task/types';
+import type { TurnStepRetryingPayload } from '@moonshot-ai/agent-core-v2/actor/loop/internal/stepRetry';
+import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/actor/task/types';
 import type {
   ToolCallStartedPayload,
   ToolProgressPayload,
   ToolResultEventPayload,
-} from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
+} from '@moonshot-ai/agent-core-v2/actor/toolExecutor/toolExecutorEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';

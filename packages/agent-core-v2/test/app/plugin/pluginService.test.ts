@@ -17,7 +17,7 @@ import { PluginService } from '#/app/plugin/pluginService';
 import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
-import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
+import { ISkillDiscovery } from '#/actor/skill/catalog/skillDiscovery';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 
 import { stubBootstrap } from '../bootstrap/stubs';

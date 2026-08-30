@@ -4,7 +4,7 @@ import type { CollectionChange, CollectionView } from '#/_base/di/collection';
 import { Event } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
+import { AgentRuntimeSet } from '#/actor/agentRuntimeSet';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -14,20 +14,20 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { EventStateContribution, type EventStateContributionRecord } from '#/state/stateContribution';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
-import { AgentContextMemory, contextMemoryAgentRuntimeProvider } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
-import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
-import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
-import { AgentUsage, usageAgentRuntimeProvider } from '#/features/usage/usageAgentRuntime';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/actor/todo/todoAgentRuntime';
+import { AgentContextMemory, contextMemoryAgentRuntimeProvider } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/actor/cron/cronAgentRuntime';
+import { AgentGoal, goalAgentRuntimeProvider } from '#/actor/goal/goalAgentRuntime';
+import { AgentInteraction, interactionAgentRuntimeProvider } from '#/actor/interaction/interactionAgentRuntime';
+import { AgentUsage, usageAgentRuntimeProvider } from '#/actor/usage/usageAgentRuntime';
 import {
   AgentFullCompaction,
   fullCompactionAgentRuntimeProvider,
-} from '#/features/fullCompaction/fullCompactionAgentRuntime';
+} from '#/actor/fullCompaction/fullCompactionAgentRuntime';
 import {
   AgentPermissionRules,
   permissionRulesAgentRuntimeProvider,
-} from '#/features/permissionRules/permissionRulesAgentRuntime';
+} from '#/actor/permissionRules/permissionRulesAgentRuntime';
 import {
   IWireService,
   type IWireService as AgentWire,

@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '#/features/goal/types';
+import type { GoalSnapshot } from '#/actor/goal/types';
 
 import type { SessionStatusResponse } from './sessionProtocol';
 import { LifecycleScope } from '#/app/scopes';
@@ -12,10 +12,10 @@ import {
   type ServicesAccessor,
 } from '#/_base/di/instantiation';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
+import { AgentGoal } from '#/actor/goal/goalAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { ISessionPlanService } from '#/features/plan/sessionPlanService';
-import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile } from '#/actor/profile/profileAgentRuntime';
 import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarmAgentService';
 import { ISessionTowerService } from '#/features/tower/sessionTowerService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -29,7 +29,7 @@ import { IModelService } from '#/kosong/model/model';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
+import { AgentActivityView } from '#/actor/activityView/activityViewAgentRuntime';
 
 import { ISessionLegacyService } from './sessionLegacy';
 

@@ -14,15 +14,15 @@ import {
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
-import { AgentTask } from '#/features/task/taskAgentRuntime';
+import { AgentTask } from '#/actor/task/taskAgentRuntime';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { getLoopDurableState } from '#/features/loop/internal/access';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
+import { getLoopDurableState } from '#/actor/loop/internal/access';
 import {
   createAgentTaskPersistence,
   writeLegacyTaskFile,
   type TaskServiceTestManager,
-} from '../features/task/stubs';
+} from '../actor/task/stubs';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,

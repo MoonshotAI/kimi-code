@@ -1,10 +1,10 @@
-import type { AgentTaskInfo } from '#/features/task/types';
-import type { CompactionResult } from '#/features/fullCompaction/types';
-import type { AgentConfigData, AgentConfigUpdateData } from '#/features/profile/profile';
-import type { AgentContextData, ContextMessage } from '#/features/contextMemory/types';
-import type { GoalChange, GoalSnapshot } from '#/features/goal/types';
-import type { PermissionApprovalResultRecord } from '#/features/permissionRules/types';
-import type { PermissionData, PermissionMode } from '#/features/toolExecutor/permissionTypes';
+import type { AgentTaskInfo } from '#/actor/task/types';
+import type { CompactionResult } from '#/actor/fullCompaction/types';
+import type { AgentConfigData, AgentConfigUpdateData } from '#/actor/profile/profile';
+import type { AgentContextData, ContextMessage } from '#/actor/contextMemory/types';
+import type { GoalChange, GoalSnapshot } from '#/actor/goal/types';
+import type { PermissionApprovalResultRecord } from '#/actor/permissionRules/types';
+import type { PermissionData, PermissionMode } from '#/actor/toolExecutor/permissionTypes';
 import type { PlanData } from '#/features/plan/plan';
 import type { ToolInfo } from '#/tool/toolContract';
 import type { UsageStatus } from '#/agent/usage/usage';

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import type { DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
+import type { DurableAgentRuntimeParticipant } from '#/actor/agentRuntime';
 import type { ContentPart } from '#/kosong/contract/message';
 import { Event2, registerEvent2Class } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';

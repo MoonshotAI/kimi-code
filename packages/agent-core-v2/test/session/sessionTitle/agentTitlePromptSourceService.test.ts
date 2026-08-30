@@ -2,17 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { lifecycleWithPrompt, stubPromptRuntime } from '../../features/prompt/stubs';
-import type { PromptQueueSnapshot } from '#/features/prompt/prompt';
+import type { ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { lifecycleWithPrompt, stubPromptRuntime } from '../../actor/prompt/stubs';
+import type { PromptQueueSnapshot } from '#/actor/prompt/prompt';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
 
-import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
 
 const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 

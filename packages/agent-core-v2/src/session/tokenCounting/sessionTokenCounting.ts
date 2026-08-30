@@ -5,7 +5,7 @@ import type {
   TokenCountingRebaseInput,
   TokenCountingRequest,
   TokenCountingStrategy,
-} from '#/features/tokenCounting/tokenCounting';
+} from '#/actor/tokenCounting/tokenCounting';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import type { TokenUsage } from '#/kosong/contract/usage';

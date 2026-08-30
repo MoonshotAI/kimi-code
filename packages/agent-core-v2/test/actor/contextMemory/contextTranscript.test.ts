@@ -1,0 +1,540 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  applyContextCompactionRecord,
+  computeUndoCut,
+  isFullyUndoable,
+} from '#/actor/contextMemory/contextOps';
+import {
+  reduceContextTranscript,
+  type ContextTranscript,
+} from '#/actor/contextMemory/contextTranscript';
+import {
+  foldAppendMessage,
+  foldLoopEvent,
+  resetFold,
+  type LoopRecordedEvent,
+} from '#/actor/contextMemory/loopEventFold';
+import type { ContextMessage, PromptOrigin } from '#/actor/contextMemory/types';
+import type { WireRecord } from '#/wire/record';
+
+function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }],
+    toolCalls: [],
+    ...(origin === undefined ? {} : { origin }),
+  };
+}
+
+function assistantMessage(text: string): ContextMessage {
+  return { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] };
+}
+
+function appendMessage(message: ContextMessage): WireRecord {
+  return { type: 'context.append_message', message };
+}
+
+function loopEvent(event: LoopRecordedEvent): WireRecord {
+  return { type: 'context.append_loop_event', event };
+}
+
+function assistantStep(uuid: string, text: string): WireRecord[] {
+  return [
+    loopEvent({ type: 'step.begin', uuid }),
+    loopEvent({ type: 'content.part', stepUuid: uuid, part: { type: 'text', text } }),
+    loopEvent({ type: 'step.end', uuid }),
+  ];
+}
+
+function compaction(
+  summary: string,
+  compactedCount: number,
+  keptUserMessageCount?: number,
+  keptHeadUserMessageCount?: number,
+): WireRecord {
+  return {
+    type: 'context.apply_compaction',
+    summary,
+    contextSummary: `prefixed ${summary}`,
+    compactedCount,
+    tokensBefore: 1000,
+    tokensAfter: 100,
+    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
+    ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
+  };
+}
+
+function undo(count: number): WireRecord {
+  return { type: 'context.undo', count };
+}
+
+function texts(result: ContextTranscript): string[] {
+  return result.entries.map((m) =>
+    m.content.map((p) => (p.type === 'text' ? p.text : `[${p.type}]`)).join(''),
+  );
+}
+
+describe('reduceContextTranscript', () => {
+  it('builds the transcript from append_message and loop events', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'a1']);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(result.foldedLength).toBe(2);
+  });
+
+  it('compaction keeps the prefix and appends a user-role summary marker', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      compaction('SUM', 4),
+      appendMessage(userMessage('u3')),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
+    expect(result.entries[4]!.origin).toEqual({ kind: 'compaction_summary' });
+    expect(result.entries[4]!.role).toBe('user');
+    expect(result.foldedLength).toBe(4);
+  });
+
+  it('uses the recorded kept-user count for foldedLength when present', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      appendMessage(userMessage('u3')),
+      compaction('SUM', 3, 1),
+      appendMessage(userMessage('u4')),
+    ]);
+    expect(result.foldedLength).toBe(3);
+  });
+
+  it('accounts for the elision marker when the record kept a head segment', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s1', 'a1'),
+      compaction('SUM', 3, 2, 1),
+    ]);
+    expect(result.foldedLength).toBe(4);
+  });
+
+  it('carries the originating wire record time per entry', () => {
+    const result = reduceContextTranscript([
+      { type: 'context.append_message', message: userMessage('u1'), time: 100 },
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'st1' }, time: 200 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 'st1', toolCallId: 'c1', name: 'Bash' },
+        time: 210,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          toolCallId: 'c1',
+          result: { output: 'ok', isError: false },
+        },
+        time: 220,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'st1' }, time: 230 },
+      { type: 'context.append_message', message: userMessage('u2') },
+    ]);
+
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(result.times).toEqual([100, 200, 220, undefined]);
+  });
+
+  it('preserves the pre-compaction assistant reply after a later undo', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A')),
+      appendMessage(assistantMessage('reply A')),
+      compaction('summary text', 2, 1),
+      appendMessage(userMessage('message B')),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['message A', 'reply A', 'summary text']);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(result.foldedLength).toBe(2);
+  });
+
+  it('undo without compaction keeps the earlier exchange intact', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A')),
+      appendMessage(assistantMessage('reply A')),
+      appendMessage(userMessage('message B')),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['message A', 'reply A']);
+  });
+
+  it('removes a pre-anchor image compression reminder owned by the undone prompt', () => {
+    const result = reduceContextTranscript([
+      appendMessage(
+        userMessage('compressed image', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'prompt-1',
+        }),
+      ),
+      appendMessage({ ...userMessage('undo me', { kind: 'user' }), id: 'prompt-1' }),
+      appendMessage(assistantMessage('undone answer')),
+      undo(1),
+      appendMessage(userMessage('keep me', { kind: 'user' })),
+      appendMessage(assistantMessage('kept answer')),
+    ]);
+
+    expect(texts(result)).toEqual(['keep me', 'kept answer']);
+  });
+
+  it('undo stops at a compaction summary', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('old')),
+      compaction('SUM', 1, 1),
+      appendMessage(userMessage('recent')),
+      appendMessage(assistantMessage('answer')),
+      undo(2),
+    ]);
+    expect(texts(result)).toEqual(['old', 'SUM']);
+  });
+
+  it('clear keeps prior transcript entries but resets the folded view', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      { type: 'context.clear' },
+      appendMessage(userMessage('u3')),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'u2', 'u3']);
+    expect(result.foldedLength).toBe(1);
+  });
+
+  it('undo does not cross a clear floor', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      { type: 'context.clear' },
+      appendMessage(userMessage('u2')),
+      appendMessage(assistantMessage('a2')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['u1']);
+    expect(result.foldedLength).toBe(0);
+  });
+
+  it('folds tool calls and results from loop events', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'hi' } }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'call_1',
+        name: 'Bash',
+        args: { command: 'echo hi' },
+      }),
+      loopEvent({ type: 'tool.result', toolCallId: 'call_1', result: { output: 'hi' } }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(result.entries[1]!.toolCalls).toHaveLength(1);
+    expect(result.entries[1]!.toolCalls[0]!.id).toBe('call_1');
+    expect(result.entries[2]!.toolCallId).toBe('call_1');
+    expect(result.foldedLength).toBe(3);
+  });
+
+  it('drops an output-free assistant at step.end, mirroring the live fold', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: '' } }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user']);
+    expect(result.foldedLength).toBe(1);
+  });
+
+  it('drops a failed attempt left open when the retry begins', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({ type: 'content.part', stepUuid: 's2', part: { type: 'text', text: 'recovered' } }),
+      loopEvent({ type: 'step.end', uuid: 's2' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(texts(result)).toEqual(['q', 'recovered']);
+    expect(result.foldedLength).toBe(2);
+  });
+
+  it('keeps settled steps that carry any sendable output', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'think', think: 'real' } }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({
+        type: 'content.part',
+        stepUuid: 's2',
+        part: { type: 'think', think: '', encrypted: 'sig' },
+      }),
+      loopEvent({ type: 'step.end', uuid: 's2' }),
+      loopEvent({ type: 'step.begin', uuid: 's3' }),
+      loopEvent({ type: 'content.part', stepUuid: 's3', part: { type: 'think', think: '' } }),
+      loopEvent({ type: 'content.part', stepUuid: 's3', part: { type: 'text', text: 'answer' } }),
+      loopEvent({ type: 'step.end', uuid: 's3' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(result.foldedLength).toBe(4);
+  });
+});
+
+describe('live fold parity', () => {
+  function foldLive(records: WireRecord[]): readonly ContextMessage[] {
+    let state: readonly ContextMessage[] = [];
+    for (const record of records) {
+      switch (record.type) {
+        case 'context.append_message':
+          state = foldAppendMessage(state, record['message'] as ContextMessage);
+          break;
+        case 'context.append_loop_event':
+          state = foldLoopEvent(state, record['event'] as LoopRecordedEvent);
+          break;
+        case 'context.apply_compaction':
+          state = applyContextCompactionRecord(state, record);
+          break;
+        case 'context.undo': {
+          const count = record['count'] as number;
+          const cut = computeUndoCut(state, count);
+          if (isFullyUndoable(cut, count)) state = resetFold(state.slice(0, cut.cutIndex));
+          break;
+        }
+        case 'context.clear':
+          state = state.length === 0 ? state : resetFold([]);
+          break;
+      }
+    }
+    return state;
+  }
+
+  function comparable(messages: readonly ContextMessage[]): unknown {
+    return messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      toolCalls: m.toolCalls,
+      toolCallId: m.toolCallId,
+      isError: m.isError,
+      note: m.note,
+    }));
+  }
+
+  it('matches the live folded view message-for-message on a plain stream', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'a1' } }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'c1',
+        name: 'Bash',
+        args: { command: 'echo hi' },
+      }),
+      appendMessage(userMessage('inj', { kind: 'injection', variant: 'test' })),
+      loopEvent({
+        type: 'tool.result',
+        toolCallId: 'c1',
+        result: { output: 'hi', isError: false, note: '<system>note</system>' },
+      }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({ type: 'content.part', stepUuid: 's2', part: { type: 'think', think: '' } }),
+      loopEvent({ type: 'step.end', uuid: 's2' }),
+      loopEvent({ type: 'step.begin', uuid: 's3' }),
+      loopEvent({ type: 'step.begin', uuid: 's4' }),
+      loopEvent({ type: 'content.part', stepUuid: 's4', part: { type: 'text', text: 'recovered' } }),
+      loopEvent({ type: 'step.end', uuid: 's4' }),
+      appendMessage(userMessage('u2')),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(comparable(transcript.entries)).toEqual(comparable(live));
+    expect(transcript.entries.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+      'user',
+    ]);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('tracks the live context length across compaction', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      compaction('SUM', 4, 2),
+      appendMessage(userMessage('u3')),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live).toHaveLength(5);
+    expect(transcript.foldedLength).toBe(live.length);
+    expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
+  });
+
+  it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      compaction('SUM', 3, 1),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(texts(transcript)).toEqual(['u1', 'a1', 'SUM', 'a3']);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('closes a pending tool exchange when compaction lands mid-fold', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      loopEvent({ type: 'tool.call', stepUuid: 's2', toolCallId: 'c1', name: 'Bash' }),
+      compaction('SUM', 2, 1),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(transcript.entries.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    expect(transcript.entries[2]!.toolCallId).toBe('c1');
+    expect(transcript.entries[2]!.isError).toBe(true);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('keeps legacy compaction recovery on the pre-settlement count', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      loopEvent({ type: 'step.begin', uuid: 's2' }),
+      compaction('SUM', 1),
+      ...assistantStep('s3', 'a3'),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(live.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(live[2]!.partial).toBe(true);
+    expect(transcript.entries.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('tracks the live context length across clear and undo', () => {
+    const records: WireRecord[] = [
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      { type: 'context.clear' },
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      appendMessage(userMessage('u3')),
+      ...assistantStep('s3', 'a3'),
+      undo(1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(comparable(live)).toEqual(comparable(transcript.entries.slice(-2)));
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('removes injections owned by every removed prompt on multi-turn undo, matching the live view', () => {
+    const records: WireRecord[] = [
+      appendMessage(
+        userMessage('injA', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'p1',
+        }),
+      ),
+      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'p1' }),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(
+        userMessage('injB', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'p2',
+        }),
+      ),
+      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'p2' }),
+      ...assistantStep('s2', 'a2'),
+      undo(2),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(comparable(transcript.entries)).toEqual(comparable(live));
+    expect(transcript.entries).toHaveLength(0);
+    expect(transcript.foldedLength).toBe(live.length);
+  });
+
+  it('keeps the older prompt injection when the removed prompt reuses its id', () => {
+    const records: WireRecord[] = [
+      appendMessage(
+        userMessage('injA', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'shared',
+        }),
+      ),
+      appendMessage({ ...userMessage('u1', { kind: 'user' }), id: 'shared' }),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(
+        userMessage('injB', {
+          kind: 'injection',
+          variant: 'image_compression',
+          ownerPromptId: 'shared',
+        }),
+      ),
+      appendMessage({ ...userMessage('u2', { kind: 'user' }), id: 'shared' }),
+      ...assistantStep('s2', 'a2'),
+      undo(1),
+    ];
+    const live = foldLive(records);
+    const transcript = reduceContextTranscript(records);
+    expect(texts(transcript)).toEqual(['injA', 'u1', 'a1']);
+    expect(comparable(transcript.entries)).toEqual(comparable(live));
+    expect(transcript.foldedLength).toBe(3);
+  });
+
+  it('keeps injections not owned by any removed prompt across undo', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('note', { kind: 'injection', variant: 'test' })),
+      appendMessage(userMessage('u1')),
+      appendMessage(assistantMessage('a1')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['note']);
+    expect(result.foldedLength).toBe(1);
+  });
+});

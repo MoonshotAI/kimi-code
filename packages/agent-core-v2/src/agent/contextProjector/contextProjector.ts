@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Message } from '#/kosong/contract/message';
 
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 
 declare const mediaStripSnapshotBrand: unique symbol;
 

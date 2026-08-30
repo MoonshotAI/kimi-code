@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentUndo } from '#/features/undo/undoAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentUndo } from '#/actor/undo/undoAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import '#/agent/tools/select-tools/selectToolsTool';

@@ -81,7 +81,8 @@ function scopeDirOf(file: string): ScopeDir | undefined {
 }
 
 function isFeaturesFile(file: string): boolean {
-  return relative(SRC, file).split(/[\\/]/)[0] === 'features';
+  const first = relative(SRC, file).split(/[\\/]/)[0];
+  return first === 'features' || first === 'actor';
 }
 
 const FEATURES_RECEIVER_SCOPE: Readonly<Record<string, ScopeDir>> = {

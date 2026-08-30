@@ -25,7 +25,7 @@ import {
   AgentRuntimeContributionPoint,
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
-} from '#/agent/runtime/agentRuntime';
+} from '#/actor/agentRuntime';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { Feature } from '#/features/feature';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';

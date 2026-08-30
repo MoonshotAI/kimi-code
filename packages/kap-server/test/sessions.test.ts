@@ -29,7 +29,7 @@ import {
   type ScopeSeed,
   IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
-import { TurnStarted } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
+import { TurnStarted } from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 

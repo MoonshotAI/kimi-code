@@ -17,7 +17,7 @@ import { SessionStateService } from '#/session/state/sessionStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 
-import { stubInteractionManagerFor, type InteractionManagerStub } from '../../features/interaction/stubs';
+import { stubInteractionManagerFor, type InteractionManagerStub } from '../../actor/interaction/stubs';
 const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const noopEventBus: IEventBus = {

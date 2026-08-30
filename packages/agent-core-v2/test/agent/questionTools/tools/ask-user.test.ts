@@ -11,7 +11,7 @@ import {
 } from '#/agent/tools/ask-user-question/ask-user-question';
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
+import type { TaskRuntime } from '#/actor/task/taskAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   ISessionQuestionService,

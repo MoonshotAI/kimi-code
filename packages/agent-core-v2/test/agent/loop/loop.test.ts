@@ -7,22 +7,22 @@ import { AgentProfile, type ProfileRuntime } from '#/index';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import type { ModelRequester, ModelRequestTiming } from '#/kosong/model/modelRequester';
 import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
-import { getLoopControl } from '#/features/loop/internal/access';
-import type { LoopControl, Turn } from '#/features/loop/internal/loop';
-import { ContinuationStepRequest, MessageStepRequest } from '#/features/loop/internal/stepRequest';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { AgentGoal } from '#/actor/goal/goalAgentRuntime';
+import { getLoopControl } from '#/actor/loop/internal/access';
+import type { LoopControl, Turn } from '#/actor/loop/internal/loop';
+import { ContinuationStepRequest, MessageStepRequest } from '#/actor/loop/internal/stepRequest';
 import {
   AssistantDelta,
   ThinkingDelta,
   TurnStarted,
   TurnStepInterrupted,
   TurnStepStarted,
-} from '#/features/loop/turnEvents';
-import { TurnEnded } from '#/features/loop/turnOps';
-import { RetryStepRequest } from '#/features/prompt/internal/promptStepRequests';
+} from '#/actor/loop/turnEvents';
+import { TurnEnded } from '#/actor/loop/turnOps';
+import { RetryStepRequest } from '#/actor/prompt/internal/promptStepRequests';
 import type { ExecutableTool } from '#/tool/toolContract';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { IEventBus } from '#/app/event/eventBus';
 import { userCancellationReason } from '#/_base/utils/abort';
 

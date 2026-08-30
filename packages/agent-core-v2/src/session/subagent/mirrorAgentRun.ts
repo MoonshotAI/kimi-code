@@ -1,7 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { userCancellationReason } from '#/_base/utils/abort';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile } from '#/actor/profile/profileAgentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { isProviderRateLimitError } from '#/kosong/contract/errors';

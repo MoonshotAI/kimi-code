@@ -12,10 +12,10 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { reminderAgentRuntimeProvider, AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { AgentTask, taskAgentRuntimeProvider } from '#/features/task/taskAgentRuntime';
+import { reminderAgentRuntimeProvider, AgentReminder } from '#/actor/reminder/reminderAgentRuntime';
+import { AgentTask, taskAgentRuntimeProvider } from '#/actor/task/taskAgentRuntime';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
+import { AgentContextMemory, contextMemoryAgentRuntimeProvider, type ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
@@ -34,14 +34,14 @@ import { IInstantiationService, type ServicesAccessor } from '#/_base/di/instant
 import { IAgentToolContributionSource } from '#/agent/toolRegistry/toolContributionSourceService';
 import { getAgentToolContributions } from '#/agent/toolRegistry/toolContribution';
 import { makeHookRunner } from '../features/externalHooks/runner-stub';
-import { AgentProfile, profileAgentRuntimeProvider, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { type ProfileData } from '#/features/profile/profile';
+import { AgentProfile, profileAgentRuntimeProvider, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
+import { type ProfileData } from '#/actor/profile/profile';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
-import type { LoopControl } from '#/features/loop/internal/loop';
-import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
+import type { LoopControl } from '#/actor/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/actor/loop/internal/access';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';
@@ -79,7 +79,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   AgentPermissionMode,
   permissionModeAgentRuntimeProvider,
-} from '#/features/permissionMode/permissionModeAgentRuntime';
+} from '#/actor/permissionMode/permissionModeAgentRuntime';
 import { IAgentHostService, type AgentHost as RealAgentHost } from '#/agent/host/agentHost';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
@@ -140,39 +140,39 @@ import {
 } from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
-import { AgentTools, agentToolsRuntimeProvider, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { AgentPrompt, promptAgentRuntimeProvider } from '#/features/prompt/promptAgentRuntime';
+import { AgentTools, agentToolsRuntimeProvider, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
+import { AgentPrompt, promptAgentRuntimeProvider } from '#/actor/prompt/promptAgentRuntime';
 import {
   AgentFullCompaction,
   fullCompactionAgentRuntimeProvider,
-} from '#/features/fullCompaction/fullCompactionAgentRuntime';
-import { stubFullCompactionRuntime } from '../features/fullCompaction/stubs';
-import { AgentUndo, undoAgentRuntimeProvider } from '#/features/undo/undoAgentRuntime';
-import { stubUndoRuntime } from '../features/undo/stubs';
-import { stubToolExecutorEvents } from '../features/toolExecutor/stubs';
-import { stubPermissionModeRuntime } from '../features/permissionMode/stubs';
+} from '#/actor/fullCompaction/fullCompactionAgentRuntime';
+import { stubFullCompactionRuntime } from '../actor/fullCompaction/stubs';
+import { AgentUndo, undoAgentRuntimeProvider } from '#/actor/undo/undoAgentRuntime';
+import { stubUndoRuntime } from '../actor/undo/stubs';
+import { stubToolExecutorEvents } from '../actor/toolExecutor/stubs';
+import { stubPermissionModeRuntime } from '../actor/permissionMode/stubs';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
-import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
-import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
-import { AgentSkill, skillAgentRuntimeProvider } from '#/features/skill/skillAgentRuntime';
+import { AgentTodo, todoAgentRuntimeProvider } from '#/actor/todo/todoAgentRuntime';
+import { AgentInteraction, interactionAgentRuntimeProvider } from '#/actor/interaction/interactionAgentRuntime';
+import { AgentCron, cronAgentRuntimeProvider } from '#/actor/cron/cronAgentRuntime';
+import { AgentGoal, goalAgentRuntimeProvider } from '#/actor/goal/goalAgentRuntime';
+import { AgentSkill, skillAgentRuntimeProvider } from '#/actor/skill/skillAgentRuntime';
 import {
   AgentTokenCounting,
   tokenCountingAgentRuntimeProvider,
-} from '#/features/tokenCounting/tokenCountingAgentRuntime';
-import { AgentUsage, usageAgentRuntimeProvider } from '#/features/usage/usageAgentRuntime';
+} from '#/actor/tokenCounting/tokenCountingAgentRuntime';
+import { AgentUsage, usageAgentRuntimeProvider } from '#/actor/usage/usageAgentRuntime';
 import {
   AgentPermissionRules,
   permissionRulesAgentRuntimeProvider,
-} from '#/features/permissionRules/permissionRulesAgentRuntime';
+} from '#/actor/permissionRules/permissionRulesAgentRuntime';
 import {
   AgentLlmRequester,
   llmRequesterAgentRuntimeProvider,
-} from '#/features/llmRequester/llmRequesterAgentRuntime';
-import { AgentLoop } from '#/features/loop/loop';
-import { loopAgentRuntimeProvider } from '#/features/loop/loopAgentRuntime';
-import type { AgentRuntimeDefinitionRecord } from '#/agent/runtime/agentRuntime';
+} from '#/actor/llmRequester/llmRequesterAgentRuntime';
+import { AgentLoop } from '#/actor/loop/loop';
+import { loopAgentRuntimeProvider } from '#/actor/loop/loopAgentRuntime';
+import type { AgentRuntimeDefinitionRecord } from '#/actor/agentRuntime';
 const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 
 const signal = new AbortController().signal;

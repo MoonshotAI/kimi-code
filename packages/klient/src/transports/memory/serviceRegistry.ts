@@ -29,7 +29,7 @@ import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/s
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
-import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/features/skill/session/skillCatalog';
+import { ISessionSkillCatalog } from '@moonshot-ai/agent-core-v2/actor/skill/session/skillCatalog';
 import { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/sessionTitle/sessionTitle';
 import { ISessionPermissionModeService } from '@moonshot-ai/agent-core-v2/session/permissionMode/sessionPermissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
@@ -37,7 +37,7 @@ import { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/ru
 import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import { ISessionTaskView } from '@moonshot-ai/agent-core-v2/features/task/sessionTaskView';
+import { ISessionTaskView } from '@moonshot-ai/agent-core-v2/actor/task/sessionTaskView';
 import { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
 import { IMcpManagementService } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 

@@ -4,11 +4,11 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
 import { UserCancellationError } from '#/_base/utils/abort';
-import type { ResolvedToolExecutionHookContext } from '#/features/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/actor/toolExecutor/toolHooks';
 import type {
   PermissionMode,
   PermissionPolicyResult,
-} from '#/features/toolExecutor/permissionTypes';
+} from '#/actor/toolExecutor/permissionTypes';
 import { type IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import {
@@ -20,8 +20,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
-import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { AgentPermissionMode } from '#/actor/permissionMode/permissionModeAgentRuntime';
+import { AgentPermissionRules } from '#/actor/permissionRules/permissionRulesAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -34,8 +34,8 @@ import { ISessionContext, makeSessionContext } from '#/session/sessionContext/se
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import { stubPermissionModeRuntime } from '../../features/permissionMode/stubs';
-import { stubPermissionRulesRuntime } from '../../features/permissionRules/stubs';
+import { stubPermissionModeRuntime } from '../../actor/permissionMode/stubs';
+import { stubPermissionRulesRuntime } from '../../actor/permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const RETRY_GUIDANCE =

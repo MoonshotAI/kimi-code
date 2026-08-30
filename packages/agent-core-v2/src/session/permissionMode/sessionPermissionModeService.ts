@@ -1,11 +1,11 @@
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { toContractMode, toWireMode } from '#/features/permissionMode/internal/modeMapping';
+import { toContractMode, toWireMode } from '#/actor/permissionMode/internal/modeMapping';
 import {
   AgentPermissionMode,
   type PermissionModeRuntime,
-} from '#/features/permissionMode/permissionModeAgentRuntime';
-import type { WirePermissionMode } from '#/features/permissionMode/permissionModeOps';
+} from '#/actor/permissionMode/permissionModeAgentRuntime';
+import type { WirePermissionMode } from '#/actor/permissionMode/permissionModeOps';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import {
   IAgentLifecycleService,

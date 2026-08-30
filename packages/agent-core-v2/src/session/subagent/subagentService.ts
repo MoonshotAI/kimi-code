@@ -13,7 +13,7 @@ import {
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile } from '#/actor/profile/profileAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';

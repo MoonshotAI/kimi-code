@@ -2,12 +2,12 @@ import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/co
 import { type TokenUsage } from '#/kosong/contract/usage';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextMessage, PromptOrigin } from '#/features/contextMemory/types';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage, PromptOrigin } from '#/actor/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { getLoopControl } from '#/features/loop/internal/access';
-import type { Turn, TurnResult } from '#/features/loop/internal/loop';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
+import { getLoopControl } from '#/actor/loop/internal/access';
+import type { Turn, TurnResult } from '#/actor/loop/internal/loop';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';

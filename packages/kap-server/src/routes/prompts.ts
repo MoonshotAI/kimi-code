@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/actor/prompt/promptAgentRuntime';
 
 import {
   IBootstrapService,

@@ -4,7 +4,7 @@ import {
   registerAgentToolService,
   type AgentToolFactoryContext,
 } from '#/agent/toolRegistry/toolContribution';
-import { SELECT_TOOLS_TOOL_NAME } from '#/features/toolExecutor/toolSelection';
+import { SELECT_TOOLS_TOOL_NAME } from '#/actor/toolExecutor/toolSelection';
 
 import {
   type ISelectToolsTool,

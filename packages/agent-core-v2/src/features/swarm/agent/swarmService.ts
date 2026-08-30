@@ -1,11 +1,11 @@
 import { Service } from '#/_base/di/service';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { activateReminderWhenReady } from '#/actor/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { TurnEnded } from '#/features/loop/turnOps';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { TurnEnded } from '#/actor/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/actor/toolExecutor/internal/executorActivation';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';

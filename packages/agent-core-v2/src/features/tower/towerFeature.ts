@@ -4,7 +4,7 @@ import type {
   AnyAgentTool,
 } from '#/agent/toolRegistry/toolContribution';
 import { IAgentHostService } from '#/agent/host/agentHost';
-import { AgentTask } from '#/features/task/taskAgentRuntime';
+import { AgentTask } from '#/actor/task/taskAgentRuntime';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';

@@ -20,19 +20,19 @@ import type {
   BackgroundRef,
   ToolCallRef,
   TurnPhase,
-} from '@moonshot-ai/agent-core-v2/features/activityView/types';
-import type { AgentContextData } from '@moonshot-ai/agent-core-v2/features/contextMemory/types';
+} from '@moonshot-ai/agent-core-v2/actor/activityView/types';
+import type { AgentContextData } from '@moonshot-ai/agent-core-v2/actor/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
-import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/actor/toolExecutor/permissionTypes';
+import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/actor/profile/profileAgentRuntime';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
+import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/actor/skill/skillAgentRuntime';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/actor/skill/catalog/types';
 import type { McpServerEntry } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import type {
   GlobalMcpServerConfig,
@@ -54,7 +54,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2/app/mcpRegistry/mcpRegistry';
 import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
 import type { McpServerConfigView } from '@moonshot-ai/agent-core-v2/mcpCore/configView';
-import type { FullCompactionBeginInput } from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionAgentRuntime';
+import type { FullCompactionBeginInput } from '@moonshot-ai/agent-core-v2/actor/fullCompaction/fullCompactionAgentRuntime';
 import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import type {
   CreateChildSessionOptions,
@@ -69,7 +69,7 @@ import type {
 import type {
   Interaction,
   InteractionResolution,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/actor/interaction/interaction';
 import type {
   QuestionAnswers,
   QuestionItem,
@@ -203,7 +203,7 @@ import {
   usageStatusSchema,
 } from '../src/contract/agent/schemas.js';
 import { sessionTaskEntrySchema } from '../src/contract/agent/services.js';
-import type { SessionTaskEntry } from '@moonshot-ai/agent-core-v2/features/task/sessionTaskView';
+import type { SessionTaskEntry } from '@moonshot-ai/agent-core-v2/actor/task/sessionTaskView';
 import {
   assistantDeltaEventSchema,
   compactionBlockedEventSchema,

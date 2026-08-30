@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { abortable } from '#/_base/utils/abort';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type {
   ExecutableTool,
   ExecutableToolContext,
@@ -15,7 +15,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import {
   AgentInteraction,
   type InteractionRuntime,
-} from '#/features/interaction/interactionAgentRuntime';
+} from '#/actor/interaction/interactionAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 

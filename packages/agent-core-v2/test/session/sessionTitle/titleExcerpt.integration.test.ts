@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { ContextAppendLoopEvent } from '#/features/contextMemory/contextEvents';
-import type { LoopRecordedEvent } from '#/features/contextMemory/loopEventFold';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { ContextAppendLoopEvent } from '#/actor/contextMemory/contextEvents';
+import type { LoopRecordedEvent } from '#/actor/contextMemory/loopEventFold';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';

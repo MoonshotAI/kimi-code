@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import type { DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
+import type { DurableAgentRuntimeParticipant } from '#/actor/agentRuntime';
 import type { Event2 } from '#/app/event/event2';
 import type { Hooks } from '#/hooks';
 

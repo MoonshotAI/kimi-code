@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '#/features/goal/types';
+import type { GoalSnapshot } from '#/actor/goal/types';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

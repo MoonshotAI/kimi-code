@@ -13,50 +13,50 @@ import type {
   AgentRuntimeDefinition,
   AgentRuntimeSnapshot,
   RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
+} from '#/actor/agentRuntime';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { getConfigSectionContributions } from '#/app/config/configSectionContributions';
 import { Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
-import type { AgentTaskInfo } from '#/features/task/types';
+import type { AgentTaskInfo } from '#/actor/task/types';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import '#/features/reminder/reminderFeature';
+import '#/actor/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { AgentCron } from '#/features/cron/cronAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { AgentCron } from '#/actor/cron/cronAgentRuntime';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { AgentGoal } from '#/features/goal/goalAgentRuntime';
-import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
-import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
+import { AgentGoal } from '#/actor/goal/goalAgentRuntime';
+import { IGoalDeadlineScheduler } from '#/actor/goal/goalDeadlineScheduler';
+import { GoalDeadlineSchedulerService } from '#/actor/goal/goalDeadlineSchedulerService';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
-import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/features/profile/profileContext';
-import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/actor/profile/profileContext';
+import { InMemorySkillCatalog } from '#/actor/skill/catalog/registry';
 import { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
-import type { PermissionData, PermissionMode } from '#/features/toolExecutor/permissionTypes';
-import { toContractMode, toWireMode } from '#/features/permissionMode/internal/modeMapping';
+import { ISessionSkillCatalogData } from '#/actor/skill/session/skillCatalogData';
+import type { PermissionData, PermissionMode } from '#/actor/toolExecutor/permissionTypes';
+import { toContractMode, toWireMode } from '#/actor/permissionMode/internal/modeMapping';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { type AgentConfigData } from '#/features/profile/profile';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { AgentFullCompaction } from '#/features/fullCompaction/fullCompactionAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
+import { type AgentConfigData } from '#/actor/profile/profile';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
+import { AgentFullCompaction } from '#/actor/fullCompaction/fullCompactionAgentRuntime';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
-import type { AgentContextData } from '#/features/contextMemory/types';
-import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
-import { AgentUndo, type UndoResult } from '#/features/undo/undoAgentRuntime';
-import { getLoopControl } from '#/features/loop/internal/access';
+import type { AgentContextData } from '#/actor/contextMemory/types';
+import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/actor/goal/types';
+import { AgentUndo, type UndoResult } from '#/actor/undo/undoAgentRuntime';
+import { getLoopControl } from '#/actor/loop/internal/access';
 import { IAgentHostService, type AgentHost } from '#/agent/host/agentHost';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
-import type { ProfileSetModelResult } from '#/features/profile/profile';
+import type { ProfileSetModelResult } from '#/actor/profile/profile';
 import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
@@ -65,8 +65,8 @@ import type { ExecutableTool, ToolDisclosure, ToolInfo, ToolSource } from '#/too
 import { AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
 
 import { type UsageStatus } from '#/agent/usage/usage';
-import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
-import { AgentSkill } from '#/features/skill/skillAgentRuntime';
+import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/actor/skill/skill';
+import { AgentSkill } from '#/actor/skill/skillAgentRuntime';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import {
@@ -89,15 +89,15 @@ import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
-import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
+import { summarizeSkill, type SkillCatalog } from '#/actor/skill/catalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
 import { type ThinkingEffort } from '#/kosong/contract/provider';
 import { type Tool as KosongTool } from '#/kosong/contract/tool';
 import { type TokenUsage } from '#/kosong/contract/usage';
-import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
-import { AgentTodo } from '#/features/todo/todoAgentRuntime';
-import { type TodoItem } from '#/features/todo/todoItem';
+import type { AgentLLMRequestSource } from '#/actor/llmRequester/llmRequester';
+import { AgentTodo } from '#/actor/todo/todoAgentRuntime';
+import { type TodoItem } from '#/actor/todo/todoItem';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -169,7 +169,7 @@ import {
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
-import { TurnPrompt } from '#/features/loop/turnOps';
+import { TurnPrompt } from '#/actor/loop/turnOps';
 import { IModelService, type ModelsSection } from '#/kosong/model/model';
 import {
   DEFAULT_MODEL_SECTION,
@@ -188,16 +188,16 @@ import {
   type ProvidersSection,
 } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
-import type { InteractionRequest } from '#/features/interaction/interaction';
+import type { InteractionRequest } from '#/actor/interaction/interaction';
 import {
   AgentInteraction,
   type InteractionRuntime,
-} from '#/features/interaction/interactionAgentRuntime';
+} from '#/actor/interaction/interactionAgentRuntime';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IHostClock } from '#/os/interface/hostClock';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { ISessionSkillCatalog } from '#/actor/skill/session/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarmAgentService';
 import { ISessionPlanService } from '#/features/plan/sessionPlanService';

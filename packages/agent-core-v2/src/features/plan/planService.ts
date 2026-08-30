@@ -6,21 +6,21 @@ import { Service } from '#/_base/di/service';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentPermissionMode } from '#/actor/permissionMode/permissionModeAgentRuntime';
+import { activateReminderWhenReady } from '#/actor/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/actor/toolExecutor/internal/executorActivation';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -29,7 +29,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import { ContextUndone } from '#/features/undo/undoEvents';
+import { ContextUndone } from '#/actor/undo/undoEvents';
 import type { ToolFileAccess } from '#/tool/toolContract';
 import {
   IAgentPlanService,

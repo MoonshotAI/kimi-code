@@ -141,8 +141,8 @@ export type {
 export type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
-export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+} from '@moonshot-ai/agent-core-v2/actor/interaction/interaction';
+export type { SkillSummary } from '@moonshot-ai/agent-core-v2/actor/skill/catalog/types';
 export type {
   GlobalMcpServerConfig,
   McpManagedServer,
@@ -155,4 +155,4 @@ export type {
   McpServerTestTarget,
 } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-export type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
+export type { PermissionMode } from '@moonshot-ai/agent-core-v2/actor/toolExecutor/permissionTypes';

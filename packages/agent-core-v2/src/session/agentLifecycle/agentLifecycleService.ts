@@ -13,13 +13,13 @@ import {
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ISessionEventBus } from '#/app/event/eventBus';
-import { DEFAULT_PERMISSION_MODE_SECTION } from '#/features/permissionMode/configSection';
-import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
-import { toContractMode } from '#/features/permissionMode/internal/modeMapping';
+import { DEFAULT_PERMISSION_MODE_SECTION } from '#/actor/permissionMode/configSection';
+import { AgentPermissionMode } from '#/actor/permissionMode/permissionModeAgentRuntime';
+import { toContractMode } from '#/actor/permissionMode/internal/modeMapping';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
+import type { PermissionMode } from '#/actor/toolExecutor/permissionTypes';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
-import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile } from '#/actor/profile/profileAgentRuntime';
 import { ISessionPlanService } from '#/features/plan/sessionPlanService';
 import { ISessionStaleGuardService } from '#/features/staleGuard/sessionStaleGuardService';
 import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarmAgentService';
@@ -40,10 +40,10 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { AgentLoop } from '#/features/loop/loop';
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { closeTrailingOpenToolExchange } from '#/features/contextMemory/openToolExchange';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { AgentLoop } from '#/actor/loop/loop';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { closeTrailingOpenToolExchange } from '#/actor/contextMemory/openToolExchange';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
 import {
   AgentRuntimeContributionPoint,
   AgentRuntimeOverrideContributionPoint,
@@ -53,9 +53,9 @@ import {
   type AgentRuntimeSnapshot,
   getAgentRuntimeDefinitionId,
   type RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
+} from '#/actor/agentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IActorHostService } from '#/lifecycle/actorHost';
+import { IActorHostService } from '#/actor/actorHost';
 
 import { ManagedAgent } from './managedAgent';
 import {

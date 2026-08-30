@@ -10,15 +10,15 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
+import { lifecycleWithToolExecutor } from '../../actor/toolExecutor/stubs';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolCall } from '#/kosong/contract/message';

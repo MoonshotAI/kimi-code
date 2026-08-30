@@ -35,25 +35,25 @@ import { ISessionPluginCommandService } from '@moonshot-ai/agent-core-v2/agent/p
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { ISessionSwarmAgentService } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmAgentService';
 import type { AgentContext } from '@moonshot-ai/agent-core-v2/agent/agentContext/agentContext';
-import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentLoop } from '@moonshot-ai/agent-core-v2/features/loop/loop';
-import { AgentProfile } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
-import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
-import { AgentFullCompaction } from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionAgentRuntime';
-import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
-import type { PromptSubmitResult } from '@moonshot-ai/agent-core-v2/features/prompt/prompt';
+import { AgentContextMemory } from '@moonshot-ai/agent-core-v2/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentLoop } from '@moonshot-ai/agent-core-v2/actor/loop/loop';
+import { AgentProfile } from '@moonshot-ai/agent-core-v2/actor/profile/profileAgentRuntime';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/actor/prompt/promptAgentRuntime';
+import { AgentFullCompaction } from '@moonshot-ai/agent-core-v2/actor/fullCompaction/fullCompactionAgentRuntime';
+import { AgentActivityView } from '@moonshot-ai/agent-core-v2/actor/activityView/activityViewAgentRuntime';
+import type { PromptSubmitResult } from '@moonshot-ai/agent-core-v2/actor/prompt/prompt';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import { AgentInteraction } from '@moonshot-ai/agent-core-v2/features/interaction/interactionAgentRuntime';
+import { AgentInteraction } from '@moonshot-ai/agent-core-v2/actor/interaction/interactionAgentRuntime';
 import type {
   InteractionKind,
   InteractionRequest,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
-import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/features/contextMemory/types';
+} from '@moonshot-ai/agent-core-v2/actor/interaction/interaction';
+import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/actor/contextMemory/types';
 import type {
   PromptWithSkillsInput,
   SkillActivationInput,
-} from '@moonshot-ai/agent-core-v2/features/skill/skill';
-import { AgentSkill } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
+} from '@moonshot-ai/agent-core-v2/actor/skill/skill';
+import { AgentSkill } from '@moonshot-ai/agent-core-v2/actor/skill/skillAgentRuntime';
 import {
   enqueueSessionInteraction,
   isSessionInteractionRecentlyResolved,
@@ -62,7 +62,7 @@ import {
   onSessionInteractionDidResolve,
   requestSessionInteraction,
   respondSessionInteraction,
-} from '@moonshot-ai/agent-core-v2/features/interaction/sessionInteractions';
+} from '@moonshot-ai/agent-core-v2/actor/interaction/sessionInteractions';
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '@moonshot-ai/agent-core-v2/app/telemetry/agentTelemetryContext';

@@ -1,15 +1,15 @@
 import { join } from 'node:path';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { activateReminderWhenReady } from '#/actor/reminder/internal/reminderActivation';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/actor/toolExecutor/internal/executorActivation';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';

@@ -1,14 +1,14 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
+import { activateToolExecutorWhenReady } from '#/actor/toolExecutor/internal/executorActivation';
 import type {
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';

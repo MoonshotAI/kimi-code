@@ -6,8 +6,8 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import { getLoopControl } from '#/features/loop/internal/access';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
+import { getLoopControl } from '#/actor/loop/internal/access';
 
 import { IRestGateway, IWSGateway } from './gateway';
 

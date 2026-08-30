@@ -9,7 +9,7 @@ import { AgentCacheProbeService } from '#/agent/usage/cacheProbeService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { AgentUsage } from '#/features/usage/usageAgentRuntime';
+import { AgentUsage } from '#/actor/usage/usageAgentRuntime';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';

@@ -5,10 +5,10 @@ import type {
   AgentRuntimeDefinition,
   AgentRuntimeSnapshot,
   RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
-import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
-import type { BindAgentInput } from '#/features/profile/profile';
-import type { AgentDomainContract } from '#/lifecycle/actorHost';
+} from '#/actor/agentRuntime';
+import type { PermissionMode } from '#/actor/toolExecutor/permissionTypes';
+import type { BindAgentInput } from '#/actor/profile/profile';
+import type { AgentDomainContract } from '#/actor/actorHost';
 
 export const MAIN_AGENT_ID = 'main';
 

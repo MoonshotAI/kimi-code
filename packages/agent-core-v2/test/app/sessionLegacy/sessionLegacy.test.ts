@@ -11,7 +11,7 @@ import {
 } from '#/agent/scopeContext/scopeContext';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { ISessionPlanService } from '#/features/plan/sessionPlanService';
-import { type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import { ISessionSwarmAgentService } from '#/features/swarm/session/sessionSwarmAgentService';
 import { ISessionTowerService } from '#/features/tower/sessionTowerService';
 import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
@@ -22,7 +22,7 @@ import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
+import { AgentActivityView } from '#/actor/activityView/activityViewAgentRuntime';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;

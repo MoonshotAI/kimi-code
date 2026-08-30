@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IAgentHostService, IEventBus } from '@moonshot-ai/agent-core-v2';
-import { ToolProgress } from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/actor/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';

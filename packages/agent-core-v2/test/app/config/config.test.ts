@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { type ResolvedAgentProfile } from '#/features/profile/profile';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
+import { type ResolvedAgentProfile } from '#/actor/profile/profile';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   Error2,
@@ -36,31 +36,31 @@ import {
 } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
-import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
-import '#/features/skill/catalog/configSection';
-import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
+import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/actor/cron/configSection';
+import '#/actor/skill/catalog/configSection';
+import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/actor/skill/catalog/configSection';
 import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
-} from '#/features/skill/catalog/configSection';
-import '#/features/permissionMode/configSection';
-import { DEFAULT_PERMISSION_MODE_SECTION } from '#/features/permissionMode/configSection';
+} from '#/actor/skill/catalog/configSection';
+import '#/actor/permissionMode/configSection';
+import { DEFAULT_PERMISSION_MODE_SECTION } from '#/actor/permissionMode/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
-import '#/features/tokenCounting/configSection';
+import '#/actor/tokenCounting/configSection';
 import {
   TOKEN_COUNTING_SECTION,
   TOKEN_COUNTING_STRATEGY_ENV,
   type TokenCountingConfig,
-} from '#/features/tokenCounting/configSection';
-import '#/features/loop/configSection';
+} from '#/actor/tokenCounting/configSection';
+import '#/actor/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
   LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
-} from '#/features/loop/configSection';
+} from '#/actor/loop/configSection';
 import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
@@ -75,8 +75,8 @@ import {
   resolveAgentTaskConfig,
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
-} from '#/features/task/configSection';
-import { applyPrintModeConfigDefaults } from '#/features/task/printDefaults';
+} from '#/actor/task/configSection';
+import { applyPrintModeConfigDefaults } from '#/actor/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,

@@ -1,8 +1,8 @@
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
-import type { ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ReminderRuntime } from '#/actor/reminder/reminderAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanFilePath } from '#/features/plan/plan';
 import { IAgentStateService } from '#/agent/state/agentState';

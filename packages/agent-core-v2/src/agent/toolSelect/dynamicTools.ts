@@ -1,4 +1,4 @@
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 
 export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
 

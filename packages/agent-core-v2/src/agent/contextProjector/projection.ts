@@ -1,7 +1,7 @@
 import { ErrorCodes, Error2 } from '#/errors';
-import { renderToolResultForModel } from '#/features/contextMemory/toolResultRender';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
+import { renderToolResultForModel } from '#/actor/contextMemory/toolResultRender';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { isVacuousContentPart } from '#/actor/contextMemory/vacuousContent';
 import type { ContentPart, Message } from '#/kosong/contract/message';
 
 export type ProjectionAnomaly =

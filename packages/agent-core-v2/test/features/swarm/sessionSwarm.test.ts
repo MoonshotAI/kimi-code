@@ -7,15 +7,15 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { type ProfileData } from '#/features/profile/profile';
-import type { LoopControl } from '#/features/loop/internal/loop';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
+import { type ProfileData } from '#/actor/profile/profile';
+import type { LoopControl } from '#/actor/loop/internal/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentHostService } from '#/agent/host/agentHost';
-import { registerLoopControl } from '#/features/loop/internal/access';
+import { registerLoopControl } from '#/actor/loop/internal/access';
 import {
   IAgentLifecycleService,
   type CreateAgentOptions,

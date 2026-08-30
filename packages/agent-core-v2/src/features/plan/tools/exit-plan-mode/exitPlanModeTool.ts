@@ -5,7 +5,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IAgentPlanService, PlanData } from '#/features/plan/plan';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { AgentPermissionMode, type PermissionModeRuntime } from '#/features/permissionMode/permissionModeAgentRuntime';
+import { AgentPermissionMode, type PermissionModeRuntime } from '#/actor/permissionMode/permissionModeAgentRuntime';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import DESCRIPTION from './exit-plan-mode.md?raw';

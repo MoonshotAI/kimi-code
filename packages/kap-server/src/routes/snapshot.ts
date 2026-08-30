@@ -8,7 +8,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
-import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/actor/prompt/promptAgentRuntime';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { ensureMainAgent } from '../transport/mainAgent';

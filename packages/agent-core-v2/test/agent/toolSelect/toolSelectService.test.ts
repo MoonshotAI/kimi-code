@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import { ContextSpliced } from '#/features/contextMemory/contextEvents';
-import { CompactionCompleted } from '#/features/fullCompaction/fullCompactionEvents';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
+import { ContextSpliced } from '#/actor/contextMemory/contextEvents';
+import { CompactionCompleted } from '#/actor/fullCompaction/fullCompactionEvents';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 

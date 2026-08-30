@@ -11,9 +11,9 @@ import {
   normalizeAgentProfile,
   type AgentProfile as CatalogAgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { type ProfileData } from '#/features/profile/profile';
+import { type ProfileData } from '#/actor/profile/profile';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { ISessionUserToolService } from '#/agent/userTool/sessionUserToolService';

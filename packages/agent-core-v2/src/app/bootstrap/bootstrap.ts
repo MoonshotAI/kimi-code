@@ -12,8 +12,8 @@ import {
   IFileSystemStorageService,
 } from '#/persistence/interface/storage';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
-import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
+import { FileSkillDiscovery } from '#/actor/skill/catalog/fileSkillDiscovery';
+import { ISkillDiscovery } from '#/actor/skill/catalog/skillDiscovery';
 
 export interface HostArgs {
   readonly agentFiles?: readonly string[];

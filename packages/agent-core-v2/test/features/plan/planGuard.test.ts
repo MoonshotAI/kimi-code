@@ -3,16 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { stubContextMemory } from '../contextMemory/stubs';
-import { stubPermissionModeRuntime } from '../permissionMode/stubs';
-import { stubUsage } from '../usage/stubs';
+import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
+import { stubContextMemory } from '../../actor/contextMemory/stubs';
+import { stubPermissionModeRuntime } from '../../actor/permissionMode/stubs';
+import { stubUsage } from '../../actor/usage/stubs';
 import type {
   ApprovalResponse,
   PermissionMode,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-} from '#/features/toolExecutor/permissionTypes';
+} from '#/actor/toolExecutor/permissionTypes';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { AgentPlanService } from '#/features/plan/planService';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -21,7 +21,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -40,7 +40,7 @@ import {
   lifecycleWithToolExecutor,
   stubToolExecutorEvents,
   type ToolExecutorEventStubs,
-} from '../toolExecutor/stubs';
+} from '../../actor/toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 const SESSION_DIR = '/session';

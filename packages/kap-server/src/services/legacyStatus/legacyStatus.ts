@@ -10,7 +10,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentScopeView } from '../../transport/agentScopeView';
 import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
 
 export type AgentPhase =
   | { readonly kind: 'idle' }

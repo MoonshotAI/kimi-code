@@ -1,12 +1,12 @@
-import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewEvents';
-import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextEvents';
+import type { AgentActivityUpdated } from '@moonshot-ai/agent-core-v2/actor/activityView/activityViewEvents';
+import type { ContextSpliced } from '@moonshot-ai/agent-core-v2/actor/contextMemory/contextEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   CompactionBlocked,
   CompactionCancelled,
   CompactionCompleted,
   CompactionStarted,
-} from '@moonshot-ai/agent-core-v2/features/fullCompaction/fullCompactionEvents';
+} from '@moonshot-ai/agent-core-v2/actor/fullCompaction/fullCompactionEvents';
 import type { ContentPart, CronFired, GoalUpdated } from '@moonshot-ai/agent-core-v2';
 import type {
   AssistantDelta,
@@ -16,35 +16,35 @@ import type {
   TurnStepCompleted,
   TurnStepInterrupted,
   TurnStepStarted,
-} from '@moonshot-ai/agent-core-v2/features/loop/turnEvents';
-import type { TurnEnded } from '@moonshot-ai/agent-core-v2/features/loop/turnOps';
+} from '@moonshot-ai/agent-core-v2/actor/loop/turnEvents';
+import type { TurnEnded } from '@moonshot-ai/agent-core-v2/actor/loop/turnOps';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/app/event/agentEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
-import type { WarningIssued } from '@moonshot-ai/agent-core-v2/features/profile/profileOps';
+import type { WarningIssued } from '@moonshot-ai/agent-core-v2/actor/profile/profileOps';
 import type {
   PromptAborted,
   PromptCompleted,
   PromptQueued,
   PromptSteered,
-} from '@moonshot-ai/agent-core-v2/features/prompt/promptEvents';
-import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/features/prompt/promptOps';
+} from '@moonshot-ai/agent-core-v2/actor/prompt/promptEvents';
+import type { PromptAccepted } from '@moonshot-ai/agent-core-v2/actor/prompt/promptOps';
 import type {
   ShellCompleted,
   ShellOutput,
   ShellStarted,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
-import type { SkillActivated } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/features/loop/internal/stepRetry';
+import type { SkillActivated } from '@moonshot-ai/agent-core-v2/actor/skill/skillOps';
+import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/actor/loop/internal/stepRetry';
 import type {
   TaskNotified,
   TaskStarted,
   TaskTerminatedNotice,
-} from '@moonshot-ai/agent-core-v2/features/task/taskOps';
+} from '@moonshot-ai/agent-core-v2/actor/task/taskOps';
 import type {
   ToolCallStarted,
   ToolProgress,
   ToolResultEvent,
-} from '@moonshot-ai/agent-core-v2/features/toolExecutor/toolExecutorEvents';
+} from '@moonshot-ai/agent-core-v2/actor/toolExecutor/toolExecutorEvents';
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
 import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';

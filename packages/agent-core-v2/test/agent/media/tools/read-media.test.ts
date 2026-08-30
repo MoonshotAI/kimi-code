@@ -29,7 +29,7 @@ import {
 import { createMediaTool, createVideoUploader } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import {
   ToolAccesses,
   type ExecutableTool,
@@ -39,7 +39,7 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import type { ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IModelCatalog } from '#/kosong/model/catalog';

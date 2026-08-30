@@ -7,18 +7,18 @@ import type {
   ApprovalResponse,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-} from '#/features/toolExecutor/permissionTypes';
+} from '#/actor/toolExecutor/permissionTypes';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { AgentPermissionMode } from '#/features/permissionMode/permissionModeAgentRuntime';
-import { toWireMode } from '#/features/permissionMode/internal/modeMapping';
-import { AgentPermissionRules } from '#/features/permissionRules/permissionRulesAgentRuntime';
+import { AgentPermissionMode } from '#/actor/permissionMode/permissionModeAgentRuntime';
+import { toWireMode } from '#/actor/permissionMode/internal/modeMapping';
+import { AgentPermissionRules } from '#/actor/permissionRules/permissionRulesAgentRuntime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionApprovalService } from '#/session/approval/approval';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

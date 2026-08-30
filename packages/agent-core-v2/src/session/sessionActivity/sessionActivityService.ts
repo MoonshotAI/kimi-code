@@ -3,18 +3,18 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
-import { AgentActivityUpdated } from '#/features/activityView/activityViewEvents';
-import type { AgentActivityState } from '#/features/activityView/types';
-import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
-import type { TurnEndReason } from '#/features/loop/turnEvents';
+import { AgentActivityUpdated } from '#/actor/activityView/activityViewEvents';
+import type { AgentActivityState } from '#/actor/activityView/types';
+import { AgentActivityView } from '#/actor/activityView/activityViewAgentRuntime';
+import type { TurnEndReason } from '#/actor/loop/turnEvents';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import type { Interaction } from '#/features/interaction/interaction';
+import type { Interaction } from '#/actor/interaction/interaction';
 import {
   listSessionPendingInteractions,
   onSessionInteractionDidChangePending,
-} from '#/features/interaction/sessionInteractions';
+} from '#/actor/interaction/sessionInteractions';
 import { ISessionStateService } from '#/session/state/sessionState';
 
 import {

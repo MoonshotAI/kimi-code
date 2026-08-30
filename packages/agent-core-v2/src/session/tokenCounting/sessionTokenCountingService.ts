@@ -1,16 +1,16 @@
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IConfigService } from '#/app/config/config';
-import { readTokenCountingStrategy } from '#/features/tokenCounting/configSection';
+import { readTokenCountingStrategy } from '#/actor/tokenCounting/configSection';
 import type {
   ContextSize,
   TokenCountingRebaseInput,
   TokenCountingRequest,
   TokenCountingStrategy,
-} from '#/features/tokenCounting/tokenCounting';
+} from '#/actor/tokenCounting/tokenCounting';
 import {
   AgentTokenCounting,
   type TokenCountingRuntime,
-} from '#/features/tokenCounting/tokenCountingAgentRuntime';
+} from '#/actor/tokenCounting/tokenCountingAgentRuntime';
 import type { Message } from '#/kosong/contract/message';
 import type { Tool } from '#/kosong/contract/tool';
 import {

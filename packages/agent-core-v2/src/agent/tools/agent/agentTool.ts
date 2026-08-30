@@ -8,9 +8,9 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import type {
   RegisterAgentTaskOptions,
-} from '#/features/task/types';
-import { AgentTask, type TaskRuntime } from '#/features/task/taskAgentRuntime';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+} from '#/actor/task/types';
+import { AgentTask, type TaskRuntime } from '#/actor/task/taskAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
@@ -18,7 +18,7 @@ import {
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { AgentLoop } from '#/features/loop/loop';
+import { AgentLoop } from '#/actor/loop/loop';
 import {
   ToolAccesses,
   type ExecutableToolContext,

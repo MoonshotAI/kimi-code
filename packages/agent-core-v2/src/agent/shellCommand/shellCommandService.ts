@@ -3,12 +3,12 @@
 import { defineState } from '#/state/state';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
-import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ToolUpdate } from '#/tool/toolContract';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { AgentEvent2 } from '#/app/event/event2';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

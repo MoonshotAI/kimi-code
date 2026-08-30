@@ -24,7 +24,7 @@ import {
   resumeSessionById,
   IAgentHostService,
 } from '@moonshot-ai/agent-core-v2';
-import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/actor/prompt/promptAgentRuntime';
 import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { emptySessionUsage } from '../src/protocol/session';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

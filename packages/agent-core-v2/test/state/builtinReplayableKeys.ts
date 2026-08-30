@@ -5,7 +5,7 @@ import { interruptionReminderKey } from '#/agent/interruptionReminder/interrupti
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { runtimeBindingKey } from '#/agent/runtimeBinding/runtimeBindingOps';
-import { taskNotificationDeliveryKey } from '#/features/task/notificationDelivery';
+import { taskNotificationDeliveryKey } from '#/actor/task/notificationDelivery';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { planKey } from '#/features/plan/planOps';
 import { swarmKey } from '#/features/swarm/swarmOps';

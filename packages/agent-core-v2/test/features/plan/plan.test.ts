@@ -6,16 +6,16 @@ import type { ToolCall } from '#/kosong/contract/message';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { LoopControl } from '#/features/loop/internal/loop';
-import { getLoopControl } from '#/features/loop/internal/access';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { LoopControl } from '#/actor/loop/internal/loop';
+import { getLoopControl } from '#/actor/loop/internal/access';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import {
   AgentPermissionRules,
   type PermissionRulesRuntime,
-} from '#/features/permissionRules/permissionRulesAgentRuntime';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+} from '#/actor/permissionRules/permissionRulesAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import {
   AgentContextMemory,
   type ContextMemoryRuntime,

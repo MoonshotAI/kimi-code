@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
-import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
 class TestTool implements ExecutableTool {

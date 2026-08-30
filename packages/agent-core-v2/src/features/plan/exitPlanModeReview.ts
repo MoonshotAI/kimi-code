@@ -1,12 +1,12 @@
 import type {
   ApprovalResponse,
   PermissionPolicyResolution,
-} from '#/features/toolExecutor/permissionTypes';
+} from '#/actor/toolExecutor/permissionTypes';
 import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';

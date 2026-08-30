@@ -12,9 +12,9 @@ import {
   type AgentTaskStatus,
   type ForegroundTaskReleaseReason,
   type RegisterAgentTaskOptions,
-} from '#/features/task/types';
-import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
-import type { AgentTaskSettlement } from '#/features/task/types';
+} from '#/actor/task/types';
+import type { TaskRuntime } from '#/actor/task/taskAgentRuntime';
+import type { AgentTaskSettlement } from '#/actor/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
@@ -22,7 +22,7 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';

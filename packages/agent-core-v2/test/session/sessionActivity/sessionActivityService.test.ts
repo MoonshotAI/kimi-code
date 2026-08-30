@@ -15,22 +15,22 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type {
   AgentRuntimeDefinition,
   RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
-import { AgentActivityUpdated } from '#/features/activityView/activityViewEvents';
-import type { AgentActivityState } from '#/features/activityView/types';
-import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
+} from '#/actor/agentRuntime';
+import { AgentActivityUpdated } from '#/actor/activityView/activityViewEvents';
+import type { AgentActivityState } from '#/actor/activityView/types';
+import { AgentActivityView } from '#/actor/activityView/activityViewAgentRuntime';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { AgentInteraction } from '#/features/interaction/interactionAgentRuntime';
+import { AgentInteraction } from '#/actor/interaction/interactionAgentRuntime';
 import {
   type Interaction,
   type InteractionKind,
   type InteractionPendingChangedEvent,
   type InteractionRequest,
   type InteractionResolution,
-} from '#/features/interaction/interaction';
+} from '#/actor/interaction/interaction';
 import {
   ISessionActivityView,
   type SessionActivityChangedEvent,

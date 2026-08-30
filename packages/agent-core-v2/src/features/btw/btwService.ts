@@ -1,6 +1,6 @@
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
+import { AgentReminder } from '#/actor/reminder/reminderAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER, TOOL_CALL_DISABLED_MESSAGE } from './btw';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';

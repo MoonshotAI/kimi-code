@@ -5,7 +5,7 @@ import {
   type TaskExecution,
   type AgentTaskInfoBase,
   type AgentTaskSink,
-} from '#/features/task/types';
+} from '#/actor/task/types';
 
 type SubagentCompletion = {
   readonly result: string;
@@ -30,7 +30,7 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly thinkingEffort?: string;
 }
 
-declare module '#/features/task/types' {
+declare module '#/actor/task/types' {
   interface AgentTaskInfoByKind {
     readonly agent: SubagentTaskInfo;
   }

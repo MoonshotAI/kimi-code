@@ -6,7 +6,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { type AgentHost, IAgentHostService } from '#/agent/host/agentHost';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { ISessionSkillCatalog } from '#/actor/skill/session/skillCatalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 

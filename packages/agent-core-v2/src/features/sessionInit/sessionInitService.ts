@@ -2,12 +2,12 @@ import { isAbortError, isUserCancellation, userCancellationReason } from '#/_bas
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { AgentProfile } from '#/features/profile/profileAgentRuntime';
-import { loadAgentsMdDetailed } from '#/features/profile/profileContext';
+import { AgentProfile } from '#/actor/profile/profileAgentRuntime';
+import { loadAgentsMdDetailed } from '#/actor/profile/profileContext';
 import { ISessionAgentsMdReminderService } from '#/agent/agentsMdReminder/sessionAgentsMdReminderService';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { IAgentHostService } from '#/agent/host/agentHost';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { AgentReminder } from '#/actor/reminder/reminderAgentRuntime';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

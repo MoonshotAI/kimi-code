@@ -1,6 +1,6 @@
-import { AgentTask, type TaskRuntime } from '#/features/task/taskAgentRuntime';
-import type { NohupTaskRecovery } from '#/features/task/types';
-import { resolveAgentTaskConfig } from '#/features/task/configSection';
+import { AgentTask, type TaskRuntime } from '#/actor/task/taskAgentRuntime';
+import type { NohupTaskRecovery } from '#/actor/task/types';
+import { resolveAgentTaskConfig } from '#/actor/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';

@@ -9,7 +9,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import type { IConfigService } from '#/app/config/config';
 import type { IFlagService } from '#/app/flag/flag';
 import type { ISessionSwarmService, SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { IAgentSwarmService } from '#/features/swarm/agent/swarm';

@@ -4,7 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/features/profile/profileContext';
+import { agentsMdWatchRoots, loadAgentsMdForRoots } from '#/actor/profile/profileContext';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment, type HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';

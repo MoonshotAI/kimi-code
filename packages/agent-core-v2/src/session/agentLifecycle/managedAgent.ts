@@ -1,8 +1,8 @@
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { AgentHost } from '#/agent/host/agentHost';
-import type { AgentRuntimeDefinitionRecord } from '#/agent/runtime/agentRuntime';
-import { AgentRuntimeHost, type AgentRuntimeHostCloseHandlers } from '#/lifecycle/internal/agentRuntimeHost';
+import type { AgentRuntimeDefinitionRecord } from '#/actor/agentRuntime';
+import { AgentRuntimeHost, type AgentRuntimeHostCloseHandlers } from '#/actor/internal/agentRuntimeHost';
 
 export class ManagedAgent {
   active = false;

@@ -11,14 +11,14 @@ import {
   setUnexpectedErrorHandler,
 } from '#/_base/errors/unexpectedError';
 import { BugIndicatingError } from '#/_base/errors/errors';
-import '#/features/contextMemory/conversationTime';
+import '#/actor/contextMemory/conversationTime';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { ContextAppendMessage, ContextUndo } from '#/features/contextMemory/contextEvents';
+import { ContextAppendMessage, ContextUndo } from '#/actor/contextMemory/contextEvents';
 import {
   defineAgentRuntimeContract,
   defineAgentRuntimeProvider,
-} from '#/agent/runtime/agentRuntime';
-import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
+} from '#/actor/agentRuntime';
+import { AgentRuntimeSet } from '#/actor/agentRuntimeSet';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';

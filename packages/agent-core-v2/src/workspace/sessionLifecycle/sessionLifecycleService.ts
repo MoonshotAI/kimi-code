@@ -39,7 +39,7 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogData';
+import { ISessionSkillCatalogData } from '#/actor/skill/session/skillCatalogData';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -69,12 +69,12 @@ import {
   IWorkspaceAgentProfileLoader,
 } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { AgentActivityView } from '#/features/activityView/activityViewAgentRuntime';
-import { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import { AgentActivityView } from '#/actor/activityView/activityViewAgentRuntime';
+import { IWorkspaceSkillCatalog } from '#/actor/skill/workspace/workspaceSkillCatalog';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
-import { IActorHostService } from '#/lifecycle/actorHost';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/actor/skill/catalog/skillSource';
+import { IActorHostService } from '#/actor/actorHost';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived } from './sessionLifecycleEvents';

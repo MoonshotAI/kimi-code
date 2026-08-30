@@ -9,19 +9,19 @@
  */
 
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import type { ContextMemoryRuntime } from '@moonshot-ai/agent-core-v2/features/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMemoryRuntime } from '@moonshot-ai/agent-core-v2/actor/contextMemory/contextMemoryAgentRuntime';
 import type { McpConnectionView } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/features/profile/profileAgentRuntime';
+import type { ProfileRuntime } from '@moonshot-ai/agent-core-v2/actor/profile/profileAgentRuntime';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/features/skill/skillAgentRuntime';
-import type { SessionTaskEntry } from '@moonshot-ai/agent-core-v2/features/task/sessionTaskView';
-import type { AgentTaskInfo as EngineAgentTaskInfo } from '@moonshot-ai/agent-core-v2/features/task/types';
+import type { SkillRuntime } from '@moonshot-ai/agent-core-v2/actor/skill/skillAgentRuntime';
+import type { SessionTaskEntry } from '@moonshot-ai/agent-core-v2/actor/task/sessionTaskView';
+import type { AgentTaskInfo as EngineAgentTaskInfo } from '@moonshot-ai/agent-core-v2/actor/task/types';
 import type { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/features/toolExecutor/permissionTypes';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/actor/toolExecutor/permissionTypes';
 
 import type { ScopeRef } from '../channel.js';
 import type { ScopedCaller } from './session.js';

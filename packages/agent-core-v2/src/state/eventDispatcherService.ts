@@ -7,7 +7,7 @@ import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type CollectionView } from '#/_base/di/collection';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { type DurableAgentRuntimeParticipant } from '#/agent/runtime/agentRuntime';
+import { type DurableAgentRuntimeParticipant } from '#/actor/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import {
   event2FromRecord,

@@ -14,7 +14,7 @@ import {
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { emptyUsage } from '#/kosong/contract/usage';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import {
   HookDefSchema,
   HOOKS_SECTION,
@@ -26,13 +26,13 @@ import { AgentExternalHooksService } from '#/features/externalHooks/agent/agentE
 import {
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
-import { type LoopControl, type AfterStepContext } from '#/features/loop/internal/loop';
-import { registerLoopControl } from '#/features/loop/internal/access';
-import { TurnStarted } from '#/features/loop/turnEvents';
-import { TurnEnded } from '#/features/loop/turnOps';
-import { PromptQueued } from '#/features/prompt/promptEvents';
+import { type LoopControl, type AfterStepContext } from '#/actor/loop/internal/loop';
+import { registerLoopControl } from '#/actor/loop/internal/access';
+import { TurnStarted } from '#/actor/loop/turnEvents';
+import { TurnEnded } from '#/actor/loop/turnOps';
+import { PromptQueued } from '#/actor/prompt/promptEvents';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { TaskStarted } from '#/features/task/taskOps';
+import { TaskStarted } from '#/actor/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -40,9 +40,9 @@ import {
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import { makeHookRunner } from './runner-stub';
-import { stubContextMemory } from '../contextMemory/stubs';
-import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import type { AgentTaskInfo } from '#/features/task/types';
+import { stubContextMemory } from '../../actor/contextMemory/stubs';
+import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
+import type { AgentTaskInfo } from '#/actor/task/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -76,9 +76,9 @@ import { IModelService } from '#/kosong/model/model';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
-import { lifecycleWithToolExecutor } from '../toolExecutor/stubs';
-import { lifecycleWithFullCompaction, stubFullCompactionRuntime } from '../fullCompaction/stubs';
-import { lifecycleWithPrompt, stubPromptRuntime } from '../prompt/stubs';
+import { lifecycleWithToolExecutor } from '../../actor/toolExecutor/stubs';
+import { lifecycleWithFullCompaction, stubFullCompactionRuntime } from '../../actor/fullCompaction/stubs';
+import { lifecycleWithPrompt, stubPromptRuntime } from '../../actor/prompt/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 

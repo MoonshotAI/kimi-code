@@ -12,17 +12,17 @@ import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import type { IFlagService } from '#/app/flag/flag';
-import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
-import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextInjectionProvider, ContextInjectionResult } from '#/actor/reminder/types';
+import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 import { DEFAULT_SWARM_TIMEOUT_MS, SWARM_SECTION } from '#/features/swarm/configSection';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { wrapSystemReminder } from '#/actor/reminder/systemReminder';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { AgentSwarmService } from '#/features/swarm/agent/swarmService';
 import SWARM_MODE_ENTER_REMINDER from '../../../src/features/swarm/agent/enter-reminder.md?raw';
@@ -44,16 +44,16 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
-import type { LoopControl } from '#/features/loop/internal/loop';
-import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
+import type { LoopControl } from '#/actor/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/actor/loop/internal/access';
 import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile as CatalogAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -78,7 +78,7 @@ import {
   lifecycleWithToolExecutor,
   stubToolExecutorEvents,
   type ToolExecutorEventStubs,
-} from '../toolExecutor/stubs';
+} from '../../actor/toolExecutor/stubs';
 import { createTestAgent } from '../../harness';
 const LifecycleScope = { App: 'app', Session: 'session', Agent: 'agent' } as const;
 

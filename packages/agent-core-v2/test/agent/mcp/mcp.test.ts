@@ -15,8 +15,8 @@ import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 import type { ToolInfo } from '#/tool/toolContract';
 import type { WireRecord } from '#/wire/record';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 
 import {
   createTestAgent,

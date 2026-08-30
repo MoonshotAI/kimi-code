@@ -6,14 +6,14 @@ import {
   type ExitPlanModeInput,
 } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
-import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
+import type { PermissionMode } from '#/actor/toolExecutor/permissionTypes';
 import { type IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
-import { stubPermissionModeRuntime } from '../../permissionMode/stubs';
+import { stubPermissionModeRuntime } from '../../../actor/permissionMode/stubs';
 
 const signal = new AbortController().signal;
 

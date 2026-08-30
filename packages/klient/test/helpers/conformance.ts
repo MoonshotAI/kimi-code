@@ -18,7 +18,7 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentHostService } from '@moonshot-ai/agent-core-v2/agent/host/agentHost';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '@moonshot-ai/agent-core-v2/state/eventDispatcher';
-import { PromptAccepted } from '@moonshot-ai/agent-core-v2/features/prompt/promptOps';
+import { PromptAccepted } from '@moonshot-ai/agent-core-v2/actor/prompt/promptOps';
 
 import type { Klient } from '../../src/index.js';
 import type { TestEngine } from './engine.js';

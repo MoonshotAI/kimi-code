@@ -7,7 +7,7 @@
  * wire).
  */
 
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/features/activityView/types';
+import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/actor/activityView/types';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -15,7 +15,7 @@ import type {
 import type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/actor/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
@@ -25,7 +25,7 @@ import type {
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+import type { SkillSummary } from '@moonshot-ai/agent-core-v2/actor/skill/catalog/types';
 
 import type { ScopeRef } from '../channel.js';
 import type { McpServerConfig } from '../../contract/mcp.js';

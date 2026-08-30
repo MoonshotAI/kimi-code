@@ -18,9 +18,9 @@ import {
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { AgentContextMemory } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
+import { AgentContextMemory } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
 import { IAgentHostService } from '#/agent/host/agentHost';
 import {
   IAgentLifecycleService,

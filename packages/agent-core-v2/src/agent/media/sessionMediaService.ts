@@ -9,7 +9,7 @@ import { IFileService } from '#/app/file/fileService';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { type AgentHost, IAgentHostService } from '#/agent/host/agentHost';
 import { AgentToolProviderContribution } from '#/agent/toolRegistry/toolContribution';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { ISessionSkillCatalog } from '#/actor/skill/session/skillCatalog';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

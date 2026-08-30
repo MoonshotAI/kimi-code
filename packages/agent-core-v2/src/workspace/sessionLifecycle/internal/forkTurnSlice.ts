@@ -3,7 +3,7 @@ import type { ContentPart } from '#/kosong/contract/message';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
-} from '#/features/prompt/promptMetadataText';
+} from '#/actor/prompt/promptMetadataText';
 import type { WireRecord } from '#/wire/record';
 
 export interface MainTurnSlice {

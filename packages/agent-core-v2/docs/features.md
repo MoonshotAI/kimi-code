@@ -5,6 +5,10 @@ self-contained unit under `src/features/<name>/`. The Feature unit is the single
 that declares everything the capability contributes to the engine; retracting the unit
 withdraws all of it across the scope tree (连坐).
 
+Agent-granular domains (Agent Runtimes contributed via `contributeAgentRuntime`) live
+under `src/actor/<name>/`; non-agent-granular features and the Feature assembly
+machinery live under `src/features/`.
+
 `plan` is the reference implementation: `src/features/plan/` (extracted from
 `agent/plan` + `agent/tools/plan`).
 
@@ -97,7 +101,7 @@ keep their static registrations; the service and the two tools go through the Fe
   participation: the per-agent impl resolves the `AgentToolsRuntime` and registers its
   guard on the pinned veto bus — see `registerPlanGuard` in
   `src/features/plan/planService.ts` for the canonical pattern and
-  `src/features/toolExecutor/internal/participants.ts` for the cross-domain order.
+  `src/actor/toolExecutor/internal/participants.ts` for the cross-domain order.
 
 ## Adding a new feature
 
@@ -109,7 +113,7 @@ keep their static registrations; the service and the two tools go through the Fe
    `test/features/feature.test.ts` (scoped host, `registerFeature` before
    `createScopedTestHost`).
 5. If the feature registers agent-state keys, `scripts/gen-state-manifest.mts` resolves
-   the scope of `.register(key)` call sites under `src/features/**` from the receiver's
+   the scope of `.register(key)` call sites under `src/features/**` and `src/actor/**` from the receiver's
    `I{App,Workspace,Session,Agent}StateService` type — register through a member typed
    as the scope's state service. Regenerate the manifests
    (`pnpm gen:config-manifest && pnpm gen:wire-manifest && pnpm gen:state-manifest`).

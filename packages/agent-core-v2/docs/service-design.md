@@ -124,7 +124,7 @@ This pattern recurs throughout the codebase and confirms the rule:
   runtime provider config plus request authorization). Provider connection
   configuration lives in the sibling `provider` domain (`IProviderService`, `App`).
   Generation itself is driven by the `AgentLlmRequester` agent runtime
-  (`src/features/llmRequester/`) in the `llmRequester` domain.
+  (`src/actor/llmRequester/`) in the `llmRequester` domain.
 - **`tool`** — `IToolDefinitionRegistry` (`App`, tool-definition registry) + `IToolService`
   (`Agent`, this agent's execution).
 

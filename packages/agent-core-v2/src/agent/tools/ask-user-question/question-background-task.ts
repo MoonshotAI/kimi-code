@@ -3,7 +3,7 @@ import {
   type TaskExecution,
   type AgentTaskInfoBase,
   type AgentTaskSink,
-} from '#/features/task/types';
+} from '#/actor/task/types';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
 export interface QuestionTaskInfo extends AgentTaskInfoBase {
@@ -12,7 +12,7 @@ export interface QuestionTaskInfo extends AgentTaskInfoBase {
   readonly toolCallId?: string;
 }
 
-declare module '#/features/task/types' {
+declare module '#/actor/task/types' {
   interface AgentTaskInfoByKind {
     readonly question: QuestionTaskInfo;
   }

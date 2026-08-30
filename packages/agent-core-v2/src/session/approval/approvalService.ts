@@ -9,7 +9,7 @@ import {
   listSessionPendingInteractions,
   requestSessionInteraction,
   respondSessionInteraction,
-} from '#/features/interaction/sessionInteractions';
+} from '#/actor/interaction/sessionInteractions';
 
 import {
   type ApprovalRequest,

@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { ISessionToolApprovalService } from '#/agent/toolApproval/sessionToolApprovalService';
-import { AgentTools } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import {
   ISessionBtwService,
   SIDE_QUESTION_SYSTEM_REMINDER,
@@ -14,7 +14,7 @@ import { SessionBtwService } from '#/features/btw/btwService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
-import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../actor/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 describe('SessionBtwService', () => {

@@ -30,7 +30,7 @@ import {
   AgentRuntimeContributionPoint,
   AgentRuntimeOverrideContributionPoint,
   type AgentRuntimeProvider,
-} from '#/agent/runtime/agentRuntime';
+} from '#/actor/agentRuntime';
 
 export abstract class Feature extends Service {
   contribute<T>(token: CollectionToken<T>, value: T): FiberHandle {

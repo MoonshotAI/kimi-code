@@ -12,7 +12,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { IAgentHostService } from '@moonshot-ai/agent-core-v2';
 import { AgentTask } from '@moonshot-ai/agent-core-v2';
-import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
+import { AgentActivityView } from '@moonshot-ai/agent-core-v2/actor/activityView/activityViewAgentRuntime';
 import type { AgentContext } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 

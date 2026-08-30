@@ -12,8 +12,8 @@ import {
   type Scope,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
-import { AgentPrompt } from '@moonshot-ai/agent-core-v2/features/prompt/promptAgentRuntime';
-import { AgentActivityView } from '@moonshot-ai/agent-core-v2/features/activityView/activityViewAgentRuntime';
+import { AgentPrompt } from '@moonshot-ai/agent-core-v2/actor/prompt/promptAgentRuntime';
+import { AgentActivityView } from '@moonshot-ai/agent-core-v2/actor/activityView/activityViewAgentRuntime';
 
 import type { ScopeKind } from './channel';
 import { resolveAnyScopedServiceId } from './channelRegistry';

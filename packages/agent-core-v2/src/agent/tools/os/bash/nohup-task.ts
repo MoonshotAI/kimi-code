@@ -2,14 +2,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'pathe';
 
-import { registerTaskExecutionReviver } from '#/features/task/revive';
+import { registerTaskExecutionReviver } from '#/actor/task/revive';
 import type {
   AgentTaskInfo,
   AgentTaskInfoBase,
   AgentTaskSink,
   NohupTaskRecovery,
   TaskExecution,
-} from '#/features/task/types';
+} from '#/actor/task/types';
 
 import type { ProcessTaskInfo } from './process-task';
 

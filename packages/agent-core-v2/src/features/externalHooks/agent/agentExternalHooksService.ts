@@ -5,24 +5,24 @@ import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { type AgentTaskInfo, type AgentTaskNotificationContext } from '#/features/task/types';
-import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import { USER_PROMPT_ORIGIN } from '#/features/contextMemory/types';
+import { type AgentTaskInfo, type AgentTaskNotificationContext } from '#/actor/task/types';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import { USER_PROMPT_ORIGIN } from '#/actor/contextMemory/types';
 import {
   AgentFullCompaction,
   type FullCompactionHookContext,
   type FullCompactionRuntime,
-} from '#/features/fullCompaction/fullCompactionAgentRuntime';
-import type { CompactionResult } from '#/features/fullCompaction/types';
-import { getLoopControl } from '#/features/loop/internal/access';
-import type { AfterStepContext, LoopControl } from '#/features/loop/internal/loop';
-import { ContinuationStepRequest } from '#/features/loop/internal/stepRequest';
-import { TurnStarted } from '#/features/loop/turnEvents';
-import { TurnEnded } from '#/features/loop/turnOps';
-import { AgentPrompt } from '#/features/prompt/promptAgentRuntime';
-import type { PromptSubmitContext } from '#/features/prompt/prompt';
-import { PromptQueued } from '#/features/prompt/promptEvents';
-import { TaskNotified, TaskStarted } from '#/features/task/taskOps';
+} from '#/actor/fullCompaction/fullCompactionAgentRuntime';
+import type { CompactionResult } from '#/actor/fullCompaction/types';
+import { getLoopControl } from '#/actor/loop/internal/access';
+import type { AfterStepContext, LoopControl } from '#/actor/loop/internal/loop';
+import { ContinuationStepRequest } from '#/actor/loop/internal/stepRequest';
+import { TurnStarted } from '#/actor/loop/turnEvents';
+import { TurnEnded } from '#/actor/loop/turnOps';
+import { AgentPrompt } from '#/actor/prompt/promptAgentRuntime';
+import type { PromptSubmitContext } from '#/actor/prompt/prompt';
+import { PromptQueued } from '#/actor/prompt/promptEvents';
+import { TaskNotified, TaskStarted } from '#/actor/task/taskOps';
 import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -30,10 +30,10 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
-import { denyToolExecution } from '#/features/toolExecutor/toolHooks';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import type { AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/actor/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/actor/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/actor/toolExecutor/internal/executorActivation';
+import type { AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { toKimiErrorPayload } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

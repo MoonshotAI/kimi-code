@@ -10,20 +10,20 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../reminder/stubs';
-import { AgentContextMemory, type ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import type { LoopControl } from '#/features/loop/internal/loop';
-import { getLoopControl } from '#/features/loop/internal/access';
+import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
+import { AgentContextMemory, type ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import type { LoopControl } from '#/actor/loop/internal/loop';
+import { getLoopControl } from '#/actor/loop/internal/access';
 import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
-import { stubProfileRuntime } from '../../features/profile/stubs';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
+import { stubProfileRuntime } from '../../actor/profile/stubs';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
-} from '#/features/toolExecutor/toolHooks';
+} from '#/actor/toolExecutor/toolHooks';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
 import { _setTowerFeatureAssembledForTests } from '#/features/tower/towerFeature';
@@ -53,7 +53,7 @@ import {
   lifecycleWithToolExecutor,
   stubToolExecutorEvents,
   type ToolExecutorEventStubs,
-} from '../toolExecutor/stubs';
+} from '../../actor/toolExecutor/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import {
   appService,

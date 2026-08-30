@@ -1,13 +1,13 @@
 import { Service } from '#/_base/di/service';
 import { Emitter, type Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentLLMRequestSource } from '#/features/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/actor/llmRequester/llmRequester';
 import type { UsageRecordedContext, UsageStatus } from '#/agent/usage/usage';
 import {
   AgentUsage,
   type UsageRuntime,
-} from '#/features/usage/usageAgentRuntime';
-import { copyUsage } from '#/features/usage/usageOps';
+} from '#/actor/usage/usageAgentRuntime';
+import { copyUsage } from '#/actor/usage/usageOps';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 

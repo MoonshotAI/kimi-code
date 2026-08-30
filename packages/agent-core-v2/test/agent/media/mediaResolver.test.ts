@@ -19,7 +19,7 @@ import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { ISessionSkillCatalog } from '#/actor/skill/session/skillCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart, Message, VideoURLPart } from '#/kosong/contract/message';
 import { IModelCatalog } from '#/kosong/model/catalog';

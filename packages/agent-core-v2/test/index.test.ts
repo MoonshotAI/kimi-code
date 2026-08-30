@@ -24,13 +24,13 @@ import {
   ContextApplyCompaction,
   ContextClear,
   ContextUndo,
-} from '#/features/contextMemory/contextEvents';
+} from '#/actor/contextMemory/contextEvents';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { TokenCountingMeasured } from '#/features/tokenCounting/tokenCountingOps';
-import { ToolsUpdateStore } from '#/features/todo/todoOps';
+import { TokenCountingMeasured } from '#/actor/tokenCounting/tokenCountingOps';
+import { ToolsUpdateStore } from '#/actor/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';

@@ -1,9 +1,9 @@
 import { Disposable } from '#/_base/di/lifecycle';
-import { AgentContextMemory, ContextMemoryRuntime } from '#/features/contextMemory/contextMemoryAgentRuntime';
-import type { ContextMessage } from '#/features/contextMemory/types';
-import { isVacuousContentPart } from '#/features/contextMemory/vacuousContent';
-import { TurnEnded } from '#/features/loop/turnOps';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { AgentContextMemory, ContextMemoryRuntime } from '#/actor/contextMemory/contextMemoryAgentRuntime';
+import type { ContextMessage } from '#/actor/contextMemory/types';
+import { isVacuousContentPart } from '#/actor/contextMemory/vacuousContent';
+import { TurnEnded } from '#/actor/loop/turnOps';
+import { AgentReminder } from '#/actor/reminder/reminderAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';

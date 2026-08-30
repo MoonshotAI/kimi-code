@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { TurnEnded } from '#/features/loop/turnOps';
+import { TurnEnded } from '#/actor/loop/turnOps';
 
 describe('TurnEnded serialization', () => {
   it('emits the op record shape without the bus-only interruptReason', () => {

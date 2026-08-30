@@ -3,7 +3,7 @@ import type { Event } from '#/_base/event';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { Turn } from '#/features/loop/internal/loop';
+import type { Turn } from '#/actor/loop/internal/loop';
 import type { Hooks } from '#/hooks';
 
 import type {

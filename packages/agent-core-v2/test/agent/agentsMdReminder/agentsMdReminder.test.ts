@@ -29,11 +29,11 @@ import type {
   ExecutableToolResult,
   ToolExecution,
 } from '#/tool/toolContract';
-import { ToolExecutorPipeline } from '#/features/toolExecutor/internal/executor';
-import { ToolDedupePolicy } from '#/features/toolExecutor/internal/toolDedupe';
-import type { AgentRuntimeContext } from '#/agent/runtime/agentRuntime';
+import { ToolExecutorPipeline } from '#/actor/toolExecutor/internal/executor';
+import { ToolDedupePolicy } from '#/actor/toolExecutor/internal/toolDedupe';
+import type { AgentRuntimeContext } from '#/actor/agentRuntime';
 import { Event } from '#/_base/event';
-import { AgentTools, type AgentToolsRuntime } from '#/features/toolExecutor/toolExecutorAgentRuntime';
+import { AgentTools, type AgentToolsRuntime } from '#/actor/toolExecutor/toolExecutorAgentRuntime';
 import { ISessionToolResultTruncationService } from '#/agent/toolResultTruncation/sessionToolResultTruncationService';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { IAgentHostService } from '#/agent/host/agentHost';
@@ -44,15 +44,15 @@ import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { LoopControl } from '#/features/loop/internal/loop';
-import { getLoopControl, registerLoopControl } from '#/features/loop/internal/access';
-import type { PromptOrigin } from '#/features/contextMemory/types';
+import type { LoopControl } from '#/actor/loop/internal/loop';
+import { getLoopControl, registerLoopControl } from '#/actor/loop/internal/access';
+import type { PromptOrigin } from '#/actor/contextMemory/types';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
-import { stubProfileRuntime } from '../../features/profile/stubs';
+import { createReminderStub, lifecycleWithReminder } from '../../actor/reminder/stubs';
+import { stubProfileRuntime } from '../../actor/profile/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext } from '#/actor/toolExecutor/toolHooks';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import {
   AgentAgentsMdReminderService,
@@ -65,7 +65,7 @@ import {
   runtimeFromPipeline,
   stubToolExecutorEvents,
   type ToolExecutorEventStubs,
-} from '../../features/toolExecutor/stubs';
+} from '../../actor/toolExecutor/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';

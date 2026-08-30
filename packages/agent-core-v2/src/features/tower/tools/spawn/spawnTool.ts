@@ -2,12 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentHostService } from '#/agent/host/agentHost';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
+import type { TaskRuntime } from '#/actor/task/taskAgentRuntime';
 import {
   GitError,
   MISSIONS_DIR,

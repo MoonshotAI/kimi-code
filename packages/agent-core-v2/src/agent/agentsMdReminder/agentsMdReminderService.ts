@@ -20,14 +20,14 @@ import {
   findProjectRoot,
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
-} from '#/features/profile/profileContext';
-import { AgentProfile } from '#/features/profile/profileAgentRuntime';
+} from '#/actor/profile/profileContext';
+import { AgentProfile } from '#/actor/profile/profileAgentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { AgentReminder, type ReminderRuntime } from '#/actor/reminder/reminderAgentRuntime';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { activateToolExecutorWhenReady } from '#/features/toolExecutor/internal/executorActivation';
-import type { ToolDidExecuteContext } from '#/features/toolExecutor/toolHooks';
+import { activateToolExecutorWhenReady } from '#/actor/toolExecutor/internal/executorActivation';
+import type { ToolDidExecuteContext } from '#/actor/toolExecutor/toolHooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';

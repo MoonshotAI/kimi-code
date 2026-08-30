@@ -9,12 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { AgentProfile, type ProfileRuntime } from '#/features/profile/profileAgentRuntime';
+import { AgentProfile, type ProfileRuntime } from '#/actor/profile/profileAgentRuntime';
 import { ISessionPermissionModeService } from '#/session/permissionMode/sessionPermissionMode';
-import type { PermissionMode } from '#/features/toolExecutor/permissionTypes';
+import type { PermissionMode } from '#/actor/toolExecutor/permissionTypes';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { TaskRuntime } from '#/features/task/taskAgentRuntime';
+import type { TaskRuntime } from '#/actor/task/taskAgentRuntime';
 import { TowerStore } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';

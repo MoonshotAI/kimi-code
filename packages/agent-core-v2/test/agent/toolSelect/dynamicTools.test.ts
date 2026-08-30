@@ -9,7 +9,7 @@ import {
   renderLoadableToolsAnnouncement,
   stripDynamicToolContext,
 } from '#/agent/toolSelect/dynamicTools';
-import type { ContextMessage } from '#/features/contextMemory/types';
+import type { ContextMessage } from '#/actor/contextMemory/types';
 
 function announcement(added: readonly string[], removed: readonly string[]): ContextMessage {
   const text = `<system-reminder>\n${renderLoadableToolsAnnouncement(added, removed).trim()}\n</system-reminder>`;

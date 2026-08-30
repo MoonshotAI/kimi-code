@@ -1,5 +1,5 @@
 import { Emitter, type Event } from '#/_base/event';
-import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
+import { UserFileSkillSource } from '#/actor/skill/catalog/userFileSkillSource';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { RuntimeBinding, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, type RuntimeGenerationSnapshot, type RuntimeRegistry, type RuntimeRegistryChange } from '#/runtime/runtimeRegistry';
@@ -33,13 +33,13 @@ import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
-import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
-import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
-import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
-import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
-import { RuntimeSkillDiscovery } from '#/features/skill/workspace/runtimeSkillDiscovery';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
-import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
+import { ExplicitFileSkillSource } from '#/actor/skill/workspace/explicitFileSkillSource';
+import { ExtraFileSkillSource } from '#/actor/skill/workspace/extraFileSkillSource';
+import { PluginSkillSource } from '#/actor/skill/workspace/pluginSkillSource';
+import { WorkspaceRootSkillSource } from '#/actor/skill/workspace/rootFileSkillSource';
+import { RuntimeSkillDiscovery } from '#/actor/skill/workspace/runtimeSkillDiscovery';
+import type { IWorkspaceSkillCatalog } from '#/actor/skill/workspace/workspaceSkillCatalog';
+import { WorkspaceSkillCatalogService } from '#/actor/skill/workspace/workspaceSkillCatalogService';
 import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import type { ProgramDependencies } from './programDependencies';
