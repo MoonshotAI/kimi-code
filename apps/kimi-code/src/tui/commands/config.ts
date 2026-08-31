@@ -648,21 +648,26 @@ function showSecondaryModelPicker(
 }
 
 /**
- * Persists `[secondary_model] default_model`. When a
+ * Persists `[secondary_model] default_model` (and the legacy `model` key the
+ * v1 engine binds from — same alias, so both engines pick it up). When a
  * `[secondary_model.models]` pool exists and does not list the alias yet, the
  * alias is added with an empty description — the engine requires the default
  * to be a pool key. Without a pool the default alone forms an implicit
- * single-entry pool, so nothing else is written. No live-apply step: the
- * engine resolves the pool per spawn, so the next subagent dispatch picks the
- * new value up on its own.
+ * single-entry pool, so nothing else is written. The v2 engine resolves the
+ * pool per spawn, and the v1 core live-applies the saved snapshot to every
+ * live session on config write, so the next subagent dispatch picks the new
+ * value up on its own.
  */
 async function performSecondaryModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
     const config = await host.harness.getConfig({ reload: true });
     const existing = config.secondaryModel?.models;
-    const patch: { defaultModel: string; models?: Record<string, string> } = {
+    // Write both keys: the v1 legacy engine binds `.model`, the v2 pool reads
+    // `defaultModel` — keeping only one would leave the other engine stale.
+    const patch: { defaultModel: string; model: string; models?: Record<string, string> } = {
       defaultModel: alias,
+      model: alias,
     };
     if (existing !== undefined) {
       patch.models = { ...existing, [alias]: existing[alias] ?? '' };

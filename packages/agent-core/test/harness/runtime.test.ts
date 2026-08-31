@@ -266,6 +266,43 @@ micro_compaction = false
     expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
   });
 
+  it('live-applies the persisted secondary recipe on config write without an explicit apply', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_secondary_auto_apply',
+      workDir,
+      model: 'default-mock',
+    });
+
+    await rpc.setKimiConfig({
+      secondaryModel: {
+        model: 'default-mock',
+        maxContextSize: 65_536,
+      },
+    });
+
+    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig;
+    expect(config?.secondaryModel).toEqual({
+      model: 'default-mock',
+      maxContextSize: 65_536,
+    });
+    expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
+  });
+
   // Regression for https://github.com/MoonshotAI/kimi-code/issues/988: during
   // ACP `session/new` the tool kaos is the reverse-RPC bridge and the client
   // does not know the session yet, so reading `.kimi-code/local.toml` through

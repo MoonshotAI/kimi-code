@@ -72,6 +72,7 @@ import {
   ProviderManager, type BearerTokenProvider,
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
+import { resolveSecondaryModel } from '../session/subagent-binding';
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { touchWorkspaceRegistry } from '../session/store/workspace-registry-file';
@@ -2014,6 +2015,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.config = config;
     this.experimentalFlags.setConfigOverrides(config.experimental);
     this.imageLimits.setConfig(config.image);
+    // Live-apply the secondary-model snapshot to every live session, so a
+    // config save (e.g. a `/secondary-model` pick) takes effect immediately
+    // instead of waiting for the next session create. Skip when nothing is
+    // configured: the snapshot setter only accepts a persisted recipe.
+    const sessionConfig = this.withPrintModeDefaults(config);
+    if (resolveSecondaryModel(sessionConfig) !== undefined) {
+      for (const session of this.sessions.values()) {
+        session.setSecondaryModelConfig(sessionConfig);
+      }
+    }
     return this.config;
   }
 
