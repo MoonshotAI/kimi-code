@@ -112,7 +112,7 @@ describe('handleSecondaryModelCommand', () => {
       expect(host.showStatus).toHaveBeenCalled();
     });
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      secondaryModel: { defaultModel: 'k2', model: 'k2' },
+      secondaryModel: { defaultModel: 'k2' },
     });
     expect(host.showError).not.toHaveBeenCalled();
   });
@@ -134,7 +134,6 @@ describe('handleSecondaryModelCommand', () => {
     expect(host.harness.setConfig).toHaveBeenCalledWith({
       secondaryModel: {
         defaultModel: 'k2',
-        model: 'k2',
         models: { cheap: 'fast and cheap', k2: '' },
       },
     });
@@ -157,7 +156,6 @@ describe('handleSecondaryModelCommand', () => {
     expect(host.harness.setConfig).toHaveBeenCalledWith({
       secondaryModel: {
         defaultModel: 'k2',
-        model: 'k2',
         models: { cheap: 'fast and cheap', k2: 'hard tasks' },
       },
     });

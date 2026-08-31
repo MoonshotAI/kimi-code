@@ -198,6 +198,8 @@ Subagents inherit the model the main agent is running by default. The `[secondar
 
 Configured values take effect in every launch mode, including the interactive TUI.
 
+The pool is enabled by default in every launch mode, including the interactive TUI. To disable it, set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0` (or `secondary-model = false` under `[experimental]` in `config.toml`); while disabled, the pool keys stay inert: subagents inherit the caller's model and session startup skips the pool validation.
+
 The minimal configuration is one line — a lone `default_model` is a pool with a single entry:
 
 ```toml

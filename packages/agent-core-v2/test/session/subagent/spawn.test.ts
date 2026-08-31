@@ -101,6 +101,7 @@ describe('SessionSubagentService planSpawn and spawn', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFlagService, stubFlag(true));
     callerData = {
       profileName: 'orchestrator',
       modelAlias: 'main-model',

@@ -266,6 +266,7 @@ function realSubagents(
     agentLifecycle,
     catalog,
     config,
+    stubFlag(true),
     modelCatalog,
     sessionContext,
     stubLog(),

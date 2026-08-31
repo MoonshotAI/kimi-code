@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { isPlainObject } from '#/app/config/toml';
+import type { IFlagService } from '#/app/flag/flag';
 import {
   type EnvBindings,
   envBindings,
@@ -15,6 +16,8 @@ import {
   declaredDefaultEffortForModel,
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
+
+import { SECONDARY_MODEL_FLAG_ID } from './flag';
 
 export const SUBAGENT_SECTION = 'subagent';
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
@@ -108,7 +111,11 @@ export function isSubagentModelForced(config: IConfigService): boolean {
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.force === true;
 }
 
-export function exposesSubagentModelChoice(config: IConfigService): boolean {
+export function exposesSubagentModelChoice(
+  config: IConfigService,
+  flags: IFlagService,
+): boolean {
+  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return false;
   if (isSubagentModelForced(config)) return false;
   return resolveSubagentModelPool(config) !== undefined;
 }
@@ -159,8 +166,10 @@ export function assertValidSubagentModelPool(
 
 export function assertValidSubagentModelConfig(
   config: IConfigService,
+  flags: IFlagService,
   modelCatalog: IModelCatalog,
 ): void {
+  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return;
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.force === true) {
     if (section.models !== undefined) {
@@ -180,11 +189,13 @@ export function assertValidSubagentModelConfig(
 
 export function resolveSubagentBinding(
   config: IConfigService,
+  flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
 ): { model: string; thinking?: string } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-  if (section?.force === true) {
+  const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
+  if (enabled && section?.force === true) {
     if (section.models !== undefined) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
         details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
@@ -208,7 +219,7 @@ export function resolveSubagentBinding(
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     return { model: own.modelAlias, thinking: own.thinkingLevel };
   }
-  const pool = resolveSubagentModelPool(config);
+  const pool = enabled ? resolveSubagentModelPool(config) : undefined;
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -257,9 +268,10 @@ export function resolveSubagentThinking(
 
 export function buildSubagentModelDescriptions(
   config: IConfigService,
+  flags: IFlagService,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  if (!exposesSubagentModelChoice(config)) return undefined;
+  if (!exposesSubagentModelChoice(config, flags)) return undefined;
   const pool = resolveSubagentModelPool(config)!;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;

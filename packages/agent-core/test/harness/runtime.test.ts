@@ -235,6 +235,7 @@ micro_compaction = false
     await mkdir(homeDir, { recursive: true });
     await mkdir(workDir, { recursive: true });
     await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL', '1');
 
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
     const core = new KimiCore(coreRpc, { homeDir });
@@ -264,112 +265,6 @@ micro_compaction = false
       maxContextSize: 65_536,
     });
     expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
-  });
-
-  it('live-applies the persisted secondary recipe on config write without an explicit apply', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    const workDir = join(tmp, 'work');
-    await mkdir(homeDir, { recursive: true });
-    await mkdir(workDir, { recursive: true });
-    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
-
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const core = new KimiCore(coreRpc, { homeDir });
-    const rpc = await sdkRpc({
-      emitEvent: vi.fn(),
-      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
-      requestQuestion: vi.fn(async () => null),
-      toolCall: vi.fn(async () => ({ output: '' })),
-    });
-    const created = await rpc.createSession({
-      id: 'ses_runtime_secondary_auto_apply',
-      workDir,
-      model: 'default-mock',
-    });
-
-    await rpc.setKimiConfig({
-      secondaryModel: {
-        model: 'default-mock',
-        maxContextSize: 65_536,
-      },
-    });
-
-    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig;
-    expect(config?.secondaryModel).toEqual({
-      model: 'default-mock',
-      maxContextSize: 65_536,
-    });
-    expect(config?.models?.['__secondary__']?.overrides?.maxContextSize).toBe(65_536);
-  });
-
-  it('live-applies a v2-style default_model-only recipe on config write', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    const workDir = join(tmp, 'work');
-    await mkdir(homeDir, { recursive: true });
-    await mkdir(workDir, { recursive: true });
-    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
-
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const core = new KimiCore(coreRpc, { homeDir });
-    const rpc = await sdkRpc({
-      emitEvent: vi.fn(),
-      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
-      requestQuestion: vi.fn(async () => null),
-      toolCall: vi.fn(async () => ({ output: '' })),
-    });
-    const created = await rpc.createSession({
-      id: 'ses_runtime_secondary_default_model',
-      workDir,
-      model: 'default-mock',
-    });
-
-    await rpc.setKimiConfig({
-      secondaryModel: { defaultModel: 'default-mock' },
-    });
-
-    const config = core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig;
-    expect(config?.secondaryModel).toEqual({ defaultModel: 'default-mock' });
-  });
-
-  it('clears the live secondary model when the section is removed on reload', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    const workDir = join(tmp, 'work');
-    await mkdir(homeDir, { recursive: true });
-    await mkdir(workDir, { recursive: true });
-    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
-
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const core = new KimiCore(coreRpc, { homeDir });
-    const rpc = await sdkRpc({
-      emitEvent: vi.fn(),
-      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
-      requestQuestion: vi.fn(async () => null),
-      toolCall: vi.fn(async () => ({ output: '' })),
-    });
-    const created = await rpc.createSession({
-      id: 'ses_runtime_secondary_clear',
-      workDir,
-      model: 'default-mock',
-    });
-
-    await rpc.setKimiConfig({
-      secondaryModel: { defaultModel: 'default-mock' },
-    });
-    expect(
-      core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig?.secondaryModel,
-    ).toEqual({ defaultModel: 'default-mock' });
-
-    // The user removes [secondary_model] from config.toml directly, then the
-    // next reload clears it from the live session too.
-    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
-    await rpc.getKimiConfig({ reload: true });
-
-    expect(
-      core.sessions.get(created.id)?.getReadyAgent('main')?.kimiConfig?.secondaryModel,
-    ).toBeUndefined();
   });
 
   // Regression for https://github.com/MoonshotAI/kimi-code/issues/988: during

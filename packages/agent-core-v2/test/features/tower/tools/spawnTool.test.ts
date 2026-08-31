@@ -41,6 +41,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
+import { stubFlag } from '../../../app/flag/stubs';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -118,6 +119,7 @@ describe('TowerSpawnTool', () => {
 
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFlagService, stubFlag(true));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(IAgentTowerService, {
       get isActive() {

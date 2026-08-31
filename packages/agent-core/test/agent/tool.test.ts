@@ -419,7 +419,7 @@ describe('Agent tools', () => {
     expect(ctx.agent.tools.loopTools.some((tool) => tool.name === 'AgentSwarm')).toBe(true);
   });
 
-  it('shows the model preference for a subagent type when a secondary model is configured', () => {
+  it('shows the model preference for a subagent type when the experiment is enabled', () => {
     const subagentHost = {
       delegatableSubagents: vi.fn(() => ({
         coder: {
@@ -433,7 +433,7 @@ describe('Agent tools', () => {
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({
       subagentHost,
-      initialConfig: { providers: {}, secondaryModel: { model: 'cheap-model' } },
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'secondary-model': true }),
     });
     ctx.configure({ tools: ['Agent'] });
 
@@ -442,7 +442,7 @@ describe('Agent tools', () => {
     expect(description).toContain('- coder: General coding.\n  Model preference: primary');
   });
 
-  it('shows the model preference when only the v2-style default_model is configured', () => {
+  it('hides model preferences when the experiment is disabled', () => {
     const subagentHost = {
       delegatableSubagents: vi.fn(() => ({
         coder: {
@@ -456,56 +456,7 @@ describe('Agent tools', () => {
     } as unknown as SessionSubagentHost;
     const ctx = testAgent({
       subagentHost,
-      initialConfig: { providers: {}, secondaryModel: { defaultModel: 'cheap-model' } },
-    });
-    ctx.configure({ tools: ['Agent'] });
-
-    const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
-
-    expect(description).toContain('- coder: General coding.\n  Model preference: primary');
-  });
-
-  it('hides model preferences when no secondary model is configured', () => {
-    const subagentHost = {
-      delegatableSubagents: vi.fn(() => ({
-        coder: {
-          name: 'coder',
-          description: 'General coding.',
-          systemPrompt: () => 'coder prompt',
-          tools: ['Read'],
-          modelPreference: 'primary' as const,
-        },
-      })),
-    } as unknown as SessionSubagentHost;
-    const ctx = testAgent({
-      subagentHost,
-      initialConfig: { providers: {} },
-    });
-    ctx.configure({ tools: ['Agent'] });
-
-    const description = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Agent')?.description;
-
-    expect(description).not.toContain('Model preference:');
-  });
-
-  it('hides model preferences when force is set', () => {
-    const subagentHost = {
-      delegatableSubagents: vi.fn(() => ({
-        coder: {
-          name: 'coder',
-          description: 'General coding.',
-          systemPrompt: () => 'coder prompt',
-          tools: ['Read'],
-          modelPreference: 'primary' as const,
-        },
-      })),
-    } as unknown as SessionSubagentHost;
-    const ctx = testAgent({
-      subagentHost,
-      initialConfig: {
-        providers: {},
-        secondaryModel: { defaultModel: 'cheap-model', force: true },
-      },
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
     });
     ctx.configure({ tools: ['Agent'] });
 

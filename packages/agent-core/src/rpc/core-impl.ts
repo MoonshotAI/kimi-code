@@ -2014,14 +2014,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.config = config;
     this.experimentalFlags.setConfigOverrides(config.experimental);
     this.imageLimits.setConfig(config.image);
-    // Live-apply the secondary-model snapshot to every live session, so a
-    // config save (e.g. a `/secondary-model` pick) takes effect immediately
-    // instead of waiting for the next session create. The setter also clears
-    // the snapshot when the section is removed.
-    const sessionConfig = this.withPrintModeDefaults(config);
-    for (const session of this.sessions.values()) {
-      session.setSecondaryModelConfig(sessionConfig);
-    }
     return this.config;
   }
 

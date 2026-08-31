@@ -60,6 +60,7 @@ import { repairWireJournal } from '#/wire/repair';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IModelService } from '#/kosong/model/model';
 import { IProviderService } from '#/kosong/provider/provider';
+import { IFlagService } from '#/app/flag/flag';
 import { assertValidSubagentModelConfig } from '#/session/subagent/configSection';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
@@ -172,6 +173,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
+    @IFlagService private readonly flags: IFlagService,
     onDispose?: () => void,
   ) {
     super();
@@ -224,7 +226,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async assertSubagentModelPoolPreFlight(): Promise<void> {
     await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    assertValidSubagentModelConfig(this.config, this.modelCatalog);
+    assertValidSubagentModelConfig(this.config, this.flags, this.modelCatalog);
   }
 
   private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {

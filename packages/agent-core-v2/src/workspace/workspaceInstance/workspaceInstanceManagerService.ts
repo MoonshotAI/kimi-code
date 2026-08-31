@@ -8,6 +8,7 @@ import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileReg
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
@@ -57,6 +58,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IAppStateService private readonly appState: IAppStateService,
     @IConfigService private readonly config: IConfigService,
     @IEventService private readonly event: IEventService,
+    @IFlagService private readonly flags: IFlagService,
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @ISessionIndex private readonly index: ISessionIndex,
@@ -242,6 +244,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.modelCatalog,
           this.models,
           this.modelProviders,
+          this.flags,
           input.onDispose,
         ),
       },

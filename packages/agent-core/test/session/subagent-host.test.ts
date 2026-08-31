@@ -1134,7 +1134,52 @@ describe('SessionSubagentHost', () => {
     expect(userTextMessages(histories[1] ?? [])).toEqual(['Implement the retry-safe change']);
   });
 
+  it('realigns a resumed subagent to the parent agent current model', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent();
+    child.configure({ tools: ['Read'] });
+    // The child was originally spawned with a model that no longer matches the
+    // parent agent's current model (as if the parent ran setModel afterwards).
+    child.agent.config.update({ modelAlias: 'stale-model-from-initial-spawn' });
+    child.agent.useProfile(
+      profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
+    });
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.resume('agent-0', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Continue from context',
+      description: 'Continue work',
+      runInBackground: false,
+      signal,
+    });
+
+    await handle.completion;
+    // resume must realign the child to the parent agent's current model rather
+    // than leave it on the stale model from its initial spawn.
+    expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
+    expect(child.agent.config.modelAlias).not.toBe('stale-model-from-initial-spawn');
+  });
+
   describe('secondary model binding', () => {
+    const secondaryFlags = () =>
+      new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1' });
     const LONG_SUMMARY =
       'Completed the delegated task end to end and reported a technically complete summary so the parent agent can continue without repeating prior work. ' +
       'The report covers the investigation, the changes made, and the verification results in enough detail for the caller to act on directly.';
@@ -1161,6 +1206,7 @@ describe('SessionSubagentHost', () => {
 
     async function spawnChild(options: {
       config?: KimiConfig;
+      experimentalFlags?: FlagResolver;
       providerManager?: Session['options']['providerManager'];
       modelChoice?: 'primary' | 'secondary';
       profilePreference?: 'primary' | 'secondary';
@@ -1173,6 +1219,7 @@ describe('SessionSubagentHost', () => {
 
       const session = fakeSession(parent.agent, child.agent, {}, {
         config: options.config,
+        experimentalFlags: options.experimentalFlags,
         providerManager: options.providerManager,
       });
       const host = new SessionSubagentHost(session, 'main');
@@ -1206,6 +1253,7 @@ describe('SessionSubagentHost', () => {
 
     it('binds the secondary model when configured', async () => {
       const { parent, child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
         config: {
           providers: {},
           secondaryModel: { model: 'cheap-model' },
@@ -1215,19 +1263,9 @@ describe('SessionSubagentHost', () => {
       expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
     });
 
-    it('binds the v2-style default_model when the legacy model key is unset', async () => {
-      const { parent, child } = await spawnChild({
-        config: {
-          providers: {},
-          secondaryModel: { defaultModel: 'cheap-model' },
-        },
-      });
-      expect(child.agent.config.modelAlias).toBe('cheap-model');
-      expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
-    });
-
     it('binds the derived entry when the recipe carries patch fields', async () => {
       const { child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
         config: {
           providers: {},
           secondaryModel: { model: 'cheap-model', defaultEffort: 'low' },
@@ -1238,15 +1276,16 @@ describe('SessionSubagentHost', () => {
       expect(child.agent.config.modelAlias).toBe('__secondary__');
     });
 
-    it('inherits the parent model when no secondary model is configured', async () => {
+    it('inherits the parent model when the experiment is off', async () => {
       const { parent, child } = await spawnChild({
-        config: { providers: {} },
+        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     });
 
     it('inherits the parent model for an explicit model: primary choice', async () => {
       const { parent, child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
         config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
         modelChoice: 'primary',
       });
@@ -1255,42 +1294,11 @@ describe('SessionSubagentHost', () => {
 
     it('honors the profile model_preference over the configured secondary model', async () => {
       const { parent, child } = await spawnChild({
+        experimentalFlags: secondaryFlags(),
         config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
         profilePreference: 'primary',
       });
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
-    });
-
-    it('binds the forced model and rejects an explicit model: primary choice', async () => {
-      await expect(
-        spawnChild({
-          config: {
-            providers: {},
-            secondaryModel: { defaultModel: 'cheap-model', force: true },
-          },
-          modelChoice: 'primary',
-        }),
-      ).rejects.toThrow(/\[secondary_model\]\.force is set/);
-    });
-
-    it('silently overrides a profile model_preference when force is set', async () => {
-      const { parent, child } = await spawnChild({
-        config: {
-          providers: {},
-          secondaryModel: { defaultModel: 'cheap-model', force: true },
-        },
-        profilePreference: 'primary',
-      });
-      expect(child.agent.config.modelAlias).toBe('cheap-model');
-      expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
-    });
-
-    it('fails the spawn when force is set without a default model', async () => {
-      await expect(
-        spawnChild({
-          config: { providers: {}, secondaryModel: { force: true } },
-        }),
-      ).rejects.toThrow(/default_model is required when \[secondary_model\]\.force is set/);
     });
 
     it('fails the spawn with a wrapped error when the secondary model does not resolve', async () => {
@@ -1303,6 +1311,7 @@ describe('SessionSubagentHost', () => {
         secondaryModel: { model: 'missing-model' },
       };
       const session = fakeSession(parent.agent, child.agent, {}, {
+        experimentalFlags: secondaryFlags(),
         config,
         providerManager: new ProviderManager({ config }),
       });
@@ -1337,6 +1346,7 @@ describe('SessionSubagentHost', () => {
         secondaryModel: { model: 'cheap-model' },
       };
       const session = fakeSession(parent.agent, child.agent, {}, {
+        experimentalFlags: secondaryFlags(),
         config,
         providerManager: new ProviderManager({ config }),
       });
@@ -1356,7 +1366,7 @@ describe('SessionSubagentHost', () => {
       });
     });
 
-    it('keeps the spawned model on resume', async () => {
+    it('keeps the spawned model on resume when the experiment is on', async () => {
       const parent = testAgent();
       parent.configure();
       parent.agent.permission.setMode('yolo');
@@ -1377,6 +1387,7 @@ describe('SessionSubagentHost', () => {
           parentAgentId: 'main',
         },
       }, {
+        experimentalFlags: secondaryFlags(),
         config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
       });
       const host = new SessionSubagentHost(session, 'main');
@@ -1389,8 +1400,8 @@ describe('SessionSubagentHost', () => {
         signal,
       });
       await handle.completion;
-      // Resume no longer realigns the child to the parent's model: the
-      // subagent keeps the model it was bound to at spawn.
+      // With the experiment on, resume no longer realigns the child to the
+      // parent's model: the subagent keeps the model it was bound to at spawn.
       expect(child.agent.config.modelAlias).toBe('cheap-model');
     });
   });

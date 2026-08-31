@@ -56,7 +56,6 @@ import {
 } from './subagent-binding';
 import {
   SECONDARY_DERIVED_MODEL_ALIAS,
-  secondaryModelAlias,
   secondaryModelPatch,
 } from '../config/secondary-model';
 import {
@@ -900,9 +899,7 @@ export class Session {
    * for the next subagent spawn without recreating the session. The core owns
    * config reload, environment overlays, and derived-model synthesis. Copying
    * that complete recipe and its model entries keeps spawn binding and provider
-   * resolution aligned without live-applying unrelated session settings. An
-   * absent `[secondary_model]` clears the snapshot, so removing the section
-   * disables the pool for live sessions too.
+   * resolution aligned without live-applying unrelated session settings.
    */
   setSecondaryModelConfig(config: KimiConfig): void {
     const base = this.runtimeConfig;
@@ -913,27 +910,23 @@ export class Session {
       );
     }
     const secondary = config.secondaryModel;
-    const secondaryAlias = secondaryModelAlias(secondary);
-    if (secondary !== undefined && secondaryAlias === undefined) {      throw new KimiError(
+    if (secondary?.model === undefined) {
+      throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
         'Cannot set the secondary model: persist its recipe before applying it to a session.',
       );
     }
-    if (secondaryAlias !== undefined) {
-      try {
-        this.options.providerManager?.resolveProviderConfig(secondaryAlias);
-      } catch (error) {
-        throw wrapSubagentModelError(error, secondaryAlias, undefined);
-      }
+    try {
+      this.options.providerManager?.resolveProviderConfig(secondary.model);
+    } catch (error) {
+      throw wrapSubagentModelError(error, secondary.model, undefined);
     }
     const models = { ...base.models };
     delete models[SECONDARY_DERIVED_MODEL_ALIAS];
-    if (secondaryAlias !== undefined) {
-      const pointedModel = config.models?.[secondaryAlias];
-      if (pointedModel !== undefined) models[secondaryAlias] = pointedModel;
-      const derivedModel = config.models?.[SECONDARY_DERIVED_MODEL_ALIAS];
-      if (derivedModel !== undefined) models[SECONDARY_DERIVED_MODEL_ALIAS] = derivedModel;
-    }
+    const pointedModel = config.models?.[secondary.model];
+    if (pointedModel !== undefined) models[secondary.model] = pointedModel;
+    const derivedModel = config.models?.[SECONDARY_DERIVED_MODEL_ALIAS];
+    if (derivedModel !== undefined) models[SECONDARY_DERIVED_MODEL_ALIAS] = derivedModel;
     const next = { ...base, models, secondaryModel: secondary };
     this.runtimeConfig = next;
     this.secondaryModelWarnings = undefined;
@@ -960,12 +953,11 @@ export class Session {
   private computeSecondaryModelWarnings(): SessionWarning[] {
     if (this.secondaryModelWarnings !== undefined) return [...this.secondaryModelWarnings];
     const warnings: SessionWarning[] = [];
-    const secondary = resolveSecondaryModel(this.kimiConfig);
-    const secondaryAlias = secondaryModelAlias(secondary);
-    if (secondary !== undefined && secondaryAlias !== undefined) {
+    const secondary = resolveSecondaryModel(this.kimiConfig, this.experimentalFlags);
+    if (secondary?.model !== undefined) {
       const boundAlias =
         secondaryModelPatch(secondary) === undefined
-          ? secondaryAlias
+          ? secondary.model
           : SECONDARY_DERIVED_MODEL_ALIAS;
       try {
         const resolved = this.options.providerManager?.resolveProviderConfig(boundAlias);

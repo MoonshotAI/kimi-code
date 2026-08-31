@@ -105,9 +105,9 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     // SubagentBatch arms no timer for non-positive timeouts.
     private readonly subagentTimeoutMs?: number,
     subagentModelDescription?: string,
-    // When no secondary model is configured, the no-op `model` parameter is
-    // stripped from the advertised schema so the secondary-model concept
-    // never enters the prompt.
+    // Mirrors the `secondary-model` experiment: off (the default), the no-op
+    // `model` parameter is stripped from the advertised schema so the
+    // secondary-model concept never enters the prompt.
     modelChoiceEnabled = false,
   ) {
     this.description =

@@ -766,7 +766,9 @@ describe('Session secondary-model live config', () => {
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       providerManager: testProviderManager(),
-      experimentalFlags: new FlagResolver({}),
+      experimentalFlags: new FlagResolver({
+        KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL: '1',
+      }),
       config,
     });
   }
@@ -871,13 +873,10 @@ describe('Session secondary-model live config', () => {
     }
   });
 
-  it('clears the snapshot when the complete config has no persisted secondary recipe', async () => {
-    const session = await makeSession(SECONDARY_POINTER_CONFIG);
+  it('rejects when the complete config has no persisted secondary recipe', async () => {
+    const session = await makeSession(SECONDARY_BASE_CONFIG);
     try {
-      session.setSecondaryModelConfig(SECONDARY_POINTER_CONFIG);
-      expect(session.kimiConfig?.secondaryModel).toEqual({ model: MOCK_PROVIDER.model });
-      session.setSecondaryModelConfig(SECONDARY_BASE_CONFIG);
-      expect(session.kimiConfig?.secondaryModel).toBeUndefined();
+      expect(() => session.setSecondaryModelConfig(SECONDARY_BASE_CONFIG)).toThrow(/persist/);
     } finally {
       await session.close();
     }

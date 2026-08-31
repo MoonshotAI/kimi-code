@@ -1,29 +1,29 @@
 import {
   SECONDARY_DERIVED_MODEL_ALIAS,
   SECONDARY_MODEL_ENV,
-  secondaryModelAlias,
   secondaryModelPatch,
   type KimiConfig,
   type SecondaryModelConfig,
 } from '../config';
 import { ErrorCodes, KimiError } from '../errors';
+import type { ExperimentalFlagResolver } from '../flags';
 import type { AgentModelPreference } from '../profile';
 
 /**
  * Subagent model binding — the secondary-model half of the spawn decision.
  *
- * When `[secondary_model]` is configured, newly spawned subagents bind to it
- * by default instead of inheriting the caller's model. The caller (the parent
- * model, through the `Agent` / `AgentSwarm` tool `model` parameter) or the
- * spawned profile (via `model_preference`) can force `primary`. A recipe
- * with patch fields binds the synthesized derived entry
- * ({@link SECONDARY_DERIVED_MODEL_ALIAS}, materialized by
- * `applySecondaryModelConfig`); a pointer-only recipe binds the pointed
- * entry directly. `default_effort` is passed as the explicit subagent
- * thinking effort; without it the child resolves thinking naturally (global
- * thinking config → the bound model's default effort) rather than inheriting
- * the caller's level. When unset, spawning behavior is unchanged: subagents
- * inherit the caller's model and effort.
+ * When the `secondary-model` experiment is enabled and `[secondary_model]` is
+ * configured, newly spawned subagents bind to it by default instead of
+ * inheriting the caller's model. The caller (the parent model, through the
+ * `Agent` / `AgentSwarm` tool `model` parameter) or the spawned profile (via
+ * `model_preference`) can force `primary`. A recipe with patch fields binds
+ * the synthesized derived entry ({@link SECONDARY_DERIVED_MODEL_ALIAS},
+ * materialized by `applySecondaryModelConfig`); a pointer-only recipe binds
+ * the pointed entry directly. `default_effort` is passed as the explicit
+ * subagent thinking effort; without it the child resolves thinking naturally
+ * (global thinking config → the bound model's default effort) rather than
+ * inheriting the caller's level. When unset, spawning behavior is unchanged:
+ * subagents inherit the caller's model and effort.
  */
 
 export type SubagentModelChoice = AgentModelPreference;
@@ -35,7 +35,9 @@ export interface SubagentModelBinding {
 
 export function resolveSecondaryModel(
   config: KimiConfig | undefined,
+  flags: ExperimentalFlagResolver,
 ): SecondaryModelConfig | undefined {
+  if (!flags.enabled('secondary-model')) return undefined;
   return config?.secondaryModel;
 }
 
@@ -46,18 +48,18 @@ export function resolveSecondaryModel(
  */
 export function resolveSubagentBinding(
   config: KimiConfig | undefined,
+  flags: ExperimentalFlagResolver,
   own: { readonly modelAlias: string | undefined; readonly thinkingEffort: string },
   requested?: SubagentModelChoice,
 ): SubagentModelBinding {
-  const secondary = resolveSecondaryModel(config);
-  const secondaryAlias = secondaryModelAlias(secondary);
-  if (requested !== 'primary' && secondaryAlias !== undefined) {
+  const secondary = resolveSecondaryModel(config, flags);
+  if (requested !== 'primary' && secondary?.model !== undefined) {
     return {
       modelAlias:
         secondaryModelPatch(secondary) === undefined
-          ? secondaryAlias
+          ? secondary.model
           : SECONDARY_DERIVED_MODEL_ALIAS,
-      thinkingEffort: secondary?.defaultEffort,
+      thinkingEffort: secondary.defaultEffort,
     };
   }
   return { modelAlias: own.modelAlias, thinkingEffort: own.thinkingEffort };
@@ -70,12 +72,11 @@ export function resolveSubagentBinding(
  */
 export function buildSubagentModelDescriptions(
   config: KimiConfig | undefined,
+  flags: ExperimentalFlagResolver,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  const secondary = resolveSecondaryModel(config);
-  const secondaryModel = secondaryModelAlias(secondary);
-  if (secondaryModel === undefined || callerModelAlias === undefined || secondary?.force === true)
-    return undefined;
+  const secondaryModel = resolveSecondaryModel(config, flags)?.model;
+  if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
   return [
     'Available models (pass via model):',
     `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
@@ -85,7 +86,7 @@ export function buildSubagentModelDescriptions(
 
 /**
  * Strip the `model` property from a subagent collaboration tool's advertised
- * JSON schema. When no secondary model is configured the parameter would be
+ * JSON schema. While the `secondary-model` experiment is off the parameter is
  * a silent no-op, so the schema the model sees (and the args validator
  * compiled from the same advertised schema) drops it entirely — the
  * secondary-model concept never enters the prompt, and a stray `model`

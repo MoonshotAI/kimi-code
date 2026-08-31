@@ -128,9 +128,9 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       subagentTimeoutMs?: number | undefined;
       subagentModelDescription?: string;
       showModelPreferences?: boolean;
-      // When no secondary model is configured, the no-op `model` parameter is
-      // stripped from the advertised schema so the secondary-model concept
-      // never enters the prompt.
+      // Mirrors the `secondary-model` experiment: off (the default), the
+      // no-op `model` parameter is stripped from the advertised schema so the
+      // secondary-model concept never enters the prompt.
       modelChoiceEnabled?: boolean;
     },
   ) {

@@ -15,11 +15,7 @@ import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
-import {
-  buildSubagentModelDescriptions,
-  resolveSecondaryModel,
-} from '../../session/subagent-binding';
-import { secondaryModelAlias } from '../../config/secondary-model';
+import { buildSubagentModelDescriptions } from '../../session/subagent-binding';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
@@ -784,11 +780,6 @@ export class ToolManager {
       background,
     } = this.agent;
     const videoUploader = this.createVideoUploader(provider);
-    const secondaryModel = resolveSecondaryModel(this.agent.kimiConfig);
-    // Mirrors the v2 exposesSubagentModelChoice rule: a configured model
-    // unlocks the choice, while `force` takes it away from the main agent.
-    const exposeModelChoice =
-      secondaryModelAlias(secondaryModel) !== undefined && secondaryModel?.force !== true;
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
@@ -858,10 +849,11 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
-              showModelPreferences: exposeModelChoice,
-              modelChoiceEnabled: exposeModelChoice,
+              showModelPreferences: this.agent.experimentalFlags.enabled('secondary-model'),
+              modelChoiceEnabled: this.agent.experimentalFlags.enabled('secondary-model'),
               subagentModelDescription: buildSubagentModelDescriptions(
                 this.agent.kimiConfig,
+                this.agent.experimentalFlags,
                 this.agent.config.modelAlias,
               ),
             },
@@ -873,9 +865,10 @@ export class ToolManager {
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
             buildSubagentModelDescriptions(
               this.agent.kimiConfig,
+              this.agent.experimentalFlags,
               this.agent.config.modelAlias,
             ),
-            exposeModelChoice,
+            this.agent.experimentalFlags.enabled('secondary-model'),
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

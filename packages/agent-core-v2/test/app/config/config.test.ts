@@ -83,7 +83,7 @@ import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
-  resolveSubagentBinding,
+  resolveSubagentBinding as resolveSubagentBindingWithFlags,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   SECONDARY_MODEL_SECTION,
@@ -93,6 +93,7 @@ import {
   type SubagentConfig,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
+import { SECONDARY_MODEL_FLAG_ID } from '#/session/subagent/flag';
 import {
   DEFAULT_SWARM_TIMEOUT_MS,
   resolveSwarmTimeoutMs,
@@ -124,6 +125,18 @@ import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../flag/stubs';
+
+function secondaryModelFlags(enabled = true) {
+  return stubFlag((id) => enabled && id === SECONDARY_MODEL_FLAG_ID);
+}
+
+function resolveSubagentBinding(
+  config: IConfigService,
+  own: { modelAlias: string; thinkingLevel: string },
+  requested?: string,
+) {
+  return resolveSubagentBindingWithFlags(config, secondaryModelFlags(), own, requested);
+}
 
 const TEST_OS_ENV = {
   osKind: 'Linux',
@@ -1893,6 +1906,24 @@ describe('subagent config section', () => {
       thinking: 'medium',
     });
     pool.disposables.dispose();
+  });
+
+  it('keeps the configured pool inert when secondary-model is disabled', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+    const { config, disposables } = await createConfig(
+      {},
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+    );
+
+    expect(resolveSubagentBindingWithFlags(config, secondaryModelFlags(false), own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(() =>
+      resolveSubagentBindingWithFlags(config, secondaryModelFlags(false), own, 'provider/fast'),
+    ).toThrow(/no \[secondary_model\.models\] pool is configured/);
+
+    disposables.dispose();
   });
 
   it('treats a pool-less default_model as an implicit single-entry pool', async () => {
