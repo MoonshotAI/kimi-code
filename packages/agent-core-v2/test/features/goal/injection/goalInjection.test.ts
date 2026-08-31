@@ -61,7 +61,6 @@ describe('GoalInjection content', () => {
     goals = ctx.get(IAgentGoalService);
     context = ctx.get(IAgentContextMemoryService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {
@@ -92,8 +91,6 @@ describe('GoalInjection content', () => {
     const localLoop = local.get(IAgentLoopService) as StubLoop;
     await localGoals.createGoal({ objective: 'work' });
 
-    await local.restoreRuntimes();
-    await local.restoreRuntimes();
     await injectDynamic(local, true);
     expect(lastGoalReminder(localContext)).toContain('<untrusted_objective>');
     expect(localContext.get().filter((message) =>
@@ -270,7 +267,6 @@ describe('GoalInjection integration', () => {
       goals = ctx.get(IAgentGoalService);
       profile = ctx.get(IAgentProfileService);
       await ctx.restorePersisted();
-      await ctx.restoreRuntimes();
     });
 
     afterEach(async () => {

@@ -14,10 +14,6 @@ import { Emitter } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type {
-  AgentRuntimeDefinition,
-  RuntimeOf,
-} from '#/agent/runtime/agentRuntime';
 import {
   AgentActivityUpdated,
   IAgentActivityView,
@@ -200,17 +196,6 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
   fork(): Promise<AgentContext> {
     throw new Error('not implemented');
   }
-  resolve<Definition extends AgentRuntimeDefinition<any, any>>(
-    agent: AgentContext,
-    definition: Definition,
-  ): RuntimeOf<Definition> {
-    void agent;
-    void definition;
-    throw new Error('not implemented');
-  }
-  inspect(): never {
-    throw new Error('not implemented');
-  }
   remove(): Promise<void> {
     throw new Error('not implemented');
   }
@@ -218,9 +203,6 @@ class FakeAgentLifecycle implements IAgentLifecycleService {
     throw new Error('not implemented');
   }
   adopt(): AgentContext {
-    throw new Error('not implemented');
-  }
-  attachRuntimes(): void {
     throw new Error('not implemented');
   }
 }

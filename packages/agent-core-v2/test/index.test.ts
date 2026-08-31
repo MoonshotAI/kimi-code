@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import * as AgentCore from '#/index';
 import {
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
@@ -103,18 +102,6 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'cron.cursor',
   'token_counting.turn_recorded',
 ]);
-
-describe('package runtime exports', () => {
-  it('exports the opaque runtime contract surface without internal descriptors or hosts', () => {
-    expect(AgentCore).toHaveProperty('AgentRuntimeContributionPoint');
-    expect(AgentCore).toHaveProperty('AgentRuntimeOverrideContributionPoint');
-    expect(AgentCore).toHaveProperty('defineAgentRuntimeContract');
-    expect(AgentCore).toHaveProperty('defineAgentRuntimeProvider');
-    expect(AgentCore).not.toHaveProperty('AgentRuntimeSet');
-    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDescriptor');
-    expect(AgentCore).not.toHaveProperty('getAgentRuntimeDefinitionId');
-  });
-});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';

@@ -1480,7 +1480,6 @@ describe('TowerModeInjection', () => {
     context = ctx.get(IAgentContextMemoryService);
     tower = ctx.get(IAgentTowerService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
   });
 
   afterEach(async () => {

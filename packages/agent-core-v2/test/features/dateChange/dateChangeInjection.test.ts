@@ -179,7 +179,6 @@ describe('AgentDateChangeService', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
 
     await runWillBeginStepHooks(loop);
 
@@ -213,7 +212,6 @@ describe('AgentDateChangeService', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
 
     await runWillBeginStepHooks(loop);
     const initial = dateReminders(context);
@@ -417,7 +415,7 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(0);
   });
 
-  it('keeps one provider registration across repeated runtime restore', async () => {
+  it('keeps one provider registration across repeated restore', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
@@ -428,8 +426,8 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    await ctx.restoreRuntimes();
-    await ctx.restoreRuntimes();
+    await ctx.restorePersisted();
+    await ctx.restorePersisted();
     clock.set('2026-07-30T04:00:00.000Z');
     await runWillBeginStepHooks(loop);
 

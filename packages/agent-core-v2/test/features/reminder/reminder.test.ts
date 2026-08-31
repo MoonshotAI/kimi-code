@@ -49,7 +49,6 @@ describe('AgentReminderService', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService) as StubLoop;
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
     reminder = ctx.get(IAgentReminderService);
   });
 
@@ -446,8 +445,6 @@ describe('AgentReminderService', () => {
     expect(calls).toBe(0);
 
     await local.restorePersisted();
-    await local.restoreRuntimes();
-    await local.restoreRuntimes();
     await runWillBeginStepHooks(localLoop, false);
     expect(calls).toBe(1);
 

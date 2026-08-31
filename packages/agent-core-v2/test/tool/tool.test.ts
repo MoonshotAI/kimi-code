@@ -47,7 +47,6 @@ import { Error2, ErrorCodes } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
 import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
@@ -99,8 +98,6 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { TestAgentRuntime, testAgentRuntimeProvider } from '../wire/stubs';
 
 const signal = new AbortController().signal;
 
@@ -225,7 +222,6 @@ interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentSer
   readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
   readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
   readonly publishedEvents: Event2[];
-  restoreRuntimes(agent: AgentContext): Promise<void>;
   addHandle(
     agentId: string,
     profileName: string,
@@ -242,7 +238,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
   const handles = new Map<string, IAgentScopeHandle>();
   const servicesByAgentId = new Map(options.handleServices);
   const contextsByAgentId = new Map<string, AgentContext>();
-  let adoptedManaged: ManagedAgent | undefined;
   const publishedEvents: Event2[] = [];
   const contextFor = (agentId: string): AgentContext => {
     let context = contextsByAgentId.get(agentId);
@@ -418,41 +413,10 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     get: vi.fn((agentId: string) => contextsByAgentId.get(agentId)),
     handleOf: vi.fn((agentId: string) => handles.get(agentId)),
     list: vi.fn(() => [...handles.keys()].map((agentId) => contextFor(agentId))),
-    resolve: vi.fn(((agent: AgentContext, definition: AgentRuntimeDefinition<any, any>) => {
-      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
-        return adoptedManaged.runtimeSet.resolve(definition);
-      }
-      throw new Error('unexpected resolve');
-    }) as IAgentLifecycleService['resolve']),
-    inspect: vi.fn((agent) => {
-      if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
-        return {
-          identity: { agentId: agent.agentId, generation: agent.generation },
-          contributions: adoptedManaged.runtimeSet.inspect(),
-        };
-      }
-      throw new Error('unexpected inspect');
-    }),
     adopt: vi.fn((adopted) => {
       const adoptedHandle = adopted as IAgentScopeHandle;
       handles.set(adoptedHandle.id, adoptedHandle);
-      adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
-        {
-          definition: TestAgentRuntime,
-          provider: testAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-      ]);
-      return adoptedManaged.context;
-    }),
-    attachRuntimes: vi.fn(() => {
-      adoptedManaged?.attachDurableRuntimes();
-    }),
-    restoreRuntimes: vi.fn(async (agent) => {
-      const managed = adoptedManaged;
-      if (managed === undefined || managed.context.agentId !== agent.agentId) return;
-      await managed.runtimeSet.restore();
+      return agentContextOf(adoptedHandle);
     }),
     broadcastPermissionMode: vi.fn(),
     remove: vi.fn(async (agent) => {

@@ -4,7 +4,6 @@ import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/t
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { defineAgentRuntimeContract, defineAgentRuntimeProvider } from '#/agent/runtime/agentRuntime';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -139,13 +138,6 @@ export function attachGoalService(ix: TestInstantiationService): AgentGoalServic
   ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
   return ix.get(IAgentGoalService) as AgentGoalService;
 }
-
-export const TestAgentRuntime = defineAgentRuntimeContract<object>('testAgentRuntime');
-
-export const testAgentRuntimeProvider = defineAgentRuntimeProvider(TestAgentRuntime, {
-  id: 'testAgentRuntime',
-  createApi: () => ({}),
-});
 
 export async function restoreTestEventDispatcher(
   dispatcher: IEventDispatcher,

@@ -152,7 +152,6 @@ describe('Agent config', () => {
 
   beforeEach(() => {
     ctx = createTestAgent();
-    void ctx.restoreRuntimes();
     profile = ctx.get(IAgentProfileService);
   });
 

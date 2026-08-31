@@ -104,7 +104,6 @@ describe('session cron wire persistence', () => {
       await expect(ctx.get(IAgentCronService).tick()).rejects.toThrow('not restored');
 
       await ctx.restorePersisted();
-      void ctx.restoreRuntimes();
 
       await expect(ctx.get(IAgentCronService).tick()).resolves.toBeUndefined();
 

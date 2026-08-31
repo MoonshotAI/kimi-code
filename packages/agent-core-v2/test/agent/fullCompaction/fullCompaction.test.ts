@@ -49,7 +49,6 @@ function testAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
 ): TestAgentContext {
   const context = createTestAgent(...inputs);
-  void context.restoreRuntimes();
   return context;
 }
 

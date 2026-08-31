@@ -627,7 +627,6 @@ describe('swarm context reconciliation', () => {
     const ctx = createTestAgent();
     try {
       await ctx.restorePersisted();
-      await ctx.restoreRuntimes();
       const swarm = ctx.get(IAgentSwarmService);
       swarm.enter('manual');
       ctx.mockNextResponse({ type: 'text', text: 'first answer' });
