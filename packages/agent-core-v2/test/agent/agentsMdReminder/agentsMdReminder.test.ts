@@ -46,8 +46,8 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { createReminderStub, lifecycleWithReminder } from '../../features/reminder/stubs';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { createReminderStub } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -154,12 +154,12 @@ function createHarness(
       });
       reg.defineInstance(IAgentStateService, agentState);
       reg.defineInstance(
-        IAgentLifecycleService,
-        lifecycleWithReminder(createReminderStub({
+        IAgentReminderService,
+        createReminderStub({
           notify: (content, notification) => {
             reminders.push({ content, origin: { kind: 'injection', ...notification } });
           },
-        })),
+        }),
       );
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,

@@ -1,9 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 
 import { DYNAMIC_TOOL_SCHEMA_VARIANT } from './dynamicTools';
 import { IAgentToolSelectService } from './toolSelect';
@@ -14,18 +12,15 @@ export class AgentToolSelectSchemasService extends Service implements IAgentTool
 
   constructor(
     @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentReminderService reminder: IAgentReminderService,
   ) {
     super();
     this._register(
-      activateReminderWhenReady(agentLifecycle, scopeContext, (reminder) =>
-        reminder.register(DYNAMIC_TOOL_SCHEMA_VARIANT, () => {
-          const tools = toolSelect.drainPendingToolSchemas();
-          if (tools === undefined) return undefined;
-          return { message: { role: 'system', content: [], tools } };
-        }),
-      ),
+      reminder.register(DYNAMIC_TOOL_SCHEMA_VARIANT, () => {
+        const tools = toolSelect.drainPendingToolSchemas();
+        if (tools === undefined) return undefined;
+        return { message: { role: 'system', content: [], tools } };
+      }),
     );
   }
 }

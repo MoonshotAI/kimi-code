@@ -11,8 +11,8 @@ import {
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { TODO_LIST_TOOL_NAME, readTodoItems, type TodoItem } from './todoItem';
@@ -48,9 +48,7 @@ const todoReminder = fromCallback(({
   };
 }) => {
   if (input.runtime.agent.agentId !== MAIN_AGENT_ID) return;
-  const injector = input.runtime
-    .get(IAgentLifecycleService)
-    .resolve(input.runtime.agent, AgentReminder);
+  const injector = input.runtime.get(IAgentReminderService);
   const memory = input.runtime.get(IAgentContextMemoryService);
   const toolPolicy = input.runtime.get(IAgentToolPolicyService);
   const registration = injector.register(TODO_LIST_REMINDER_VARIANT, () =>

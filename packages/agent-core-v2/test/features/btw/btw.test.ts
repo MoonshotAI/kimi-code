@@ -12,6 +12,7 @@ import {
   TOOL_CALL_DISABLED_MESSAGE,
 } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -39,6 +40,7 @@ describe('SessionBtwService', () => {
         get: (id: unknown) => {
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
+          if (id === IAgentReminderService) return { notify: appendReminder };
           return undefined;
         },
       },
@@ -63,7 +65,6 @@ describe('SessionBtwService', () => {
     ix.stub(IAgentLifecycleService, {
       _serviceBrand: undefined,
       fork,
-      resolve: () => ({ notify: appendReminder }),
       handleOf: (id: string) => {
         if (id === 'main') return main;
         if (id === 'agent-btw-1') return child;

@@ -5,7 +5,7 @@ import { assign, fromCallback, sendTo, setup, type Snapshot } from 'xstate';
 import { MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { abortError } from '#/_base/utils/abort';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
@@ -46,7 +46,7 @@ import {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
@@ -238,7 +238,7 @@ function goalOperationContext(runtime: AgentRuntimeContext<GoalRuntimeState>): G
 }
 
 function reminderOf(runtime: AgentRuntimeContext<GoalRuntimeState>) {
-  return runtime.get(IAgentLifecycleService).resolve(runtime.agent, AgentReminder);
+  return runtime.get(IAgentReminderService);
 }
 
 export class GoalRuntime {

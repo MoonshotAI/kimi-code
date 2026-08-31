@@ -42,9 +42,9 @@ describe('Agent loop', () => {
   let loop: IAgentLoopService;
   let profile: IAgentProfileService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
-    void ctx.restoreRuntimes();
+    await ctx.restorePersisted();
     loop = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
   });

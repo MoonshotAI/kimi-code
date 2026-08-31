@@ -635,7 +635,7 @@ export * from '#/agent/contextMemory/loopEventFold';
 export * from '#/agent/contextMemory/messageId';
 export * from '#/agent/contextMemory/contextTranscript';
 export * from '#/agent/contextMemory/types';
-export { AgentReminder, ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+export * from '#/features/reminder/reminderService';
 export * from '#/features/reminder/systemReminder';
 export * from '#/features/reminder/types';
 import '#/features/reminder/reminderFeature';

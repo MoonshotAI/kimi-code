@@ -7,13 +7,12 @@ import {
   type AgentRuntimeContext,
   type AgentRuntimeRestoreEvent,
 } from '#/agent/runtime/agentRuntime';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
   ContextInjectionContext,
   ContextInjectionResult,
 } from '#/features/reminder/types';
 import { IHostClock } from '#/os/interface/hostClock';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import type { DateInjectionDisclosure } from './dateChange';
@@ -62,9 +61,7 @@ const dateChangeInjection = fromCallback(({
   };
 }) => {
   const runtime = input.runtime;
-  const reminder = runtime
-    .get(IAgentLifecycleService)
-    .resolve(runtime.agent, AgentReminder);
+  const reminder = runtime.get(IAgentReminderService);
   const profile = runtime.get(IAgentProfileService);
   const clock = runtime.get(IHostClock);
   const sessionContext = runtime.get(ISessionContext);

@@ -304,7 +304,11 @@ describe('Agent config', () => {
   });
 
   it('keeps turn-start config for later steps and applies updates to the next turn', async () => {
-    await ctx.restoreRuntimes();
+    await ctx.dispose();
+    ctx = createTestAgent({ autoConfigure: false });
+    await ctx.restorePersisted();
+    ctx.configure();
+    profile = ctx.get(IAgentProfileService);
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',

@@ -1492,8 +1492,13 @@ export class AgentTestContext {
     return this.get(IAgentStateService);
   }
 
+  private persistedRestored = false;
+
   async restorePersisted(): Promise<void> {
-    await this.dispatcher.restore();
+    if (!this.persistedRestored) {
+      this.persistedRestored = true;
+      await this.dispatcher.restore();
+    }
     await this.restoreRuntimes();
   }
 
@@ -1506,6 +1511,7 @@ export class AgentTestContext {
     const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
     await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
+    this.persistedRestored = true;
     await this.dispatcher.restore();
     await (this.session.accessor.get(IAgentLifecycleService) as AgentLifecycleService).restoreRuntimes(
       scopeContext.agentContext,

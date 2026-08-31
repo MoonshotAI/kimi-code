@@ -25,9 +25,7 @@ import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -241,7 +239,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
@@ -294,10 +292,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      activateReminderWhenReady(agentLifecycle, this.scopeContext, (reminder) =>
-        reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
-          this.activeBackgroundTaskReminder(),
-        ),
+      this.reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
+        this.activeBackgroundTaskReminder(),
       ),
     );
   }
@@ -1160,16 +1156,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
     if (tasks.length === 0) return;
     const lines = tasks.map((info) => previousSessionTaskLine(info));
-    this.agentLifecycle
-      .resolve(this.scopeContext.agentContext, AgentReminder)
-      .notify(
-        [
-          'The user exited the application after your last turn, so your background tasks from the previous session lost contact:',
-          ...lines,
-          "Don't assume any of them completed; check current state (they may still be running), then re-run or resume only what you still need.",
-        ].join('\n'),
-        { variant: TASK_RESUME_TERMINATION_VARIANT },
-      );
+    this.reminder.notify(
+      [
+        'The user exited the application after your last turn, so your background tasks from the previous session lost contact:',
+        ...lines,
+        "Don't assume any of them completed; check current state (they may still be running), then re-run or resume only what you still need.",
+      ].join('\n'),
+      { variant: TASK_RESUME_TERMINATION_VARIANT },
+    );
     for (const info of tasks) {
       this.firePreviousSessionLostTaskNotificationHook(info);
       this.persistPreviousSessionReminderMarker(info);

@@ -163,7 +163,6 @@ import {
   ensureMainAgent,
   agentContextOf,
   IAgentActivityView,
-  AgentReminder,
   IAgentContextMemoryService,
   AgentCron,
   AgentGoal,
@@ -176,6 +175,7 @@ import {
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
   IAgentProfileService,
+  IAgentReminderService,
   IAgentSkillService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -2063,7 +2063,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       swarm.exit();
     }
-    await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentReminder).reconcileWhenIdle('swarm_mode');
+    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('swarm_mode');
   }
 
   /** v1's `swarm()` composition: enter with the one-shot `task` trigger, then prompt. */
@@ -2087,7 +2087,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     } else {
       tower.exit();
     }
-    await agent.accessor.get(IAgentLifecycleService).resolve(agentContextOf(agent), AgentReminder).reconcileWhenIdle('tower_mode');
+    await agent.accessor.get(IAgentReminderService).reconcileWhenIdle('tower_mode');
   }
 
   // -----------------------------------------------------------------------

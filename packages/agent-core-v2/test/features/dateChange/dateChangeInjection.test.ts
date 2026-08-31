@@ -80,11 +80,12 @@ describe('dateChangeAgentRuntime', () => {
 
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
-    ctx = createTestAgent(appService(IHostClock, clock));
+    ctx = createTestAgent({ autoConfigure: false }, appService(IHostClock, clock));
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
-    await ctx.restoreRuntimes();
+    await ctx.restorePersisted();
+    ctx.configure();
   });
 
   afterEach(async () => {

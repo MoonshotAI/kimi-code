@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import type { TodoItem } from '#/features/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
@@ -156,7 +156,7 @@ describe('AgentTodoService', () => {
   it('arms the stale-todo reminder on first use for the main agent only', async () => {
     const lifecycle = ctx.get(IAgentLifecycleService);
     const todo = ctx.get(IAgentTodoService);
-    const reminder = lifecycle.resolve(ctx.agentContext, AgentReminder);
+    const reminder = ctx.get(IAgentReminderService);
 
     appendAssistantTurns(ctx.context, 10);
     await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
@@ -169,7 +169,7 @@ describe('AgentTodoService', () => {
 
     const sub = await lifecycle.create({ agentId: 'agent-1' });
     const subTodo = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentTodoService);
-    const subReminder = lifecycle.resolve(sub, AgentReminder);
+    const subReminder = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentReminderService);
     const subMemory = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentContextMemoryService);
     await subTodo.replace([{ title: 'sub task', status: 'pending' }]);
     appendAssistantTurns(subMemory, 10);

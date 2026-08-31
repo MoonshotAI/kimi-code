@@ -7,7 +7,7 @@ import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -93,8 +93,8 @@ export class SessionInitService implements ISessionInitService {
       main.accessor
         .get(IAgentAgentsMdReminderService)
         .seedInjected(agentsMdPaths, this.sessionContext.cwd);
-      this.agentLifecycle
-        .resolve(agentContextOf(main), AgentReminder)
+      main.accessor
+        .get(IAgentReminderService)
         .notify(initCompletionReminder(agentsMd), { variant: 'init' });
       await main.accessor.get(IEventDispatcher).flush();
     } catch (error) {

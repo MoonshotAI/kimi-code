@@ -2765,6 +2765,7 @@ describe('AgentGoalService WaitFor guidance gating', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure();
+      await ctx.restorePersisted();
       await ctx.rpc.createGoal({ objective: 'finish bounded work' });
 
       ctx.mockNextResponse({ type: 'text', text: 'slice done' });
@@ -2851,6 +2852,7 @@ describe('AgentGoalService WaitFor guidance gating', () => {
     const ctx = createTestAgent();
     try {
       ctx.configure({ tools: ['WaitFor', 'UpdateGoal'] });
+      await ctx.restorePersisted();
       const tasks = ctx.get(IAgentTaskService);
       let settle!: (value: { result: string }) => void;
       const completion = new Promise<{ result: string }>((resolve) => {

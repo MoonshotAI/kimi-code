@@ -5,8 +5,7 @@ import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -39,9 +38,9 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
   return part?.type === 'text' ? part.text : undefined;
 }
 
-describe('ReminderRuntime', () => {
+describe('AgentReminderService', () => {
   let ctx: TestAgentContext;
-  let reminder: ReminderRuntime;
+  let reminder: IAgentReminderService;
   let context: IAgentContextMemoryService;
   let loop: StubLoop;
 
@@ -51,7 +50,7 @@ describe('ReminderRuntime', () => {
     loop = ctx.get(IAgentLoopService) as StubLoop;
     await ctx.restorePersisted();
     await ctx.restoreRuntimes();
-    reminder = ctx.resolve(AgentReminder);
+    reminder = ctx.get(IAgentReminderService);
   });
 
   afterEach(async () => {
@@ -433,17 +432,10 @@ describe('ReminderRuntime', () => {
     expect(lastText(context)).toContain('surviving reminder');
   });
 
-  it('exposes an opaque frozen contract token', () => {
-    expect(Object.isFrozen(AgentReminder)).toBe(true);
-    expect(Object.keys(AgentReminder)).toEqual([]);
-    const forged = Object.freeze({}) as AgentRuntimeDefinition<ReminderRuntime>;
-    expect(() => ctx.resolve(forged)).toThrow('Unknown agent runtime definition');
-  });
-
   it('installs effects only after restore and only once', async () => {
     const local = createTestAgent();
     const localLoop = local.get(IAgentLoopService) as StubLoop;
-    const localReminder = local.resolve(AgentReminder);
+    const localReminder = local.get(IAgentReminderService);
     let calls = 0;
     localReminder.register('restore_test', () => {
       calls += 1;
@@ -477,6 +469,6 @@ describe('ReminderRuntime', () => {
     await runInjectionStep();
 
     expect(calls).toBe(1);
-    expect(() => ctx.resolve(AgentReminder)).toThrow('unavailable');
+    expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
   });
 });

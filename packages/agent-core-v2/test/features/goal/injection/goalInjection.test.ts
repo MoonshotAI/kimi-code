@@ -86,6 +86,7 @@ describe('GoalInjection content', () => {
 
   it('activates injection after restore and removes it on close', async () => {
     const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
+    await local.dispatcher.restore();
     const localGoals = local.resolve(AgentGoal) as GoalServiceTestManager;
     const localContext = local.get(IAgentContextMemoryService);
     const localLoop = local.get(IAgentLoopService) as StubLoop;
