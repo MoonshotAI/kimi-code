@@ -81,6 +81,8 @@ describe('AcpServer + AgentSideConnection', () => {
     expect(response.agentCapabilities?.mcpCapabilities?.sse).toBe(true);
     expect(response.agentCapabilities?.sessionCapabilities?.list).toEqual({});
     expect(response.agentCapabilities?.sessionCapabilities?.resume).toEqual({});
+    expect(response.agentCapabilities?.sessionCapabilities?.close).toEqual({});
+    expect(response.agentCapabilities?.auth?.logout).toEqual({});
   });
 
   it('initialize advertises terminal-auth with id, type, args, name', async () => {
