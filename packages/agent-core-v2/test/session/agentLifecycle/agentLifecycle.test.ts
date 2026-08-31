@@ -1153,12 +1153,18 @@ describe('AgentLifecycleService', () => {
   });
 
   it('drops the handle when creation bootstrap fails so the next create starts clean', async () => {
+    const records: TelemetryRecord[] = [];
+    ix.stub(ITelemetryService, recordingTelemetry(records));
     registerAgent.mockRejectedValueOnce(new Error('bootstrap boom'));
     const svc = ix.get(IAgentLifecycleService);
 
     await expect(svc.create({ agentId: 'main' })).rejects.toThrow('bootstrap boom');
     expect(svc.get('main')).toBeUndefined();
     expect(svc.handleOf('main')).toBeUndefined();
+    expect(records).toContainEqual({
+      event: 'agent_create_failed',
+      properties: { agent_id: 'main', stage: 'register', error_type: 'Error' },
+    });
 
     const main = await svc.create({ agentId: 'main' });
     expect(main.agentId).toBe('main');

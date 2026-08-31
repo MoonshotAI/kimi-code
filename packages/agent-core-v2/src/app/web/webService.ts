@@ -9,6 +9,7 @@ import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection'
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/kosong/provider/provider';
 import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
@@ -27,6 +28,7 @@ export class WebFetchService implements IWebFetchService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     this.localFetcher = new LocalFetchURLProvider();
   }
@@ -51,6 +53,7 @@ export class WebFetchService implements IWebFetchService {
       defaultHeaders: { ...this.identity.current().requestHeaders },
       customHeaders: fetchConfig.customHeaders,
       localFallback: this.localFetcher,
+      telemetry: this.telemetry,
     });
   }
 
@@ -73,6 +76,7 @@ export class WebFetchService implements IWebFetchService {
       defaultHeaders: { ...this.bootstrap.args.requestHeaders },
       customHeaders: provider.customHeaders,
       localFallback: this.localFetcher,
+      telemetry: this.telemetry,
     });
   }
 }
