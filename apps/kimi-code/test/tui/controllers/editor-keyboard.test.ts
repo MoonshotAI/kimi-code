@@ -473,6 +473,7 @@ describe('EditorKeyboardController Shift-Tab plan toggle', () => {
 describe('EditorKeyboardController Ctrl-S steering', () => {
   function createCtrlSHarness(options: {
     editorText: string;
+    editorExpandedText?: string;
     queued: Array<Record<string, unknown>>;
     engineV2?: boolean;
     skillCommandMap?: Map<string, string>;
@@ -488,6 +489,12 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       setText: setText as unknown as (...args: never[]) => unknown,
       inputMode: 'prompt' as unknown as (...args: never[]) => unknown,
     };
+    if (options.editorExpandedText !== undefined) {
+      const expanded = options.editorExpandedText;
+      editor['getExpandedText'] = vi.fn(() => expanded) as unknown as (
+        ...args: never[]
+      ) => unknown;
+    }
     const host = {
       state: {
         editor,
@@ -511,10 +518,11 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
         closeOrCancel: vi.fn(() => false),
       },
     } as unknown as EditorKeyboardHost;
-    const controller = new EditorKeyboardController(
-      host,
-      undefined as unknown as ImageAttachmentStore,
-    );
+    const imageStore = {
+      get: vi.fn(() => undefined),
+      retainFileIds: vi.fn(),
+    } as unknown as ImageAttachmentStore;
+    const controller = new EditorKeyboardController(host, imageStore);
     controller.install();
     const onCtrlS = editor['onCtrlS'];
     if (onCtrlS === undefined) throw new Error('onCtrlS handler not installed');
@@ -647,5 +655,21 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     ]);
     expect(setText).not.toHaveBeenCalled();
     expect(host.state.queuedMessages).toEqual([]);
+  });
+
+  it('expands paste markers in the editor draft before steering', () => {
+    const longText = 'line\n'.repeat(15).trimEnd();
+    const { host, setText, steerMessage, onCtrlS } = createCtrlSHarness({
+      editorText: '[paste #1 +15 lines]',
+      editorExpandedText: longText,
+      queued: [],
+    });
+
+    onCtrlS();
+
+    expect(steerMessage).toHaveBeenCalledWith(host.session, [
+      { text: longText, parts: undefined, imageAttachmentIds: undefined },
+    ]);
+    expect(setText).toHaveBeenCalledWith('');
   });
 });
