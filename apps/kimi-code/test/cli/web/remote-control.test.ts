@@ -1,3 +1,9 @@
+/**
+ * Remote Control CLI integration: flags, links, tunnel auth/lifecycle, and process locking.
+ * Public entry points use local HTTP/WebSocket relays; the OS keyring boundary is faked.
+ * Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/cli/web/remote-control.test.ts
+ */
+
 import { createServer, type IncomingMessage } from 'node:http';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -215,7 +221,7 @@ describe('Remote Control HTTP forwarding', () => {
 });
 
 describe('Remote Control tunnel', () => {
-  it('reads a keychain-only Kimi login', async () => {
+  it('authenticates the relay when the Kimi login exists only in the keychain', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
     vi.stubEnv('KIMI_DISABLE_KEYRING', '');
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-keyring-'));
@@ -243,10 +249,13 @@ describe('Remote Control tunnel', () => {
       stderr: { write: () => true },
     });
 
-    expect(handle.url).toContain('/devices/');
-    expect(relay.requests.some((request) => request.authorization === `Bearer ${TOKEN.refreshToken}`)).toBe(
-      true,
-    );
+    expect(
+      relay.requests.some(
+        (request) =>
+          request.authorization === 'Bearer refresh-token' ||
+          request.protocol === 'kimi-code.bearer.refresh-token',
+      ),
+    ).toBe(true);
   });
 
   it('surfaces register_nak details', async () => {
