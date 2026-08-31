@@ -71,9 +71,12 @@ for (const sumFile of sumFiles.sort()) {
   const target = basename(sumFile, '.sha256').replace(/^kimi-code-/, '').replace(/\.zip$/, '');
   const zipName = `kimi-code-${target}.zip`;
   const exeName = target.startsWith('win32') ? 'kimi.exe' : 'kimi';
-  const binaryName = `kimi-code-${target}`;
-  const zstName = `${binaryName}.zst`;
-  const tarballName = `${binaryName}.tar.gz`;
+  // The CDN bare-binary layout carries the .exe suffix on Windows
+  // (src/constant/app.ts); the updater's fallback downloads this filename.
+  const binaryName = target.startsWith('win32') ? `kimi-code-${target}.exe` : `kimi-code-${target}`;
+  const artifactBase = `kimi-code-${target}`;
+  const zstName = `${artifactBase}.zst`;
+  const tarballName = `${artifactBase}.tar.gz`;
 
   const workDir = await mkdtemp(join(tmpdir(), `native-manifest-${target}-`));
   try {
