@@ -126,6 +126,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       runInBackground: options.runInBackground,
       fork: plan.fork,
       model: plan.model,
+      modelSource: plan.modelSource,
     });
     const child = this.requireHandle(spawned.agentId, 'Agent instance');
     return this.observe(

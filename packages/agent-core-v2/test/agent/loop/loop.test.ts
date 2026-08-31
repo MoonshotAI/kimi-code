@@ -72,8 +72,8 @@ describe('Agent loop', () => {
       [wire] prompt.accepted             { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ], "time": "<time>" }
       [emit] prompt.accepted             { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ] }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello" }
+      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -132,8 +132,8 @@ describe('Agent loop', () => {
       [wire] prompt.accepted             { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ], "time": "<time>" }
       [emit] prompt.accepted             { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Hello" } ] }
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello" }
+      [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] agent.activity.updated      { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -387,8 +387,8 @@ describe('Agent loop', () => {
       [wire] prompt.accepted                 { "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up moon" } ], "time": "<time>" }
       [emit] prompt.accepted                 { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "content": [ { "type": "text", "text": "Look up moon" } ] }
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
-      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon" }
+      [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "time": "<time>" }
+      [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
       [emit] agent.activity.updated          { "time": "<time>", "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [], "agentId": "main" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }

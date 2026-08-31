@@ -352,13 +352,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
   });
 
   it('persists the rendered prompt and disclosure snapshot in one bind record', async () => {
-    const environment: EnvironmentDisclosureSnapshot = {
-      cwd: '/work',
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
-    };
+    const environment: EnvironmentDisclosureSnapshot = { cwd: '/work' };
     svc.applyBindingSnapshot({
       modelAlias: 'kimi-code',
       profileName: 'agent',
@@ -397,13 +391,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
   });
 
   it('replays a legacy config.update record with an explicit renderGeneration verbatim', async () => {
-    const environment: EnvironmentDisclosureSnapshot = {
-      cwd: '/work',
-      date: {
-        disclosed: true,
-        value: { localDate: '2026-07-29', timeZone: 'Asia/Shanghai' },
-      },
-    };
+    const environment: EnvironmentDisclosureSnapshot = { cwd: '/work' };
 
     const replay = buildHost('profile-replay-legacy-generation');
     await restoreTestEventDispatcher(

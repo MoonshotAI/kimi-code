@@ -76,16 +76,6 @@ const dateChangeInjection = fromCallback(({
       environment.cwd !== sessionContext.cwd
     );
   };
-  const dateFromProfile = (): DateDisclosure | undefined => {
-    if (!belongsToCurrentCwd()) return undefined;
-    const profileData = profile.data();
-    const date = profileData.environmentDisclosure?.date;
-    if (!date?.disclosed) return undefined;
-    return {
-      ...date.value,
-      renderGeneration: profileData.renderGeneration ?? 0,
-    };
-  };
   const registration = reminder.register<DateInjectionDisclosure>(
     DATE_CHANGE_INJECTION_VARIANT,
     ({
@@ -95,13 +85,8 @@ const dateChangeInjection = fromCallback(({
       if (!belongsToCurrentCwd()) return undefined;
       const renderGeneration = profileData.renderGeneration ?? 0;
       const current = currentDateDisclosure(clock);
-      const profileDate = dateFromProfile();
       const seed = runtime.getLogicState<DateChangeActorContext>().seed;
-      const baseline = pickDisclosureBaseline<DateDisclosure>(
-        lastDisclosure,
-        profileDate,
-        seed,
-      );
+      const baseline = pickDisclosureBaseline<DateDisclosure>(lastDisclosure, seed);
       if (baseline !== undefined && baseline.localDate !== current.localDate) {
         return {
           content: `The date has changed. Today's date is now ${current.localDate}. Rely on this reminder over any earlier date statement for the current date. DO NOT mention this to the user explicitly.`,
@@ -113,7 +98,7 @@ const dateChangeInjection = fromCallback(({
           },
         };
       }
-      if (lastDisclosure !== undefined || profileDate !== undefined) return undefined;
+      if (lastDisclosure !== undefined) return undefined;
       if (seed === undefined) {
         runtime.send({
           type: 'dateChange.disclose',

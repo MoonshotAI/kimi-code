@@ -282,15 +282,15 @@ describe('TowerPlanTool', () => {
 });
 
 describe('TowerTeardownTool', () => {
-  it('tears down the workspace and exits tower mode', async () => {
+  it('tears down the workspace and keeps tower mode active', async () => {
     await initViaTool();
 
     const result = await run(ix.get(ITowerTeardownTool), {});
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('tower teardown:');
-    expect(result.output).toContain('Tower mode exited.');
-    expect(towerActive).toBe(false);
+    expect(result.output).toContain('Tower mode stays active');
+    expect(towerActive).toBe(true);
   });
 
   it('refuses to tear down while the owning session is live in this process', async () => {
