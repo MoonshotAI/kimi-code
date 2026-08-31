@@ -153,6 +153,13 @@ export interface TuiAltScreenOptions {
 	openUrl?: (url: string) => void;
 	/** Handle an unmodified secondary-button press for clipboard paste. Currently enabled on Windows only. */
 	onRightClickPaste?: () => void;
+	/**
+	 * Receive text copied from an application-owned selection, so a host with a
+	 * native clipboard binding can set it directly. Called in addition to the
+	 * OSC 52 write, which stays the fallback for terminals with no reachable
+	 * native clipboard (SSH, headless).
+	 */
+	onCopy?: (text: string) => void;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -192,6 +199,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly searchCurrentMatchStyle: (text: string) => string;
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
+	private readonly onCopy?: (text: string) => void;
 
 	constructor(
 		terminal: Terminal,
@@ -214,6 +222,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1b[1;7m${text}\x1b[22;27m`);
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
+		this.onCopy = options.onCopy;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -1074,6 +1083,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const text = lines.join("\n");
 		if (text.length === 0) return;
 		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+		// Many terminals refuse OSC 52 writes by default, so a host with a native
+		// clipboard gets the text too; whichever path works wins.
+		this.onCopy?.(text);
 		this.flash("Copied!");
 	}
 
