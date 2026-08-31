@@ -352,7 +352,6 @@ describe('McpOAuthStoreAdapter', () => {
   afterEach(() => {
     disposables.dispose();
     unregisterKeyringBackend();
-    vi.unstubAllEnvs();
     rmSync(homeDir, { recursive: true, force: true });
   });
 
@@ -386,9 +385,7 @@ describe('McpOAuthStoreAdapter', () => {
     return ix.createInstance(McpOAuthStoreAdapter);
   }
 
-  it('uses the keyring when a backend is registered and the gate opts in', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '');
+  it('uses the keyring when a backend is registered', async () => {
     const keyring = new FakeKeyring();
     registerKeyringBackend(keyring);
     const docs = createDocsStub();
@@ -399,22 +396,7 @@ describe('McpOAuthStoreAdapter', () => {
     expect(docs.calls).toEqual([{ op: 'delete', key: 'srv-tokens.json' }]);
   });
 
-  it('stays on the document store without the opt-in gate', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '');
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '');
-    const keyring = new FakeKeyring();
-    registerKeyringBackend(keyring);
-    const docs = createDocsStub();
-
-    await createAdapter(docs.impl).write('srv-tokens.json', { token: 'abc' });
-
-    expect(keyring.store.size).toBe(0);
-    expect(docs.calls).toEqual([{ op: 'set', key: 'srv-tokens.json', value: { token: 'abc' } }]);
-  });
-
   it('stays on the document store when no backend is registered', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '');
     const docs = createDocsStub();
 
     await createAdapter(docs.impl).write('srv-tokens.json', { token: 'abc' });
@@ -423,8 +405,6 @@ describe('McpOAuthStoreAdapter', () => {
   });
 
   it('stays on the document store when the keyring probe fails', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '');
     const keyring = new FakeKeyring();
     keyring.throwOnGet = true;
     registerKeyringBackend(keyring);

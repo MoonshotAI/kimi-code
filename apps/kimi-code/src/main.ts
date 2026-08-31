@@ -172,9 +172,8 @@ function bootstrap(): void {
   installGlobalProxyDispatcher();
   installNativeModuleHook();
   // Register the OS keychain as an OAuth token-store backend. Whether it is
-  // actually used is gated inside packages/oauth (experimental opt-in,
-  // KIMI_DISABLE_KEYRING, capability probe); a load failure only warns and
-  // the file store stays in charge.
+  // actually used is decided inside packages/oauth (capability probe); a load
+  // failure only warns and the file store stays in charge.
   installKeyringBackend();
   // Best-effort SEA worker installation. Diagnostics are trace-only and avoid
   // exposing the user's cache path; failure keeps MiniDb's bounded inline mode.

@@ -8,9 +8,8 @@
  * SEA it resolves from node_modules. When the binding cannot be loaded we
  * warn and skip registration, and the OAuth toolkit keeps the plaintext-file
  * token store. Whether the keychain is actually used is decided per process
- * by the toolkit's `resolveTokenStorage` (experimental opt-in,
- * `KIMI_DISABLE_KEYRING` kill switch, capability probe) — registration here
- * is unconditional.
+ * by the toolkit's `resolveTokenStorage` (capability probe) — registration
+ * here is unconditional.
  */
 
 import { createRequire } from 'node:module';

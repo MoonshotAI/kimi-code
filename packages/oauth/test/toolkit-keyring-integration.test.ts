@@ -11,11 +11,11 @@
  *     read and write lands in the FAKE keychain, never in a plaintext file on
  *     disk.
  *  2. A default-constructed toolkit (no `options.storage`) goes through
- *     `resolveTokenStorage`: with `KIMI_DISABLE_KEYRING=1` it transparently
+ *     `resolveTokenStorage`: with no backend registered it transparently
  *     falls back to the file store and still works — proving the factory is on
- *     the default code path, not bypassed. With a backend registered AND
- *     `KIMI_CODE_EXPERIMENTAL_KEYRING=1` it transparently uses the keychain —
- *     the exact production wiring the host app sets up.
+ *     the default code path, not bypassed. With a backend registered it
+ *     transparently uses the keychain — the exact production wiring the host
+ *     app sets up.
  */
 
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
@@ -140,15 +140,10 @@ describe('KimiOAuthToolkit with a keyring-backed store (hermetic)', () => {
     dir = makeTmpDir();
     service = keyringServiceForCredentialsDir(dir);
     keyring = new FakeKeyring();
-    // Build the store through the REAL factory + the test seam. `disabled:
-    // false` and `optedIn: true` are explicit so a stray env var can't make
-    // this select the file backend — we are specifically proving the keyring
-    // path. The probe round-trips against the fake, so this returns a
-    // KeyringTokenStorage.
+    // Build the store through the REAL factory + the test seam. The probe
+    // round-trips against the fake, so this returns a KeyringTokenStorage.
     const resolved = resolveTokenStorage(dir, {
       loadKeyring: () => keyring,
-      disabled: false,
-      optedIn: true,
     });
     storage = resolved as KeyringTokenStorage;
   });
@@ -264,7 +259,7 @@ describe('KimiOAuthToolkit with a keyring-backed store (hermetic)', () => {
     // real FileTokenStorage — exactly what a prior file-backend fallback run (or
     // a keychain-wins reconcile) leaves behind. The keychain holds an expired
     // token so ensureFresh refreshes and calls save(). After save() the cleartext
-    // copy must be gone, so a later KIMI_DISABLE_KEYRING run (keychain-unaware)
+    // copy must be gone, so a later file-backend run (keychain-unaware)
     // can no longer read it back and resurrect the obsolete credential.
     await new FileTokenStorage(dir).save(
       'kimi-code',
@@ -346,15 +341,13 @@ describe('KimiOAuthToolkit default storage goes through resolveTokenStorage', ()
 
   afterEach(() => {
     unregisterKeyringBackend();
-    vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('falls back to the file store when KIMI_DISABLE_KEYRING=1 (no injected storage)', async () => {
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '1');
-
+  it('falls back to the file store when no backend is registered (no injected storage)', async () => {
     // No `storage` option: the toolkit must build its store via
-    // resolveTokenStorage, which with the flag set returns a FileTokenStorage.
+    // resolveTokenStorage, which without a registered backend returns a
+    // FileTokenStorage.
     const toolkit = new KimiOAuthToolkit({
       homeDir: dir,
       identity: TEST_IDENTITY,
@@ -377,8 +370,7 @@ describe('KimiOAuthToolkit default storage goes through resolveTokenStorage', ()
     expect(existsSync(join(credentialsDir, 'kimi-code.json'))).toBe(true);
   });
 
-  it('uses the registered keychain backend when KIMI_CODE_EXPERIMENTAL_KEYRING=1 (no injected storage)', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
+  it('uses the registered keychain backend (no injected storage)', async () => {
     const keyring = new FakeKeyring();
     registerKeyringBackend(keyring);
     const service = keyringServiceForCredentialsDir(credentialsDir);
@@ -404,32 +396,5 @@ describe('KimiOAuthToolkit default storage goes through resolveTokenStorage', ()
     await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('keyring-access');
     // Proof the keychain backend is what was selected: nothing on disk.
     expect(plaintextTokenFiles(credentialsDir)).toEqual([]);
-  });
-
-  it('stays on the file store when not opted in, even with a backend registered', async () => {
-    // The opt-in gate is default-OFF: without KIMI_CODE_EXPERIMENTAL_KEYRING=1
-    // a registered backend must NOT be used. Defensively clear any ambient value.
-    const prev = process.env['KIMI_CODE_EXPERIMENTAL_KEYRING'];
-    delete process.env['KIMI_CODE_EXPERIMENTAL_KEYRING'];
-    try {
-      registerKeyringBackend(new FakeKeyring());
-
-      const toolkit = new KimiOAuthToolkit({
-        homeDir: dir,
-        identity: TEST_IDENTITY,
-        now: () => 100,
-        flowConfig: FLOW_CONFIG,
-      });
-
-      await new FileTokenStorage(credentialsDir).save(
-        'kimi-code',
-        token({ accessToken: 'file-access' }),
-      );
-
-      await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('file-access');
-      expect(existsSync(join(credentialsDir, 'kimi-code.json'))).toBe(true);
-    } finally {
-      if (prev !== undefined) process.env['KIMI_CODE_EXPERIMENTAL_KEYRING'] = prev;
-    }
   });
 });

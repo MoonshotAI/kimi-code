@@ -32,7 +32,6 @@ export type {
 } from './keyring-storage';
 export {
   getRegisteredKeyringBackend,
-  isKeyringOptedIn,
   KEYRING_PROBE_SERVICE,
   KEYRING_SERVICE,
   KeyringTokenStorage,

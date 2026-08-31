@@ -13,11 +13,10 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   getRegisteredKeyringBackend,
-  isKeyringOptedIn,
   KEYRING_PROBE_SERVICE,
   KEYRING_SERVICE,
   KeyringTokenStorage,
@@ -229,7 +228,7 @@ describe('KeyringTokenStorage', () => {
     // A stale plaintext file lingers from a prior file-backend run (or a
     // keychain-wins reconcile that left an older file). A later save() must make
     // the keychain authoritative AND drop the cleartext, so a subsequent
-    // KIMI_DISABLE_KEYRING / probe-failure run (keychain-unaware FileTokenStorage)
+    // probe-failure / no-backend run (keychain-unaware FileTokenStorage)
     // can no longer resurrect the obsolete token, and no secret lingers on disk.
     const fileTok = sampleToken({ accessToken: 'at-stale-file', refreshToken: 'rt-stale-file' });
     const newTok = sampleToken({ accessToken: 'at-new', refreshToken: 'rt-new' });
@@ -1051,57 +1050,16 @@ describe('resolveTokenStorage', () => {
 
   afterEach(() => {
     unregisterKeyringBackend();
-    vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('returns FileTokenStorage when KIMI_DISABLE_KEYRING=1', () => {
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '1');
-    const observer = new FakeObserver();
-    const storage = resolveTokenStorage(dir, { observer, optedIn: true });
-    expect(storage).toBeInstanceOf(FileTokenStorage);
-    expect(observer.selected).toEqual([{ backend: 'file', reason: 'disabled' }]);
-  });
-
-  it('KIMI_DISABLE_KEYRING=1 wins over the opt-in gate (and never probes)', () => {
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '1');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-    const keyring = new RecordingKeyring();
-    const observer = new FakeObserver();
-    registerKeyringBackend(keyring, observer);
-    const storage = resolveTokenStorage(dir);
-    expect(storage).toBeInstanceOf(FileTokenStorage);
-    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
-    expect(observer.selected).toEqual([{ backend: 'file', reason: 'disabled' }]);
-    // The disabled branch short-circuits before any keyring call.
-    expect(keyring.accountsByService.size).toBe(0);
-  });
-
-  it('defaults to FileTokenStorage until KIMI_CODE_EXPERIMENTAL_KEYRING=1 (temporary opt-in gate)', () => {
-    // The gate is env-driven and default-OFF: a registered, healthy backend is
-    // NOT used until the process opts in. Defensively clear any ambient value.
-    const prev = process.env['KIMI_CODE_EXPERIMENTAL_KEYRING'];
-    delete process.env['KIMI_CODE_EXPERIMENTAL_KEYRING'];
-    try {
-      const observer = new FakeObserver();
-      registerKeyringBackend(new FakeKeyring(), observer);
-      const storage = resolveTokenStorage(dir);
-      expect(storage).toBeInstanceOf(FileTokenStorage);
-      expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
-      expect(observer.selected).toEqual([{ backend: 'file', reason: 'not-opted-in' }]);
-    } finally {
-      if (prev !== undefined) process.env['KIMI_CODE_EXPERIMENTAL_KEYRING'] = prev;
-    }
-  });
-
-  it('selects KeyringTokenStorage via the registered backend once KIMI_CODE_EXPERIMENTAL_KEYRING=1', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
+  it('selects KeyringTokenStorage via the registered backend', async () => {
     const keyring = new FakeKeyring();
     const observer = new FakeObserver();
     registerKeyringBackend(keyring, observer);
 
     // The full production path: no deps seam, everything comes from the
-    // registration slot + env.
+    // registration slot.
     const storage = resolveTokenStorage(dir);
     expect(storage).toBeInstanceOf(KeyringTokenStorage);
     expect(observer.selected).toEqual([{ backend: 'keyring', reason: undefined }]);
@@ -1112,7 +1070,6 @@ describe('resolveTokenStorage', () => {
   });
 
   it('re-registering replaces the backend (and the observer)', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
     const first = new FakeKeyring();
     const second = new FakeKeyring();
     const secondObserver = new FakeObserver();
@@ -1133,7 +1090,6 @@ describe('resolveTokenStorage', () => {
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => undefined,
       observer,
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(observer.selected).toEqual([{ backend: 'file', reason: 'no-backend' }]);
@@ -1144,7 +1100,6 @@ describe('resolveTokenStorage', () => {
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => new ThrowingKeyring(),
       observer,
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(observer.selected).toEqual([{ backend: 'file', reason: 'probe-failed' }]);
@@ -1155,7 +1110,6 @@ describe('resolveTokenStorage', () => {
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => new ConstructorThrowingKeyring(),
       observer,
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
@@ -1164,7 +1118,7 @@ describe('resolveTokenStorage', () => {
 
   it('selects KeyringTokenStorage when the keyring probe succeeds', async () => {
     const keyring = new FakeKeyring();
-    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring, optedIn: true });
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring });
     expect(storage).toBeInstanceOf(KeyringTokenStorage);
 
     // A save lands in the fake keyring, not on disk.
@@ -1175,7 +1129,7 @@ describe('resolveTokenStorage', () => {
 
   it('the probe sentinel never leaks into the real service list', async () => {
     const keyring = new FakeKeyring();
-    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring, optedIn: true });
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring });
     // Probe ran against a separate service; nothing under KEYRING_SERVICE yet.
     expect(await storage.list()).toEqual([]);
   });
@@ -1203,7 +1157,6 @@ describe('resolveTokenStorage', () => {
     }
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => new NoDeleteKeyring(),
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
@@ -1231,7 +1184,6 @@ describe('resolveTokenStorage', () => {
     }
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => new LyingDeleteKeyring(),
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
@@ -1269,7 +1221,6 @@ describe('resolveTokenStorage', () => {
     }
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => new DeniedReadSurvivingProbeKeyring(),
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
@@ -1298,7 +1249,6 @@ describe('resolveTokenStorage', () => {
     }
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => new UnreachableProbeKeyring(),
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
@@ -1310,7 +1260,7 @@ describe('resolveTokenStorage', () => {
     // Assert via instanceof AND that the isolated probe service has zero accounts
     // afterward, proving the probe's own cleanup ran (no leaked sentinel).
     const keyring = new FakeKeyring();
-    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring, optedIn: true });
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring });
     expect(storage).toBeInstanceOf(KeyringTokenStorage);
     expect(keyring.findAccounts(KEYRING_PROBE_SERVICE)).toEqual([]);
   });
@@ -1318,8 +1268,8 @@ describe('resolveTokenStorage', () => {
   it('the probe uses a unique, non-constant account per attempt', () => {
     const a = new RecordingKeyring();
     const b = new RecordingKeyring();
-    resolveTokenStorage(dir, { loadKeyring: () => a, optedIn: true });
-    resolveTokenStorage(dir, { loadKeyring: () => b, optedIn: true });
+    resolveTokenStorage(dir, { loadKeyring: () => a });
+    resolveTokenStorage(dir, { loadKeyring: () => b });
 
     const aAccounts = a.accountsByService.get(KEYRING_PROBE_SERVICE) ?? [];
     const bAccounts = b.accountsByService.get(KEYRING_PROBE_SERVICE) ?? [];
@@ -1372,7 +1322,6 @@ describe('resolveTokenStorage', () => {
     // Sanity: this interleave on a SHARED account breaks the probe (read null).
     const storage = resolveTokenStorage(dir, {
       loadKeyring: () => interleavingKeyring,
-      optedIn: true,
     });
     expect(storage).toBeInstanceOf(FileTokenStorage);
 
@@ -1411,44 +1360,5 @@ describe('getRegisteredKeyringBackend', () => {
     expect(getRegisteredKeyringBackend()?.observer).toBeUndefined();
     unregisterKeyringBackend();
     expect(getRegisteredKeyringBackend()).toBeUndefined();
-  });
-});
-
-describe('isKeyringOptedIn', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('requires KIMI_CODE_EXPERIMENTAL_KEYRING=1 and no KIMI_DISABLE_KEYRING=1', () => {
-    expect(isKeyringOptedIn({})).toBe(false);
-    expect(isKeyringOptedIn({ KIMI_CODE_EXPERIMENTAL_KEYRING: '1' })).toBe(true);
-    expect(isKeyringOptedIn({ KIMI_CODE_EXPERIMENTAL_KEYRING: '0' })).toBe(false);
-    expect(isKeyringOptedIn({ KIMI_DISABLE_KEYRING: '1' })).toBe(false);
-    // Disable always wins over the opt-in.
-    expect(
-      isKeyringOptedIn({ KIMI_CODE_EXPERIMENTAL_KEYRING: '1', KIMI_DISABLE_KEYRING: '1' }),
-    ).toBe(false);
-  });
-
-  it('reads process.env by default', () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '');
-    expect(isKeyringOptedIn()).toBe(true);
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '1');
-    expect(isKeyringOptedIn()).toBe(false);
-  });
-
-  it('gates resolveTokenStorage end-to-end (single decision source)', () => {
-    const dir = makeTmpDir();
-    try {
-      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-      vi.stubEnv('KIMI_DISABLE_KEYRING', '1');
-      registerKeyringBackend(new FakeKeyring());
-      // The combined gate rejects (disable wins) without consulting any deps seam.
-      expect(resolveTokenStorage(dir)).toBeInstanceOf(FileTokenStorage);
-    } finally {
-      unregisterKeyringBackend();
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

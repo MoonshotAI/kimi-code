@@ -222,8 +222,6 @@ describe('Remote Control HTTP forwarding', () => {
 
 describe('Remote Control tunnel', () => {
   it('authenticates the relay when the Kimi login exists only in the keychain', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_KEYRING', '1');
-    vi.stubEnv('KIMI_DISABLE_KEYRING', '');
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-keyring-'));
     cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
     const keyring = new FakeKeyring();

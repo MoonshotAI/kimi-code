@@ -66,7 +66,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 - **`mcp.json`**：用户级 MCP server 声明，启动时与项目内的 `.kimi-code/mcp.json` 合并加载。详见 [MCP](../customization/mcp.md)。
 - **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
 - **`plugins/installed.json`**：记录已安装的 plugin、每个 plugin 的启用状态，以及通过 `/plugins` 或 `/plugins mcp disable|enable` 修改的 MCP server 能力状态。本地路径和 zip URL 安装的文件会复制到 `plugins/managed/<id>/`。详见 [Plugins](../customization/plugins.md)。
-- **`credentials/`**：OAuth 凭据目录，权限 `0o700`（目录）/ `0o600`（文件），仅当前用户可读写。文件存储模式下，托管供应商凭据存为 `credentials/<name>.json`，MCP server 凭据存在 `credentials/mcp/` 子目录下；凭据写入使用原子流程（tmp → fsync → rename）防止写损。启用实验性钥匙串存储（`KIMI_CODE_EXPERIMENTAL_KEYRING=1`，见[环境变量](./env-vars.md#运行时开关)）后，OAuth 凭据改存操作系统钥匙串，已有明文文件会在首次读取时迁移进钥匙串。钥匙串独立于此目录，删除这些文件不会清理钥匙串中的凭据；禁用钥匙串访问不会把仅存在于钥匙串的凭据复制回文件。
+- **`credentials/`**：OAuth 凭据目录，权限 `0o700`（目录）/ `0o600`（文件），仅当前用户可读写。文件存储模式下，托管供应商凭据存为 `credentials/<name>.json`，MCP server 凭据存在 `credentials/mcp/` 子目录下；凭据写入使用原子流程（tmp → fsync → rename）防止写损。操作系统钥匙串可用时（macOS Keychain、Windows 凭据管理器或 Linux Secret Service），OAuth 凭据改存钥匙串，已有明文文件会在首次读取时迁移进钥匙串。钥匙串独立于此目录，删除这些文件不会清理钥匙串中的凭据；钥匙串不可用时，仍有明文副本的凭据可以继续使用，仅存在于钥匙串的凭据会暂时不可用，直到钥匙串恢复或重新登录。
 
 ## 会话数据
 

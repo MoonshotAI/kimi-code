@@ -1,8 +1,4 @@
-import {
-  getRegisteredKeyringBackend,
-  isKeyringOptedIn,
-  probeKeyringBackend,
-} from '@moonshot-ai/kimi-code-oauth';
+import { getRegisteredKeyringBackend, probeKeyringBackend } from '@moonshot-ai/kimi-code-oauth';
 import { join } from 'pathe';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -61,7 +57,7 @@ export class McpOAuthStoreAdapter implements IMcpOAuthStore {
   ) {
     const backend = getRegisteredKeyringBackend();
     this.delegate =
-      backend !== undefined && isKeyringOptedIn() && probeKeyringBackend(backend.api)
+      backend !== undefined && probeKeyringBackend(backend.api)
         ? createKeyringMcpOAuthStore(
             backend.api,
             createMcpOAuthStore(docs),

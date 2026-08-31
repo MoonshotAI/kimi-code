@@ -13,15 +13,12 @@
  * payload `FileTokenStorage` writes to disk.
  *
  * Selection (`resolveTokenStorage`), in order:
- *   1. `KIMI_DISABLE_KEYRING=1` → file ('disabled').
- *   2. `KIMI_CODE_EXPERIMENTAL_KEYRING` not '1' → file ('not-opted-in'); a
- *      temporary opt-in gate, see the factory's JSDoc.
- *   3. No backend registered → file ('no-backend').
- *   4. Capability probe failed → file ('probe-failed'). A set/get/delete
+ *   1. No backend registered → file ('no-backend').
+ *   2. Capability probe failed → file ('probe-failed'). A set/get/delete
  *      round-trip under a SEPARATE sentinel service catches a binding that
  *      loads but has no live OS backend at runtime (e.g. headless Linux with
  *      no Secret Service): entry operations only throw at CALL time.
- *   5. Otherwise the keychain is authoritative.
+ *   3. Otherwise the keychain is authoritative.
  *
  * Degradation: any keyring call that THROWS marks the backend degraded
  * process-wide (sticky until re-registration), reports
@@ -43,9 +40,9 @@
  *
  * Reconcile-on-hit (flip-flop repair): `resolveTokenStorage` can pick a
  * DIFFERENT backend per run for one credentialsDir (keychain locked,
- * headless/SSH, `KIMI_DISABLE_KEYRING=1`, no registered backend, probe
- * fails). A sequential flip-flop then splits state — the keychain may hold an
- * OLDER token while a fallback run wrote a NEWER one to the plaintext file.
+ * headless/SSH, no registered backend, probe fails). A sequential
+ * flip-flop then splits state — the keychain may hold an OLDER token
+ * while a fallback run wrote a NEWER one to the plaintext file.
  * So `load` reconciles against the legacy file even on a keychain HIT,
  * adopting the file token ONLY when BOTH sides are valid (neither a
  * tombstone) AND the file was issued strictly later (mint second
@@ -102,8 +99,8 @@ export type KeyringOperation = 'load' | 'save' | 'remove' | 'list';
 export interface KeyringStorageObserver {
   /**
    * Fired once per `resolveTokenStorage` call. `reason` for `'file'` is one of
-   * `'disabled' | 'not-opted-in' | 'no-backend' | 'probe-failed'`; the
-   * `'keyring'` selection carries no reason.
+   * `'no-backend' | 'probe-failed'`; the `'keyring'` selection carries no
+   * reason.
    */
   onBackendSelected?(backend: 'keyring' | 'file', reason?: string): void;
   /** Fired when a keyring call throws and the backend degrades to the file store. */
@@ -154,17 +151,6 @@ export function unregisterKeyringBackend(): void {
  */
 export function getRegisteredKeyringBackend(): RegisteredKeyringBackend | undefined {
   return registeredBackend;
-}
-
-/**
- * Single source for the keyring opt-in gate: the keychain is considered only
- * when `KIMI_CODE_EXPERIMENTAL_KEYRING` is '1' AND `KIMI_DISABLE_KEYRING` is
- * not '1'. `resolveTokenStorage` still reports the two halves as distinct
- * fallback reasons ('disabled' / 'not-opted-in'); callers that only need the
- * combined decision use this.
- */
-export function isKeyringOptedIn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env['KIMI_DISABLE_KEYRING'] !== '1' && env['KIMI_CODE_EXPERIMENTAL_KEYRING'] === '1';
 }
 
 interface KeyringTokenStorageOptions {
@@ -552,22 +538,12 @@ export interface ResolveTokenStorageDeps {
   loadKeyring?: () => KeyringApi | undefined;
   /** Overrides the registered observer. */
   observer?: KeyringStorageObserver;
-  /** Force the file backend (defaults to the KIMI_DISABLE_KEYRING env flag). */
-  disabled?: boolean;
-  /** Overrides the KIMI_CODE_EXPERIMENTAL_KEYRING opt-in gate. */
-  optedIn?: boolean;
 }
 
 /**
  * Pick the token backend for `credentialsDir`: the keychain when usable,
  * otherwise the plaintext file store (which also seeds migration). The `deps`
- * seam is for tests only; production uses the registered backend + env flags.
- *
- * TEMPORARY OPT-IN GATE: the keychain is considered only when
- * `KIMI_CODE_EXPERIMENTAL_KEYRING=1` is set ('not-opted-in' otherwise). The
- * gate stays until the datasource-broker plugin rollout makes keyring
- * storage the right default everywhere; releasing is a one-line follow-up
- * that flips this check to default-on.
+ * seam is for tests only; production uses the registered backend.
  */
 export function resolveTokenStorage(
   credentialsDir: string,
@@ -575,18 +551,6 @@ export function resolveTokenStorage(
 ): TokenStorage {
   const legacy = new FileTokenStorage(credentialsDir);
   const observer = deps.observer ?? registeredBackend?.observer;
-
-  const disabled = deps.disabled ?? process.env['KIMI_DISABLE_KEYRING'] === '1';
-  if (disabled) {
-    observer?.onBackendSelected?.('file', 'disabled');
-    return legacy;
-  }
-
-  const optedIn = deps.optedIn ?? isKeyringOptedIn();
-  if (!optedIn) {
-    observer?.onBackendSelected?.('file', 'not-opted-in');
-    return legacy;
-  }
 
   const loadKeyring = deps.loadKeyring ?? (() => registeredBackend?.api);
   const keyring = loadKeyring();
