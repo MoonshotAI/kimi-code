@@ -1,9 +1,10 @@
 import type { ManagedKimiCodeModelInfo } from './managed-kimi-code';
 import { isRecord } from './utils';
 
-// OpenAI-compatible `/models` responses omit context length, so assume a
-// conservative window. Users can override per-model in config.toml; this only
-// seeds the alias so the model is selectable until a richer source is used.
+// Honor a provider-supplied context length (OpenRouter's `context_length`,
+// OpenAI's `context_window`) when present; fall back to a conservative 128K
+// window only when the value is missing or invalid. Users can still override
+// per-model in config.toml.
 export const OPENAI_COMPATIBLE_DEFAULT_CONTEXT = 131072;
 
 export interface FetchOpenAIProviderModelsOptions {
@@ -58,9 +59,15 @@ export async function fetchOpenAIProviderModels(
     if (!isRecord(raw)) continue;
     const id = raw['id'];
     if (typeof id !== 'string' || id.length === 0) continue;
+    const rawCtx = raw['context_length'] ?? raw['context_window'];
+    const parsedCtx = Number(rawCtx);
+    const contextLength =
+      Number.isInteger(parsedCtx) && parsedCtx > 0
+        ? parsedCtx
+        : OPENAI_COMPATIBLE_DEFAULT_CONTEXT;
     out.push({
       id,
-      contextLength: OPENAI_COMPATIBLE_DEFAULT_CONTEXT,
+      contextLength,
       supportsReasoning: false,
       supportsImageIn: false,
       supportsVideoIn: false,

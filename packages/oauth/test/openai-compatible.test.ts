@@ -96,6 +96,64 @@ describe('fetchOpenAIProviderModels', () => {
     const models = await fetchOpenAIProviderModels('https://api.example.test/v1', 'sk-test', options);
     expect(models.map((m) => m.id)).toEqual(['m1']);
   });
+
+  it('uses the provider-supplied context_length when present', async () => {
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'minimax/minimax-m3:free', context_length: 1048576 }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await fetchOpenAIProviderModels('https://api.example.test/v1', 'sk-test', {});
+
+    expect(models).toHaveLength(1);
+    expect(models[0]?.id).toBe('minimax/minimax-m3:free');
+    expect(models[0]?.contextLength).toBe(1048576);
+  });
+
+  it('falls back to the default when context_length is absent', async () => {
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'm1' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await fetchOpenAIProviderModels('https://api.example.test/v1', 'sk-test', {});
+
+    expect(models[0]?.contextLength).toBe(131072);
+  });
+
+  it('prefers context_length over context_window', async () => {
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'm1', context_window: 200000, context_length: 1048576 }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await fetchOpenAIProviderModels('https://api.example.test/v1', 'sk-test', {});
+
+    expect(models[0]?.contextLength).toBe(1048576);
+  });
+
+  it('falls back to the default for non-positive context lengths', async () => {
+    const fetchMock = vi.fn<FetchMock>(async () =>
+      new Response(
+        JSON.stringify({ data: [{ id: 'm1', context_length: 0 }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await fetchOpenAIProviderModels('https://api.example.test/v1', 'sk-test', {});
+
+    expect(models[0]?.contextLength).toBe(131072);
+  });
 });
 
 describe('refreshProviderModels — OpenAI-compatible branch (3.5)', () => {
@@ -314,5 +372,43 @@ describe('refreshProviderModels — OpenAI-compatible branch (3.5)', () => {
       { providerId: 'opencode', providerName: 'opencode', added: 1, removed: 0 },
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries an OpenRouter context_length through to the model maxContextSize', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        openrouter: {
+          type: 'openai',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey: 'sk-or-test',
+        },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe('https://openrouter.ai/api/v1/models');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-or-test');
+      return new Response(
+        JSON.stringify({
+          data: [{ id: 'minimax/minimax-m3:free', context_length: 1048576 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshProviderModels(host, { scope: 'all' });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { providerId: 'openrouter', providerName: 'openrouter', added: 1, removed: 0 },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const models = Object.values((await host.getConfig()).models ?? {});
+    const carried = models.find((m) => m.maxContextSize === 1048576);
+    expect(carried).toBeDefined();
+    expect(carried?.provider).toBe('openrouter');
+    expect(carried?.model).toBe('minimax/minimax-m3:free');
   });
 });
