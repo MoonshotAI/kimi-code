@@ -122,7 +122,10 @@ beforeEach(async () => {
         get isActive() {
           return towerActive;
         },
-        enter: () => {
+        get isAvailable() {
+          return true;
+        },
+        enter: async () => {
           towerActive = true;
         },
         exit: () => {

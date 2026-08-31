@@ -1076,6 +1076,7 @@ key = "${titleOAuthRef.key}"
 
   it('rejects setTowerMode when the tower feature is unavailable', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TOWER', '0');
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1085,7 +1086,10 @@ key = "${titleOAuthRef.key}"
       await client.createSession({ id: 'ses_tower_off', workDir });
 
       await expect(client.setTowerMode({ sessionId: 'ses_tower_off', enabled: true }))
-        .rejects.toMatchObject({ code: 'session.tower_mode_invalid' });
+        .rejects.toMatchObject({
+          code: 'session.tower_mode_invalid',
+          message: expect.stringContaining('KIMI_CODE_EXPERIMENTAL_TOWER=1'),
+        });
       expect((await client.getStatus({ sessionId: 'ses_tower_off' })).towerMode).toBe(false);
 
       await client.setTowerMode({ sessionId: 'ses_tower_off', enabled: false });

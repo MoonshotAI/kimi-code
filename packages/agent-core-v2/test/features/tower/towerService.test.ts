@@ -443,6 +443,23 @@ describe('AgentTowerService', () => {
     }
   });
 
+  it('isAvailable tracks the flag and the feature assembly', () => {
+    const tower = ix.get(IAgentTowerService);
+    expect(tower.isAvailable).toBe(true);
+
+    towerFlagOn = false;
+    expect(tower.isAvailable).toBe(false);
+    towerFlagOn = true;
+
+    _setTowerFeatureAssembledForTests(false);
+    try {
+      expect(tower.isAvailable).toBe(false);
+    } finally {
+      _setTowerFeatureAssembledForTests(true);
+    }
+    expect(tower.isAvailable).toBe(true);
+  });
+
   it('publishes towerMode:false when the tower feature becomes unavailable while active', async () => {
     const tower = ix.get(IAgentTowerService);
     await tower.enter();

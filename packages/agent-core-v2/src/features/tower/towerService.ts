@@ -200,11 +200,14 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   get isActive(): boolean {
+    return this.isAvailable && this.agentState.get(towerKey);
+  }
+
+  get isAvailable(): boolean {
     return (
       this.agentCtx.agentId === 'main' &&
       this.flags.enabled(TOWER_FLAG_ID) &&
-      isTowerFeatureAssembled(this.flags) &&
-      this.agentState.get(towerKey)
+      isTowerFeatureAssembled(this.flags)
     );
   }
 

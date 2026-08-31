@@ -2082,7 +2082,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (!tower.isActive) {
         throw new V2Error2(
           V2ErrorCodes.SESSION_TOWER_MODE_INVALID,
-          'tower mode could not be enabled — the tower feature is unavailable in this process, or another live session owns the workspace tower',
+          tower.isAvailable
+            ? 'tower mode could not be enabled — another live session owns the workspace tower and is busy or awaiting interaction'
+            : 'tower mode could not be enabled — enable it with KIMI_CODE_EXPERIMENTAL_TOWER=1 and restart the process.',
         );
       }
     } else {

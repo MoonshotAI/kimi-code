@@ -763,6 +763,7 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(on.body.code).not.toBe(0);
     expect(on.body.msg).toContain('tower mode could not be enabled');
+    expect(on.body.msg).toContain('KIMI_CODE_EXPERIMENTAL_TOWER=1');
     const after = await getJson<{
       tower_mode?: boolean;
     }>(`/api/v1/sessions/${id}/status`);
