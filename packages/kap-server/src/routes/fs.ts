@@ -1,38 +1,15 @@
-/**
- * `/api/v1` session filesystem routes — server-v2 port.
- *
- * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
- * so existing v1 clients keep working against server-v2. Backed by the v2
- * Workspace-scoped `IWorkspaceFsService` (`agent-core-v2/src/workspace/workspaceFs`):
- * the route resolves the session from the URL, then dispatches `fs:<action>`
- * to the matching `IWorkspaceFsService` method — the session's accessor
- * resolves it from its parent Workspace scope (the handler), which is the
- * "session → handler → workspace fs" chain (chdir is gone, so the handler
- * root is the one fixed fs root). The wire schema comes from the engine's own
- * `workspaceFs` domain contract (`agent-core-v2`).
- *
- * Draft-session fallback: a client composing the first prompt of a new
- * session (e.g. kimi-web's new-session draft) has no session id yet, so it
- * passes the workspace reference — registered workspace id or absolute root —
- * in the `{session_id}` slot. Only `fs:search` serves those (the `@` file
- * mention must work before the session exists): the route resolves the
- * workspace's handler directly and uses the same Workspace-scope fs service a
- * real session would resolve to. URL and wire schema are unchanged.
- *
- * First-class workspace search: `POST /workspace/fs:search` carries the same
- * workspace reference in the body (`workspace`), so a session-less client
- * searches without borrowing the `{session_id}` slot. kimi-web's `@` mention
- * uses this route; the session-route fallback above predates it and stays for
- * wire compatibility.
- */
-
-import { createReadStream } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { Readable } from 'node:stream';
 
 import {
   ErrorCodes,
+  IRuntimeResolver,
+  ISessionContext,
+  ISessionWorkspaceContext,
+  IStandaloneRuntimeFactory,
+  ITelemetryService,
   IWorkspaceFsService,
-  IWorkspaceLifecycleService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
@@ -40,6 +17,8 @@ import {
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -52,7 +31,16 @@ import {
   fsSearchResponseSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
+  fsSuggestRequestSchema,
+  fsSuggestResponseSchema,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
+import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
+import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import type { RuntimeCapability, RuntimeLease } from '@moonshot-ai/agent-core-v2/runtime/runtime';
+import { WorkspaceFsService } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fsService';
+import { WorkspaceGitService } from '@moonshot-ai/agent-core-v2/workspace/workspaceGit/workspaceGitService';
+import type { IWorkspaceContext } from '@moonshot-ai/agent-core-v2/workspace/workspaceContext/workspaceContext';
+import type { IWorkspaceDirs } from '@moonshot-ai/agent-core-v2/workspace/workspaceDirs/workspaceDirs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -85,7 +73,7 @@ interface FsRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; params: unknown; headers: Record<string, unknown> },
+      req: { id: string; params: unknown; query: unknown; headers: Record<string, unknown> },
       reply: FsDownloadReply,
     ) => unknown,
   ): unknown;
@@ -103,13 +91,23 @@ const sessionIdAndTailParamSchema = z.object({
   tail: z.string().min(1),
 });
 
-/**
- * Body for `POST /workspace/fs:search`: the engine's fs-search request plus
- * the workspace reference (registered workspace id or absolute root) the
- * session route would otherwise carry in its `{session_id}` slot.
- */
+const fsDownloadQuerySchema = z.object({
+  runtime_id: z.string().min(1).optional(),
+});
+
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
+  runtime_id: z.string().min(1).optional(),
+});
+
+const workspaceFsSuggestBodySchema = fsSuggestRequestSchema.extend({
+  workspace: z.string().min(1),
+  runtime_id: z.string().min(1).optional(),
+});
+
+const rootFsSuggestBodySchema = fsSuggestRequestSchema.extend({
+  roots: z.array(z.string().min(1)).min(1).max(32),
+  runtime_id: z.string().min(1).optional(),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
@@ -132,26 +130,142 @@ const FS_ACTIONS = [
 type FsAction = (typeof FS_ACTIONS)[number];
 const FS_TAIL_PREFIX = 'fs:';
 
-function resolveFs(core: Scope, sessionId: string): IWorkspaceFsService {
-  const session = getLiveSessionById(core.accessor, sessionId);
-  if (session === undefined) {
-    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
-  }
-  // The fs service lives on the session's parent Workspace scope (the
-  // handler): one instance per workspace, pinned to the handler root.
-  return session.accessor.get(IWorkspaceFsService);
+interface RuntimeFsScope {
+  readonly fs: IWorkspaceFsService;
+  readonly hostFs: IHostFileSystem;
+  readonly lease: RuntimeLease;
+  readonly roots: { readonly workDir: string; readonly additionalDirs: readonly string[] };
 }
 
-/**
- * Workspace fallback for `fs:search` (see the file header): resolve a
- * workspace reference — registered id, or an absolute root registered on the
- * spot — to its handler's `IWorkspaceFsService`. `undefined` when the ref is
- * neither a known workspace nor an existing absolute directory.
- */
+function createRuntimeFs(
+  core: Scope,
+  workspaceId: string,
+  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
+  runtimeId: string,
+  required: readonly RuntimeCapability[],
+): RuntimeFsScope {
+  const lease = core.accessor.get(IRuntimeResolver).acquire(
+    { workspaceId, runtimeId },
+    required,
+  );
+  try {
+    return buildRuntimeFsScope(core, workspaceId, roots, runtimeId, lease);
+  } catch (error) {
+    lease.dispose();
+    throw error;
+  }
+}
+
+function createLocalRuntimeFs(
+  core: Scope,
+  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
+): RuntimeFsScope {
+  const workspaceId = encodeWorkDirKey(roots.workDir);
+  const runtime = core.accessor.get(IStandaloneRuntimeFactory).createLocalRuntime(workspaceId);
+  const lease: RuntimeLease = {
+    runtime,
+    track: (resource) => resource,
+    dispose: () => {
+      void runtime.dispose();
+    },
+  };
+  try {
+    return buildRuntimeFsScope(core, workspaceId, roots, 'local', lease);
+  } catch (error) {
+    lease.dispose();
+    throw error;
+  }
+}
+
+function buildRuntimeFsScope(
+  core: Scope,
+  workspaceId: string,
+  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
+  runtimeId: string,
+  lease: RuntimeLease,
+): RuntimeFsScope {
+  const mapped = lease.runtime.workspace.mapRoots(roots);
+  const workspace = {
+    _serviceBrand: undefined,
+    workspaceId,
+    cwd: mapped.workDir,
+    source: 'local',
+    meta: {
+      id: workspaceId,
+      root: mapped.workDir,
+      name: workspaceId,
+      createdAt: 0,
+      lastOpenedAt: 0,
+    },
+    persistenceScope: `sessions/${workspaceId}`,
+  } satisfies IWorkspaceContext;
+  const dirs = {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    additionalDirs: mapped.additionalDirs ?? [],
+    onDidChange: () => ({ dispose: () => {} }),
+    addDir: async () => { throw new Error('runtime fs directories are immutable'); },
+    mergeAdditionalDirs: async () => { throw new Error('runtime fs directories are immutable'); },
+    sessionInfo: () => ({ workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] }),
+  } as unknown as IWorkspaceDirs;
+  const resolver: IRuntimeResolver = {
+    _serviceBrand: undefined,
+    inspect: () => lease.runtime,
+    acquire: (_binding, capabilities = []) => {
+      const missing = capabilities.filter((capability) => !lease.runtime.capabilities.has(capability));
+      if (missing.length > 0) throw new Error(`runtime ${runtimeId} missing capabilities: ${missing.join(', ')}`);
+      return {
+        runtime: lease.runtime,
+        track: (resource) => lease.track(resource),
+        dispose: () => {},
+      };
+    },
+  };
+  const instances = {
+    findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
+  } as unknown as IWorkspaceInstanceManager;
+  const git = new WorkspaceGitService(
+    workspace,
+    {
+      current: new GitService(resolver, instances, lease.runtime.fs!),
+      onDidChange: () => ({ dispose: () => {} }),
+    },
+  );
+  return {
+    fs: new WorkspaceFsService(
+      workspace,
+      dirs,
+      lease.runtime.fs!,
+      resolver,
+      core.accessor.get(ITelemetryService),
+      git,
+      runtimeId,
+    ),
+    hostFs: lease.runtime.fs!,
+    lease,
+    roots: { workDir: mapped.workDir, additionalDirs: mapped.additionalDirs ?? [] },
+  };
+}
+
+function acquireSessionFs(
+  core: Scope,
+  sessionId: string,
+  runtimeId: string,
+  required: readonly RuntimeCapability[],
+): RuntimeFsScope {
+  const session = getLiveSessionById(core.accessor, sessionId);
+  if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+  const context = session.accessor.get(ISessionContext);
+  const workspace = session.accessor.get(ISessionWorkspaceContext);
+  return createRuntimeFs(core, context.workspaceId, workspace, runtimeId, required);
+}
+
 async function resolveWorkspaceFs(
   core: Scope,
   ref: string,
-): Promise<IWorkspaceFsService | undefined> {
+  runtimeId: string,
+  required: readonly RuntimeCapability[],
+): Promise<RuntimeFsScope | undefined> {
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);
   if (ws === undefined) {
@@ -162,10 +276,10 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  const handler = await core.accessor
-    .get(IWorkspaceLifecycleService)
-    .handlerFor({ workspaceId: ws.id, root: ws.root });
-  return handler.accessor.get(IWorkspaceFsService);
+  await core.accessor
+    .get(IWorkspaceInstanceManager)
+    .getOrCreate({ workspaceId: ws.id, root: ws.root });
+  return createRuntimeFs(core, ws.id, { workDir: ws.root }, runtimeId, required);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -211,68 +325,80 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       }
       const fsAction = action as FsAction;
 
-      // Cold-load a persisted-but-not-live session so fs actions (which only
-      // need the work dir) do not 404 on a freshly-opened session. Matches v1,
-      // which reads the persisted cwd. `resume` returns undefined only when the
-      // session is unknown or its workspace is gone.
       const session = await resumeSessionById(core.accessor, session_id);
-      // Draft-session fallback (file header): no session yet, but the client
-      // addressed a workspace — `fs:search` resolves it directly.
-      const workspaceFs =
-        session === undefined && fsAction === 'search'
-          ? await resolveWorkspaceFs(core, session_id)
-          : undefined;
-      if (session === undefined && workspaceFs === undefined) {
-        reply.send(
-          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
-        );
-        return;
-      }
-
+      let runtimeFs: RuntimeFsScope | undefined;
       try {
+        const result = z.object({ runtime_id: z.string().min(1).optional() }).passthrough().safeParse(req.body ?? {});
+        if (!result.success) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, 'request body must be an object', req.id));
+          return;
+        }
+        const { runtime_id, ...request } = result.data;
+        const runtimeId = runtime_id ?? 'local';
+        req.body = request;
+        const required: RuntimeCapability[] = ['fs'];
+        if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'diff') {
+          required.push('process');
+        }
+        runtimeFs = session === undefined && fsAction === 'search'
+          ? await resolveWorkspaceFs(core, session_id, runtimeId, required)
+          : session === undefined
+            ? undefined
+            : acquireSessionFs(core, session_id, runtimeId, required);
+        if (runtimeFs === undefined) {
+          reply.send(
+            errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
+          );
+          return;
+        }
+        if ((fsAction === 'open' || fsAction === 'open-in' || fsAction === 'reveal') && runtimeFs.lease.runtime.identity.runtimeId !== 'local') {
+          throw new Error(`filesystem action ${fsAction} is unavailable on runtime ${runtimeId}`);
+        }
         switch (fsAction) {
           case 'list':
-            await handleList(core, session_id, req, reply);
+            await handleList(runtimeFs.fs, req, reply);
             return;
           case 'read':
-            await handleRead(core, session_id, req, reply);
+            await handleRead(runtimeFs.fs, req, reply);
             return;
           case 'list_many':
-            await handleListMany(core, session_id, req, reply);
+            await handleListMany(runtimeFs.fs, req, reply);
             return;
           case 'stat':
-            await handleStat(core, session_id, req, reply);
+            await handleStat(runtimeFs.fs, req, reply);
             return;
           case 'stat_many':
-            await handleStatMany(core, session_id, req, reply);
+            await handleStatMany(runtimeFs.fs, req, reply);
             return;
           case 'mkdir':
-            await handleMkdir(core, session_id, req, reply);
+            await handleMkdir(runtimeFs.fs, req, reply);
             return;
           case 'search':
-            await handleSearch(workspaceFs ?? resolveFs(core, session_id), req, reply);
+            await handleSearch(runtimeFs.fs, req, reply);
             return;
           case 'grep':
-            await handleGrep(core, session_id, req, reply);
+            await handleGrep(runtimeFs.fs, req, reply);
             return;
           case 'git_status':
-            await handleGitStatus(core, session_id, req, reply);
+            await handleGitStatus(runtimeFs.fs, req, reply);
             return;
           case 'diff':
-            await handleDiff(core, session_id, req, reply);
+            await handleDiff(runtimeFs.fs, req, reply);
             return;
           case 'open':
-            await handleOpen(core, session_id, req, reply);
+            await handleOpen(runtimeFs.fs, req, reply);
             return;
           case 'open-in':
-            await handleOpenIn(core, session_id, req, reply);
+            await handleOpenIn(runtimeFs.fs, session_id, req, reply);
             return;
           case 'reveal':
-            await handleReveal(core, session_id, req, reply);
+            await handleReveal(runtimeFs.fs, req, reply);
             return;
         }
       } catch (err) {
         sendMappedError(reply, req, err);
+      } finally {
+        runtimeFs?.lease.dispose();
       }
     },
   );
@@ -282,11 +408,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
-  // Session-less workspace file search (file header): the `@` file mention of
-  // a not-yet-created session addresses the workspace directly instead of
-  // borrowing the session route's `{session_id}` slot. Declared with a double
-  // colon so find-my-way serves it on the wire as `/workspace/fs:search`
-  // (same convention as `/fs::browse` in `workspaceFs.ts`).
   const workspaceSearchRoute = defineRoute(
     {
       method: 'POST',
@@ -304,23 +425,26 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       operationId: 'workspaceFsSearch',
     },
     async (req, reply) => {
-      const { workspace, ...searchRequest } = req.body;
-      const fs = await resolveWorkspaceFs(core, workspace);
-      if (fs === undefined) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.WORKSPACE_NOT_FOUND,
-            `workspace ${workspace} does not exist`,
-            req.id,
-          ),
-        );
-        return;
-      }
+      const { workspace, runtime_id, ...searchRequest } = req.body;
+      let runtimeFs: RuntimeFsScope | undefined;
       try {
-        const data = await fs.search(searchRequest);
+        runtimeFs = await resolveWorkspaceFs(core, workspace, runtime_id ?? 'local', ['fs', 'process']);
+        if (runtimeFs === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.WORKSPACE_NOT_FOUND,
+              `workspace ${workspace} does not exist`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        const data = await runtimeFs.fs.search(searchRequest);
         reply.send(okEnvelope(data, req.id));
       } catch (err) {
         sendMappedError(reply, req, err);
+      } finally {
+        runtimeFs?.lease.dispose();
       }
     },
   );
@@ -330,10 +454,127 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     workspaceSearchRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
+  const workspaceSuggestRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspace/fs::suggest',
+      body: workspaceFsSuggestBodySchema,
+      success: { data: fsSuggestResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description:
+        'Suggest file and directory completion candidates in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+      tags: ['fs'],
+      operationId: 'workspaceFsSuggest',
+    },
+    async (req, reply) => {
+      const { workspace, runtime_id, ...suggestRequest } = req.body;
+      let runtimeFs: RuntimeFsScope | undefined;
+      try {
+        runtimeFs = await resolveWorkspaceFs(core, workspace, runtime_id ?? 'local', ['fs']);
+        if (runtimeFs === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.WORKSPACE_NOT_FOUND,
+              `workspace ${workspace} does not exist`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        const data = await runtimeFs.fs.suggest(suggestRequest);
+        reply.send(okEnvelope(data, req.id));
+      } catch (err) {
+        sendMappedError(reply, req, err);
+      } finally {
+        runtimeFs?.lease.dispose();
+      }
+    },
+  );
+  app.post(
+    workspaceSuggestRoute.path,
+    workspaceSuggestRoute.options,
+    workspaceSuggestRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
+  const rootSuggestRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/fs::suggest',
+      body: rootFsSuggestBodySchema,
+      success: { data: fsSuggestResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+      },
+      description:
+        'Suggest file and directory completion candidates across one or more absolute root directories without a session or workspace. The first root is the primary root: its candidates are returned as relative paths, candidates under additional roots as absolute paths. Overlapping roots are deduplicated. No workspace registration or other side effects.',
+      tags: ['fs'],
+      operationId: 'fsSuggest',
+    },
+    async (req, reply) => {
+      const { roots, runtime_id, ...suggestRequest } = req.body;
+      for (const root of roots) {
+        if (!isAbsolute(root)) {
+          reply.send(
+            errEnvelope(ErrorCode.VALIDATION_FAILED, `root must be an absolute path: ${root}`, req.id),
+          );
+          return;
+        }
+      }
+      const runtimeId = runtime_id ?? 'local';
+      const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
+      let runtimeFs: RuntimeFsScope | undefined;
+      try {
+        runtimeFs = runtimeId === 'local'
+          ? createLocalRuntimeFs(core, fsRoots)
+          : createRuntimeFs(core, encodeWorkDirKey(roots[0]!), fsRoots, runtimeId, ['fs']);
+        for (const root of [runtimeFs.roots.workDir, ...runtimeFs.roots.additionalDirs]) {
+          let stat;
+          try {
+            stat = await runtimeFs.hostFs.stat(root);
+          } catch {
+            throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `root not found: ${root}`, {
+              details: { path: root },
+            });
+          }
+          if (!stat.isDirectory) {
+            throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `root is not a directory: ${root}`, {
+              details: { path: root },
+            });
+          }
+        }
+        const data = await runtimeFs.fs.suggest(suggestRequest);
+        reply.send(okEnvelope(data, req.id));
+      } catch (err) {
+        if (err instanceof RuntimeError) {
+          const code = err.code === 'runtime.not_found'
+            ? ErrorCode.RUNTIME_NOT_FOUND
+            : ErrorCode.RUNTIME_UNAVAILABLE;
+          reply.send(errEnvelope(code, err.message, req.id));
+          return;
+        }
+        sendMappedError(reply, req, err);
+      } finally {
+        runtimeFs?.lease.dispose();
+      }
+    },
+  );
+  app.post(
+    rootSuggestRoute.path,
+    rootSuggestRoute.options,
+    rootSuggestRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
   const downloadRoute = defineRoute(
     {
       method: 'GET',
       path: '/sessions/{session_id}/fs/*',
+      querystring: fsDownloadQuerySchema,
       rawResponse: {
         200: { type: 'string', format: 'binary' },
       },
@@ -364,8 +605,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
 
-      // Cold-load so a freshly-opened (persisted but not live) session can still
-      // serve downloads; `resume` only returns undefined for unknown / workspace-gone.
       const session = await resumeSessionById(core.accessor, session_id);
       if (session === undefined) {
         reply.send(
@@ -375,9 +614,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       }
 
       let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
+      let runtimeFs: RuntimeFsScope | undefined;
       try {
-        resolved = await resolveFs(core, session_id).resolveDownload(relPath);
+        runtimeFs = acquireSessionFs(core, session_id, req.query.runtime_id ?? 'local', ['fs']);
+        resolved = await runtimeFs.fs.resolveDownload(relPath);
       } catch (err) {
+        runtimeFs?.lease.dispose();
         sendMappedError(reply, req, err);
         return;
       }
@@ -387,6 +629,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       const ifNoneMatch = pickHeader(headers, 'if-none-match');
       if (ifNoneMatch !== undefined && ifNoneMatch === resolved.etag) {
+        runtimeFs.lease.dispose();
         r.code(304).header('etag', resolved.etag).send('');
         return;
       }
@@ -405,10 +648,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         r.code(206)
           .header('content-length', String(range.length))
           .header('content-range', `bytes ${range.start}-${range.end}/${resolved.size}`);
-        const stream = createReadStream(resolved.absolute, {
-          start: range.start,
-          end: range.end,
-        });
+        const stream = createRuntimeReadStream(runtimeFs, resolved.absolute, range.start, range.length);
         stream.on('error', (error: unknown) => {
           requestLog(req)?.warn(
             { session_id, path: relPath, err: error },
@@ -417,14 +657,13 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           try {
             stream.destroy();
           } catch {
-            // best-effort
           }
         });
         return r.send(stream) as unknown as void;
       }
 
       r.code(200).header('content-length', String(resolved.size));
-      const stream = createReadStream(resolved.absolute);
+      const stream = createRuntimeReadStream(runtimeFs, resolved.absolute, 0, resolved.size);
       stream.on('error', (error: unknown) => {
         requestLog(req)?.warn(
           { session_id, path: relPath, err: error },
@@ -433,7 +672,6 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         try {
           stream.destroy();
         } catch {
-          // best-effort
         }
       });
       return r.send(stream) as unknown as void;
@@ -446,70 +684,97 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Action handlers — thin adapters: parse body, call IWorkspaceFsService, wrap result.
-// ---------------------------------------------------------------------------
+function createRuntimeReadStream(
+  runtimeFs: RuntimeFsScope,
+  path: string,
+  start: number,
+  length: number,
+): Readable {
+  async function* chunks(): AsyncGenerator<Uint8Array> {
+    let offset = start;
+    let remaining = length;
+    while (remaining > 0) {
+      const chunk = await runtimeFs.hostFs.readBytes(path, Math.min(64 * 1024, remaining), offset);
+      if (chunk.byteLength === 0) break;
+      offset += chunk.byteLength;
+      remaining -= chunk.byteLength;
+      yield chunk;
+    }
+  }
+  const stream = Readable.from(chunks());
+  const tracked = runtimeFs.lease.track({ dispose: () => { stream.destroy(); } });
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    tracked.dispose();
+    runtimeFs.lease.dispose();
+  };
+  stream.once('end', release);
+  stream.once('close', release);
+  return stream;
+}
 
 type Req = { id: string; body: unknown };
 type Reply = { send(payload: unknown): unknown };
 
-async function handleList(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsListRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).list(parsed.data);
+  const data = await fs.list(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleRead(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleRead(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsReadRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).read(parsed.data);
+  const data = await fs.read(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleListMany(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleListMany(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsListManyRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).listMany(parsed.data);
+  const data = await fs.listMany(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleStat(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleStat(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsStatRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).stat(parsed.data);
+  const data = await fs.stat(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleStatMany(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleStatMany(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsStatManyRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).statMany(parsed.data);
+  const data = await fs.statMany(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleMkdir(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleMkdir(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsMkdirRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).mkdir(parsed.data);
+  const data = await fs.mkdir(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
@@ -523,66 +788,66 @@ async function handleSearch(fs: IWorkspaceFsService, req: Req, reply: Reply): Pr
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleGrep(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleGrep(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsGrepRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).grep(parsed.data);
+  const data = await fs.grep(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleGitStatus(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleGitStatus(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsGitStatusRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).gitStatus(parsed.data);
+  const data = await fs.gitStatus(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleDiff(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleDiff(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsDiffRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const data = await resolveFs(core, sessionId).diff(parsed.data);
+  const data = await fs.diff(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleOpen(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleOpen(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsOpenRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const resolved = await resolveFs(core, sessionId).resolvePath(parsed.data.path);
+  const resolved = await fs.resolvePath(parsed.data.path);
   await launchDetached(openFileCommandFor(resolved.absolute, parsed.data.line));
   reply.send(okEnvelope({ opened: true as const }, req.id));
 }
 
-async function handleReveal(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleReveal(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
   const parsed = fsRevealRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
-  const resolved = await resolveFs(core, sessionId).resolvePath(parsed.data.path);
+  const resolved = await fs.resolvePath(parsed.data.path);
   await launchDetached(revealFileCommandFor(resolved.absolute));
   reply.send(okEnvelope({ revealed: true as const }, req.id));
 }
 
-async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Reply): Promise<void> {
+async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req, reply: Reply): Promise<void> {
   const parsed = fsOpenInRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
     return;
   }
   const body = parsed.data;
-  const resolved = await resolveFs(core, sessionId).resolvePath(body.path);
+  const resolved = await fs.resolvePath(body.path);
   try {
     await launchDetached(
       openInAppCommandFor(body.app_id, resolved.absolute, {
@@ -606,10 +871,6 @@ async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Rep
   }
   reply.send(okEnvelope({ opened: true as const }, req.id));
 }
-
-// ---------------------------------------------------------------------------
-// Error mapping — domain Error2 codes → protocol wire codes.
-// ---------------------------------------------------------------------------
 
 function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
   const requestId = req.id;
@@ -646,9 +907,6 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
-      // hostFs errors that escaped the workspaceFs layer keep their `os.fs.*`
-      // code; map them onto the closest v1 wire code (ENOTDIR collapses into
-      // path-not-found, matching `mapFsError`).
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
         reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));

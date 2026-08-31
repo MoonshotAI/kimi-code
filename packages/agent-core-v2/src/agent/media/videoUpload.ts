@@ -1,12 +1,3 @@
-/**
- * `media` domain — shared video-upload fallback helpers.
- *
- * The provider video-upload attempt and its graceful fallbacks must agree on
- * which failures are auth failures (surfaced, never masked into a fallback)
- * and which protocols carry inline `video_url` on the wire. Pure helpers; no
- * scoped service.
- */
-
 import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import type { VideoURLPart } from '#/kosong/contract/message';
 import type { Protocol } from '#/kosong/protocol/protocol';

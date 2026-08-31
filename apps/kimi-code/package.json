@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "0.31.1",
+  "version": "0.39.1",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -50,7 +50,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-native-assets.mjs && node scripts/copy-web-assets.mjs",
+    "build": "tsdown && tsdown --config tsdown.dist-worker.config.ts && node scripts/copy-native-assets.mjs && node scripts/check-web-assets.mjs",
     "prebuild": "node scripts/build-vis-asset.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
@@ -83,17 +83,20 @@
   },
   "devDependencies": {
     "@moonshot-ai/acp-adapter": "workspace:^",
+    "@moonshot-ai/acp-server": "workspace:^",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
-    "@moonshot-ai/kimi-web": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
+    "@moonshot-ai/minidb": "workspace:^",
     "@moonshot-ai/pi-tui": "workspace:^",
     "@moonshot-ai/vis-server": "workspace:^",
     "@moonshot-ai/vis-web": "workspace:*",
+    "@types/qrcode": "^1.5.6",
     "@types/semver": "^7.7.0",
+    "@types/ws": "^8.18.0",
     "@types/yazl": "^2.4.6",
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",
@@ -109,5 +112,9 @@
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
   }
 }

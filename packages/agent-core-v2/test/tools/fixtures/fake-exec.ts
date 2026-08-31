@@ -1,16 +1,16 @@
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 
 function notImplemented(name: string): never {
   throw new Error(`${name} not implemented - override it in the test`);
 }
 
 export function createFakeProcessRunner(
-  overrides: Partial<ISessionProcessRunner> = {},
-): ISessionProcessRunner {
+  overrides: Partial<IHostProcessService> = {},
+): IHostProcessService {
   return {
     _serviceBrand: undefined,
-    exec: () => notImplemented('FakeProcessRunner.exec'),
+    spawn: () => notImplemented('FakeProcessService.spawn'),
     ...overrides,
   };
 }

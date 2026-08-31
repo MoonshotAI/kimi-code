@@ -1,16 +1,10 @@
-/**
- * One-shot config migrations. Each migration runs at most once per kimi
- * home: a marker in `<home>/migrations-effort.json` records completion (ISO
- * timestamp), so a value the user re-sets by hand afterwards is never
- * migrated again. Best-effort and never throws — a migration must never
- * block startup.
- */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'pathe';
 
-import { type IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { type IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
 import { isPlainObject } from './configPure';
+import { replaceThinkingEffortMax } from './tomlWriteback';
 
 const MIGRATIONS_FILE = 'migrations-effort.json';
 const THINKING_EFFORT_MAX_TO_HIGH = 'thinking-effort-max-to-high';
@@ -38,14 +32,16 @@ function writeMigrationMarker(homeDir: string, key: string): void {
 }
 
 export async function migrateThinkingEffortMaxToHigh(
-  documentStore: IAtomicDocumentStore,
+  documentStore: IAtomicTomlDocumentStore,
   configKey: string,
   homeDir: string,
 ): Promise<void> {
   try {
     if (readMigrationMarkers(homeDir)[THINKING_EFFORT_MAX_TO_HIGH] !== undefined) return;
     let doc: Record<string, unknown> | undefined;
+    let text: string | undefined;
     try {
+      text = await documentStore.getText(CONFIG_SCOPE, configKey);
       const data = await documentStore.get<Record<string, unknown>>(CONFIG_SCOPE, configKey);
       doc = data !== undefined && isPlainObject(data) ? data : {};
     } catch {
@@ -53,8 +49,13 @@ export async function migrateThinkingEffortMaxToHigh(
     }
     const thinking = doc['thinking'];
     if (isPlainObject(thinking) && thinking['effort'] === 'max') {
-      doc['thinking'] = { ...thinking, effort: 'high' };
-      await documentStore.set(CONFIG_SCOPE, configKey, doc);
+      const migrated = text === undefined ? undefined : replaceThinkingEffortMax(text);
+      if (migrated === undefined) {
+        doc['thinking'] = { ...thinking, effort: 'high' };
+        await documentStore.set(CONFIG_SCOPE, configKey, doc);
+      } else if (migrated !== text) {
+        await documentStore.setText(CONFIG_SCOPE, configKey, migrated);
+      }
     }
     writeMigrationMarker(homeDir, THINKING_EFFORT_MAX_TO_HIGH);
   } catch {

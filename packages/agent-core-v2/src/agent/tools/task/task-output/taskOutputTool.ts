@@ -1,22 +1,3 @@
-/**
- * `tools` domain — `TaskOutputTool` implementation (the `TaskOutput`
- * tool).
- *
- * Returns structured task metadata plus a fixed-size tail preview of the
- * task's output, read through `IAgentTaskService` (`agentTask` domain). The
- * full, never-truncated output lives on disk at `output_path`; the caller is
- * always pointed at the `Read` tool to page through the complete log, and
- * the preview also carries a banner when it has been truncated to a tail.
- *
- * For terminal tasks the output also surfaces why the task ended:
- * `stop_reason` records the concrete reason; `terminal_reason` classifies
- * timeout vs. explicit stop vs. failure for callers that need stable labels.
- *
- * Registered via the module-level `registerAgentToolService(ITaskOutputTool,
- * TaskOutputTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
@@ -35,7 +16,6 @@ import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 const PAGING_HINT_LINES = 300;
-
 
 function retrievalStatus(status: AgentTaskStatus): 'success' | 'not_ready' {
   return TERMINAL_STATUSES.has(status) ? 'success' : 'not_ready';

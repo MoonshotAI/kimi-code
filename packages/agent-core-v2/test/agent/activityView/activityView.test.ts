@@ -1,46 +1,57 @@
-/**
- * `AgentActivityView` — the folded read model: turn slice, lastTurn memory,
- * and the background-work busy layer (seeded from task and compaction owners,
- * folded from their lifecycle events).
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { IEventBus } from '#/app/event/eventBus';
+import type { Event2, Event2Class } from '#/app/event/event2';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded, turnKey, type TurnModelState } from '#/agent/loop/turnOps';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentTaskService } from '#/agent/task/task';
+import { TaskStarted, TaskTerminatedNotice } from '#/agent/task/taskOps';
 import type { AgentTaskInfo } from '#/agent/task/types';
+import {
+  CompactionCancelled,
+  CompactionStarted,
+} from '#/agent/fullCompaction/compactionOps';
 import { AgentActivityView } from '#/agent/activityView/activityViewService';
 import { IAgentActivityView, type AgentActivityState } from '#/agent/activityView/activityView';
 import {
-  IAgentFullCompactionService,
-  type FullCompactionTask,
-} from '#/agent/fullCompaction/fullCompaction';
+  PermissionApprovalRequested,
+  PermissionApprovalResolved,
+} from '#/agent/toolApproval/toolApprovalService';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import type { FullCompactionTask } from '#/agent/fullCompaction/fullCompaction';
+import { ContextUndone } from '#/agent/undo/undoService';
+import { OrderedHookSlot } from '#/hooks';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { stubAgentContext } from '../agentContext/stubs';
 
 class FakeBus {
-  private readonly byType = new Map<string, Array<(e: DomainEvent) => void>>();
-  private readonly all: Array<(e: DomainEvent) => void> = [];
-  readonly published: DomainEvent[] = [];
+  private readonly byType = new Map<string, Array<(e: Event2) => void>>();
+  private readonly all: Array<(e: Event2) => void> = [];
+  readonly published: Event2[] = [];
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     this.published.push(event);
     for (const h of this.all) h(event);
     for (const h of this.byType.get(event.type) ?? []) h(event);
   }
 
-  subscribe(type: unknown, handler?: unknown): IDisposable {
-    if (typeof type === 'function') {
-      this.all.push(type as (e: DomainEvent) => void);
+  subscribe(typeOrClass: unknown, handler?: unknown): IDisposable {
+    if (typeof typeOrClass === 'function' && !('type' in typeOrClass)) {
+      this.all.push(typeOrClass as (e: Event2) => void);
       return { dispose: () => {} };
     }
-    const list = this.byType.get(type as string) ?? [];
-    list.push(handler as (e: DomainEvent) => void);
-    this.byType.set(type as string, list);
+    const type =
+      typeof typeOrClass === 'string' ? typeOrClass : (typeOrClass as Event2Class).type;
+    const list = this.byType.get(type) ?? [];
+    list.push(handler as (e: Event2) => void);
+    this.byType.set(type, list);
     return { dispose: () => {} };
   }
 }
@@ -64,17 +75,46 @@ let disposables: DisposableStore;
 function harness(
   seedTasks: readonly AgentTaskInfo[] = [],
   compacting: FullCompactionTask | null = null,
+  lastEnded?: TurnModelState['lastEnded'],
 ) {
   const bus = new FakeBus();
   const loop = {
     status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
   } as unknown as IAgentLoopService;
   const tasks = { list: () => seedTasks } as unknown as IAgentTaskService;
+  const restoreHooks: Array<() => Promise<void>> = [];
+  const dispatcher = {
+    dispatch: async (event: Event2) => {
+      bus.publish(event);
+    },
+    hooks: {
+      onDidRestore: {
+        register: (_id: string, fn: (ctx: undefined, next: () => Promise<void>) => Promise<void>) => {
+          restoreHooks.push(async () => fn(undefined, async () => {}));
+          return { dispose: () => {} };
+        },
+      },
+    },
+  } as unknown as IEventDispatcher;
+  const restore = async (ended: TurnModelState['lastEnded']): Promise<void> => {
+    agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], anchorTurnIds: [], lastEnded: ended });
+    for (const hook of restoreHooks) await hook();
+  };
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IEventBus, bus as unknown as IEventBus);
   ix.stub(IAgentLoopService, loop);
   ix.stub(IAgentTaskService, tasks);
-  ix.set(IAgentStateService, new AgentStateService());
+  ix.stub(IEventDispatcher, dispatcher);
+  const agentState = new AgentStateService();
+  agentState.contributeState(turnKey);
+  agentState.set(turnKey, { nextTurnId: 1, cancelledTurnIds: [], anchorTurnIds: [], lastEnded });
+  ix.set(IAgentStateService, agentState);
+  ix.stub(IAgentScopeContext, {
+    _serviceBrand: undefined,
+    agentId: 'main',
+    agentContext: stubAgentContext('main', 1),
+    scope: (subKey?: string) => subKey ?? '',
+  });
   ix.stub(IAgentFullCompactionService, {
     _serviceBrand: undefined,
     compacting,
@@ -85,7 +125,7 @@ function harness(
     bus.published
       .filter((e) => e.type === 'agent.activity.updated')
       .map((e) => e as unknown as AgentActivityState);
-  return { bus, view, updates };
+  return { bus, view, updates, restore };
 }
 
 describe('AgentActivityView', () => {
@@ -105,11 +145,11 @@ describe('AgentActivityView', () => {
   it('folds task.started / task.terminated into the background slice', () => {
     const { bus, view, updates } = harness();
 
-    bus.publish({ type: 'task.started', info: makeTaskInfo('bash-1') });
+    bus.publish(new TaskStarted({ agentId: 'main', info: makeTaskInfo('bash-1') }));
     expect(view.state().background).toEqual([{ kind: 'process', id: 'bash-1', since: 100 }]);
     expect(updates().at(-1)?.background).toHaveLength(1);
 
-    bus.publish({ type: 'task.terminated', info: makeTaskInfo('bash-1') });
+    bus.publish(new TaskTerminatedNotice({ agentId: 'main', info: makeTaskInfo('bash-1') }));
     expect(view.state().background).toEqual([]);
     expect(updates().at(-1)?.background).toHaveLength(0);
   });
@@ -119,15 +159,39 @@ describe('AgentActivityView', () => {
     expect(view.state().background).toEqual([{ kind: 'process', id: 'bash-9', since: 100 }]);
   });
 
+  it('seeds lastTurn from the wire turnKey when the view is built after restore', () => {
+    const { view } = harness([], null, { turnId: 7, reason: 'failed', durationMs: 1234 });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 7, reason: 'failed', durationMs: 1234 });
+  });
+
+  it('seeds lastTurn when the wire restore lands after construction (cold resume ordering)', async () => {
+    const { view, restore } = harness();
+    expect(view.state().lastTurn).toBeUndefined();
+    await restore({ turnId: 7, reason: 'failed', durationMs: 1234 });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 7, reason: 'failed', durationMs: 1234 });
+  });
+
+  it('does not overwrite a live lastTurn when the restore hook runs', async () => {
+    const { bus, view, restore } = harness([], null, { turnId: 7, reason: 'failed' });
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 9, reason: 'completed' }));
+    await restore({ turnId: 7, reason: 'failed' });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 9, reason: 'completed' });
+  });
+
+  it('leaves lastTurn empty when the wire has no ended turn', () => {
+    const { view } = harness();
+    expect(view.state().lastTurn).toBeUndefined();
+  });
+
   it('folds full compaction into the background slice', () => {
     const { bus, view } = harness();
 
-    bus.publish({ type: 'compaction.started', trigger: 'manual' });
+    bus.publish(new CompactionStarted({ agentId: 'main', trigger: 'manual' }));
     expect(view.state().background).toEqual([
       expect.objectContaining({ kind: 'compaction', id: 'full-compaction' }),
     ]);
 
-    bus.publish({ type: 'compaction.cancelled' });
+    bus.publish(new CompactionCancelled({ agentId: 'main' }));
     expect(view.state().background).toEqual([]);
   });
 
@@ -149,10 +213,10 @@ describe('AgentActivityView', () => {
   it('folds turn boundaries into turn / lastTurn', () => {
     const { bus, view } = harness();
 
-    bus.publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
     expect(view.state().turn?.turnId).toBe(1);
 
-    bus.publish({ type: 'turn.ended', turnId: 1, reason: 'completed' });
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
     expect(view.state().turn).toBeUndefined();
     expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'completed' });
   });
@@ -160,16 +224,101 @@ describe('AgentActivityView', () => {
   it('clears the previous outcome when a new turn starts', () => {
     const { bus, view } = harness();
 
-    bus.publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
-    bus.publish({ type: 'turn.ended', turnId: 1, reason: 'cancelled' });
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled' }));
     expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'cancelled' });
 
-    // While the next turn runs there is no current outcome; turn.ended
-    // publishes the fresh one.
-    bus.publish({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } });
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }));
     expect(view.state().lastTurn).toBeUndefined();
 
-    bus.publish({ type: 'turn.ended', turnId: 2, reason: 'completed' });
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'completed' }));
     expect(view.state().lastTurn).toMatchObject({ turnId: 2, reason: 'completed' });
+  });
+
+  it('clears the last outcome when an undo rewinds the turn it describes', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'cancelled' }));
+    expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'cancelled' });
+
+    bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 1 }));
+    expect(view.state().lastTurn).toBeUndefined();
+  });
+
+  it('keeps the last outcome when an undo rewinds only later turns', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
+
+    bus.publish(new ContextUndone({ agentId: 'main', turns: 1, fromTurnId: 2 }));
+    expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'completed' });
+  });
+
+  it('clears the last outcome when the undo range cannot be determined', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'failed' }));
+
+    bus.publish(new ContextUndone({ agentId: 'main', turns: 1 }));
+    expect(view.state().lastTurn).toBeUndefined();
+  });
+
+  it('exposes the engine-minted interaction id as the approval id', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(
+      new PermissionApprovalRequested({ agentId: 'main',
+        id: 'approval_1',
+        sessionId: 's',
+        turnId: 1,
+        toolCallId: 'tc-1',
+        toolName: 'Bash',
+        action: 'run',
+        toolInput: {},
+        display: { kind: 'command', command: 'ls' },
+      }),
+    );
+    expect(view.state().turn?.pendingApprovals).toEqual([
+      { approvalId: 'approval_1', toolCallId: 'tc-1', since: expect.any(Number) },
+    ]);
+
+    bus.publish(
+      new PermissionApprovalResolved({ agentId: 'main',
+        id: 'approval_1',
+        sessionId: 's',
+        turnId: 1,
+        toolCallId: 'tc-1',
+        toolName: 'Bash',
+        action: 'run',
+        toolInput: {},
+        display: { kind: 'command', command: 'ls' },
+        decision: 'approved',
+      }),
+    );
+    expect(view.state().turn?.pendingApprovals).toEqual([]);
+  });
+
+  it('falls back to the tool call id when the approval event carries no interaction id', () => {
+    const { bus, view } = harness();
+
+    bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(
+      new PermissionApprovalRequested({ agentId: 'main',
+        sessionId: 's',
+        turnId: 1,
+        toolCallId: 'tc-1',
+        toolName: 'Bash',
+        action: 'run',
+        toolInput: {},
+        display: { kind: 'command', command: 'ls' },
+      }),
+    );
+    expect(view.state().turn?.pendingApprovals).toEqual([
+      { approvalId: 'tc-1', toolCallId: 'tc-1', since: expect.any(Number) },
+    ]);
   });
 });

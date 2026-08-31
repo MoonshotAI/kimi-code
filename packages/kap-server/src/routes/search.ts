@@ -1,14 +1,3 @@
-/**
- * `/search` route handler — global cross-session message search.
- *
- * Thin adapter over the App-scoped `IGlobalSearchService` (see
- * `src/search/searchService.ts`): maps the snake_case wire body to the
- * service contract, projects the result back, and maps the service's
- * parameter errors to `40001`.
- *
- *   POST /search   body: SearchMessagesBody   data: SearchMessagesResponse
- */
-
 import { type Scope } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
@@ -78,6 +67,8 @@ function toWirePage(page: GlobalSearchPage): SearchMessagesResponse {
       indexed_sessions: page.indexState.indexedSessions,
       total_sessions: page.indexState.totalSessions,
       documents: page.indexState.documents,
+      stale: page.indexState.stale,
+      degraded: page.indexState.degraded,
     },
     source: page.source,
   };

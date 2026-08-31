@@ -1,25 +1,9 @@
-/**
- * `app/kosongConfig` models.dev import tests — `IModelsDevImportService`:
- *
- *  - the browse surface prunes the models.dev directory and resolves import
- *    eligibility (ok / needs-base-url / rejected), and a missing entry throws
- *    `provider.catalog_entry_not_found`;
- *  - a failed upstream fetch with no built-in snapshot throws
- *    `provider.catalog_unavailable`;
- *  - `importModelsDevProvider` writes the provider + model aliases through
- *    `config.replace` (never the default pointers), keeps the stored api_key
- *    on a re-import without one, and rejects OAuth-managed providers and
- *    non-importable entries with coded errors;
- *  - `importCustomRegistry` applies every valid entry with a `source` blob,
- *    drops same-URL providers that vanished upstream, rejects OAuth-managed
- *    targets, and maps fetch/validation failures to
- *    `provider.registry_import_invalid`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
+import { DEFAULT_IDENTITY_SLUG, IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import {
   resetModelsDevUpstreamForTest,
@@ -35,6 +19,10 @@ import type { ModelsSection } from '#/kosong/model/model';
 import type { ProvidersSection } from '#/kosong/provider/provider';
 
 import { StubConfigService } from '../../kosong/stubs';
+import { stubBootstrap } from '../bootstrap/stubs';
+import { stubAgentIdentity } from '../agentIdentity/stubs';
+
+const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0' };
 
 const codes = ModelsDevImportErrors.codes;
 
@@ -109,6 +97,16 @@ function fetchJson(doc: unknown): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
+function fetchJsonRecordingUserAgent(doc: unknown, seen: Array<string | null>): typeof fetch {
+  return (async (_input: unknown, init?: { headers?: Record<string, string> }) => {
+    seen.push(new Headers(init?.headers).get('User-Agent'));
+    return new Response(JSON.stringify(doc), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+}
+
 function fetchFail(): typeof fetch {
   return (async () => {
     throw new Error('network down');
@@ -132,7 +130,11 @@ function stubModelCatalog(): IModelCatalog {
   } as unknown as IModelCatalog;
 }
 
-function createHost(sections: Record<string, unknown> = {}): {
+function createHost(
+  sections: Record<string, unknown> = {},
+  identitySlug?: string,
+  hostHeaders: Record<string, string> = HOST_HEADERS,
+): {
   config: StubConfigService;
   imports: IModelsDevImportService;
 } {
@@ -141,6 +143,8 @@ function createHost(sections: Record<string, unknown> = {}): {
     [IConfigService, config],
     [IKosongConfigService, stubKosongConfig()],
     [IModelCatalog, stubModelCatalog()],
+    [IBootstrapService, stubBootstrap('/home', {}, { requestHeaders: hostHeaders })],
+    [IAgentIdentity, stubAgentIdentity({ slug: identitySlug, hostRequestHeaders: hostHeaders })],
   ]);
   return { config, imports: host.app.accessor.get(IModelsDevImportService) };
 }
@@ -232,6 +236,58 @@ describe('IModelsDevImportService', () => {
     expect(config.get('defaultModel')).toBe('k2');
   });
 
+  it('leaves the pool untouched when a catalog import drops an entry', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'openai/gpt-4o': { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+        k2: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 131072 },
+      },
+      secondaryModel: {
+        defaultModel: 'k2',
+        models: { k2: 'fast', 'openai/gpt-4o': 'smart' },
+      },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+
+    expect(config.get('secondaryModel')).toEqual({
+      defaultModel: 'k2',
+      models: { k2: 'fast', 'openai/gpt-4o': 'smart' },
+    });
+  });
+
+  it('leaves the pool untouched when a catalog import orphans its default', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'openai/gpt-4o': { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+      },
+      secondaryModel: { defaultModel: 'openai/gpt-4o' },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+
+    expect(config.get('secondaryModel')).toEqual({ defaultModel: 'openai/gpt-4o' });
+  });
+
+  it('leaves the pool untouched on custom-registry imports too', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
+    const { config, imports } = createHost({
+      providers: { 'acme-gpt': { type: 'openai', apiKey: 'sk-old' } },
+      models: {
+        'acme-gpt/gpt-old': { provider: 'acme-gpt', model: 'gpt-old', maxContextSize: 64000 },
+      },
+      secondaryModel: { defaultModel: 'acme-gpt/gpt-old' },
+    });
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(config.get('secondaryModel')).toEqual({ defaultModel: 'acme-gpt/gpt-old' });
+  });
+
   it('seeds default_model from the first imported model only when none is configured', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { config, imports } = createHost({ providers: {}, models: {} });
@@ -239,7 +295,6 @@ describe('IModelsDevImportService', () => {
     await imports.importModelsDevProvider({ catalogId: 'openai' });
     expect(config.get('defaultModel')).toBe('openai/gpt-4.1');
 
-    // A later import never moves the seeded pointer.
     await imports.importModelsDevProvider({
       catalogId: 'gateway',
       baseUrl: 'https://gw.example/v1',
@@ -285,6 +340,56 @@ describe('IModelsDevImportService', () => {
       codes.CATALOG_IMPORT_INVALID,
     );
     expect(err.message).toContain('requires a base_url');
+  });
+
+  it('sends the configured identity as the custom-registry import User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, 'acme');
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual(['acme/1.0']);
+  });
+
+  it('keeps the host User-Agent on the import when no identity is configured', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost();
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual([HOST_HEADERS['User-Agent']]);
+  });
+
+  it('sends the configured identity when browsing the models.dev directory', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(CATALOG, seen) });
+    const { imports } = createHost({}, 'acme');
+
+    await imports.listModelsDevProviders();
+
+    expect(seen).toEqual(['acme/1.0']);
+  });
+
+  it('presents the configured slug when the host states no User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, 'acme', {});
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual(['acme']);
+  });
+
+  it('falls back to a neutral token when the host states no User-Agent', async () => {
+    const seen: Array<string | null> = [];
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJsonRecordingUserAgent(REGISTRY_DOC, seen) });
+    const { imports } = createHost({}, undefined, {});
+
+    await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(seen).toEqual([DEFAULT_IDENTITY_SLUG]);
   });
 
   it('imports a custom registry with a source blob and drops providers vanished upstream', async () => {

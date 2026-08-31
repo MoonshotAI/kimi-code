@@ -1,20 +1,32 @@
-/**
- * Scenario: shared system-prompt rendering — the single `${var}` variable
- * table (`systemPromptVars`), user-template rendering with a lazily bound
- * `${base_prompt}` (`renderPromptTemplate`), and the builtin template renderer
- * (`renderSystemPrompt`) including its code-composed conditional sections
- * (Windows notes, additional directories, skills). Pure functions, no IO.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentProfileCatalog/profile-shared.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import {
-  renderPromptTemplate,
-  renderSystemPrompt,
+  normalizeAgentProfile,
+  type AgentProfileContext,
+  type AgentProfileInput,
+  type SystemPromptRenderResult,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  _clearAgentProfileContributionsForTests,
+  getAgentProfileContributions,
+  registerAgentProfile,
+} from '#/app/agentProfileCatalog/contribution';
+import {
+  DEFAULT_REPLY_STYLE_GUIDE,
+  profileCanDelegate,
+  renderPromptTemplateResult,
+  renderSystemPromptResult,
+  rootDelegationExtras,
+  subagentAllowlistFor,
   systemPromptVars,
+  withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
+
+type AssertFalse<T extends false> = T;
+
+type RenderlessInputIsNotAssignable = AssertFalse<
+  [{ name: string }] extends [AgentProfileInput] ? true : false
+>;
 
 describe('systemPromptVars', () => {
   it('builds the full variable table from the context', () => {
@@ -27,7 +39,6 @@ describe('systemPromptVars', () => {
         osKind: 'macOS',
         shellName: 'zsh',
         shellPath: '/bin/zsh',
-        now: 'NOW',
         additionalDirsInfo: '/extra',
       },
       { skillActive: true },
@@ -37,7 +48,6 @@ describe('systemPromptVars', () => {
     expect(vars['os']).toBe('macOS');
     expect(vars['windows_notes']).toBe('');
     expect(vars['shell']).toBe('zsh (`/bin/zsh`)');
-    expect(vars['now']).toBe('NOW');
     expect(vars['cwd']).toBe('/work');
     expect(vars['cwd_listing']).toBe('LISTING');
     expect(vars['agents_md']).toBe('AGENTS');
@@ -49,7 +59,7 @@ describe('systemPromptVars', () => {
     expect(vars['skills_section']).toContain('SKILLS');
   });
 
-  it('renders missing context fields as empty strings and defaults ${now}', () => {
+  it('renders missing context fields as empty strings', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
     expect(vars['cwd']).toBe('');
@@ -62,7 +72,6 @@ describe('systemPromptVars', () => {
     expect(vars['skills_section']).toBe('');
     expect(vars['windows_notes']).toBe('');
     expect(vars['role_additional']).toBe('');
-    expect(Number.isNaN(Date.parse(vars['now'] ?? ''))).toBe(false);
   });
 
   it('empties skills and the skills section when the Skill tool is off', () => {
@@ -97,7 +106,7 @@ describe('systemPromptVars', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
     expect(vars['product_name']).toBe('Kimi Code CLI');
-    expect(vars['reply_style_guide']).toContain("render as Markdown in the user's terminal");
+    expect(vars['reply_style_guide']).toBe(DEFAULT_REPLY_STYLE_GUIDE);
   });
 
   it('lets the context override host-identity variables', () => {
@@ -111,49 +120,79 @@ describe('systemPromptVars', () => {
   });
 });
 
-describe('renderPromptTemplate', () => {
+describe('renderPromptTemplateResult', () => {
   it('substitutes known variables and keeps unknown placeholders verbatim', () => {
-    const out = renderPromptTemplate(
+    const out = renderPromptTemplateResult(
       'cwd=${cwd} unknown=${nope} bare=$cwd dollar=$${cwd}',
       { cwd: '/work' },
       { skillActive: true },
-    );
+    ).text;
 
     expect(out).toBe('cwd=/work unknown=${nope} bare=$cwd dollar=$/work');
   });
 
   it('resolves ${base_prompt} lazily and only when the template references it', () => {
     let calls = 0;
-    const basePrompt = () => {
+    const basePrompt = (): SystemPromptRenderResult => {
       calls += 1;
-      return 'BASE';
+      return {
+        text: 'BASE',
+        environment: { cwd: '' },
+      };
     };
 
-    expect(renderPromptTemplate('no base here', {}, { skillActive: true }, basePrompt)).toBe(
-      'no base here',
-    );
+    expect(
+      renderPromptTemplateResult('no base here', {}, { skillActive: true }, basePrompt).text,
+    ).toBe('no base here');
     expect(calls).toBe(0);
 
     expect(
-      renderPromptTemplate('wrap\n\n${base_prompt}', {}, { skillActive: true }, basePrompt),
+      renderPromptTemplateResult('wrap\n\n${base_prompt}', {}, { skillActive: true }, basePrompt)
+        .text,
     ).toBe('wrap\n\nBASE');
     expect(calls).toBe(1);
   });
 
   it('keeps ${base_prompt} verbatim when no base prompt is provided', () => {
-    expect(renderPromptTemplate('${base_prompt}', {}, { skillActive: true })).toBe(
+    expect(renderPromptTemplateResult('${base_prompt}', {}, { skillActive: true }).text).toBe(
       '${base_prompt}',
     );
   });
+
+  it('keeps ${now} verbatim as an unknown placeholder', () => {
+    const result = renderPromptTemplateResult(
+      'date=${now} agents=${agents_md}',
+      { cwd: '/work', agentsMd: 'AGENTS' },
+      { skillActive: true },
+    );
+
+    expect(result.text).toBe('date=${now} agents=AGENTS');
+    expect(result.environment).toEqual({ cwd: '/work' });
+  });
+
+  it('merges environment metadata from a structured base_prompt render', () => {
+    const result = renderPromptTemplateResult(
+      'custom\n\n${base_prompt}',
+      { cwd: '/work' },
+      { skillActive: true },
+      () => ({
+        text: 'BASE',
+        environment: { cwd: '/base' },
+      }),
+    );
+
+    expect(result.text).toBe('custom\n\nBASE');
+    expect(result.environment).toEqual({ cwd: '/work' });
+  });
 });
 
-describe('renderSystemPrompt', () => {
+describe('renderSystemPromptResult', () => {
   it('places the role text at the role slot and injects context sections', () => {
-    const prompt = renderSystemPrompt(
+    const prompt = renderSystemPromptResult(
       'ROLE_TEXT',
       { agentsMd: 'AGENTS', skills: 'SKILLS', cwd: '/work' },
       { skillActive: true },
-    );
+    ).text;
 
     expect(prompt).toContain('ROLE_TEXT');
     expect(prompt).toContain('AGENTS');
@@ -163,44 +202,46 @@ describe('renderSystemPrompt', () => {
   });
 
   it('omits the skills section when the profile disables the Skill tool', () => {
-    const prompt = renderSystemPrompt('', { skills: 'SKILLS' }, { skillActive: false });
+    const prompt = renderSystemPromptResult('', { skills: 'SKILLS' }, { skillActive: false }).text;
 
     expect(prompt).not.toContain('# Skills');
     expect(prompt).not.toContain('SKILLS');
   });
 
   it('shows Windows notes only on Windows', () => {
-    expect(renderSystemPrompt('', { osKind: 'Windows' }, { skillActive: true })).toContain(
-      'IMPORTANT: You are on Windows',
-    );
-    expect(renderSystemPrompt('', { osKind: 'macOS' }, { skillActive: true })).not.toContain(
-      'IMPORTANT: You are on Windows',
-    );
+    expect(
+      renderSystemPromptResult('', { osKind: 'Windows' }, { skillActive: true }).text,
+    ).toContain('IMPORTANT: You are on Windows');
+    expect(
+      renderSystemPromptResult('', { osKind: 'macOS' }, { skillActive: true }).text,
+    ).not.toContain('IMPORTANT: You are on Windows');
   });
 
   it('shows the additional directories section only when directories exist', () => {
     expect(
-      renderSystemPrompt('', { additionalDirsInfo: '/extra' }, { skillActive: true }),
+      renderSystemPromptResult('', { additionalDirsInfo: '/extra' }, { skillActive: true }).text,
     ).toContain('## Additional Directories');
-    expect(renderSystemPrompt('', {}, { skillActive: true })).not.toContain(
+    expect(renderSystemPromptResult('', {}, { skillActive: true }).text).not.toContain(
       '## Additional Directories',
     );
   });
 
   it('shows the plugin instructions section only when plugin sections exist', () => {
-    const prompt = renderSystemPrompt('', { pluginSections: 'PLUGIN_A' }, { skillActive: true });
+    const prompt = renderSystemPromptResult(
+      '',
+      { pluginSections: 'PLUGIN_A' },
+      { skillActive: true },
+    ).text;
 
     expect(prompt).toContain('# Plugin Instructions');
     expect(prompt).toContain('PLUGIN_A');
-    expect(renderSystemPrompt('', {}, { skillActive: true })).not.toContain(
+    expect(renderSystemPromptResult('', {}, { skillActive: true }).text).not.toContain(
       '# Plugin Instructions',
     );
   });
 
   it('renders the builtin template with no leftover placeholders', () => {
-    // Every placeholder in the builtin template must be bound in the variable
-    // table — an unbound one would stay verbatim in the output.
-    const prompt = renderSystemPrompt(
+    const prompt = renderSystemPromptResult(
       'ROLE_TEXT',
       {
         skills: 'SKILLS',
@@ -210,27 +251,263 @@ describe('renderSystemPrompt', () => {
         osKind: 'Windows',
         shellName: 'cmd',
         shellPath: 'C:\\cmd.exe',
-        now: 'NOW',
         additionalDirsInfo: '/extra',
       },
       { skillActive: true },
-    );
+    ).text;
 
     expect(prompt).not.toMatch(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/);
   });
 
   it('renders the host identity from the context, defaulting to the CLI text', () => {
-    const fallback = renderSystemPrompt('', {}, { skillActive: true });
-    expect(fallback).toContain('You are Kimi Code CLI,');
-    expect(fallback).toContain("render as Markdown in the user's terminal");
+    const fallback = renderSystemPromptResult('', {}, { skillActive: true }).text;
+    expect(fallback).toContain('Kimi Code CLI');
+    expect(fallback).toContain(DEFAULT_REPLY_STYLE_GUIDE);
 
-    const overridden = renderSystemPrompt(
+    const overridden = renderSystemPromptResult(
       '',
       { productName: 'Kimi Desktop', replyStyleGuide: 'GUI_STYLE' },
       { skillActive: true },
-    );
-    expect(overridden).toContain('You are Kimi Desktop,');
+    ).text;
+    expect(overridden).toContain('Kimi Desktop');
     expect(overridden).toContain('GUI_STYLE');
     expect(overridden).not.toContain('Kimi Code CLI');
+  });
+});
+
+describe('normalizeAgentProfile', () => {
+  it('derives a disclosure-free renderSystemPrompt for text-only input', () => {
+    const profile = normalizeAgentProfile({
+      name: 'text-only',
+      systemPrompt: (context) => `cwd:${context.cwd ?? ''}`,
+    });
+
+    expect(profile.renderSystemPrompt({ cwd: '/work' })).toEqual({
+      text: 'cwd:/work',
+      environment: { cwd: '/work' },
+    });
+    expect(profile.renderSystemPrompt({})).toEqual({
+      text: 'cwd:',
+      environment: { cwd: '' },
+    });
+  });
+
+  it('derives systemPrompt from renderSystemPrompt for structured input', () => {
+    const render = (context: AgentProfileContext): SystemPromptRenderResult => ({
+      text: `structured:${context.cwd ?? ''}`,
+      environment: { cwd: context.cwd ?? '' },
+    });
+    const profile = normalizeAgentProfile({ name: 'structured', renderSystemPrompt: render });
+
+    expect(profile.systemPrompt({ cwd: '/work' })).toBe('structured:/work');
+    expect(profile.systemPrompt({ cwd: '/work' })).toBe(
+      profile.renderSystemPrompt({ cwd: '/work' }).text,
+    );
+    expect(profile.renderSystemPrompt({ cwd: '/work' }).environment).toEqual({ cwd: '/work' });
+  });
+
+  it('falls back to systemPrompt when renderSystemPrompt is explicitly undefined', () => {
+    const profile = normalizeAgentProfile({
+      name: 'legacy-undefined',
+      systemPrompt: () => 'text-entry',
+      renderSystemPrompt: undefined,
+    });
+
+    expect(profile.systemPrompt({})).toBe('text-entry');
+    expect(profile.renderSystemPrompt({})).toEqual({
+      text: 'text-entry',
+      environment: { cwd: '' },
+    });
+  });
+
+  it('rejects a profile without any render entry', () => {
+    const renderless = { name: 'empty' } as unknown as AgentProfileInput;
+    expect(() => normalizeAgentProfile(renderless)).toThrow(
+      /must define systemPrompt or renderSystemPrompt/,
+    );
+  });
+
+  it('keeps the input object as receiver for a method-style text-only profile', () => {
+    const input = {
+      name: 'method-text',
+      systemPrompt() {
+        return `name:${this.name}`;
+      },
+    };
+    const profile = normalizeAgentProfile(input);
+
+    expect(profile.systemPrompt({})).toBe('name:method-text');
+    expect(profile.renderSystemPrompt({}).text).toBe('name:method-text');
+  });
+
+  it('keeps the input object as receiver for a method-style structured profile', () => {
+    const input = {
+      name: 'method-structured',
+      renderSystemPrompt(): SystemPromptRenderResult {
+        return {
+          text: `name:${this.name}`,
+          environment: { cwd: '' },
+        };
+      },
+    };
+    const profile = normalizeAgentProfile(input);
+
+    expect(profile.renderSystemPrompt({}).text).toBe('name:method-structured');
+    expect(profile.systemPrompt({})).toBe('name:method-structured');
+  });
+
+  it('prefers the structured entry when both are given and keeps cross-entry this calls working', () => {
+    const input = {
+      name: 'both',
+      systemPrompt(_context: AgentProfileContext) {
+        return 'text-entry';
+      },
+      renderSystemPrompt(context: AgentProfileContext): SystemPromptRenderResult {
+        return {
+          text: `structured:${this.systemPrompt(context)}`,
+          environment: { cwd: context.cwd ?? '' },
+        };
+      },
+    };
+    const profile = normalizeAgentProfile(input);
+
+    expect(profile.renderSystemPrompt({})).toEqual({
+      text: 'structured:text-entry',
+      environment: { cwd: '' },
+    });
+    expect(profile.systemPrompt({})).toBe('structured:text-entry');
+  });
+
+  it('registerAgentProfile rejects a renderless profile without touching the registry', () => {
+    _clearAgentProfileContributionsForTests();
+    try {
+      registerAgentProfile({ name: 'kept', systemPrompt: () => 'text' });
+      const renderless = { name: 'empty' } as unknown as AgentProfileInput;
+      expect(() => registerAgentProfile(renderless)).toThrow(
+        /must define systemPrompt or renderSystemPrompt/,
+      );
+      expect(getAgentProfileContributions().map((profile) => profile.name)).toEqual(['kept']);
+    } finally {
+      _clearAgentProfileContributionsForTests();
+    }
+  });
+});
+
+describe('subagentAllowlistFor', () => {
+  const catalogWithDefault = (subagents: readonly string[] | undefined) => ({
+    getDefault: () => ({ subagents }),
+  });
+
+  it('inherits the default profile allowlist when the caller declares none', () => {
+    expect(subagentAllowlistFor(catalogWithDefault(['coder']), { profileName: 'custom' })).toEqual([
+      'coder',
+    ]);
+  });
+
+  it('keeps an explicit empty caller allowlist instead of inheriting', () => {
+    expect(
+      subagentAllowlistFor(catalogWithDefault(['coder']), { profileName: 'custom', subagents: [] }),
+    ).toEqual([]);
+  });
+
+  it('treats a lone "*" allowlist as unrestricted', () => {
+    expect(
+      subagentAllowlistFor(catalogWithDefault(['coder']), {
+        profileName: 'custom',
+        subagents: ['*'],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('unions root delegation extras over the declared allowlist', () => {
+    expect(
+      subagentAllowlistFor(
+        catalogWithDefault(['coder']),
+        { profileName: 'agent', subagents: ['coder'] },
+        ['reviewer'],
+      ),
+    ).toEqual(['coder', 'reviewer']);
+  });
+
+  it('stays unrestricted for a lone "*" even with root extras', () => {
+    expect(
+      subagentAllowlistFor(catalogWithDefault(['*']), { profileName: 'agent' }, ['reviewer']),
+    ).toBeUndefined();
+  });
+});
+
+describe('rootDelegationExtras', () => {
+  const catalog = {
+    inspect: (name: string) =>
+      name === 'ghost'
+        ? undefined
+        : name === 'agent' || name === 'coder'
+          ? { sourceId: 'builtin' }
+          : name === 'tower-worker'
+            ? { sourceId: 'feature:tower' }
+            : { sourceId: 'workspace' },
+  };
+  const profiles = [
+    { name: 'agent' },
+    { name: 'coder' },
+    { name: 'tower-worker' },
+    { name: 'reviewer' },
+  ];
+
+  it('collects discovered file-sourced profiles except the default itself', () => {
+    expect(
+      rootDelegationExtras(catalog, { profileName: 'agent', subagents: ['coder'] }, profiles),
+    ).toEqual(['reviewer']);
+  });
+
+  it('honors an explicit allowlist on a discovered main profile instead of unioning', () => {
+    expect(
+      rootDelegationExtras(catalog, { profileName: 'reviewer', subagents: ['coder'] }, profiles),
+    ).toBeUndefined();
+  });
+
+  it('honors an explicit allowlist even after the profile leaves the catalog', () => {
+    expect(
+      rootDelegationExtras(catalog, { profileName: 'ghost', subagents: ['coder'] }, profiles),
+    ).toBeUndefined();
+  });
+
+  it('unions for a discovered main profile that declares no allowlist', () => {
+    expect(rootDelegationExtras(catalog, { profileName: 'reviewer' }, profiles)).toEqual([
+      'reviewer',
+    ]);
+  });
+});
+
+describe('profileCanDelegate', () => {
+  it('treats an omitted tools list as delegation-capable', () => {
+    expect(profileCanDelegate({})).toBe(true);
+  });
+
+  it('treats a tools list without Agent and AgentSwarm as terminal', () => {
+    expect(profileCanDelegate({ tools: ['Read', 'Bash'] })).toBe(false);
+  });
+
+  it('honors disallowedTools over the tools allowlist', () => {
+    expect(profileCanDelegate({ tools: ['Agent'], disallowedTools: ['Agent'] })).toBe(false);
+    expect(profileCanDelegate({ tools: ['AgentSwarm'] })).toBe(true);
+  });
+});
+
+describe('withoutDelegatingTargets', () => {
+  it('drops delegation-capable targets and keeps terminal and unknown ones', () => {
+    const catalog = {
+      get: (name: string) =>
+        name === 'coder'
+          ? { tools: ['Agent', 'Read'] as readonly string[] }
+          : name === 'explore'
+            ? { tools: ['Read'] as readonly string[] }
+            : undefined,
+    };
+
+    expect(withoutDelegatingTargets(catalog, ['coder', 'explore', 'missing'])).toEqual([
+      'explore',
+      'missing',
+    ]);
   });
 });

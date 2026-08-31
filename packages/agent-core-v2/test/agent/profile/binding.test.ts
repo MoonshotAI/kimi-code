@@ -1,32 +1,44 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
+import { InstantiationService } from '#/_base/di/instantiationService';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  normalizeAgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import type { HostFsChange } from '#/os/interface/hostFsWatch';
+import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IWireService } from '#/wire/wire';
 import type { ExecutableTool, ToolExecution, ToolResult, ToolSource } from '#/tool/toolContract';
 
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
+
+import { deferredAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
   InMemoryWireRecordPersistence,
+  agentService,
   appService,
   createTestAgent,
   hostEnvironmentServices,
@@ -96,9 +108,11 @@ describe('AgentProfileService.bind', () => {
   it('binds a profile + model atomically and becomes runnable', async () => {
     const { profile: svc } = buildContext();
 
-    const catalog = new BuiltinAgentProfileLoaderService(new AgentProfileRegistryService());
+    const container = new InstantiationService(new ServiceCollection(), true);
+    const catalog = new BuiltinAgentProfileLoaderService(container);
     expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)).toBeDefined();
     catalog.dispose();
+    container.dispose();
 
     expect(svc.isRunnable()).toBe(false);
 
@@ -109,6 +123,32 @@ describe('AgentProfileService.bind', () => {
     expect(svc.isRunnable()).toBe(true);
     expect(svc.getActiveToolNames()?.length).toBeGreaterThan(0);
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
+  });
+
+  it('waits for the identity freeze instead of racing it', async () => {
+    const deferred = deferredAgentIdentityStub();
+    ctx = createTestAgent(
+      appService(IAgentIdentity, deferred.identity),
+      hostEnvironmentServices(homeDir),
+    );
+    const svc = ctx.get(IAgentProfileService);
+
+    const bound = svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    setTimeout(() => deferred.freeze(), 20);
+    await bound;
+
+    expect(svc.data().modelAlias).toBe(MOCK_MODEL);
+    expect(svc.isRunnable()).toBe(true);
+  });
+
+  it('binds an environment disclosure snapshot with only the session cwd', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(svc.getSystemPrompt()).not.toContain('2026-07-29');
+    expect(svc.data().environmentDisclosure).toEqual({ cwd: ctx.get(ISessionContext).cwd });
   });
 
   it('persists the complete binding in one journal record', async () => {
@@ -166,7 +206,8 @@ describe('AgentProfileService.bind', () => {
     });
     await ctx.get(IWireService).flush();
 
-    expect(persistence.records.find((record) => record.type === 'profile.bind')).toMatchObject({
+    const bindingRecord = persistence.records.find((record) => record.type === 'profile.bind');
+    expect(bindingRecord).toMatchObject({
       profileName: 'delegates-explore',
       subagents: ['explore'],
     });
@@ -197,23 +238,64 @@ describe('AgentProfileService.bind', () => {
       profileName: 'delegates-explore',
       subagents: ['explore'],
     });
+    expect(ctx.get(IAgentProfileService).data().agentsMdPaths).toEqual(
+      bindingRecord?.['agentsMdPaths'],
+    );
   });
 
-  it('refreshes the system prompt from the session cwd after a default bind', async () => {
+  it('keeps the system prompt frozen after a default bind when AGENTS.md changes', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
     try {
       await writeFile(join(workDir, 'AGENTS.md'), 'v1 instructions', 'utf-8');
       ctx = createTestAgent(hostEnvironmentServices(homeDir), { cwd: workDir });
       const svc = ctx.get(IAgentProfileService);
       await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+      const bound = svc.getSystemPrompt();
+      expect(bound).toContain('v1 instructions');
 
       await writeFile(join(workDir, 'AGENTS.md'), 'v2 instructions', 'utf-8');
-      await svc.refreshSystemPrompt();
 
-      expect(svc.getSystemPrompt()).toContain('v2 instructions');
+      expect(svc.getSystemPrompt()).toBe(bound);
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
+  });
+
+  it('freezes the system prompt when the session instructions change', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const emitter = new Emitter<readonly HostFsChange[]>();
+    let agentsMd = 'v1 instructions';
+    ctx = createTestAgent(
+      { persistence },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionInstructionsProvider, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        get agentsMd() {
+          return agentsMd;
+        },
+        agentsMdWarning: undefined,
+        agentsMdPaths: [],
+        onDidChange: emitter.event,
+      } satisfies ISessionInstructionsProvider),
+    );
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    const before = svc.getSystemPrompt();
+    expect(before).toContain('v1 instructions');
+    await ctx.get(IWireService).flush();
+    const configUpdates = () =>
+      persistence.records.filter(
+        (record) => record.type === 'config.update' && 'systemPrompt' in record,
+      );
+    const configUpdateCount = configUpdates().length;
+
+    agentsMd = 'v2 instructions';
+    emitter.fire([{ path: '/repo/AGENTS.md', action: 'modified', kind: 'file' }]);
+    await ctx.get(IWireService).flush();
+
+    expect(svc.getSystemPrompt()).toBe(before);
+    expect(configUpdates()).toHaveLength(configUpdateCount);
   });
 
   it('setModel applies the default profile when none is bound yet', async () => {
@@ -279,7 +361,6 @@ describe('AgentProfileService.bind', () => {
       }),
     ).rejects.toThrow(/not supported by model/);
 
-    // The failed bind must leave the agent unbound — a retry can still bind.
     expect(svc.data().profileName).toBeUndefined();
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'kimi-code/kimi-for-coding' });
     expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
@@ -307,8 +388,6 @@ describe('AgentProfileService.bind', () => {
     );
     const svc = ctx.get(IAgentProfileService);
 
-    // Spawn paths pass inherited (possibly drifted) thinking without
-    // strictThinking: the bind must succeed and clamp to a supported effort.
     await svc.bind({
       profile: DEFAULT_AGENT_PROFILE_NAME,
       model: 'kimi-code/kimi-for-coding',
@@ -335,17 +414,12 @@ describe('AgentProfileService.bind', () => {
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL, thinking: 'off' });
     expect(svc.data().thinkingLevel).toBe('off');
 
-    // A same-name rebind without an explicit thinking override must not reset
-    // the persisted effort to the configured/model default ('on' here).
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
     expect(svc.data().thinkingLevel).toBe('off');
   });
 });
 
 describe('AgentToolPolicyService tool denylist', () => {
-  // Registration is idempotent (replace-by-name) and scoped to this describe's
-  // run window — module-scope registration would also pollute the bind
-  // describe above at collection time.
   beforeAll(() => {
     registerAgentProfile({
       name: 'deny-builtin',
@@ -443,9 +517,6 @@ describe('AgentToolPolicyService tool denylist', () => {
     await ctx.get(IWireService).flush();
     await ctx.dispose();
 
-    // Resume by replaying the same records, with a catalog that cannot resolve
-    // the bound profile (e.g. its agent file was deleted): the denylist must
-    // come from the persisted record, not from a catalog lookup.
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -531,11 +602,8 @@ describe('AgentToolPolicyService global [tools] config', () => {
 
   it('intersects the global config with the profile policy instead of overriding it', async () => {
     const svc = await bindWithToolsConfig({ enabled: ['Read', 'Bash'] }, 'config-intersect');
-    // Allowed by both layers.
     expect(svc.isToolActive('Read')).toBe(true);
-    // The global allowlist cannot re-enable a tool the profile itself denies.
     expect(svc.isToolActive('Bash')).toBe(false);
-    // Absent from the profile allowlist even though the global one admits it.
     expect(svc.isToolActive('Write')).toBe(false);
   });
 });
@@ -614,9 +682,6 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     await ctx.get(IWireService).flush();
     await ctx.dispose();
 
-    // Resume by replaying the same records, with a catalog that cannot resolve
-    // the bound profile: the session denylist must come from the persisted
-    // record, not from a catalog lookup.
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -676,7 +741,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(toolPolicy.isToolActive('Bash')).toBe(false);
   });
 
-  it('removes the skill listing when the session disables Skill', async () => {
+  it('keeps the skill listing frozen when the session disables Skill', async () => {
     const skillMarker = 'session-policy-skill-marker';
     ctx = createTestAgent(
       hostEnvironmentServices(homeDir),
@@ -687,16 +752,18 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        list: async () => [],
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    expect(profile.getSystemPrompt()).toContain(skillMarker);
+    const before = profile.getSystemPrompt();
+    expect(before).toContain(skillMarker);
 
     await toolPolicy.setSessionDisabledTools(['Skill']);
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
-    expect(profile.getSystemPrompt()).not.toContain(skillMarker);
+    expect(profile.getSystemPrompt()).toBe(before);
   });
 
   it('omits the skill listing when global tools disable Skill', async () => {
@@ -711,6 +778,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        list: async () => [],
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
@@ -720,7 +788,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(profile.getSystemPrompt()).not.toContain(skillMarker);
   });
 
-  it('refreshes the skill listing when global tool policy changes at runtime', async () => {
+  it('keeps the skill listing frozen when global tool policy changes at runtime', async () => {
     const skillMarker = 'live-global-policy-skill-marker';
     ctx = createTestAgent(
       hostEnvironmentServices(homeDir),
@@ -731,18 +799,20 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        list: async () => [],
       }),
     );
     const { profile, toolPolicy } = profileServices(ctx);
     await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    expect(profile.getSystemPrompt()).toContain(skillMarker);
+    const before = profile.getSystemPrompt();
+    expect(before).toContain(skillMarker);
 
     await ctx
       .get(IConfigService)
       .replace(TOOLS_SECTION, { disabled: ['Skill'] }, ConfigTarget.Memory);
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
-    await vi.waitFor(() => expect(profile.getSystemPrompt()).not.toContain(skillMarker));
+    expect(profile.getSystemPrompt()).toBe(before);
   });
 });
 
@@ -825,9 +895,6 @@ describe('AgentToolPolicyService executor enforcement', () => {
     expect(probe.calls).toBe(0);
   });
 
-  // Phase-4 behavior contract: the workspace (os-level) veto — seeded as
-  // `ISessionToolPolicyGate` — blocks direct execution just like the classic
-  // layers, and it wins over every one of them.
   it('blocks a direct builtin call through the workspace tool-policy gate', async () => {
     ctx = createTestAgent(
       hostEnvironmentServices(homeDir),
@@ -853,9 +920,6 @@ describe('AgentToolPolicyService executor enforcement', () => {
     expect(probe.calls).toBe(0);
   });
 
-  // The prompt projection goes through the same workspace veto: a profile
-  // whose prompt renders `skillActive` must see the Skill tool as inactive
-  // when the gate disables it (profileService's `isToolActiveForProfile`).
   it('applies the workspace gate in the prompt projection (skillActive)', async () => {
     registerAgentProfile({
       name: 'gate-skill-active',
@@ -878,9 +942,6 @@ describe('AgentToolPolicyService executor enforcement', () => {
 
   it('does not reject select_tools, the policy-gated disclosure loading entry', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
-    // The default profile's allowlist does not name select_tools; the guard
-    // must still let the disclosure entry point through (its loadable set is
-    // policy-filtered downstream).
     await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
     const probe = new PolicyProbeTool(SELECT_TOOLS_TOOL_NAME);
     ctx.get(IAgentToolRegistryService).register(probe);
@@ -955,15 +1016,12 @@ describe('AgentProfileService tool-pattern warnings', () => {
       .filter((args) => args.code === 'tool-pattern-no-match');
   }
 
-  // A file-defined agent, as far as the warning path is concerned: inline so
-  // its typo stays out of the builtin-profile known-name vocabulary (a
-  // registerAgentProfile contribution would legitimize its own entries).
-  const fileProfile: ResolvedAgentProfile = {
+  const fileProfile: ResolvedAgentProfile = normalizeAgentProfile({
     name: 'bad-patterns',
     tools: ['Bashh', 'mcp__github'],
     disallowedTools: ['*'],
     systemPrompt: () => 'tool pattern warning test',
-  };
+  });
 
   it('warns about profile entries that can never activate anything', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
@@ -1067,3 +1125,67 @@ class PolicyProbeTool implements ExecutableTool<Record<string, never>> {
     };
   }
 }
+
+describe('agentsMdReminder seeding', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+  let workDir: string;
+
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'throws-on-prompt',
+      systemPrompt: () => {
+        throw new Error('prompt build boom');
+      },
+    });
+  });
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-seed-home-'));
+    workDir = await mkdtemp(join(tmpdir(), 'kimi-seed-work-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  function buildSeededContext(
+    seedInjected: IAgentAgentsMdReminderService['seedInjected'],
+  ): IAgentProfileService {
+    ctx = createTestAgent(
+      { cwd: workDir },
+      hostEnvironmentServices(homeDir),
+      agentService(IAgentAgentsMdReminderService, {
+        _serviceBrand: undefined,
+        seedInjected,
+      }),
+    );
+    return ctx.get(IAgentProfileService);
+  }
+
+  it('seeds the known-set with the injected paths after a successful bind', async () => {
+    const seedInjected = vi.fn<(paths: readonly string[], cwd: string) => void>();
+    const profile = buildSeededContext(seedInjected);
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    seedInjected.mockClear();
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(seedInjected).toHaveBeenCalledWith([normalize(join(workDir, 'AGENTS.md'))], workDir);
+    expect(profile.data().agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+  });
+
+  it('does not seed when the prompt build fails before the bind commits', async () => {
+    const seedInjected = vi.fn<(paths: readonly string[], cwd: string) => void>();
+    const profile = buildSeededContext(seedInjected);
+
+    seedInjected.mockClear();
+    await expect(profile.bind({ profile: 'throws-on-prompt', model: MOCK_MODEL })).rejects.toThrow(
+      'prompt build boom',
+    );
+
+    expect(seedInjected).not.toHaveBeenCalled();
+  });
+});

@@ -95,6 +95,13 @@ export class SDKRpcClient extends SDKRpcClientBase {
 
   async close(): Promise<void> {
     try {
+      // Close live sessions and stop the shared MCP OAuth service (proactive
+      // refresh timers, in-flight authorization flows) before flushing logs.
+      await this.core.shutdown();
+    } catch {
+      // never let core shutdown block process exit
+    }
+    try {
       await getRootLogger().flush();
     } catch {
       // never let logger flush block process exit

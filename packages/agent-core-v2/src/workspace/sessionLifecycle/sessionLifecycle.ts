@@ -1,35 +1,19 @@
-/**
- * `sessionLifecycle` domain — per-handler session lifecycle contract.
- *
- * Defines the public contract of one workspace handler: the
- * `CreateSessionOptions`, `ForkSessionOptions`, `CreateChildSessionOptions`,
- * `ResumeSessionOptions`, and the `ISessionLifecycleService` used to create
- * sessions (`create`), look up the live ones (`get` / `list`), close them
- * (`close`), archive/restore them, fork them (`fork`), and fork-then-tag
- * them as direct children (`createChild`) — always as child scopes of THIS
- * handler's Workspace scope, so a handler owns exactly the sessions of one
- * workspace and fork never crosses handlers. Announces lifecycle transitions
- * through `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession`
- * / `onDidForkSession`; the ordered hook slots are per-session seeds.
- * Workspace-scoped — one instance per materialized handler.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
-import type { Event } from '#/_base/event';
+import { type Event, type IWaitUntil } from '#/_base/event';
 import type { BindAgentInput } from '#/agent/profile/profile';
-import type {
-  SessionCloseReason,
-  SessionCreateSource,
-} from '#/session/sessionLifecycleHooks/sessionLifecycleHooks';
+import type { McpServerConfig } from '#/mcpCore/config-schema';
 
-export type { SessionCloseReason, SessionCreateSource };
+export type SessionCreateSource = 'startup' | 'resume' | 'fork';
+
+export type SessionCloseReason = 'exit' | 'archive';
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;
   readonly workDir: string;
   readonly additionalDirs?: readonly string[];
   readonly mainAgentBinding?: BindAgentInput;
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 
 export interface ForkSessionOptions {
@@ -37,10 +21,12 @@ export interface ForkSessionOptions {
   readonly newSessionId?: string;
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
+  readonly turnIndex?: number;
 }
 
 export interface ResumeSessionOptions {
   readonly additionalDirs?: readonly string[];
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 
 export interface CreateChildSessionOptions {
@@ -76,10 +62,19 @@ export interface SessionForkedEvent {
   readonly handle: ISessionScopeHandle;
 }
 
+export interface SessionWillCreateEvent {
+  readonly sessionId: string;
+  readSeed<T>(id: ServiceIdentifier<T>): T;
+  contributeSeed<T>(id: ServiceIdentifier<T>, value: T): void;
+  onSessionDispose(dispose: () => void): void;
+}
+
 export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
 
-  readonly onDidCreateSession: Event<SessionCreatedEvent>;
+  readonly onWillCreateSession: Event<SessionWillCreateEvent>;
+  readonly onDidCreateSession: Event<SessionCreatedEvent & IWaitUntil>;
+  readonly onWillCloseSession: Event<SessionWillCloseEvent & IWaitUntil>;
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
@@ -89,7 +84,8 @@ export interface ISessionLifecycleService {
   resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
-  restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;
+  restore(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
+  delete(sessionId: string): Promise<void>;
   fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle>;
   createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle>;
 }

@@ -168,6 +168,44 @@ describe('Event.None', () => {
   });
 });
 
+describe('Emitter debug name / EventSubscription ledger labels', () => {
+  it('named emitter subscriptions land on the store ledger as on:<name>', () => {
+    const emitter = new Emitter<number>('test.event');
+    const store = new DisposableStore();
+
+    emitter.event(() => undefined, undefined, store);
+
+    expect(store.ledger.entries().map((entry) => entry.label)).toContain('on:test.event');
+    store.dispose();
+    emitter.dispose();
+  });
+
+  it('unnamed emitter subscriptions fall back to disposable:EventSubscription', () => {
+    const emitter = new Emitter<number>();
+    const store = new DisposableStore();
+
+    emitter.event(() => undefined, undefined, store);
+
+    expect(store.ledger.entries().map((entry) => entry.label)).toContain(
+      'disposable:EventSubscription',
+    );
+    store.dispose();
+    emitter.dispose();
+  });
+
+  it('listenerCount tracks subscribe and dispose', () => {
+    const emitter = new Emitter<number>();
+    expect(emitter.listenerCount).toBe(0);
+
+    const subscription = emitter.event(() => undefined);
+    expect(emitter.listenerCount).toBe(1);
+
+    subscription.dispose();
+    expect(emitter.listenerCount).toBe(0);
+    emitter.dispose();
+  });
+});
+
 describe('Event.once', () => {
   it('delivers exactly once then auto-disposes', () => {
     const emitter = new Emitter<number>();

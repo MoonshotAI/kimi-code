@@ -20,13 +20,13 @@ import { basename, join } from 'pathe';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
+import { kimiRegionProfile, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { extract as extractTar } from 'tar';
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
 
 import { abortable } from '../../utils/abort';
 
 const RG_VERSION = '15.0.0';
-const RG_BASE_URL = 'https://code.kimi.com/kimi-code/rg';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
 const RG_ARCHIVE_SHA256: Record<string, string> = {
   'ripgrep-15.0.0-aarch64-apple-darwin.tar.gz':
@@ -124,6 +124,13 @@ function rgBinaryName(): string {
   return process.platform === 'win32' ? 'rg.exe' : 'rg';
 }
 
+// Resolved per download so the region follows env changes; this tool-layer
+// module has no access to the persisted config, so resolution is
+// env override > install marker > cn default.
+function rgBaseUrl(): string {
+  return `${kimiRegionProfile(resolveKimiRegion()).cdnBase}/rg`;
+}
+
 function getShareDir(): string {
   const override = process.env['KIMI_CODE_HOME'];
   if (override !== undefined && override !== '') return override;
@@ -191,7 +198,7 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
   if (expectedSha256 === undefined) {
     throw new Error(`No pinned SHA-256 is configured for ripgrep archive ${archiveName}`);
   }
-  const url = `${RG_BASE_URL}/${archiveName}`;
+  const url = `${rgBaseUrl()}/${archiveName}`;
 
   const binDir = join(shareDir, 'bin');
   await mkdir(binDir, { recursive: true });

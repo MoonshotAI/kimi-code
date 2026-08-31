@@ -6,6 +6,13 @@ export const THIRD_PARTY_BADGE = 'third-party';
 
 export type PluginTrustLabel = 'official' | 'curated' | 'third-party';
 
+// Trusted plugin hosts come in .com / .ai region pairs: code.kimi.* is the
+// per-region marketplace CDN (cdnBase), cdn.kimi.* the content CDN. Both
+// families are trusted regardless of the current region — a zip served by
+// either deployment is still an official build.
+const CODE_CDN_HOSTS = new Set(['code.kimi.com', 'code.kimi.ai']);
+const CONTENT_CDN_HOSTS = new Set(['cdn.kimi.com', 'cdn.kimi.ai']);
+
 /**
  * Human-readable provenance label for a plugin, suitable for inline display
  * in `/plugins` overviews and lists.
@@ -35,13 +42,14 @@ export function pluginTrustLabel(plugin: PluginSummary): PluginTrustLabel {
   }
   try {
     const url = new URL(plugin.originalSource);
-    if (url.protocol !== 'https:' || url.hostname !== 'code.kimi.com') {
-      return 'third-party';
-    }
-    if (url.pathname.startsWith('/kimi-code/plugins/official/')) {
+    if (isOfficialPluginUrl(url)) {
       return 'official';
     }
-    if (url.pathname.startsWith('/kimi-code/plugins/curated/')) {
+    if (
+      url.protocol === 'https:' &&
+      CODE_CDN_HOSTS.has(url.hostname) &&
+      url.pathname.startsWith('/kimi-code/plugins/curated/')
+    ) {
       return 'curated';
     }
     return 'third-party';
@@ -60,11 +68,7 @@ export function isOfficialPluginSource(source: string): boolean {
   const trimmed = source.trim();
   if (!trimmed.startsWith('https://')) return false;
   try {
-    const url = new URL(trimmed);
-    return (
-      url.hostname === 'code.kimi.com' &&
-      url.pathname.startsWith('/kimi-code/plugins/official/')
-    );
+    return isOfficialPluginUrl(new URL(trimmed));
   } catch {
     return false;
   }
@@ -81,6 +85,17 @@ export function isOfficialPluginInstall(plugin: PluginSummary): boolean {
     plugin.source === 'zip-url' &&
     plugin.originalSource !== undefined &&
     isOfficialPluginSource(plugin.originalSource)
+  );
+}
+
+function isOfficialPluginUrl(url: URL): boolean {
+  if (url.protocol !== 'https:') return false;
+  return (
+    (CODE_CDN_HOSTS.has(url.hostname) &&
+      url.pathname.startsWith('/kimi-code/plugins/official/')) ||
+    (CONTENT_CDN_HOSTS.has(url.hostname) &&
+      (url.pathname.startsWith('/kimi-computer-use/') ||
+        url.pathname.startsWith('/kimi-computer-use-windows/')))
   );
 }
 

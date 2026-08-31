@@ -222,7 +222,7 @@ function ServerForm({
         <>
           <div>
             <Label className="text-[10px] text-muted-foreground">URL</Label>
-            <Input value={data.url} onChange={(e) => set("url", e.target.value)} placeholder="https://..." className="h-7 text-xs font-mono" />
+            <Input value={data.url} onChange={(e) => set("url", e.target.value)} placeholder="https://…" className="h-7 text-xs font-mono" />
             <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer">
               <input type="checkbox" checked={data.requiresAuth} onChange={(e) => set("requiresAuth", e.target.checked)} className="rounded size-3" />
               <span className="text-xs text-muted-foreground">Requires OAuth</span>
@@ -379,9 +379,11 @@ function ServerItem({ server, onDelete }: { server: MCPServerConfig; onDelete: (
           <Button variant="ghost" size="icon" className="size-6" onClick={() => { void handleTest(); }} disabled={isLoading}>
             {isLoading ? <IconLoader2 className="size-3 animate-spin" /> : <IconPlugConnected className="size-3" />}
           </Button>
-          <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" onClick={onDelete} disabled={isLoading}>
-            <IconTrash className="size-3" />
-          </Button>
+          {server.mutable !== false && (
+            <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" onClick={onDelete} disabled={isLoading}>
+              <IconTrash className="size-3" />
+            </Button>
+          )}
         </div>
         <IconChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", expanded && "rotate-180")} />
       </div>
@@ -397,7 +399,15 @@ function ServerItem({ server, onDelete }: { server: MCPServerConfig; onDelete: (
               ))}
             </div>
           )}
-          <ServerForm data={form} onChange={setForm} onSubmit={() => { void handleUpdate(); }} onCancel={() => setExpanded(false)} submitLabel="Update" />
+          {server.mutable === false ? (
+            <p className="text-[10px] text-muted-foreground">
+              {server.source === "plugin"
+                ? `Contributed by plugin "${server.origin ?? ""}" — update the plugin manifest instead`
+                : `Defined in ${server.origin ?? "a project config file"} — edit that file instead`}
+            </p>
+          ) : (
+            <ServerForm data={form} onChange={setForm} onSubmit={() => { void handleUpdate(); }} onCancel={() => setExpanded(false)} submitLabel="Update" />
+          )}
         </div>
       )}
     </div>
@@ -570,7 +580,7 @@ export function MCPServersModal() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => { void handleDelete(); }} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {isDeleting ? "Deleting..." : "Delete"}
+              {isDeleting ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

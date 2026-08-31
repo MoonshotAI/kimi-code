@@ -1,11 +1,3 @@
-/**
- * `kosong/contract` domain — token usage wire shape and aggregations.
- *
- * `TokenUsage` is the common usage breakdown for a single LLM generation.
- * Providers map their native usage counters into this shape so callers can
- * aggregate costs without caring about the backend.
- */
-
 export interface TokenUsage {
   inputOther: number;
   output: number;

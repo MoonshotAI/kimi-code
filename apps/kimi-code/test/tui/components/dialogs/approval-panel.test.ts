@@ -72,7 +72,7 @@ describe('ApprovalPanelComponent', () => {
         display: [],
         choices: [
           {
-            label: 'Switch to Auto and start',
+            label: 'Switch to Never Ask and start',
             response: 'approved',
             selected_label: 'auto',
             description: 'Tools are approved automatically, and questions are skipped.',
@@ -82,7 +82,7 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
-    expect(out).toContain('1. Switch to Auto and start');
+    expect(out).toContain('1. Switch to Never Ask and start');
     expect(out).toContain('Tools are approved automatically, and questions are skipped.');
     // A choice without a description stays label-only — no stray blank helper line.
     expect(out).toContain('2. Do not start');

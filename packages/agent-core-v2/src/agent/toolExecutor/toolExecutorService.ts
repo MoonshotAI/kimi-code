@@ -1,23 +1,8 @@
-/**
- * `toolExecutor` domain — `IAgentToolExecutorService` implementation.
- *
- * Resolves executable tools through `toolRegistry`, adjudicates tool calls
- * through the `onBeforeExecuteTool` veto event, awaits readiness work
- * through the `onWillExecuteTool` participation event, finalizes results
- * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
- * events through `event`, records telemetry through `telemetry`, truncates
- * oversized outputs through `toolResultTruncation`, and logs parse
- * diagnostics through `log`. The mutable dup-type tracking state
- * (`toolCallDupTypes`, `dupTypeTurnId`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it; the emitters, the hook
- * slot, and the describer/guard registration slots stay plain fields. Bound
- * at Agent scope.
- */
-
 import { toDisposable } from '#/_base/di/lifecycle';
-import { LifecycleScope, ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
@@ -30,7 +15,7 @@ import {
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   ToolAccesses,
   type ExecutableTool,
@@ -38,15 +23,18 @@ import {
   type RunnableToolExecution,
   type ToolExecution,
   type ToolResult,
+  type ToolResultSpill,
   type ToolUpdate,
 } from '#/tool/toolContract';
 import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
+  ToolExecutionOutcome,
   WillExecuteToolEvent,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
@@ -63,23 +51,32 @@ import {
   type ToolExecutorExecuteOptions,
   type UnavailableToolDescriber,
 } from './toolExecutor';
+import { ToolCallStarted, ToolProgress, ToolResultEvent } from './toolExecutorEvents';
 import { ToolScheduler } from './toolScheduler';
-import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
 
-const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+const validators = new WeakMap<
+  ExecutableTool,
+  { schema: Record<string, unknown>; validator: ToolArgsValidator }
+>();
 
 export interface ToolExecutionTask {
   readonly accesses: ToolAccesses;
-  readonly execute: (signal: AbortSignal) => Promise<ToolResult>;
+  readonly execute: (signal: AbortSignal) => Promise<ToolExecutionRunResult>;
+}
+
+export interface ToolExecutionRunResult {
+  readonly result: ToolResult;
+  readonly outcome: ToolExecutionOutcome;
 }
 
 interface TimedToolResult {
   readonly index: number;
   readonly result: ToolResult;
+  readonly outcome: ToolExecutionOutcome;
   readonly durationMs: number;
 }
 
@@ -153,16 +150,17 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   }
 
   constructor(
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IEventBus private readonly eventBus: IEventBus,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ILogService private readonly log?: ILogService,
   ) {
-    this.states.register(toolExecutorToolCallDupTypesKey);
-    this.states.register(toolExecutorDupTypeTurnIdKey);
+    this.states.contributeState(toolExecutorToolCallDupTypesKey);
+    this.states.contributeState(toolExecutorDupTypeTurnIdKey);
   }
 
   private get toolCallDupTypes(): Map<string, ToolCallDupType> {
@@ -200,13 +198,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const preparedTasks: Array<{
       task: ToolExecutionTask;
       call: PreflightedToolCall;
+      resolvedAccesses?: ToolAccesses;
       stopBatchAfterThis?: boolean;
     }> = [];
 
     let stopBatch = false;
     for (const call of preflighted) {
       if (stopBatch) {
-        preparedTasks.push({ task: this.prepareSkippedToolCall(call, options), call });
+        const skipped = this.prepareSkippedToolCall(call, options);
+        preparedTasks.push({ ...skipped, call });
         continue;
       }
 
@@ -214,6 +214,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       preparedTasks.push({
         task: prepared.task,
         call,
+        resolvedAccesses: prepared.resolvedAccesses,
         stopBatchAfterThis: prepared.stopBatchAfterThis,
       });
       if (prepared.stopBatchAfterThis === true) {
@@ -285,13 +286,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   private async finalizeTimedResult(
     prepared: {
       readonly call: PreflightedToolCall;
+      readonly resolvedAccesses?: ToolAccesses;
     },
     timedResult: TimedToolResult,
     options: ToolExecutorExecuteOptions,
   ): Promise<ToolExecutionResult> {
     const { call } = prepared;
     const rawResult = timedResult.result;
-    const finalized = await this.finalizeToolResult(call, rawResult, options);
+    const finalized = await this.finalizeToolResult(
+      call,
+      rawResult,
+      options,
+      timedResult.outcome,
+      prepared.resolvedAccesses,
+    );
 
     this.dispatchToolResult(call, finalized, options);
     this.trackToolCall(call, finalized, timedResult.durationMs, options);
@@ -332,22 +340,25 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): Promise<{
     task: ToolExecutionTask;
+    resolvedAccesses?: ToolAccesses;
     stopBatchAfterThis?: boolean;
   }> {
     const settleError = (
       args: unknown,
       output: string,
+      outcome: Exclude<ToolExecutionOutcome, 'executed'>,
       displayFields?: ToolCallDisplayFields,
     ): { task: ToolExecutionTask } => {
       this.dispatchToolCall(call, args, options, displayFields);
       return {
-        task: makeResolvedTask(makeErrorToolResult(call, args, output)),
+        task: makeResolvedTask(makeErrorToolResult(call, args, output), outcome),
       };
     };
 
     const settleSynthetic = (
       args: unknown,
       result: ExecutableToolResult,
+      outcome: Exclude<ToolExecutionOutcome, 'executed'>,
       displayFields?: ToolCallDisplayFields,
     ): {
       task: ToolExecutionTask;
@@ -356,19 +367,22 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       const toolResult = this.normalizeAndMergeResult(result, call.toolName, undefined);
       this.dispatchToolCall(call, args, options, displayFields);
       return {
-        task: makeResolvedTask({
-          toolCall: call.toolCall,
-          toolName: call.toolName,
-          args,
-          result: toolResult,
-          stopTurn: toolResult.stopTurn === true,
-        }),
+        task: makeResolvedTask(
+          {
+            toolCall: call.toolCall,
+            toolName: call.toolName,
+            args,
+            result: toolResult,
+            stopTurn: toolResult.stopTurn === true,
+          },
+          outcome,
+        ),
         stopBatchAfterThis: toolResult.stopBatchAfterThis ?? toolResult.stopTurn,
       };
     };
 
     if (call.kind === 'rejected') {
-      return settleError(call.args, call.output);
+      return settleError(call.args, call.output, 'preflight-rejected');
     }
 
     let execution: ToolExecution;
@@ -379,7 +393,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
-      return settleError(call.args, output);
+      return settleError(call.args, output, 'resolution-failed');
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -388,19 +402,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleError(
         call.args,
         abortedToolOutput(call.toolName, options.signal),
+        'aborted',
         displayFields,
       );
     }
 
     if (execution.isError === true) {
-      return settleSynthetic(call.args, execution, displayFields);
+      return settleSynthetic(call.args, execution, 'synthetic', displayFields);
     }
 
     const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
     const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
     if (decision?.veto !== undefined) {
-      return settleSynthetic(call.args, decision.veto, displayFields);
+      return settleSynthetic(call.args, decision.veto, 'vetoed', displayFields);
     }
 
     const executionMetadata = decision?.executionMetadata;
@@ -423,6 +438,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         execute: async (taskSignal) =>
           this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
       },
+      resolvedAccesses: execution.accesses,
       stopBatchAfterThis: execution.stopBatchAfterThis,
     };
   }
@@ -430,10 +446,12 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   private prepareSkippedToolCall(
     call: PreflightedToolCall,
     options: ToolExecutorExecuteOptions,
-  ): ToolExecutionTask {
+  ): { task: ToolExecutionTask } {
     const output = 'Tool skipped because a previous tool call stopped the turn.';
     this.dispatchToolCall(call, call.args, options);
-    return makeResolvedTask(makeErrorToolResult(call, call.args, output));
+    return {
+      task: makeResolvedTask(makeErrorToolResult(call, call.args, output), 'skipped'),
+    };
   }
 
   private async *executeBatch(
@@ -451,9 +469,10 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         start: async () => {
           const startedAt = Date.now();
           return {
-            result: task.execute(signal).then((result) => ({
+            result: task.execute(signal).then(({ result, outcome }) => ({
               index,
               result,
+              outcome,
               durationMs: Math.max(0, Date.now() - startedAt),
             })),
           };
@@ -488,13 +507,16 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     metadata: unknown,
     options: ToolExecutorExecuteOptions,
     signal: AbortSignal,
-  ): Promise<ToolResult> {
+  ): Promise<ToolExecutionRunResult> {
     if (signal.aborted) {
-      return makeErrorToolResult(
-        call,
-        call.args,
-        abortedToolOutput(call.toolName, signal),
-      ).result;
+      return {
+        result: makeErrorToolResult(
+          call,
+          call.args,
+          abortedToolOutput(call.toolName, signal),
+        ).result,
+        outcome: 'aborted',
+      };
     }
 
     let rawResult: ExecutableToolResult;
@@ -516,10 +538,16 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       const output = aborted
         ? abortedToolOutput(call.toolName, signal)
         : `Tool "${call.toolName}" failed: ${errorMessage(error)}`;
-      return makeErrorToolResult(call, call.args, output).result;
+      return {
+        result: makeErrorToolResult(call, call.args, output).result,
+        outcome: 'executed',
+      };
     }
 
-    return this.normalizeAndMergeResult(rawResult, call.toolName, execution);
+    return {
+      result: this.normalizeAndMergeResult(rawResult, call.toolName, execution),
+      outcome: 'executed',
+    };
   }
 
   private normalizeAndMergeResult(
@@ -545,15 +573,17 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
     displayFields?: ToolCallDisplayFields,
   ): void {
-    this.eventBus.publish({
-      type: 'tool.call.started',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      name: call.toolName,
-      args,
-      description: displayFields?.description,
-      display: displayFields?.display,
-    });
+    void this.dispatcher.dispatch(
+      new ToolCallStarted({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        name: call.toolName,
+        args,
+        description: displayFields?.description,
+        display: displayFields?.display,
+      }),
+    );
     options.onToolCall?.({
       toolCallId: call.toolCall.id,
       name: call.toolName,
@@ -566,13 +596,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): void {
-    this.eventBus.publish({
-      type: 'tool.result',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      output: result.output,
-      isError: result.isError,
-    });
+    void this.dispatcher.dispatch(
+      new ToolResultEvent({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        output: result.output,
+        isError: result.isError,
+      }),
+    );
   }
 
   private dispatchToolProgress(
@@ -580,18 +612,22 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     update: ToolUpdate,
     options: ToolExecutorExecuteOptions,
   ): void {
-    this.eventBus.publish({
-      type: 'tool.progress',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      update,
-    });
+    void this.dispatcher.dispatch(
+      new ToolProgress({
+        agentId: this.scopeContext.agentId,
+        turnId: options.turnId,
+        toolCallId: call.toolCall.id,
+        update,
+      }),
+    );
   }
 
   private async finalizeToolResult(
     call: PreflightedToolCall,
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
+    outcome: ToolExecutionOutcome,
+    resolvedAccesses?: ToolAccesses,
   ): Promise<ToolResult> {
     const didCtx: ToolDidExecuteContext = {
       turnId: options.turnId,
@@ -601,6 +637,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCalls: [call.toolCall],
       tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
+      outcome,
+      accesses: resolvedAccesses,
       result: result as ExecutableToolResult,
     };
 
@@ -751,16 +789,17 @@ function preflightToolCall(
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
-  let validator = validators.get(tool);
-  if (validator === undefined) {
+  const schema = tool.parameters;
+  let cached = validators.get(tool);
+  if (cached === undefined || cached.schema !== schema) {
     try {
-      validator = compileToolArgsValidator(tool.parameters);
-      validators.set(tool, validator);
+      cached = { schema, validator: compileToolArgsValidator(schema) };
+      validators.set(tool, cached);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   }
-  return validateToolArgs(validator, args as JsonType);
+  return validateToolArgs(cached.validator, args as JsonType);
 }
 
 function toolCallDisplayFieldsFromExecution(
@@ -775,10 +814,13 @@ function toolCallDisplayFieldsFromExecution(
   };
 }
 
-function makeResolvedTask(result: PreparedToolResult): ToolExecutionTask {
+function makeResolvedTask(
+  result: PreparedToolResult,
+  outcome: ToolExecutionOutcome,
+): ToolExecutionTask {
   return {
     accesses: ToolAccesses.none(),
-    execute: async () => result.result,
+    execute: async () => ({ result: result.result, outcome }),
   };
 }
 
@@ -843,7 +885,14 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     stopTurn?: boolean;
     truncated?: true;
     note?: string;
-  } = { output, stopTurn: result.stopTurn };
+    spill?: ToolResultSpill;
+    spillExempt?: true;
+  } = {
+    output,
+    stopTurn: result.stopTurn,
+    spill: result.spill,
+    spillExempt: result.spillExempt,
+  };
   if (result.truncated === true) base.truncated = true;
   if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {

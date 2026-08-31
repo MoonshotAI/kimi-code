@@ -1,18 +1,3 @@
-/**
- * `subagent` domain — helper that runs one prompt (or retry) turn on
- * an agent and distills a summary from its context once the turn ends.
- *
- * Not a Service: `runAgentTurn` is a pure function that borrows
- * `IAgentPromptService`, `IAgentContextMemoryService`, `IAgentUsageService`,
- * and `IEventBus` from the target agent's scope. It has no notion of a caller:
- * it emits no record signals, runs no hooks, and tracks no telemetry.
- *
- * The lifecycle is imperative — the caller awaits the returned `completion`
- * promise. Turn hooks are not used because there is exactly one observer (the
- * caller who requested the run); a hook indirection would only obscure the
- * flow.
- */
-
 import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/contract/errors';
 import { type TokenUsage } from '#/kosong/contract/usage';
 
@@ -20,10 +5,11 @@ import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
+import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
-import { IAgentUsageService } from '#/agent/usage/usage';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
 import type { AgentRunHandle, AgentRunRequest } from './subagent';
@@ -58,7 +44,7 @@ export async function runAgentTurn(
           origin: AGENT_RUN_PROMPT_ORIGIN,
         } })).launched
       : await promptService.retry();
-  if (turn === undefined) throw new Error('Agent turn could not be started');
+  if (turn === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
 
   if (options.onReady !== undefined) {
     void turn.ready.then(() => options.onReady?.()).catch(() => {});
@@ -92,7 +78,7 @@ async function awaitRun(
       },
       cancelTurn,
     );
-    const usage = target.accessor.get(IAgentUsageService)?.status().total;
+    const usage = target.accessor.get(ISessionUsageService)?.status(agentContextOf(target)).total;
     return { summary, usage };
   } finally {
     unlink();
@@ -162,7 +148,7 @@ function classifyTurnResult(result: TurnResult): void {
   switch (result.type) {
     case 'completed':
       if (result.truncated) {
-        throw new Error(SUBAGENT_MAX_TOKENS_ERROR);
+        throw new Error2(ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED, SUBAGENT_MAX_TOKENS_ERROR);
       }
       return;
     case 'failed': {

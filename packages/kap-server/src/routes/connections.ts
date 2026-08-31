@@ -1,19 +1,3 @@
-/**
- * `GET /connections` route handler (v1 mirror).
- *
- * Lists the WebSocket clients currently attached to the server, projected onto
- * the v1 wire shape (`connectionsListResponseSchema` from the local
- * `protocol/rest-connection`). Backed by the in-memory `IConnectionRegistry`.
- *
- * server-v2 serves one WebSocket endpoint:
- *   - `/api/v1/ws` (v1 protocol) — `has_client_hello` reflects the v1
- *     `client_hello` handshake; `subscriptions` are the sessions the client
- *     subscribed to via `subscribe` (or the legacy inline subscriptions on
- *     `client_hello`).
- *
- * Read-only and infallible: it only snapshots the registry.
- */
-
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';

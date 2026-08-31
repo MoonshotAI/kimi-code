@@ -1,14 +1,3 @@
-/**
- * Scenario: MCP connection lifecycle and timeout defaults.
- *
- * Exercises the real connection manager; stdio MCP processes are the
- * external boundary, and timeout forwarding tests stub only the MCP SDK
- * client boundary. The workspace-level initialization scenarios live in
- * `test/workspace/workspaceMcp/`. Run with
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/mcp/connection-manager.test.ts`.
- */
-
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -30,8 +19,40 @@ import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Error2 } from '#/errors';
-import { McpConnectionManager, type McpServerEntry } from '#/mcpCore/connection-manager';
+import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
+import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
+import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { RuntimeBinding } from '#/runtime/runtime';
+
+const testRuntimeBinding: RuntimeBinding = { workspaceId: 'test-workspace', runtimeId: 'local' };
+const testProcess = new HostProcessService();
+const testRuntime = Object.assign(
+  new FakeRuntime({ ...testRuntimeBinding, generation: 'test-generation' }, {
+    capabilities: ['process'],
+  }),
+  { process: testProcess },
+);
+const testRuntimeResolver = {
+  _serviceBrand: undefined,
+  inspect: () => testRuntime,
+  acquire: () => ({
+    runtime: testRuntime,
+    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+    dispose: () => {},
+  }),
+};
+
+function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {
+  return new McpConnectionManager({
+    runtimeResolver: testRuntimeResolver,
+    workspaceId: testRuntimeBinding.workspaceId,
+    runtimeId: testRuntimeBinding.runtimeId,
+    stdioCwd: process.cwd(),
+    ...options,
+  });
+}
 
 import {
   closeServer,
@@ -55,14 +76,14 @@ function stdioConfig(args: string[] = [stdioFixture]) {
 
 describe('McpConnectionManager', () => {
   it('connects servers in parallel and exposes connected entries with their tool count', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({ alpha: stdioConfig(), beta: stdioConfig() });
       const entries = cm.list();
       expect(entries.map((e) => e.name).toSorted()).toEqual(['alpha', 'beta']);
       for (const entry of entries) {
         expect(entry.status).toBe('connected');
-        expect(entry.toolCount).toBe(3);
+        expect(entry.toolCount).toBe(4);
         expect(entry.transport).toBe('stdio');
       }
     } finally {
@@ -71,7 +92,7 @@ describe('McpConnectionManager', () => {
   }, 20000);
 
   it('isolates failures: a bad server is marked failed without blocking the rest', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         good: stdioConfig(),
@@ -85,8 +106,57 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
+  it('markRemoved tombstones the entry: client closed, entry kept, reconnect rejected, re-connect revives', async () => {
+    const cm = createManager();
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      expect(cm.get('alpha')?.status).toBe('connected');
+
+      const statuses: string[] = [];
+      cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
+
+      expect(await cm.markRemoved('alpha')).toBe(true);
+      const entry = cm.get('alpha');
+      expect(entry?.status).toBe('removed');
+      expect(entry?.toolCount).toBe(0);
+      expect(cm.resolved('alpha')).toBeUndefined();
+      expect(cm.list().map((e) => e.name)).toEqual(['alpha']);
+      expect(statuses).toContain('alpha:removed');
+      await expect(cm.reconnect('alpha')).rejects.toThrow('Unknown MCP server: alpha');
+
+      expect(await cm.markRemoved('missing')).toBe(false);
+
+      await cm.connect('alpha', stdioConfig());
+      expect(cm.get('alpha')?.status).toBe('connected');
+      expect(cm.resolved('alpha')).toBeDefined();
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('connect with the identical config is a no-op for a live entry', async () => {
+    const cm = createManager();
+    const statuses: string[] = [];
+    cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
+    try {
+      await cm.connect('alpha', stdioConfig());
+      expect(cm.get('alpha')?.status).toBe('connected');
+      statuses.length = 0;
+
+      await cm.connect('alpha', stdioConfig());
+      expect(cm.get('alpha')?.status).toBe('connected');
+      expect(statuses).toEqual([]);
+
+      await cm.connect('alpha', { ...stdioConfig(), startupTimeoutMs: 5_000 });
+      expect(cm.get('alpha')?.status).toBe('connected');
+      expect(statuses).toEqual(['alpha:pending', 'alpha:connected']);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
   it('marks HTTP servers failed when configured bearer token env var is missing', async () => {
-    const cm = new McpConnectionManager({ envLookup: () => undefined });
+    const cm = createManager({ envLookup: () => undefined });
     try {
       await cm.connectAll({
         remote: {
@@ -104,7 +174,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('marks SSE servers failed when configured bearer token env var is missing', async () => {
-    const cm = new McpConnectionManager({ envLookup: () => undefined });
+    const cm = createManager({ envLookup: () => undefined });
     try {
       await cm.connectAll({
         legacy: {
@@ -123,7 +193,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('marks disabled servers without attempting a connection', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         off: { ...stdioConfig(), enabled: false },
@@ -137,7 +207,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('applies enabledTools / disabledTools filters to the resolved tool set', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         filtered: { ...stdioConfig(), enabledTools: ['echo'], disabledTools: ['boom'] },
@@ -152,7 +222,7 @@ describe('McpConnectionManager', () => {
 
   it('starts stdio servers in stdioCwd when config.cwd is omitted', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-manager-cwd-'));
-    const cm = new McpConnectionManager({ stdioCwd: cwd });
+    const cm = createManager({ stdioCwd: cwd });
     try {
       await cm.connectAll({
         cwd: stdioConfig([cwdStdioFixture]),
@@ -168,8 +238,36 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  it('announces the resolved custom identity as the MCP client name', async () => {
+    const cm = createManager({ resolveClientName: () => 'acme-dev' });
+    try {
+      await cm.connectAll({ mock: stdioConfig() });
+      const resolved = cm.resolved('mock');
+      if (resolved === undefined) throw new Error('Expected mock MCP server to connect');
+      const result = await resolved.client.callTool('whoami', {});
+      expect((result.content[0] as { type: 'text'; text: string }).text).toBe('acme-dev');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('keeps the builtin MCP client name when no identity is configured', async () => {
+    const cm = createManager();
+    try {
+      await cm.connectAll({ mock: stdioConfig() });
+      const resolved = cm.resolved('mock');
+      if (resolved === undefined) throw new Error('Expected mock MCP server to connect');
+      const result = await resolved.client.callTool('whoami', {});
+      expect((result.content[0] as { type: 'text'; text: string }).text).toBe(
+        KIMI_MCP_CLIENT_NAME,
+      );
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
   it('emits status transitions in order per server', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     try {
@@ -184,7 +282,7 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('reconnect cycles a failed server back through pending and into connected when fixed', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         flaky: { transport: 'stdio', command: '/no/such/binary' },
@@ -201,7 +299,7 @@ describe('McpConnectionManager', () => {
   }, 20000);
 
   it('does not let stale in-flight startup failures overwrite a reconnect attempt', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((entry) => {
       seen.push({ name: entry.name, status: entry.status });
@@ -226,7 +324,7 @@ describe('McpConnectionManager', () => {
 
       expect(cm.get('slow')).toMatchObject({
         status: 'connected',
-        toolCount: 3,
+        toolCount: 4,
       });
       expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
         'pending',
@@ -240,7 +338,7 @@ describe('McpConnectionManager', () => {
   }, 7000);
 
   it('reconnect throws a coded Error2 when the server name is unknown', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await expect(cm.reconnect('nope')).rejects.toBeInstanceOf(Error2);
       await expect(cm.reconnect('nope')).rejects.toMatchObject({ code: 'mcp.server_not_found' });
@@ -250,7 +348,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('reconnect rejects disabled servers without connecting them', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         off: { ...stdioConfig(), enabled: false },
@@ -268,7 +366,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('reconnectAndJoin joins an in-flight reconnect instead of starting a second one', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((entry) => {
       seen.push({ name: entry.name, status: entry.status });
@@ -301,7 +399,7 @@ describe('McpConnectionManager', () => {
   }, 20000);
 
   it('reconnectAndJoin rejects for unknown servers', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await expect(cm.reconnectAndJoin('nope')).rejects.toBeInstanceOf(Error2);
       await expect(cm.reconnectAndJoin('nope')).rejects.toMatchObject({
@@ -313,7 +411,7 @@ describe('McpConnectionManager', () => {
   });
 
   it('shutdown clears entries and is idempotent', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     await cm.connectAll({ alpha: stdioConfig() });
     expect(cm.list()).toHaveLength(1);
     await cm.shutdown();
@@ -322,7 +420,7 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('shutdown cancels in-flight startup without late status updates', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((entry) => {
       seen.push({ name: entry.name, status: entry.status });
@@ -350,7 +448,7 @@ describe('McpConnectionManager', () => {
   }, 2000);
 
   it('honors startupTimeoutMs by marking slow servers failed', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         slow: {
@@ -369,7 +467,7 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('honors startupTimeoutMs while discovering tools', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const connectPromise = cm.connectAll({
       slowList: {
         transport: 'stdio',
@@ -395,7 +493,7 @@ describe('McpConnectionManager', () => {
   }, 7000);
 
   it('applies the resolved default startup timeout when the server entry omits startupTimeoutMs', async () => {
-    const cm = new McpConnectionManager({
+    const cm = createManager({
       resolveDefaultTimeouts: () => ({ startupTimeoutMs: 100 }),
     });
     try {
@@ -423,7 +521,7 @@ describe('McpConnectionManager', () => {
     async (_transport, config) => {
       const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
       const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
-      const cm = new McpConnectionManager({
+      const cm = createManager({
         resolveDefaultTimeouts: () => ({ startupTimeoutMs: 120_000 }),
       });
       try {
@@ -453,7 +551,7 @@ describe('McpConnectionManager', () => {
     async (_transport, config) => {
       const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
       const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
-      const cm = new McpConnectionManager({
+      const cm = createManager({
         resolveDefaultTimeouts: () => ({ startupTimeoutMs: 120_000 }),
       });
       try {
@@ -477,7 +575,7 @@ describe('McpConnectionManager', () => {
   );
 
   it('applies the resolved default tool timeout when the server entry omits toolTimeoutMs', async () => {
-    const cm = new McpConnectionManager({
+    const cm = createManager({
       resolveDefaultTimeouts: () => ({ toolTimeoutMs: 100 }),
     });
     try {
@@ -497,7 +595,7 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('lets a per-server toolTimeoutMs override the resolved default tool timeout', async () => {
-    const cm = new McpConnectionManager({
+    const cm = createManager({
       resolveDefaultTimeouts: () => ({ toolTimeoutMs: 100 }),
     });
     try {
@@ -530,7 +628,7 @@ describe('McpConnectionManager', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as HttpAddress).port;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = new McpConnectionManager({ oauthService });
+    const cm = createManager({ oauthService });
     try {
       await cm.connectAll({
         gated: {
@@ -549,6 +647,65 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
+  it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate':
+          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        gated: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { 'X-Tenant': 'example' },
+          auth: 'oauth',
+          startupTimeoutMs: 5_000,
+        },
+      });
+      const entry = cm.get('gated');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login gated');
+      expect(entry?.toolCount).toBe(0);
+    } finally {
+      await cm.shutdown();
+      await closeServer(server);
+    }
+  }, 15000);
+
+  it('keeps a headers-only HTTP server failed (not needs-auth) on 401', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const cm = createManager({ oauthService });
+    try {
+      await cm.connectAll({
+        keyed: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: { Authorization: 'Bearer static-key' },
+          startupTimeoutMs: 5_000,
+        },
+      });
+      const entry = cm.get('keyed');
+      expect(entry?.status).toBe('failed');
+    } finally {
+      await cm.shutdown();
+      await closeServer(server);
+    }
+  }, 15000);
+
   it('flips SSE servers into needs-auth when the server returns 401 and no static token is set', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
       res.writeHead(401, {
@@ -561,7 +718,7 @@ describe('McpConnectionManager', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as HttpAddress).port;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = new McpConnectionManager({ oauthService });
+    const cm = createManager({ oauthService });
     try {
       await cm.connectAll({
         legacy: {
@@ -624,7 +781,7 @@ describe('McpConnectionManager', () => {
       token_type: 'Bearer',
     } satisfies OAuthTokens);
 
-    const cm = new McpConnectionManager({ oauthService });
+    const cm = createManager({ oauthService });
     try {
       await cm.connectAll({
         notion: {
@@ -651,7 +808,7 @@ describe('McpConnectionManager', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as HttpAddress).port;
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         gated: {
@@ -668,7 +825,7 @@ describe('McpConnectionManager', () => {
   }, 15000);
 
   it('flips connected stdio servers to failed when the child exits unexpectedly', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     try {
@@ -703,7 +860,7 @@ describe('McpConnectionManager', () => {
   }, 10000);
 
   it('includes captured stderr in the error when stdio connect fails before handshake', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     try {
       await cm.connectAll({
         nope: {
@@ -723,7 +880,7 @@ describe('McpConnectionManager', () => {
   }, 10000);
 
   it('does not flip to failed when the manager intentionally closes the client', async () => {
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     try {
@@ -757,7 +914,7 @@ describe('McpConnectionManager', () => {
     await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
     const port = (httpServer.address() as HttpAddress).port;
 
-    const cm = new McpConnectionManager();
+    const cm = createManager();
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     try {
@@ -801,7 +958,7 @@ describe('McpConnectionManager', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as HttpAddress).port;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = new McpConnectionManager({ oauthService });
+    const cm = createManager({ oauthService });
     try {
       await cm.connectAll({
         keyed: {

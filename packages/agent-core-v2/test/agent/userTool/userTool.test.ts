@@ -10,16 +10,22 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
 import { AgentUserToolService } from '#/agent/userTool/userToolService';
-import { UserToolModel } from '#/agent/userTool/userToolOps';
+import { userToolKey } from '#/agent/userTool/userToolOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IWireService } from '#/wire/wire';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { InteractionRuntime } from '#/features/interaction/interactionAgentRuntime';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
+import {
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+  restoreTestEventDispatcher,
+  testWireScope,
+} from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'user-tool-test';
@@ -45,12 +51,12 @@ interface ProfileStub {
   readonly active: Set<string>;
 }
 
-function createProfileStub(): IAgentProfileService & ProfileStub {
+function createProfileStub(activeToolNames?: readonly string[]): IAgentProfileService & ProfileStub {
   const active = new Set<string>();
   return {
     active,
     _serviceBrand: undefined,
-    getActiveToolNames: () => undefined,
+    getActiveToolNames: () => activeToolNames,
     addActiveTool: (name: string) => {
       active.add(name);
     },
@@ -60,20 +66,24 @@ function createProfileStub(): IAgentProfileService & ProfileStub {
   } as unknown as IAgentProfileService & ProfileStub;
 }
 
-function createInteractionStub(): ISessionInteractionService {
+type InteractionApi = Pick<InteractionRuntime, 'request' | 'respond'>;
+
+function createInteractionStub(): InteractionApi {
   return {
-    _serviceBrand: undefined,
     request: () => Promise.reject(new Error('not exercised')),
-    respond: () => undefined,
-    onDidResolve: () => ({ dispose: () => undefined }),
-    onDidChangePending: () => ({ dispose: () => undefined }),
-  } as unknown as ISessionInteractionService;
+    respond: () => false,
+  };
+}
+
+function createManagerStub(interaction: InteractionApi): IAgentLifecycleService {
+  return { resolve: () => interaction } as unknown as IAgentLifecycleService;
 }
 
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
-let wire: IWireService;
+let dispatcher: IEventDispatcher;
+let agentState: IAgentStateService;
 let registry: IAgentToolRegistryService;
 let profile: IAgentProfileService & ProfileStub;
 let svc: IAgentUserToolService;
@@ -87,10 +97,12 @@ beforeEach(() => {
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
   profile = createProfileStub();
   ix.stub(IAgentProfileService, profile);
-  ix.stub(ISessionInteractionService, createInteractionStub());
+  ix.stub(IAgentLifecycleService, createManagerStub(createInteractionStub()));
   ix.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
   log = ix.get(IAppendLogStore);
-  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
+  dispatcher = registerTestEventDispatcher(ix);
+  agentState = ix.get(IAgentStateService);
   registry = ix.get(IAgentToolRegistryService);
   svc = ix.get(IAgentUserToolService);
 });
@@ -98,7 +110,7 @@ beforeEach(() => {
 afterEach(() => disposables.dispose());
 
 async function readRecords(key = KEY): Promise<WireRecord[]> {
-  await wire.flush();
+  await dispatcher.flush();
   const out: WireRecord[] = [];
   for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
@@ -106,8 +118,8 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
   return out;
 }
 
-function modelOf(target: IWireService): ReadonlyMap<string, UserToolRegistration> {
-  return target.getModel(UserToolModel);
+function modelOf(target: IAgentStateService): ReadonlyMap<string, UserToolRegistration> {
+  return target.get(userToolKey);
 }
 
 describe('AgentUserToolService (wire-backed)', () => {
@@ -116,11 +128,16 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     expect(registry.resolve(toolA.name)).toBeDefined();
     expect(profile.active.has(toolA.name)).toBe(true);
-    expect(modelOf(wire).get(toolA.name)).toEqual(toolA);
+    expect(modelOf(agentState).get(toolA.name)).toEqual(toolA);
 
     const records = await readRecords();
     expect(records).toEqual([
-      { type: 'tools.register_user_tool', ...toolA, time: expect.any(Number) },
+      {
+        type: 'tools.register_user_tool',
+        agentId: 'test-agent',
+        ...toolA,
+        time: expect.any(Number),
+      },
     ]);
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });
@@ -128,13 +145,14 @@ describe('AgentUserToolService (wire-backed)', () => {
   it('preserves deferred disclosure in the wire model and runtime registry', async () => {
     svc.register(deferredTool);
 
-    expect(modelOf(wire).get(deferredTool.name)).toEqual(deferredTool);
+    expect(modelOf(agentState).get(deferredTool.name)).toEqual(deferredTool);
     expect(registry.list().find((tool) => tool.name === deferredTool.name)?.disclosure).toBe(
       'deferred',
     );
     expect(await readRecords()).toEqual([
       {
         type: 'tools.register_user_tool',
+        agentId: 'test-agent',
         ...deferredTool,
         time: expect.any(Number),
       },
@@ -147,12 +165,22 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     expect(registry.resolve(toolA.name)).toBeUndefined();
     expect(profile.active.has(toolA.name)).toBe(false);
-    expect(modelOf(wire).has(toolA.name)).toBe(false);
+    expect(modelOf(agentState).has(toolA.name)).toBe(false);
 
     const records = await readRecords();
     expect(records).toEqual([
-      { type: 'tools.register_user_tool', ...toolA, time: expect.any(Number) },
-      { type: 'tools.unregister_user_tool', name: toolA.name, time: expect.any(Number) },
+      {
+        type: 'tools.register_user_tool',
+        agentId: 'test-agent',
+        ...toolA,
+        time: expect.any(Number),
+      },
+      {
+        type: 'tools.unregister_user_tool',
+        agentId: 'test-agent',
+        name: toolA.name,
+        time: expect.any(Number),
+      },
     ]);
   });
 
@@ -168,19 +196,21 @@ describe('AgentUserToolService (wire-backed)', () => {
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
-    ixChild.stub(ISessionInteractionService, createInteractionStub());
+    ixChild.stub(IAgentLifecycleService, createManagerStub(createInteractionStub()));
     ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
-    const childWire = registerTestAgentWire(ixChild, testWireScope(SCOPE, 'user-tool-child'), {
+    registerTestAgentWire(ixChild, testWireScope(SCOPE, 'user-tool-child'), {
       log: ixChild.get(IAppendLogStore),
     });
+    const childDispatcher = registerTestEventDispatcher(ixChild);
+    const childAgentState = ixChild.get(IAgentStateService);
     const child = ixChild.get(IAgentUserToolService);
     const childRegistry = ixChild.get(IAgentToolRegistryService);
     child.inheritUserTools(svc);
 
     expect(child.list()).toEqual([toolA]);
-    expect(modelOf(childWire).get(toolA.name)).toEqual(toolA);
-    expect(modelOf(childWire).has(toolB.name)).toBe(false);
+    expect(modelOf(childAgentState).get(toolA.name)).toEqual(toolA);
+    expect(modelOf(childAgentState).has(toolB.name)).toBe(false);
     expect(childRegistry.resolve(toolA.name)).toBeDefined();
     expect(childProfile.active.has(toolA.name)).toBe(true);
     expect(childProfile.active.has(toolB.name)).toBe(false);
@@ -192,25 +222,128 @@ describe('AgentUserToolService (wire-backed)', () => {
       childRecords.push(record);
     }
     expect(childRecords).toEqual([
-      { type: 'tools.register_user_tool', ...toolA, time: expect.any(Number) },
+      {
+        type: 'tools.register_user_tool',
+        agentId: 'test-agent',
+        ...toolA,
+        time: expect.any(Number),
+      },
     ]);
+  });
+
+  it('inherits a registered tool without activating it when absent from the active tool names', () => {
+    svc.register(toolA);
+
+    const ixChild = disposables.add(new TestInstantiationService());
+    ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixChild.set(IAgentStateService, new AgentStateService());
+    ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
+    const childProfile = createProfileStub([]);
+    ixChild.stub(IAgentProfileService, childProfile);
+    ixChild.stub(IAgentLifecycleService, createManagerStub(createInteractionStub()));
+    ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
+    registerTestAgentWire(ixChild, testWireScope(SCOPE, 'inactive-user-tool-child'), {
+      log: ixChild.get(IAppendLogStore),
+    });
+    registerTestEventDispatcher(ixChild);
+    const child = ixChild.get(IAgentUserToolService);
+    const childRegistry = ixChild.get(IAgentToolRegistryService);
+
+    child.inheritUserTools(svc, []);
+
+    expect(child.list()).toEqual([toolA]);
+    expect(childRegistry.resolve(toolA.name)).toBeDefined();
+    expect(childProfile.active.has(toolA.name)).toBe(false);
   });
 
   it('re-registering an equal tool is a no-op on the model (same reference)', () => {
     svc.register(toolA);
-    const before = modelOf(wire);
+    const before = modelOf(agentState);
     svc.register(toolA);
-    expect(modelOf(wire)).toBe(before);
+    expect(modelOf(agentState)).toBe(before);
+  });
+
+  it('execute parks under a minted interaction id and keeps the provider toolCallId on the payload', async () => {
+    const parked: { id: string | undefined; kind: string; payload: unknown }[] = [];
+    const responses: { id: string; response: unknown }[] = [];
+    let settle: ((result: unknown) => void) | undefined;
+    const interactionStub: InteractionApi = {
+      request: ((req: { id?: string; kind: string; payload: unknown }) => {
+        parked.push({ id: req.id, kind: req.kind, payload: req.payload });
+        return new Promise<unknown>((resolve) => {
+          settle = resolve;
+        });
+      }) as InteractionApi['request'],
+      respond: (id: string, response: unknown) => {
+        responses.push({ id, response });
+        return true;
+      },
+    };
+
+    const ixExec = disposables.add(new TestInstantiationService());
+    ixExec.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixExec.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixExec.set(IAgentStateService, new AgentStateService());
+    ixExec.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
+    ixExec.stub(IAgentProfileService, createProfileStub());
+    ixExec.stub(IAgentLifecycleService, createManagerStub(interactionStub));
+    ixExec.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
+    registerTestAgentWire(ixExec, testWireScope(SCOPE, 'user-tool-exec'), {
+      log: ixExec.get(IAppendLogStore),
+    });
+    registerTestEventDispatcher(ixExec);
+    const execSvc = ixExec.get(IAgentUserToolService);
+    const execRegistry = ixExec.get(IAgentToolRegistryService);
+    execSvc.register(toolA);
+
+    const tool = execRegistry.resolve(toolA.name);
+    expect(tool).toBeDefined();
+    const execution = await tool!.resolveExecution({ query: 'x' });
+    if (!('execute' in execution)) throw new Error('expected a runnable execution');
+
+    const resultPromise = execution.execute({
+      turnId: 1,
+      toolCallId: 'Bash_0',
+      signal: new AbortController().signal,
+    });
+    expect(parked).toHaveLength(1);
+    expect(parked[0]!.id).toMatch(/^user_tool_/);
+    expect(parked[0]!.payload).toEqual({
+      turnId: 1,
+      toolCallId: 'Bash_0',
+      name: toolA.name,
+      args: { query: 'x' },
+    });
+    settle!({ output: 'done', isError: false });
+    await expect(resultPromise).resolves.toEqual({ output: 'done', isError: false });
+
+    const controller = new AbortController();
+    const aborted = execution.execute({
+      turnId: 1,
+      toolCallId: 'Bash_0',
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(aborted).rejects.toThrow();
+    expect(parked).toHaveLength(2);
+    expect(parked[1]!.id).not.toBe(parked[0]!.id);
+    expect(responses).toEqual([
+      {
+        id: parked[1]!.id,
+        response: { output: `User tool "${toolA.name}" was aborted.`, isError: true },
+      },
+    ]);
   });
 
   it('treats a disclosure change as a new registration state', () => {
     svc.register(toolA);
-    const before = modelOf(wire);
+    const before = modelOf(agentState);
 
     svc.register({ ...toolA, disclosure: 'deferred' });
 
-    expect(modelOf(wire)).not.toBe(before);
-    expect(modelOf(wire).get(toolA.name)?.disclosure).toBe('deferred');
+    expect(modelOf(agentState)).not.toBe(before);
+    expect(modelOf(agentState).get(toolA.name)?.disclosure).toBe('deferred');
     expect(registry.list().find((tool) => tool.name === toolA.name)?.disclosure).toBe(
       'deferred',
     );
@@ -228,25 +361,27 @@ describe('AgentUserToolService (wire-backed)', () => {
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);
-    ix2.stub(ISessionInteractionService, createInteractionStub());
+    ix2.stub(IAgentLifecycleService, createManagerStub(createInteractionStub()));
     ix2.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
-    const wire2 = registerTestAgentWire(ix2, testWireScope(SCOPE, 'user-tool-replay'), {
+    registerTestAgentWire(ix2, testWireScope(SCOPE, 'user-tool-replay'), {
       log: ix2.get(IAppendLogStore),
     });
+    const dispatcher2 = registerTestEventDispatcher(ix2);
+    const agentState2 = ix2.get(IAgentStateService);
     const registry2 = ix2.get(IAgentToolRegistryService);
     ix2.get(IAgentUserToolService);
 
     expect(registry2.resolve(toolA.name)).toBeUndefined();
-    await restoreTestAgentWire(
-      wire2,
+    await restoreTestEventDispatcher(
+      dispatcher2,
       ix2.get(IAppendLogStore),
       testWireScope(SCOPE, 'user-tool-replay'),
       records,
     );
 
-    expect(modelOf(wire2).get(toolA.name)).toEqual(toolA);
-    expect(modelOf(wire2).get(toolB.name)).toEqual(toolB);
+    expect(modelOf(agentState2).get(toolA.name)).toEqual(toolA);
+    expect(modelOf(agentState2).get(toolB.name)).toEqual(toolB);
     expect(registry2.resolve(toolA.name)).toBeDefined();
     expect(registry2.resolve(toolB.name)).toBeDefined();
     expect(profile2.active.has(toolA.name)).toBe(true);

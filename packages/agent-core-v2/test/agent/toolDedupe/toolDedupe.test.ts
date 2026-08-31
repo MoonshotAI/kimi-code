@@ -8,7 +8,7 @@ import { type ToolCall } from '#/kosong/contract/message';
 import { emptyUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ISessionProcessRunner } from '#/session/process/processRunner';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -30,6 +30,7 @@ import { registerToolResultTruncationServices } from '../toolResultTruncation/st
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import { createTestAgent, execEnvServices, telemetryServices } from '../../harness';
 import { createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
+import { stubAgentContext } from '../agentContext/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
 const ZERO_USAGE = emptyUsage();
@@ -85,6 +86,7 @@ function createHarness(
       reg.defineInstance(IAgentScopeContext, {
         _serviceBrand: undefined,
         agentId: 'main',
+        agentContext: stubAgentContext('main', 0),
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
       reg.defineInstance(IBootstrapService, {
@@ -167,7 +169,7 @@ function beforeStep(
   step: number,
   signal = new AbortController().signal,
 ): Promise<void> {
-  return h.loop.hooks.onWillBeginStep.run({ turnId, step, signal });
+  return h.loop.hooks.onWillBeginStep.run({ turnId, step, firstStepOfTurn: step === 1, signal });
 }
 
 function afterStep(
@@ -179,6 +181,7 @@ function afterStep(
   return h.loop.hooks.onDidFinishStep.run({
     turnId,
     step,
+    firstStepOfTurn: step === 1,
     signal,
     usage: ZERO_USAGE,
     finishReason: 'completed',
@@ -251,6 +254,7 @@ function didCtx(
     toolCall: tc,
     toolCalls: [tc],
     args,
+    outcome: 'executed',
     result,
   };
 }
@@ -497,6 +501,38 @@ describe('AgentToolDedupeService', () => {
       expect(final!.result.isError).toBe(true);
       expect(final!.result.output as string).toContain('<system-reminder>');
     });
+
+    it('mirrors the reminder into spill.suffix for results carrying a spill', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        spill: { outputPath: '/tmp/log' },
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.spill?.suffix).toBe(REMINDER_TEXT_1);
+    });
+
+    it('appends the reminder after an existing spill suffix', async () => {
+      const h = createHarness();
+      const tool = new EchoTool('X', () => ({
+        output: 'truncated view',
+        truncated: true,
+        spill: { outputPath: '/tmp/log', suffix: 'Command failed with exit code: 1.' },
+      }));
+      h.registry.register(tool);
+      for (let i = 0; i < 2; i += 1) {
+        await runStep(h, 1, i + 1, [toolCall(`p${String(i)}`, 'X', {})]);
+      }
+      const [final] = await runStep(h, 1, 3, [toolCall('final', 'X', {})]);
+      expect(final!.result.spill?.suffix).toBe(
+        'Command failed with exit code: 1.' + REMINDER_TEXT_1,
+      );
+    });
   });
 
   describe('key canonicalization', () => {
@@ -698,6 +734,66 @@ describe('AgentToolDedupeService', () => {
       });
     });
 
+    it('counts interleaved tool calls across a turn without injecting a reminder', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('A'));
+      h.registry.register(new EchoTool('B'));
+      h.registry.register(new EchoTool('C'));
+
+      await runStep(h, 7, 1, [toolCall('a1', 'A', {})]);
+      await runStep(h, 7, 2, [toolCall('b1', 'B', {})]);
+      await runStep(h, 7, 3, [toolCall('c1', 'C', {})]);
+      await runStep(h, 7, 4, [toolCall('a2', 'A', {})]);
+      await runStep(h, 7, 5, [toolCall('b2', 'B', {})]);
+      const [last] = await runStep(h, 7, 6, [toolCall('c2', 'C', {})]);
+
+      expect(last!.result.output as string).not.toContain('<system-reminder>');
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toEqual([
+        expect.objectContaining({
+          event: 'tool_call_turn_repeat',
+          properties: expect.objectContaining({
+            turn_id: 7,
+            step_no: 4,
+            tool_call_id: 'a2',
+            tool_name: 'A',
+            turn_repeat_count: 1,
+          }),
+        }),
+        expect.objectContaining({
+          event: 'tool_call_turn_repeat',
+          properties: expect.objectContaining({
+            turn_id: 7,
+            step_no: 5,
+            tool_call_id: 'b2',
+            tool_name: 'B',
+            turn_repeat_count: 2,
+          }),
+        }),
+        expect.objectContaining({
+          event: 'tool_call_turn_repeat',
+          properties: expect.objectContaining({
+            turn_id: 7,
+            step_no: 6,
+            tool_call_id: 'c2',
+            tool_name: 'C',
+            turn_repeat_count: 3,
+          }),
+        }),
+      ]);
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
+    });
+
+    it('does not carry turn repeat telemetry across turns', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+
+      await runStep(h, 7, 1, [toolCall('first', 'Read', { path: '/a' })]);
+      telemetryEvents.length = 0;
+      await runStep(h, 8, 1, [toolCall('new-turn', 'Read', { path: '/a' })]);
+
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_turn_repeat')).toHaveLength(0);
+    });
+
     it('merges the request trace id into dedupe and repeat telemetry', async () => {
       const h = createHarness();
       h.registry.register(new EchoTool('Read'));
@@ -838,9 +934,6 @@ describe('AgentToolDedupeService', () => {
   });
 
   describe('preflight-rejected calls (bypass onBeforeExecuteTool)', () => {
-    // Calls rejected by args validation in preflight never fire
-    // onBeforeExecuteTool; the dedupe hook registers them late at
-    // onDidExecuteTool time so the repeat breaker still counts them.
     class StrictTool implements ExecutableTool<Record<string, unknown>> {
       readonly name = 'Strict';
       readonly description = 'Requires a command string.';
@@ -864,7 +957,6 @@ describe('AgentToolDedupeService', () => {
     }
 
     function invalidCall(id: string): ToolCall {
-      // Missing the required "command".
       return { type: 'function', id, name: 'Strict', arguments: JSON.stringify({ timeout: 60 }) };
     }
 
@@ -901,8 +993,6 @@ describe('AgentToolDedupeService', () => {
         await h.executor.hooks.onDidExecuteTool.run(d);
         await afterStep(h, 1, i + 1);
       }
-      // Exactly one repeat at count 2 — a double registration would inflate
-      // the streak and fire the reminder one occurrence early.
       const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2]);
     });
@@ -924,20 +1014,16 @@ describe('AgentToolDedupeService', () => {
       for (let i = 0; i < 3; i += 1) {
         await runStep(h, 1, i + 1, [malformedCall(`c${String(i)}`, raws[i]!)]);
       }
-      // All three normalize to {} on parse failure, but the raw texts
-      // differ, so no repeat streak may form.
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
     });
   });
 
   describe('turn-level repeat breaker for rejected calls', () => {
     function invalidBashCallWithId(id: string): ToolCall {
-      // Missing the required "command".
       return { type: 'function', id, name: 'Bash', arguments: JSON.stringify({ timeout: 60 }) };
     }
 
     function malformedBashCallWithId(id: string, variant: number): ToolCall {
-      // Invalid JSON (unquoted key), unique per variant.
       return { type: 'function', id, name: 'Bash', arguments: `{"command_${String(variant)}: "ls"` };
     }
 
@@ -945,10 +1031,10 @@ describe('AgentToolDedupeService', () => {
       readonly ctx: ReturnType<typeof createTestAgent>;
       readonly exec: ReturnType<typeof vi.fn>;
     } {
-      const exec = vi.fn<ISessionProcessRunner['exec']>().mockRejectedValue(new Error('Bash should not execute'));
+      const exec = vi.fn<IHostProcessService['spawn']>().mockRejectedValue(new Error('Bash should not execute'));
       const ctx = createTestAgent(
         telemetryServices(recordingTelemetry(records)),
-        execEnvServices({ processRunner: createFakeProcessRunner({ exec: exec as unknown as ISessionProcessRunner['exec'] }) }),
+        execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
       );
       ctx.get(IAgentProfileService).update({ activeToolNames: ['Bash'] });
       records.length = 0;
@@ -959,9 +1045,6 @@ describe('AgentToolDedupeService', () => {
       const records: TelemetryRecord[] = [];
       const { ctx, exec } = rejectedBashAgent(records);
 
-      // 12 identical calls missing the required "command": each is rejected
-      // in preflight. If the breaker did not count them, the turn would keep
-      // going and consume the 13th scripted response.
       for (let i = 0; i < 12; i += 1) {
         ctx.mockNextResponse(invalidBashCallWithId(`call_bad_${String(i)}`));
       }
@@ -982,9 +1065,6 @@ describe('AgentToolDedupeService', () => {
       const records: TelemetryRecord[] = [];
       const { ctx, exec } = rejectedBashAgent(records);
 
-      // 12 rejected calls, each with DIFFERENT malformed raw JSON: all
-      // normalize to {} on parse failure, but they are not repeats of the
-      // same call, so the turn must not be force-stopped.
       for (let i = 0; i < 12; i += 1) {
         ctx.mockNextResponse(malformedBashCallWithId(`call_mal_${String(i)}`, i));
       }
