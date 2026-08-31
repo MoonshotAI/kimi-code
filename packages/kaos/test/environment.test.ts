@@ -138,6 +138,36 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('/bin/sh');
   });
 
+  it('reports osKind "Linux" on openharmony', async () => {
+    const env = await detectEnvironment(
+      stubDeps({ platform: 'openharmony' as NodeJS.Platform, existingPaths: ['/bin/bash'] }),
+    );
+    expect(env.osKind).toBe('Linux');
+  });
+
+  it('honors KIMI_SHELL_PATH override on POSIX when the file exists', async () => {
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'openharmony' as NodeJS.Platform,
+        env: { KIMI_SHELL_PATH: '/storage/Users/currentUser/.harmonybrew/bin/bash' },
+        existingPaths: ['/storage/Users/currentUser/.harmonybrew/bin/bash', '/bin/bash'],
+      }),
+    );
+    expect(env.shellName satisfies ShellName).toBe('bash');
+    expect(env.shellPath).toBe('/storage/Users/currentUser/.harmonybrew/bin/bash');
+  });
+
+  it('ignores KIMI_SHELL_PATH override on POSIX when the file is missing', async () => {
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'linux',
+        env: { KIMI_SHELL_PATH: '/nonexistent/bash' },
+        existingPaths: ['/bin/bash'],
+      }),
+    );
+    expect(env.shellPath).toBe('/bin/bash');
+  });
+
   // ── Windows Git Bash probing ───────────────────────────────────────
 
   it('uses KIMI_SHELL_PATH override when set and the file exists', async () => {

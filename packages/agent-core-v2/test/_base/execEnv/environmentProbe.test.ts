@@ -32,6 +32,38 @@ function execFileKey(file: string, args: readonly string[]): string {
 }
 
 describe('probeHostEnvironment', () => {
+  it('reports osKind "Linux" on openharmony', async () => {
+    const env = await probeHostEnvironment(
+      stubDeps({ platform: 'openharmony', existingPaths: ['/bin/bash'] }),
+    );
+    expect(env.osKind).toBe('Linux');
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('/bin/bash');
+  });
+
+  it('honors KIMI_SHELL_PATH override on POSIX when the file exists', async () => {
+    const env = await probeHostEnvironment(
+      stubDeps({
+        platform: 'openharmony',
+        env: { KIMI_SHELL_PATH: '/storage/Users/currentUser/.harmonybrew/bin/bash' },
+        existingPaths: ['/storage/Users/currentUser/.harmonybrew/bin/bash'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('/storage/Users/currentUser/.harmonybrew/bin/bash');
+  });
+
+  it('ignores KIMI_SHELL_PATH override on POSIX when the file is missing', async () => {
+    const env = await probeHostEnvironment(
+      stubDeps({
+        platform: 'linux',
+        env: { KIMI_SHELL_PATH: '/nonexistent/bash' },
+        existingPaths: ['/bin/bash'],
+      }),
+    );
+    expect(env.shellPath).toBe('/bin/bash');
+  });
+
   it('resolves MSYS2 ucrt64 native git through git --exec-path', async () => {
     const gitExe = 'C:\\msys64\\ucrt64\\bin\\git.exe';
     const env = await probeHostEnvironment(

@@ -27,11 +27,13 @@ const nodeRequire = createRequire(import.meta.url);
 const isNativeBundle =
   typeof __KIMI_CODE_NATIVE_BUNDLE__ === 'boolean' && __KIMI_CODE_NATIVE_BUNDLE__;
 
-// The native module uses X11/Wayland on Linux; if no display is
-// available, skip the load attempt so headless environments don't pay
-// the binding cost just to fail later.
+// The native module uses X11/Wayland on Linux; HarmonyOS has neither.
+// If no display is available, skip the load attempt so headless
+// environments don't pay the binding cost just to fail later.
+const DISPLAY_SERVER_PLATFORMS: ReadonlySet<string> = new Set(['linux', 'openharmony']);
 const hasDisplay =
-  process.platform !== 'linux' || Boolean(process.env['DISPLAY'] ?? process.env['WAYLAND_DISPLAY']);
+  !DISPLAY_SERVER_PLATFORMS.has(process.platform) ||
+  Boolean(process.env['DISPLAY'] ?? process.env['WAYLAND_DISPLAY']);
 
 const clipboard: ClipboardModule | null = (() => {
   if (process.env['TERMUX_VERSION'] !== undefined || !hasDisplay) return null;

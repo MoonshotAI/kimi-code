@@ -64,6 +64,7 @@ function resolveOsKind(platform: string): OsKind {
     case 'darwin':
       return 'macOS';
     case 'linux':
+    case 'openharmony':
       return 'Linux';
     case 'win32':
       return 'Windows';
@@ -80,6 +81,11 @@ export async function detectEnvironment(deps: EnvironmentDeps): Promise<Environm
   if (deps.platform === 'win32') {
     const shellPath = await locateWindowsGitBash(deps);
     return { osKind, osArch, osVersion, shellName: 'bash', shellPath };
+  }
+
+  const override = deps.env['KIMI_SHELL_PATH']?.trim();
+  if (override !== undefined && override.length > 0 && (await deps.isFile(override))) {
+    return { osKind, osArch, osVersion, shellName: 'bash', shellPath: override };
   }
 
   const candidates: readonly string[] = ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash'];

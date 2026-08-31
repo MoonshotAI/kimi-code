@@ -57,6 +57,7 @@ function resolveOsKind(platform: string): OsKind {
     case 'darwin':
       return 'macOS';
     case 'linux':
+    case 'openharmony':
       return 'Linux';
     case 'win32':
       return 'Windows';
@@ -81,6 +82,19 @@ export async function probeHostEnvironment(
       osVersion,
       shellName: 'bash',
       shellPath,
+      pathClass,
+      homeDir: deps.homeDir,
+    };
+  }
+
+  const override = deps.env['KIMI_SHELL_PATH']?.trim();
+  if (override !== undefined && override.length > 0 && (await deps.isFile(override))) {
+    return {
+      osKind,
+      osArch,
+      osVersion,
+      shellName: 'bash',
+      shellPath: override,
       pathClass,
       homeDir: deps.homeDir,
     };
