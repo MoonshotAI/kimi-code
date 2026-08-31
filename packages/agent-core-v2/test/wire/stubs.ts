@@ -16,7 +16,6 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 import {
   IWireService,
@@ -134,22 +133,6 @@ export function registerTestEventDispatcher(ix: TestInstantiationService): IEven
 export function attachTodoService(ix: TestInstantiationService): AgentTodoService {
   ix.set(IAgentTodoService, new SyncDescriptor(AgentTodoService));
   return ix.get(IAgentTodoService) as AgentTodoService;
-}
-
-export function attachCronRuntime(
-  ix: TestInstantiationService,
-  dispatcher: IEventDispatcher,
-): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
-  runtimes.apply({
-    definition: AgentCron,
-    provider: cronAgentRuntimeProvider,
-    generation: 1,
-    active: true,
-  });
-  runtimes.attachDurable(dispatcher);
-  return runtimes;
 }
 
 export function attachGoalRuntime(

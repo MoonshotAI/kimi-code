@@ -55,7 +55,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import '#/wire/wireService';
 import '#/state/eventDispatcherService';
 import { IAgentTaskService } from '#/agent/task/task';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
+import { AgentCronService, IAgentCronService } from '#/features/cron/cronService';
 import { ICronCreateTool } from '#/features/cron/tools/cron-create/cron-create';
 import { ICronDeleteTool } from '#/features/cron/tools/cron-delete/cron-delete';
 import { ICronListTool } from '#/features/cron/tools/cron-list/cron-list';
@@ -492,12 +492,17 @@ describe('AgentLifecycleService', () => {
     );
   }
 
-  function contributeCron(): () => void {
-    return ix.fiberHost.addCollectionRecord(
-      AgentRuntimeContributionPoint,
+  function contributeCronService(): void {
+    ix.fiberHost.addCollectionRecord(
+      ScopeUnits(LifecycleScope.Agent),
       'test',
       new Ledger('test'),
-      cronAgentRuntimeProvider,
+      {
+        name: 'test:agentCronService',
+        apply(fiber: Fiber): void {
+          fiber.provide(IAgentCronService, AgentCronService);
+        },
+      },
     );
   }
 
@@ -978,7 +983,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(ICronListTool, { _serviceBrand: undefined });
     ix.stub(ICronDeleteTool, { _serviceBrand: undefined });
     contributeTodoService();
-    contributeCron();
+    contributeCronService();
 
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
@@ -986,9 +991,8 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')!.accessor.get(IAgentTodoService).get()).toEqual([
       { title: 'bridged', status: 'pending' },
     ]);
-    const contributions = svc.inspect(main).contributions;
-    expect(contributions.find((line) => line.id === 'cron')?.state).toEqual([
-      { id: 'cron-1', cron: '0 9 * * *', recurring: true, createdAt: 1, lastFiredAt: undefined },
+    expect(svc.handleOf('main')!.accessor.get(IAgentCronService).list()).toEqual([
+      { id: 'cron-1', cron: '0 9 * * *', prompt: 'ping', recurring: true, createdAt: 1, lastFiredAt: undefined },
     ]);
   });
 
@@ -1002,7 +1006,7 @@ describe('AgentLifecycleService', () => {
         : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
-    contributeCron();
+    contributeCronService();
     const svc = ix.get(IAgentLifecycleService);
     let created = false;
 
@@ -1015,10 +1019,10 @@ describe('AgentLifecycleService', () => {
     expect(created).toBe(false);
 
     releaseConfig();
-    const agent = await creation;
+    await creation;
 
     expect(created).toBe(true);
-    expect(svc.resolve(agent, AgentCron).isDisabled()).toBe(false);
+    expect(svc.handleOf('main')!.accessor.get(IAgentCronService).isDisabled()).toBe(false);
   });
 
   it('broadcastPermissionMode sets the mode on every live agent', async () => {

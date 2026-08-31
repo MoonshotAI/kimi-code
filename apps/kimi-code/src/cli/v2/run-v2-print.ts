@@ -19,8 +19,8 @@
 import { readFile } from 'node:fs/promises';
 
 import {
-  AgentCron,
   AgentGoal,
+  IAgentCronService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -473,9 +473,7 @@ async function runNativeTurn(
       const goalService = session.accessor
         .get(IAgentLifecycleService)
         .resolve(agentContextOf(agent), AgentGoal);
-      const cronService = session.accessor
-        .get(IAgentLifecycleService)
-        .resolve(agentContextOf(agent), AgentCron);
+      const cronService = agent.accessor.get(IAgentCronService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),

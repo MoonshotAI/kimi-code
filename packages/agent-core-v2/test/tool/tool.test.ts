@@ -100,7 +100,6 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 
 const signal = new AbortController().signal;
@@ -438,12 +437,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       const adoptedHandle = adopted as IAgentScopeHandle;
       handles.set(adoptedHandle.id, adoptedHandle);
       adoptedManaged = new ManagedAgent(agentContextOf(adoptedHandle), adoptedHandle, [
-        {
-          definition: AgentCron,
-          provider: cronAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
         {
           definition: AgentGoal,
           provider: goalAgentRuntimeProvider,

@@ -164,9 +164,9 @@ import {
   agentContextOf,
   IAgentActivityView,
   IAgentContextMemoryService,
-  AgentCron,
   AgentGoal,
   IAgentConversationUndoService,
+  IAgentCronService,
   IAgentFullCompactionService,
   IAgentPluginService,
   IAgentLifecycleService,
@@ -2152,9 +2152,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the main agent's `AgentCron` runtime facade — no klient facade
+   * Through the main agent's `IAgentCronService` — no klient facade
    * exists for cron. v1's cron manager is per-agent: the main agent's
-   * manager is what the v2 cron runtime ports (it borrows the main
+   * manager is what the v2 cron service ports (it borrows the main
    * agent to steer fires), and a v1 subagent reports `[]` (`cron` is null) —
    * mirrored here for a non-main `interactiveAgentId`. The v1 snapshot shape
    * is restored field-by-field: `recurring` defaults to true, and the
@@ -2164,10 +2164,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult> {
     await this.agentScope(input.sessionId);
     if (this.interactiveAgentId !== MAIN_AGENT_ID) return { tasks: [] };
-    const manager = this.requireLiveSession(input.sessionId).accessor.get(IAgentLifecycleService);
-    const mainContext = manager.get(MAIN_AGENT_ID);
-    if (mainContext === undefined) return { tasks: [] };
-    const cron = manager.resolve(mainContext, AgentCron);
+    const session = this.requireLiveSession(input.sessionId);
+    const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return { tasks: [] };
+    const cron = main.accessor.get(IAgentCronService);
     return {
       tasks: cron.list().map((task) => ({
         id: task.id,
