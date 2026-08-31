@@ -3528,6 +3528,59 @@ describe('bindSessionTranscript', () => {
     expect(frames).toContainEqual(expect.objectContaining({ kind: 'text', frameId: 't0.1.f2', text: 'Hello world' }));
   });
 
+  it('skips cold per-delta frames already covered by the live consolidated frame', () => {
+    const full =
+      "Sure, here's one:\n\nWhy do programmers prefer dark mode?\n\nBecause light attracts bugs.";
+    const snapshotTurn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      steps: [
+        {
+          kind: 'step',
+          stepId: 't0.1',
+          turnId: 't0',
+          ordinal: 1,
+          state: 'completed',
+          frames: [
+            { kind: 'thinking', frameId: 't0.1.f1', text: 'plan' },
+            { kind: 'text', frameId: 't0.1.f2', role: 'assistant', text: 'Sure' },
+            { kind: 'text', frameId: 't0.1.f3', role: 'assistant', text: ", here's one" },
+            { kind: 'text', frameId: 't0.1.f4', role: 'assistant', text: ':' },
+            { kind: 'text', frameId: 't0.1.f5', role: 'assistant', text: '\n\nWhy do programmers' },
+          ],
+        },
+      ],
+    };
+    const liveTurn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      steps: [
+        {
+          kind: 'step',
+          stepId: 't0.1',
+          turnId: 't0',
+          ordinal: 1,
+          state: 'completed',
+          frames: [
+            { kind: 'thinking', frameId: 't0.1.f1', text: 'plan' },
+            { kind: 'text', frameId: 't0.1.f2', role: 'assistant', text: full },
+          ],
+        },
+      ],
+    };
+
+    const frames = healTurnOps(snapshotTurn, liveTurn)
+      .filter((op): op is FrameUpsertOp => op.op === 'frame.upsert')
+      .map((op) => op.frame);
+    expect(frames).toHaveLength(0);
+  });
+
   it('heals missing tool frames and missed results, keeps richer live ones', () => {
     const makeTurn = (frames: TranscriptTurn['steps'][number]['frames']): TranscriptTurn => ({
       kind: 'turn',
