@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { AppendLogCorruptedError, IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { AppendLogCorruptedError, IAppendLogStore, type AppendLogTruncation } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -634,6 +634,56 @@ describe('AppendLogStore', () => {
     });
   });
 
+  it('stops at a corrupted middle line and reports it when onTruncate is given', async () => {
+    const raw = `${JSON.stringify({ n: 1 })}\nGARBAGE\n${JSON.stringify({ n: 3 })}\n`;
+    await storage.append(SCOPE, KEY, enc.encode(raw));
+    const truncations: AppendLogTruncation[] = [];
+
+    const out: Rec[] = [];
+    for await (const r of record.read<Rec>(SCOPE, KEY, {
+      onTruncate: (truncation) => truncations.push(truncation),
+    })) {
+      out.push(r);
+    }
+
+    expect(out).toEqual([{ n: 1 }]);
+    expect(truncations).toHaveLength(1);
+    expect(truncations[0]).toMatchObject({ lineNumber: 2, reason: 'corrupted' });
+    expect(truncations[0]!.cause).toBeInstanceOf(AppendLogCorruptedError);
+  });
+
+  it('reports a torn final line as truncation when onTruncate is given', async () => {
+    const raw = `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 }).slice(0, 4)}`;
+    await storage.append(SCOPE, KEY, enc.encode(raw));
+    const truncations: AppendLogTruncation[] = [];
+
+    const out: Rec[] = [];
+    for await (const r of record.read<Rec>(SCOPE, KEY, {
+      onTruncate: (truncation) => truncations.push(truncation),
+    })) {
+      out.push(r);
+    }
+
+    expect(out).toEqual([{ n: 1 }]);
+    expect(truncations).toEqual([{ lineNumber: 2, reason: 'truncated' }]);
+  });
+
+  it('does not report truncation for a clean log when onTruncate is given', async () => {
+    const raw = `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 })}\n`;
+    await storage.append(SCOPE, KEY, enc.encode(raw));
+    const truncations: AppendLogTruncation[] = [];
+
+    const out: Rec[] = [];
+    for await (const r of record.read<Rec>(SCOPE, KEY, {
+      onTruncate: (truncation) => truncations.push(truncation),
+    })) {
+      out.push(r);
+    }
+
+    expect(out).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(truncations).toEqual([]);
+  });
+
   it('reads across chunk boundaries (stream read splits lines)', async () => {
     const full = `${JSON.stringify({ n: 1 })}\n${JSON.stringify({ n: 2 })}\n${JSON.stringify({ n: 3 })}\n`;
     const bytes = enc.encode(full);
@@ -708,5 +758,36 @@ describe('AppendLogStore', () => {
       { n: 1, s: '中文' },
       { n: 2, s: '日本語' },
     ]);
+  });
+
+  it('does not emit onDidWrite when a flush persists nothing', async () => {
+    const events: string[] = [];
+    record.onDidWrite((write) => events.push(`${write.scope}/${write.key}`));
+
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+    await record.flush();
+    expect(events).toEqual([`${SCOPE}/${KEY}`]);
+
+    await record.flush();
+    await record.flush();
+    expect(events).toEqual([`${SCOPE}/${KEY}`]);
+  });
+
+  it('emits onDidWrite for batches persisted before a later drain failure', async () => {
+    const events: string[] = [];
+    record.onDidWrite((write) => events.push(`${write.scope}/${write.key}`));
+    const original = storage.append.bind(storage);
+    let calls = 0;
+    storage.append = async (scope, key, data, options) => {
+      calls += 1;
+      if (calls > 1) throw new Error('disk full');
+      const result = await original(scope, key, data, options);
+      record.append<Rec>(scope, key, { n: 2 });
+      return result;
+    };
+
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+    await expect(record.flush()).rejects.toThrow('disk full');
+    expect(events).toEqual([`${SCOPE}/${KEY}`]);
   });
 });

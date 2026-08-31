@@ -1,6 +1,6 @@
 import { normalize } from 'pathe';
 
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -246,7 +246,10 @@ export class GrepTool implements IGrepTool {
     if (paginationTruncated) {
       const total = afterOffset.length + offset;
       const nextOffset = offset + headLimit;
-      const paginationNotice = `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
+      const paginationNotice =
+        bufferTruncated || timedOut
+          ? `Results truncated to ${String(headLimit)} lines (total: ${String(total)} of a partial result set). Use offset=${String(nextOffset)} to see more.`
+          : `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
       if (mode === 'count_matches') {
         headerLines.push(paginationNotice);
       } else {
@@ -255,12 +258,12 @@ export class GrepTool implements IGrepTool {
     }
     if (bufferTruncated) {
       messages.push(
-        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; incomplete trailing line omitted]`,
+        `[Output truncated at ${String(MAX_OUTPUT_BYTES)} bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]`,
       );
     }
     if (timedOut) {
       messages.push(
-        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned`,
+        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.`,
       );
     }
 
@@ -287,7 +290,7 @@ export class GrepTool implements IGrepTool {
         : visibleBody;
     const combined = [...headerLines, body, ...messages].filter((part) => part !== '').join('\n');
 
-    const builder = new ToolResultBuilder();
+    const builder = new ToolOutputAccumulator();
     builder.write(combined);
     return builder.ok();
   }

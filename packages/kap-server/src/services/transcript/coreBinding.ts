@@ -1,6 +1,8 @@
 import {
   IAgentLifecycleService,
   IAgentActivityView,
+  IAgentLoopService,
+  IAgentPromptService,
   IAgentTaskService,
   IEventBus,
   ISessionMetadata,
@@ -65,7 +67,7 @@ export function bindSessionTranscript(
   const projectorFor = (agentId: string): AgentTranscriptProjector => {
     let projector = projectors.get(agentId);
     if (projector === undefined) {
-      projector = new AgentTranscriptProjector(agentId, {
+      projector = new AgentTranscriptProjector(agentId, store.sessionId, {
         stepFrames: (turnId, stepId) =>
           store.getAgent(agentId)?.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
         toolFrame: (toolCallId) => {
@@ -91,6 +93,7 @@ export function bindSessionTranscript(
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
+        items: () => store.getAgent(agentId)?.getItems(),
       });
       const agentHandle = agents.handleOf(agentId);
       if (agentHandle !== undefined) {
@@ -125,6 +128,11 @@ export function bindSessionTranscript(
     const busD = bus.subscribe((event) =>
       applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
     );
+    const loopStatus = handle.accessor.get(IAgentLoopService)?.status();
+    if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
+      const promptId = handle.accessor.get(IAgentPromptService)?.list().active?.id;
+      projector.seedActiveTurn({ turnId: loopStatus.activeTurnId, promptId });
+    }
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);
@@ -148,6 +156,7 @@ export function bindSessionTranscript(
       kind: interaction.kind,
       payload: interaction.payload,
       origin: interaction.origin,
+      createdAt: interaction.createdAt,
     };
     applyOps(agentId, projectorFor(agentId).mapInteractionRequested(request));
   };

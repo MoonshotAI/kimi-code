@@ -1,6 +1,6 @@
 # 服务 API
 
-`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考。如何启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web) 参考；端到端的上手流程见 [本地服务与 API](../guides/server.md)。
+`kimi web` 启动的本地服务暴露两组程序化接口：REST API（`/api/v1`，另有 `/api/v2/sessions` 和 `/api/v2/mcp`）和 WebSocket 事件流（`/api/v1/ws`）。本页是这两组接口的协议参考。如何启动服务及其命令行选项见 [kimi 命令](./kimi-command.md#kimi-web) 参考；端到端的上手流程见下文「[用 API 驱动一个会话](#用-api-驱动一个会话)」。
 
 本页是一份经过整理、面向人阅读的参考：下文逐一记录每个端点的参数、请求体与响应结构。每个端点精确的机器可读 schema 以服务的在线规范文档为准：`GET /openapi.json`（OpenAPI）与 `GET /asyncapi.json`（AsyncAPI），两者都由服务运行时实际执行的校验 schema 生成。两者都需要鉴权；当本页与在线规范不一致时，以在线规范为准。
 
@@ -22,7 +22,7 @@
 - `GET /api/v1/healthz`（探活）
 - 静态 web 资源（非 `/api/` 路径）
 
-携带方式：REST 用 `Authorization: Bearer <token>` 请求头；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。token 的生成与轮换见 [本地服务与 API：鉴权](../guides/server.md#authentication)。
+携带方式：REST 用 `Authorization: Bearer <token>` 请求头；WebSocket 升级请求接受同一请求头，或子协议 `kimi-code.bearer.<token>`。token 的生成与轮换见 [在网页中使用：开始使用](../guides/web.md#开始使用)。
 
 鉴权失败返回 HTTP 401，信封 `code` 为 `40101`。在非 loopback 绑定上，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，期间每个请求都返回 HTTP 429（`code` 为 `42901`）。
 
@@ -79,6 +79,65 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 - **游标式**：`before_id` / `after_id`（互斥）加 `page_size`（1–100），响应为 `{ items, has_more }`。用于会话列表、消息列表、转录等。
 - **`page_token`**：不透明令牌（绑定了查询条件的指纹），用于 `POST /api/v1/search` 与 `GET /api/v2/sessions`。翻页途中改变任何查询条件会使令牌失效：v2 返回 `40922`，search 返回 `40001`。`GET /api/v2/sessions` 另提供无状态的 `page` 页码模式作为替代。
 
+## 用 API 驱动一个会话
+
+下面用 curl 走一遍最小流程：确认服务状态 → 创建会话 → 订阅事件 → 提交提示词 → 回读历史。示例假设服务跑在默认地址，token 已存入 shell 变量 `TOKEN`。
+
+1. 确认服务状态：
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:58627/api/v1/meta
+```
+
+所有 JSON 响应都包在统一信封里——`{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`，业务结果以 `code` 为准（`0` 表示成功），HTTP 状态码只表达传输层结果。
+
+2. 创建会话，`metadata.cwd` 指定工作目录：
+
+```sh
+curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"cwd": "/path/to/project"}}'
+```
+
+返回的 `data.id`（形如 `session_...`）就是后续所有请求要用的会话 id。
+
+3. 连接 WebSocket 并订阅会话事件。任何 WebSocket 客户端都可以；下面是一个零依赖的 Node.js 脚本（Node.js 22+ 内置 `WebSocket` 客户端）：
+
+```js
+// subscribe.mjs —— 用法：TOKEN=... node subscribe.mjs session_...
+const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
+  `kimi-code.bearer.${process.env.TOKEN}`,
+]);
+ws.onmessage = (e) => console.log(e.data);
+ws.onopen = () =>
+  ws.send(
+    JSON.stringify({
+      type: 'subscribe',
+      id: '1',
+      payload: { session_ids: [process.argv[2]] },
+    }),
+  );
+```
+
+4. 提交提示词：
+
+```sh
+curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": [{"type": "text", "text": "用一句话介绍这个仓库"}]}'
+```
+
+订阅端会依次看到 `turn.started`（轮次开始）→ `assistant.delta`（流式文本增量）→ 发生工具调用时的 `tool.call.started` / `tool.result` → `turn.ended`（轮次结束）。
+
+5. 随时可以用 REST 回读历史消息：
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
+```
+
 ## REST 端点
 
 下文按资源分组列出端点。路径里的 `:{action}` 后缀是动作约定——对单个资源 POST 到 `路径:动作` 执行非 CRUD 操作（如会话的 `:fork`、`:archive`）。
@@ -128,7 +187,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/auth` | 鉴权就绪状态快照 |
+| `GET /api/v1/auth` | 鉴权状态快照 |
 | `POST /api/v1/oauth/login` | 发起 OAuth device-code 登录流程 |
 | `GET /api/v1/oauth/login` | 轮询登录流程状态 |
 | `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
@@ -139,9 +198,9 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 
 #### `GET /api/v1/auth`
 
-鉴权就绪状态快照：服务是否具备可用的模型配置，以及托管供应商的登录状态。当至少配置了一个供应商、设置了默认模型、且托管供应商（如存在）未被吊销时，`ready` 为 `true`。
+鉴权状态快照：默认模型能否解析到可用的供应商配置，以及托管供应商的登录状态。当全局 `default_model` 别名存在于模型表中且能解析到已配置的供应商时，`models_ready` 为 `true`——包括自带 `base_url` 的平铺（providerless）模型，以及通过 `KIMI_MODEL_*` 环境变量注入的模型。它不做凭据校验，因此此后的对话请求仍可能以 `40111` / `40112` 失败。
 
-成功时 `data` 携带 `ready`（布尔值）、`providers_count`（已配置供应商数量）、`default_model`（全局默认模型别名，或 `null`）与 `managed_provider`（`null`，或 `{ name, status }`，其中 `status` 为 `authenticated` / `expired` / `revoked` / `unauthenticated` 之一）。
+成功时 `data` 携带 `models_ready`（布尔值）、`providers_count`（已配置供应商数量）与 `managed_provider`（`null`，或 `{ name, status }`，其中 `status` 为 `authenticated` / `expired` / `revoked` / `unauthenticated` 之一）。全局默认模型别名本身改从 `GET /api/v1/config` 的 `default_model` 读取，本端点不再携带。
 
 #### `POST /api/v1/oauth/login`
 
@@ -249,7 +308,9 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 
 #### `POST /api/v1/config`
 
-合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写。更新成功后，服务会广播全局 `event.config.changed` 事件，携带变更的字段名与完整的更新后配置；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
+合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
+
+每一次配置变更——经本端点成功更新、在进程外编辑 `config.toml`，或服务端内部写入（如 OAuth 登录刷新）——都会广播全局 `event.config.changed` 事件。短时间窗内的多次变更会合并为一个事件，其 `changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（与 `GET /api/v1/config` 响应同形状）。
 
 请求体是部分配置对象——上述响应域中除 `raw` 外的任意子集，均为可选：
 
@@ -1157,6 +1218,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `GET /api/v1/sessions/{session_id}/tasks` | 列出后台任务 |
 | `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | 读取任务（可选输出预览） |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | 取消任务 |
+| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | 将前台任务转入后台 |
 
 #### `GET /api/v1/sessions/{session_id}/tasks`
 
@@ -1191,7 +1253,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
 
-取消运行中的任务。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，`cancel` 是唯一的动作——单独的任务 id 或未知动作返回 `40001`。
+取消运行中的任务。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，支持 `cancel` / `detach` 两个动作——单独的任务 id 或未知动作返回 `40001`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1204,6 +1266,21 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40401`：会话不存在
 - `40406`：没有该 id 的任务
 - `40904`：任务已结束；`data` 携带 `{ cancelled: false }`，`details.current_status` 为最终状态
+
+#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
+
+将运行中的前台任务转入后台而不终止它：等待该任务的工具调用会立即以后台任务结果返回，轮次继续推进，任务则在后台任务注册表下继续运行（输出持久化，完成时以任务通知投递）。已在后台或已结束的任务为幂等空操作。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，支持 `cancel` / `detach` 两个动作——单独的任务 id 或未知动作返回 `40001`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `task_id` | path | string | **必填。** 任务 id |
+
+成功时，`data` 为 `{ detached, status }`：本次调用确实将运行中的前台任务转入后台时 `detached` 为 `true`，幂等空操作时为 `false`；`status` 为调用后的任务状态。
+
+- `40001`：动作后缀缺失或未知
+- `40401`：会话不存在
+- `40406`：没有该 id 的任务
 
 ### 技能、工具与 MCP
 
@@ -2090,7 +2167,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `page_token` | 上一页返回的翻页令牌 |
 | `page` | 无状态的 1 起始页码；与 `page_token` 互斥（同传返回 `40001`） |
 
-响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
+响应每项固定包含 `workspace`、`meta`、`activity` 三组，`include=git` 时附加 `git` 组；`fields=id,archived` 时仅返回 `{ id, archived }`。`activity` 组还会带上 `model`：会话仍加载在当前进程时为其绑定的模型别名，冷会话（未加载）为 `null`。每页额外携带 `total`，即过滤后的集合大小。翻页令牌绑定首页查询条件（含投影），中途改条件返回 `40922`。`page` 模式是跳页用的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
 
 `view=by_workspace` 时，同一份过滤、排序后的集合会重新投影为按工作区分组的形态，概览页因此可以用一次请求替代「每个工作区各一轮询」：
 
@@ -2102,7 +2179,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
     "groups": [
       {
         "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle" } } ],
+        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
         "total": 42
       }
     ],
@@ -2278,7 +2355,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
-- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`。
+- **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
 - **会话事件**：只发给订阅了该会话的连接，受 `agent_filter` 过滤。主要事件族：
 
 | 事件族 | 主要事件 |
@@ -2318,5 +2395,5 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ## 下一步
 
-- [本地服务与 API](../guides/server.md) — 启动、鉴权与端到端调用流程
+- [在网页中使用](../guides/web.md) — 启动服务并在浏览器中使用 Kimi Code
 - [kimi 命令](./kimi-command.md#kimi-web) — `kimi web` 的全部命令行选项

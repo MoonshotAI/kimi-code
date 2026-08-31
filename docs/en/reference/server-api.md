@@ -1,6 +1,6 @@
 # Server API
 
-The local server started by `kimi web` exposes two programmatic surfaces: a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`) and a WebSocket event stream (`/api/v1/ws`). This page is the protocol reference for both. For how to start the server and its command-line options, see the [kimi command](./kimi-command.md#kimi-web) reference; for an end-to-end walkthrough, see [Local server and API](../guides/server.md).
+The local server started by `kimi web` exposes two programmatic surfaces: a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`) and a WebSocket event stream (`/api/v1/ws`). This page is the protocol reference for both. For how to start the server and its command-line options, see the [kimi command](./kimi-command.md#kimi-web) reference; for an end-to-end walkthrough, see [Drive a session over the API](#drive-a-session-over-the-api) below.
 
 This page is a curated, human-readable reference: it documents every endpoint's parameters, request bodies, and response shapes below. The precise machine-readable schema of every endpoint is owned by the server's live specification documents: `GET /openapi.json` (OpenAPI) and `GET /asyncapi.json` (AsyncAPI), both generated from the same validation schemas the server enforces at runtime. Both require authentication; when this page and the live spec ever disagree, the live spec wins.
 
@@ -22,7 +22,7 @@ All `/api/*` paths (including `/openapi.json` and `/asyncapi.json`) require the 
 - `GET /api/v1/healthz` (liveness probe)
 - Static web assets (non-`/api/` paths)
 
-How to carry it: REST uses the `Authorization: Bearer <token>` header; the WebSocket upgrade accepts the same header or the subprotocol `kimi-code.bearer.<token>`. Token generation and rotation are covered in [Local server and API: Authentication](../guides/server.md#authentication).
+How to carry it: REST uses the `Authorization: Bearer <token>` header; the WebSocket upgrade accepts the same header or the subprotocol `kimi-code.bearer.<token>`. Token generation and rotation are covered in [Using Kimi Code in the browser: Getting started](../guides/web.md#getting-started).
 
 Failed authentication returns HTTP 401 with envelope code `40101`. On non-loopback binds, a source that fails authentication 10 times within 60 seconds is banned for 60 seconds, during which every request gets HTTP 429 (code `42901`).
 
@@ -79,6 +79,65 @@ List endpoints come in two styles:
 - **Cursor style**: `before_id` / `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. Used by the session list, message list, transcript, and others.
 - **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `POST /api/v1/search` and `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token: v2 returns `40922`, search returns `40001`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode as an alternative.
 
+## Drive a session over the API
+
+The minimal flow with curl: check the server → create a session → subscribe to events → submit a prompt → read history back. The examples assume the server runs at the default address and the token is stored in the shell variable `TOKEN`.
+
+1. Check server status:
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:58627/api/v1/meta
+```
+
+Every JSON response is wrapped in a uniform envelope — `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. The business outcome lives in `code` (`0` means success); the HTTP status only reports transport-level results.
+
+2. Create a session; `metadata.cwd` sets the working directory:
+
+```sh
+curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"cwd": "/path/to/project"}}'
+```
+
+The returned `data.id` (shaped like `session_...`) is the session id used by every subsequent request.
+
+3. Connect to the WebSocket and subscribe to session events. Any WebSocket client works; below is a dependency-free Node.js script (Node.js 22+ ships a built-in `WebSocket` client):
+
+```js
+// subscribe.mjs — usage: TOKEN=... node subscribe.mjs session_...
+const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
+  `kimi-code.bearer.${process.env.TOKEN}`,
+]);
+ws.onmessage = (e) => console.log(e.data);
+ws.onopen = () =>
+  ws.send(
+    JSON.stringify({
+      type: 'subscribe',
+      id: '1',
+      payload: { session_ids: [process.argv[2]] },
+    }),
+  );
+```
+
+4. Submit a prompt:
+
+```sh
+curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": [{"type": "text", "text": "Introduce this repository in one sentence"}]}'
+```
+
+The subscriber sees, in order: `turn.started` (turn begins) → `assistant.delta` (streaming text increments) → `tool.call.started` / `tool.result` when tool calls happen → `turn.ended` (turn finishes).
+
+5. Read history back over REST at any time:
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
+```
+
 ## REST endpoints
 
 Endpoints are grouped by resource below. A `:{action}` suffix in a path is the action convention — POST to `path:action` on a single resource for non-CRUD operations (such as `:fork` and `:archive` on a session).
@@ -128,7 +187,7 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/auth` | Auth readiness snapshot |
+| `GET /api/v1/auth` | Auth snapshot |
 | `POST /api/v1/oauth/login` | Start the OAuth device-code login flow |
 | `GET /api/v1/oauth/login` | Poll the login flow state |
 | `DELETE /api/v1/oauth/login` | Cancel a pending login flow |
@@ -139,9 +198,9 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 
 #### `GET /api/v1/auth`
 
-Auth readiness snapshot: whether the server has a usable model configuration, plus the managed provider's login state. `ready` is `true` when at least one provider is configured, a default model is set, and the managed provider (when present) is not revoked.
+Auth snapshot: whether the default model resolves to a usable provider configuration, plus the managed provider's login state. `models_ready` is `true` when the global `default_model` alias exists in the model table and resolves to a configured provider — including providerless flat models carrying their own `base_url` and models injected through `KIMI_MODEL_*` environment variables. It does not verify credentials, so a prompt can still fail afterwards with `40111` / `40112`.
 
-On success, `data` carries `ready` (boolean), `providers_count` (number of configured providers), `default_model` (the global default model alias, or `null`), and `managed_provider` (`null`, or `{ name, status }` with `status` one of `authenticated` / `expired` / `revoked` / `unauthenticated`).
+On success, `data` carries `models_ready` (boolean), `providers_count` (number of configured providers), and `managed_provider` (`null`, or `{ name, status }` with `status` one of `authenticated` / `expired` / `revoked` / `unauthenticated`). The global default model alias itself is read from `GET /api/v1/config` (`default_model`), not from this endpoint.
 
 #### `POST /api/v1/oauth/login`
 
@@ -249,7 +308,9 @@ On success, `data` is the config object; its fields mirror the top-level domains
 
 #### `POST /api/v1/config`
 
-Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`. After a successful update the server broadcasts the global `event.config.changed` event with the changed field names and the full updated config; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+
+Every config change — a successful update through this endpoint, an external edit of `config.toml`, or a server-side write such as an OAuth login refresh — is broadcast as the global `event.config.changed` event. Changes inside a short window are merged into one event carrying the affected domain names in `changedFields` (camelCase config domains, for example `defaultModel`) and the full current config projection in `config` (same shape as the `GET /api/v1/config` response).
 
 The body is a partial config object — any subset of the response domains above except `raw`, all optional:
 
@@ -1157,6 +1218,7 @@ Background tasks are the session's asynchronous units — background shells, sub
 | `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
 | `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
+| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
 
 #### `GET /api/v1/sessions/{session_id}/tasks`
 
@@ -1191,7 +1253,7 @@ On success, `data` is the task object documented under `GET /api/v1/sessions/{se
 
 #### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
 
-Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` as the only action — a bare task id or an unknown action fails `40001`.
+Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1204,6 +1266,21 @@ On success, `data` is `{ cancelled: true }`.
 - `40401`: session not found
 - `40406`: no task with that id
 - `40904`: the task already finished; `data` carries `{ cancelled: false }` and `details.current_status` the terminal status
+
+#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
+
+Moves a running foreground task to the background without stopping it: the tool call waiting on the task returns immediately with a background-task result, the turn continues, and the task keeps running under the background task registry (its output is persisted, and its completion arrives as a task notification). Already-background or finished tasks are an idempotent no-op. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `task_id` | path | string | **Required.** Task id |
+
+On success, `data` is `{ detached, status }`: `detached` is `true` when the call moved a running foreground task to the background and `false` for the idempotent no-op; `status` is the task's status after the call.
+
+- `40001`: missing or unknown action suffix
+- `40401`: session not found
+- `40406`: no task with that id
 
 ### Skills, tools, and MCP
 
@@ -2090,7 +2167,7 @@ A next-generation session query for list views — filtering, sorting, and field
 | `page_token` | Pagination token from the previous page |
 | `page` | Stateless 1-based page number; mutually exclusive with `page_token` (`40001` when combined) |
 
-Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
+Every response item carries the `workspace`, `meta`, and `activity` groups, plus `git` when `include=git` — or just `{ id, archived }` under `fields=id,archived`. The `activity` group also reports `model`: the session's bound model alias while it is live in this process, `null` for cold (not currently loaded) sessions. Every page additionally carries `total`, the size of the filtered set. The page token binds the first page's query conditions (including the projection); changing them mid-pagination returns `40922`. `page` mode is a stateless alternative for jumping to arbitrary pages: every request is an independent snapshot, no token is minted, and `next_page_token` is always `null`.
 
 With `view=by_workspace` the same filtered, sorted set is re-projected into per-workspace groups, so an overview client replaces one polling loop per workspace with a single request:
 
@@ -2102,7 +2179,7 @@ With `view=by_workspace` the same filtered, sorted set is re-projected into per-
     "groups": [
       {
         "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle" } } ],
+        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
         "total": 42
       }
     ],
@@ -2278,7 +2355,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
-- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`.
+- **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
 - **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
 
 | Family | Main events |
@@ -2318,5 +2395,5 @@ Error semantics differ as well: `GET /api/v1/files/{file_id}` answers lookup and
 
 ## Next steps
 
-- [Local server and API](../guides/server.md) — startup, authentication, and the end-to-end calling flow
+- [Using Kimi Code in the browser](../guides/web.md) — start the server and use Kimi Code in a browser
 - [kimi command](./kimi-command.md#kimi-web) — all `kimi web` command-line options

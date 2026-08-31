@@ -4308,7 +4308,7 @@ command = "vim"
     driver.handleUserInput('seq 30');
     await vi.waitFor(() => {
       const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
-      expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+      expect(transcript).toContain('… (20 more lines, ctrl+o to expand)');
     });
 
     let transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
@@ -4322,7 +4322,7 @@ command = "vim"
 
     driver.state.editor.onToggleToolExpand?.();
     transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
-    expect(transcript).toContain('... (20 more lines, ctrl+o to expand)');
+    expect(transcript).toContain('… (20 more lines, ctrl+o to expand)');
     expect(transcript).not.toContain('row-11');
   });
 
@@ -4844,7 +4844,7 @@ command = "vim"
       expect(session.startBtw).toHaveBeenCalledWith();
     });
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question…');
 
     driver.handleUserInput('What are you working on right now?');
 
@@ -4885,7 +4885,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(session.startBtw).toHaveBeenCalledWith();
     });
-    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question…');
 
     driver.handleUserInput('check /skill:review');
 
@@ -5179,7 +5179,7 @@ command = "vim"
     const lines = getMountedBtwPanel(driver).render(80).map(stripSgr);
     expect(lines).toHaveLength(3);
     expect(lines.join('\n')).toContain('Q: side question');
-    expect(lines.join('\n')).toContain('Waiting for answer...');
+    expect(lines.join('\n')).toContain('Waiting for answer…');
   });
 
   it('keeps /btw panel height stable when final output is shorter than thinking', async () => {
@@ -5594,6 +5594,89 @@ command = "vim"
 
     expect(session.startBtw).not.toHaveBeenCalled();
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
+  });
+
+  it('recomputes contextUsage when a status update carries contextTokens without it', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.contextTokens = 0;
+    driver.state.appState.maxContextTokens = 1_000_000;
+    driver.state.appState.contextUsage = 0.74;
+
+    // v2 token-counting events carry contextTokens only; the ratio must be
+    // recomputed or the footer and /usage bar keep showing the stale value.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        contextTokens: 180_000,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.contextTokens).toBe(180_000);
+    expect(driver.state.appState.contextUsage).toBeCloseTo(0.18);
+  });
+
+  it('recomputes contextUsage when a status update carries maxContextTokens without it', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.contextTokens = 180_000;
+    driver.state.appState.maxContextTokens = 256_000;
+    driver.state.appState.contextUsage = 180_000 / 256_000;
+
+    // v2 profile events carry maxContextTokens only (e.g. a model switch).
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        maxContextTokens: 1_000_000,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.maxContextTokens).toBe(1_000_000);
+    expect(driver.state.appState.contextUsage).toBeCloseTo(0.18);
+  });
+
+  it('keeps an explicit contextUsage from status updates instead of recomputing', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.contextTokens = 100;
+    driver.state.appState.maxContextTokens = 1_000_000;
+    driver.state.appState.contextUsage = 0;
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        contextTokens: 180_000,
+        maxContextTokens: 1_000_000,
+        contextUsage: 0.42,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.contextUsage).toBe(0.42);
+  });
+
+  it('zeroes contextUsage when a recomputation has no known context window', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.contextTokens = 180_000;
+    driver.state.appState.maxContextTokens = 0;
+    driver.state.appState.contextUsage = 0.74;
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        contextTokens: 190_000,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.contextUsage).toBe(0);
   });
 
   it('applies the effective thinking effort from status updates', async () => {
@@ -6069,7 +6152,7 @@ command = "vim"
 
     transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('001 [');
-    expect(transcript).toContain('Queued...');
+    expect(transcript).toContain('Queued…');
     expect(transcript).not.toContain('Provider rate limit');
     expect(transcript).not.toContain('Failed');
 
@@ -6108,7 +6191,7 @@ command = "vim"
     expect(transcript).toContain('001 [');
     expect(transcript).toContain('Reviewing src/a.ts');
     expect(transcript).not.toContain('Completed');
-    expect(transcript).toContain('002 Queued...');
+    expect(transcript).toContain('002 Queued…');
     expect(transcript).not.toContain('002 [');
 
     driver.sessionEventHandler.handleEvent(
@@ -6430,7 +6513,7 @@ command = "vim"
     const renderSwarm = (): string =>
       stripSgr(swarmProgress.render(transcriptWidth).join('\n'));
 
-    expect(renderSwarm()).toContain('001 Queued...');
+    expect(renderSwarm()).toContain('001 Queued…');
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -6456,7 +6539,7 @@ command = "vim"
       .reduce((sum, child) => sum + child.render(transcriptWidth).length, 0);
     expect(rowsAfterSwarmInTranscript).toBeGreaterThan(0);
 
-    expect(renderSwarm()).toContain('001 Queued...');
+    expect(renderSwarm()).toContain('001 Queued…');
     const transcript = stripSgr(
       driver.state.transcriptContainer.render(terminalColumns).join('\n'),
     );
@@ -6529,7 +6612,7 @@ command = "vim"
 
     let transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Agent Swarm');
-    expect(transcript).toContain('Orchestrating...');
+    expect(transcript).toContain('Orchestrating…');
     expect(transcript).not.toContain('01');
 
     driver.sessionEventHandler.handleEvent(
@@ -6566,7 +6649,7 @@ command = "vim"
     );
 
     transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('001 Queued...');
+    expect(transcript).toContain('001 Queued…');
     expect(transcript).not.toContain('001 [');
     expect(transcript).toContain('002 src/b');
 
@@ -6588,8 +6671,8 @@ command = "vim"
     );
 
     transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('001 Queued...');
-    expect(transcript).toContain('002 Queued...');
+    expect(transcript).toContain('001 Queued…');
+    expect(transcript).toContain('002 Queued…');
     expect(transcript).not.toContain('001 [');
     expect(transcript).not.toContain('002 [');
   });

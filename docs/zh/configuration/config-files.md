@@ -196,7 +196,9 @@ subagent 默认继承 main agent 正在运行的模型。`[secondary_model]` 节
 
 ### subagent 模型池
 
-该功能目前是实验功能，默认关闭。通过 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1` 启用，或使用 master `KIMI_CODE_EXPERIMENTAL_FLAG=1`，在包括交互式 TUI 在内的所有启动方式下生效。实验功能关闭时模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
+配置后在包括交互式 TUI 在内的所有启动方式下生效。
+
+模型池默认启用，在包括交互式 TUI 在内的所有启动方式下生效。如需禁用，设置 `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0`（或在 `config.toml` 的 `[experimental]` 下配置 `secondary-model = false`）；禁用期间模型池配置不生效：subagent 继承调用方模型，会话启动也会跳过池校验。
 
 最小配置只有一行——单独写下的 `default_model` 就是只含一个条目的模型池：
 
@@ -219,6 +221,8 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 - `force`：必须搭配 `default_model`，且不能与 `models` 表同用——表的意义在于提供选择，而 force 取消了选择。
 - `default_effort` 是节级设置：无论派生绑定到池中哪个条目（或 force 固定的模型）都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
 - `primary` 是保留字（含义见下文），不能作为池中 key。
+
+池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 
 在交互式 TUI 中，也可以用 [`/secondary-model`](../reference/slash-commands.md) 命令（别名 `/subagent-model`）打开模型选择器：选择后写入 `default_model`（已有 models 表而所选别名不在其中时，会一并补一条空描述条目），之后派生的 subagent 立即按新默认值绑定，无需重启会话。
 

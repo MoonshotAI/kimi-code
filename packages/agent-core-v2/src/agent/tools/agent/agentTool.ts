@@ -57,6 +57,7 @@ import {
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
+  type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
@@ -276,6 +277,7 @@ export class SubagentTool implements ISubagentTool {
     let agentId: string;
     let profileName: string;
     let displayModel: string | undefined;
+    let displayModelSource: SubagentModelSource | undefined;
     let promptText = args.prompt;
     if (isResume) {
       const target = this.agentLifecycle.handleOf(resumeAgentId);
@@ -305,6 +307,7 @@ export class SubagentTool implements ISubagentTool {
       agentId = spawned.agentId;
       profileName = spawned.profileName;
       displayModel = spawned.model;
+      displayModelSource = spawned.modelSource;
       promptText = spawned.promptText;
     }
 
@@ -329,6 +332,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
+      modelSource: displayModelSource,
       thinkingEffort: this.agentLifecycle.handleOf(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
@@ -458,6 +462,7 @@ export class SubagentTool implements ISubagentTool {
           runInBackground,
           fork: args.fork === true,
           model: handle.model,
+          modelSource: handle.modelSource,
           taskId,
         });
         void requester.accessor
@@ -467,14 +472,14 @@ export class SubagentTool implements ISubagentTool {
 
       if (runInBackground) {
         return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground),
+          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false),
         };
       }
 
       const release = await this.tasks.waitForForegroundRelease(taskId);
       if (release === 'detached') {
         return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground),
+          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
         };
       }
       return await this.formatForegroundResult(taskId, handle, timeoutMs);
@@ -560,7 +565,11 @@ function formatBackgroundAgentResult(
   handle: SubagentHandle,
   description: string,
   allowBackground: boolean,
+  detachedByUser: boolean,
 ): string {
+  const nextStep = allowBackground
+    ? `next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)`
+    : 'next_step: The completion arrives automatically in a later turn.';
   return [
     `task_id: ${taskId}`,
     'status: running',
@@ -570,9 +579,7 @@ function formatBackgroundAgentResult(
     '',
     `description: ${description}`,
     '',
-    allowBackground
-      ? `next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)`
-      : 'next_step: The completion arrives automatically in a later turn.',
+    detachedByUser ? `note: The user moved this subagent to the background.\n${nextStep}` : nextStep,
     `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
   ].join('\n');
 }

@@ -102,6 +102,25 @@ export interface ConfigWarningEvent {
   readonly warnings: readonly ConfigWarningItem[];
 }
 
+export interface ModelCatalogRefreshChange {
+  readonly provider_id: string;
+  readonly provider_name: string;
+  readonly added: number;
+  readonly removed: number;
+}
+
+export interface ModelCatalogRefreshFailure {
+  readonly provider: string;
+  readonly reason: string;
+}
+
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ModelCatalogRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ModelCatalogRefreshFailure[];
+}
+
 export interface PluginChangedEvent {
   readonly type: 'event.plugin.changed';
 }
@@ -206,6 +225,7 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
+  | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent
   | DiUnitChangedEvent

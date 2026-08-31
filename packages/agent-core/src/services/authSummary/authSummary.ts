@@ -9,11 +9,12 @@
  *     classes below; daemon route layers map them to envelope codes
  *     `40110 / 40111 / 40112 / 40113`.
  *
- * Why centralized: the same "is there a usable provider + model + token?"
- * computation is needed by both the read probe and every write-side entry that
- * could surface 50001 "internal" today. Co-locating it keeps the
- * logic in one place + makes it cheap to add new gated entries (PATCH session
- * model, etc.).
+ * Orthogonal signals: `get()` reports config-side readiness
+ * (`models_ready` — the configured default model resolves) plus the managed
+ * credential status (`managed_provider`), while `ensureReady()` is the
+ * write-side credential gate. Co-locating them keeps the config/model
+ * resolution logic in one place + makes it cheap to add new gated entries
+ * (PATCH session model, etc.).
  *
  * Status mapping note: we only return `'authenticated'` (token cached) or
  * `'unauthenticated'` (no token). The `'expired' / 'revoked'` states require
@@ -34,8 +35,12 @@ export interface IAuthSummaryService {
   readonly _serviceBrand: undefined;
 
   /**
-   * Compute the current readiness snapshot. Cheap (one config read + one
-   * cached-token lookup); safe to call on every `GET /v1/auth`.
+   * Compute the current auth snapshot: `models_ready` (config-side — the
+   * default model resolves, no credential check) and `managed_provider`
+   * (managed OAuth login status from the cached token). The two are
+   * orthogonal: after logout, third-party defaults keep `models_ready: true`.
+   * Cheap (one config read + one cached-token lookup); safe to call on every
+   * `GET /v1/auth`.
    */
   get(): Promise<AuthSummary>;
 

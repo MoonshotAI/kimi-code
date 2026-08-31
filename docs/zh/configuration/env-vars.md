@@ -137,7 +137,7 @@ kimi
 | 环境变量 | 用途 | 合法值 |
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | 关闭匿名遥测上报 | `1`、`true`、`yes`、`y`（不区分大小写） |
-| `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码，与 bearer token 同时有效；把服务绑定到非本机地址时建议设置，见[本地服务与 API](../guides/server.md#鉴权) | 任意非空字符串；未设置时仅 token 有效 |
+| `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码，与 bearer token 同时有效；把服务绑定到非本机地址时建议设置，见 [在网页中使用：安全注意](../guides/web.md#安全注意) | 任意非空字符串；未设置时仅 token 有效 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务数上限，优先级高于 `config.toml` 的 `[background] max_running_tasks`（不设置表示无上限） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_MAX_EDGE_PX` | 图片压缩的最长边上限（像素），优先级高于 `config.toml` 的 `[image] max_edge_px`（默认 `2000`） | 正整数；非法值被忽略 |
@@ -150,7 +150,7 @@ kimi
 | `KIMI_CODE_IDENTITY_SLUG` | 协议标识，用于发给第三方 provider 的 `User-Agent` 产品名和 MCP 客户端名，优先级高于 `[identity] slug`。未设置时由名称派生 | 任意非空字符串；会转小写并将连续非字母数字字符折叠为 `-` |
 | `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills，优先级高于 `config.toml` 的 `builtin_product_skills`（默认开启） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_TUI_FULL_SCREEN` | 启用实验性的 fullscreen alternate-screen 界面：可滚动的 transcript 视口、鼠标选择文本、可点击链接、Ctrl-Shift-F 搜索 | `1` 开启；其他值保持常规内联界面 |
-| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | 在包括交互式 TUI 在内的所有启动方式下启用实验性的[subagent 模型池](./config-files.md#subagent-模型池)；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL` | [subagent 模型池](./config-files.md#subagent-模型池) 默认启用，在包括交互式 TUI 在内的所有启动方式下生效；设为假值可禁用；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会强制启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent` 和 `AgentSwarm` 工具上启用实验性的 `fork` 参数，让模型可以以调用方 Agent 对话历史的快照而不是空上下文启动 subagent；master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 也会启用本功能 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_KEYRING` | 将 OAuth 凭据（供应商登录态和 MCP server 授权）存入操作系统钥匙串（macOS Keychain、Windows 凭据管理器或 Linux Secret Service），而不是 `credentials/` 下的明文文件；已有明文凭据会在首次读取时迁移进钥匙串。钥匙串不可用时，仍有明文副本的凭据可以继续使用；仅存在于钥匙串的凭据会暂时不可用，直到钥匙串恢复或重新登录。master `KIMI_CODE_EXPERIMENTAL_FLAG=1` 不会启用本功能 | `1` 开启；其他值保持明文文件存储 |
 | `KIMI_DISABLE_KEYRING` | 即使设置了 `KIMI_CODE_EXPERIMENTAL_KEYRING=1`，也禁用钥匙串访问；不会将仅存在于钥匙串的凭据复制回明文文件 | `1` 禁用钥匙串；其他值交由 `KIMI_CODE_EXPERIMENTAL_KEYRING` 决定 |

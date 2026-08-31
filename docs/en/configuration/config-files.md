@@ -196,7 +196,9 @@ Subagents inherit the model the main agent is running by default. The `[secondar
 
 ### Subagent model pool
 
-This feature is experimental and disabled by default. Enable it with `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=1`, or the master `KIMI_CODE_EXPERIMENTAL_FLAG=1`; it takes effect in every launch mode, including the interactive TUI. While the experiment is off, the pool keys stay inert: subagents inherit the caller's model and session startup skips the pool validation.
+Configured values take effect in every launch mode, including the interactive TUI.
+
+The pool is enabled by default in every launch mode, including the interactive TUI. To disable it, set `KIMI_CODE_EXPERIMENTAL_SECONDARY_MODEL=0` (or `secondary-model = false` under `[experimental]` in `config.toml`); while disabled, the pool keys stay inert: subagents inherit the caller's model and session startup skips the pool validation.
 
 The minimal configuration is one line — a lone `default_model` is a pool with a single entry:
 
@@ -219,6 +221,8 @@ Constraints between the fields:
 - `force`: requires `default_model` and cannot be combined with a `models` table — the table exists to offer a choice, and force removes it.
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
 - `primary` is a reserved alias (see below) and cannot be a pool key.
+
+Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias — fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately — no session restart needed.
 

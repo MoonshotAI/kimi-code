@@ -1,4 +1,5 @@
 import type { TokenUsage } from '#/kosong/contract/usage';
+import type { SubagentModelSource } from '#/session/subagent/configSection';
 
 import { isAbortError } from '#/_base/utils/abort';
 import {
@@ -17,6 +18,7 @@ export type SubagentHandle = {
   readonly profileName: string;
   readonly parentToolCallId?: string;
   readonly model?: string;
+  readonly modelSource?: SubagentModelSource;
   readonly thinkingEffort?: string;
   readonly completion: Promise<SubagentCompletion>;
 };

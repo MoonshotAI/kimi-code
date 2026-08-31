@@ -12,12 +12,25 @@ export class GitError extends Error {
   }
 }
 
-export async function git(cwd: string, args: readonly string[]): Promise<string> {
+export interface GitOptions {
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export async function git(
+  cwd: string,
+  args: readonly string[],
+  options: GitOptions = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       [...args],
-      { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      {
+        cwd,
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: 16 * 1024 * 1024,
+        env: options.env === undefined ? process.env : { ...process.env, ...options.env },
+      },
       (error, stdout, stderr) => {
         if (error !== null) {
           reject(new GitError(args, stderr || error.message));
@@ -59,6 +72,10 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
   return (
     (await tryGit(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])) !== null
   );
+}
+
+export async function isAncestor(cwd: string, ancestor: string, ref: string): Promise<boolean> {
+  return (await tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, ref])) !== null;
 }
 
 export async function worktreeAdd(

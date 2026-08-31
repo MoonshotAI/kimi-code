@@ -36,6 +36,8 @@ const MAX_HTTP_REQUEST_BYTES = 10 * 1024 * 1024;
 const HTTP_REQUEST_TIMEOUT_MS = 30_000;
 const REGISTER_TIMEOUT_MS = 10_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
+const RELAY_PING_INTERVAL_MS = 30_000;
+const RELAY_SILENCE_TIMEOUT_MS = 300_000;
 const BLOCKED_REQUEST_HEADERS = new Set([
   'authorization',
   'cookie',
@@ -95,6 +97,8 @@ export interface RemoteControlOptions {
   readonly relayOrigin?: string;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
   readonly onStatus?: (status: RemoteControlStatus) => void;
+  readonly pingIntervalMs?: number;
+  readonly silenceTimeoutMs?: number;
 }
 
 export interface RemoteControlHandle {
@@ -126,9 +130,7 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const status = (text: string): string => chalk.hex(darkColors.success)(text);
   const link = (url: string): string =>
-    supportsHyperlinks()
-      ? toTerminalHyperlink(accent(shortRemoteControlUrl(url)), url)
-      : accent(url);
+    supportsHyperlinks() ? toTerminalHyperlink(accent(url), url) : accent(url);
   const docs = toTerminalHyperlink('docs', 'https://kimi.com/code/docs/remote-control');
   const feedback = toTerminalHyperlink('feedback', 'https://kimi.com/code/feedback');
   return [
@@ -167,17 +169,6 @@ export function formatRemoteControlStatus(status: RemoteControlStatus): string {
     case 'device_disconnected':
       return `  ${value('→')} ${label('Remote device disconnected')}\n`;
   }
-}
-
-function shortRemoteControlUrl(url: string): string {
-  const parsed = new URL(url);
-  const parts = parsed.pathname.split('/');
-  const deviceIndex = parts.indexOf('devices');
-  const deviceId = deviceIndex >= 0 ? parts[deviceIndex + 1] : undefined;
-  if (deviceId !== undefined && deviceId.length > 12) {
-    parts[deviceIndex + 1] = `${deviceId.slice(0, 6)}…${deviceId.slice(-4)}`;
-  }
-  return `${parsed.host}${parts.join('/')}`;
 }
 
 export function buildRemoteControlUrl(
@@ -348,6 +339,8 @@ class RemoteControlClient {
   private pendingHttpBytes = 0;
   private reconnectAttempt = 0;
   private reconnectImmediately = false;
+  private readonly pingIntervalMs: number;
+  private readonly silenceTimeoutMs: number;
   private stopped = false;
   private connected = false;
   private relayOnline = false;
@@ -369,6 +362,8 @@ class RemoteControlClient {
     this.refreshToken = options.refreshToken;
     this.stderr = options.stderr ?? process.stderr;
     this.onStatus = options.onStatus ?? (() => {});
+    this.pingIntervalMs = options.pingIntervalMs ?? RELAY_PING_INTERVAL_MS;
+    this.silenceTimeoutMs = options.silenceTimeoutMs ?? RELAY_SILENCE_TIMEOUT_MS;
   }
 
   async start(): Promise<void> {
@@ -403,12 +398,13 @@ class RemoteControlClient {
         await this.serveCycle();
       } catch (error) {
         if (error instanceof RegistrationError) {
-          if (!this.connected) this.rejectInitial(error);
-          else this.stderr.write(`${error.message}\n`);
-          this.stopped = true;
-          return;
-        }
-        if (!this.stopped && !this.reconnectImmediately) {
+          if (!this.connected) {
+            this.rejectInitial(error);
+            this.stopped = true;
+            return;
+          }
+          this.stderr.write(`${error.message}\n`);
+        } else if (!this.stopped && !this.reconnectImmediately) {
           this.stderr.write(`Remote Control disconnected: ${errorMessage(error)}\n`);
         }
       } finally {
@@ -434,6 +430,7 @@ class RemoteControlClient {
   private async serveCycle(): Promise<void> {
     const management = await this.connectRelay('/v1/remote/create');
     this.management = management;
+    this.watchSocket(management, 'management');
     management.send(
       JSON.stringify({
         type: 'register',
@@ -461,6 +458,7 @@ class RemoteControlClient {
       `/v1/remote/http?device_id=${encodeURIComponent(this.deviceId)}`,
     );
     this.http = http;
+    this.watchSocket(http, 'http');
     if (management.readyState !== WebSocket.OPEN) {
       throw new Error('management connection closed');
     }
@@ -483,6 +481,32 @@ class RemoteControlClient {
 
   private connectRelay(path: string): Promise<WebSocket> {
     return connectWebSocket(relayWebSocketUrl(this.relayOrigin, path), this.refreshToken);
+  }
+
+  private watchSocket(socket: WebSocket, label: string): void {
+    const pingTimer = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) socket.ping();
+    }, this.pingIntervalMs);
+    pingTimer.unref();
+    let silenceTimer: NodeJS.Timeout | undefined;
+    const armSilenceTimer = (): void => {
+      if (silenceTimer !== undefined) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        this.stderr.write(
+          `Remote Control ${label} connection silent for ${Math.round(this.silenceTimeoutMs / 1000)}s; reconnecting…\n`,
+        );
+        socket.terminate();
+      }, this.silenceTimeoutMs);
+      silenceTimer.unref();
+    };
+    armSilenceTimer();
+    socket.on('message', armSilenceTimer);
+    socket.on('ping', armSilenceTimer);
+    socket.on('pong', armSilenceTimer);
+    socket.once('close', () => {
+      clearInterval(pingTimer);
+      if (silenceTimer !== undefined) clearTimeout(silenceTimer);
+    });
   }
 
   private rejectInitial(error: Error): void {

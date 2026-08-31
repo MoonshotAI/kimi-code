@@ -19,6 +19,7 @@ import lockfile from 'proper-lockfile';
 
 import {
   DeviceCodeTimeoutError,
+  OAuthAccessDeniedError,
   OAuthError,
   OAuthStorageUnavailableError,
   OAuthUnauthorizedError,
@@ -439,7 +440,7 @@ export class OAuthManager {
           return result.token;
         }
         if (result.kind === 'denied') {
-          throw new OAuthError(
+          throw new OAuthAccessDeniedError(
             `Authorization denied${result.description ? `: ${result.description}` : ''}`,
           );
         }

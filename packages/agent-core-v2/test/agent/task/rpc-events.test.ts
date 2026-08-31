@@ -830,6 +830,7 @@ describe('AgentTaskService — notification delivery', () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-lost-'));
     let fixture: TaskServiceFixture | undefined;
     try {
+      const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
       const persistence = createAgentTaskPersistence(sessionDir);
       await persistence.writeTask(
         persistedAgent({
@@ -839,7 +840,10 @@ describe('AgentTaskService — notification delivery', () => {
           status: 'running',
         }),
       );
-      fixture = createAgentTaskService({ sessionDir });
+      fixture = createAgentTaskService({
+        sessionDir,
+        hooks: { fireAndForgetTrigger },
+      });
       const { agent, manager } = fixture;
 
       await manager.loadFromDisk();
@@ -850,15 +854,146 @@ describe('AgentTaskService — notification delivery', () => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
       const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
-        kind: 'task',
-        taskId: 'agent-run00000',
-        status: 'lost',
-        notificationId: 'task:agent-run00000:lost',
+      expect(message.origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
       });
-      expect(message.content[0]!.text).toContain(
-        'Background agent lost',
+      expect(message.content[0]!.text).toContain('<system-reminder>');
+      expect(message.content[0]!.text).toContain('agent-run00000');
+      await vi.waitFor(() => {
+        expect(fireAndForgetTrigger).toHaveBeenCalledTimes(1);
+      });
+      expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
+        matcherValue: 'task.lost',
+        inputData: expect.objectContaining({
+          sink: 'context',
+          notificationType: 'task.lost',
+          title: 'Background agent lost',
+          body: expect.stringContaining('interrupted task lost.'),
+          severity: 'warning',
+          sourceKind: 'background_task',
+          sourceId: 'agent-run00000',
+        }),
+      }));
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not repeat a restored lost-task reminder when its marker is missing', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reminded-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-hist0000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
       );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.appendSystemReminder(
+        '- agent-hist0000 "interrupted task" (subagent)',
+        { kind: 'injection', variant: 'task_resume_termination' },
+      );
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      await vi.waitFor(async () => {
+        await expect(persistence.readTask('agent-hist0000')).resolves.toMatchObject({
+          resumeReminded: true,
+        });
+      });
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not replace a delivered legacy lost-task notification with a reminder', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-delivered-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-old00000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
+      );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.get(IAgentContextMemoryService).append({
+        role: 'user',
+        content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
+        toolCalls: [],
+        origin: {
+          kind: 'task',
+          taskId: 'agent-old00000',
+          status: 'lost',
+          notificationId: 'task:agent-old00000:lost',
+        },
+      });
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      expect(
+        ctx.contextData().history.filter(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'task_resume_termination',
+        ),
+      ).toEqual([]);
+      await vi.waitFor(async () => {
+        await expect(persistence.readTask('agent-old00000')).resolves.toMatchObject({
+          resumeReminded: true,
+        });
+      });
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not block restore when persisting a reminder marker fails', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-marker-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-mark0000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
+      );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, manager } = fixture;
+      await manager.loadFromDisk();
+      const internalPersistence = (
+        manager as unknown as {
+          readonly persistence: Pick<ReturnType<typeof createAgentTaskPersistence>, 'writeTask'>;
+        }
+      ).persistence;
+      vi.spyOn(internalPersistence, 'writeTask').mockRejectedValueOnce(
+        new Error('marker write failed'),
+      );
+
+      await expect(manager.reconcile()).resolves.toEqual([]);
+
+      expect(manager.getTask('agent-mark0000')).toMatchObject({
+        status: 'lost',
+        resumeReminded: true,
+      });
+      expect(firstAppendedContextMessage(agent).origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
+      });
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }

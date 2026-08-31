@@ -122,6 +122,7 @@ export function kimiCodePluginMarketplaceUrl(): string {
 // marketplace versions. Without it a stalled connection to github.com hangs
 // the version phase for undici's default header timeout (300s).
 export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
+export const INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS = 10_000;
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.
 export const QUOTA_CONSUMING_PLUGIN_IDS: readonly string[] = ['kimi-datasource'];

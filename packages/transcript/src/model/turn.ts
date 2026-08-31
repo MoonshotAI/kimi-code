@@ -50,6 +50,7 @@ export interface StepRetry {
 export interface TranscriptTurn {
   readonly kind: 'turn';
   readonly turnId: TurnId;
+  readonly triggerPromptId?: string;
   readonly ordinal: number;
   readonly state: TurnState;
   readonly origin: TurnOrigin;

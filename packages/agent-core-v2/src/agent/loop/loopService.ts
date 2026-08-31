@@ -465,7 +465,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private startTurn(job: TurnJob): void {
     const origin = job.seed.origin;
     void this.dispatcher.dispatch(
-      new TurnPrompt({ agentId: this.scopeContext.agentId, input: job.seed.input, origin }),
+      new TurnPrompt({
+        agentId: this.scopeContext.agentId,
+        input: job.seed.input,
+        origin,
+        promptId: job.seed.promptId,
+      }),
     );
     job.turn.state = 'running';
     this.activeTurnJob = job;
@@ -473,9 +478,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: job.turn.id,
+        promptId: job.seed.promptId,
         origin,
         prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
-        promptAttachments: turnPromptAttachments(job.seed.input),
+        promptAttachments: turnPromptAttachments(job.seed.input, origin),
       }),
     );
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
@@ -850,7 +856,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       try {
         response = await request.result;
       } catch (error) {
-        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts, turnSignal);
+        this.appendInterruptedStreamContent(turnId, currentStep, stepUuid, streamParts);
         throw error;
       }
       this.lastRequestTraceId = request.trace.traceId;
@@ -942,9 +948,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     currentStep: number,
     stepUuid: string,
     streamParts: StreamPartCollector,
-    turnSignal: AbortSignal,
   ): void {
-    if (!turnSignal.aborted) return;
     for (const part of streamParts.drainInterruptedContent()) {
       this.context.appendLoopEvent({
         type: 'content.part',

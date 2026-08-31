@@ -1298,7 +1298,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
   });
@@ -1314,7 +1314,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
   });
 
@@ -1330,7 +1330,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
   });
 
@@ -1349,7 +1349,7 @@ describe('GrepTool', () => {
     const result = await resultPromise;
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts:1:hit', 'Grep timed out after 20s; partial results returned'].join('\n'),
+      ['src/a.ts:1:hit', 'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.'].join('\n'),
     );
   });
 
@@ -1379,7 +1379,7 @@ describe('GrepTool', () => {
         'src/b.ts:2:hit',
         '--',
         'src/c.ts:3:hit',
-        'Grep timed out after 20s; partial results returned',
+        'Grep timed out after 20s; partial results returned. Narrow the path, glob, or pattern and retry for complete results.',
       ].join('\n'),
     );
   });
@@ -1400,9 +1400,28 @@ describe('GrepTool', () => {
     expect(toolContentString(result)).toBe(
       [
         displayedCompleteLine,
-        '[stdout truncated at 10485760 bytes; incomplete trailing line omitted]',
+        '[Output truncated at 10485760 bytes of rg output — the result set is incomplete. Narrow the pattern, path, or glob filters and re-run to recover complete results.]',
       ].join('\n'),
     );
+  });
+
+  it('marks pagination totals as partial when rg output hit the byte cap', async () => {
+    const line = (i: number) => `/workspace/src/f${String(i)}.ts:1:${'x'.repeat(11_000)}`;
+    const stdout = `${Array.from({ length: 1000 }, (_, i) => line(i)).join('\n')}\n`;
+    const tool = new GrepTool(
+      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)) }),
+      { workspaceDir: '/workspace', additionalDirs: [] },
+    );
+
+    const result = await executeTool(tool,
+      context({ pattern: 'hit', output_mode: 'content', head_limit: 2 }),
+    );
+
+    const output = toolContentString(result);
+    expect(output).toMatch(
+      /Results truncated to 2 lines \(total: \d+ of a partial result set\)\. Use offset=2 to see more\./,
+    );
+    expect(output).toContain('the result set is incomplete');
   });
 
   it('summarizes count output across all non-sensitive results', async () => {
@@ -1467,7 +1486,7 @@ describe('GrepTool', () => {
     );
   });
 
-  it('keeps the count summary ahead of the body so the char cap cannot drop it', async () => {
+  it('keeps the count summary as the first line so a later char cap cannot drop it', async () => {
     const fileCount = 5000;
     const stdout =
       Array.from({ length: fileCount }, (_, i) => `/workspace/f${String(i)}.txt:3`).join('\n') + '\n';
@@ -1482,9 +1501,8 @@ describe('GrepTool', () => {
 
     const output = toolContentString(result);
     const summary = `Found ${String(fileCount * 3)} total occurrences across ${String(fileCount)} files.`;
-    expect(output).toContain(summary);
-    expect(output).toContain('[...truncated]');
-    expect(output.indexOf(summary)).toBeLessThan(output.indexOf('[...truncated]'));
+    expect(output.startsWith(summary)).toBe(true);
+    expect(output).toContain(`f${String(fileCount - 1)}.txt:3`);
   });
 
   it('does not add a zero count summary when every count result is sensitive', async () => {
@@ -1741,7 +1759,7 @@ describe('GrepTool', () => {
 
   it('truncates extremely long rg output with a byte-level safety cap message', async () => {
     const longLine = '/workspace/big.txt:1:' + 'x'.repeat(100);
-    const stdout = `${Array.from({ length: 5000 }, () => longLine).join('\n')}\n`;
+    const stdout = `${Array.from({ length: 100_000 }, () => longLine).join('\n')}\n`;
     const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
 
@@ -1749,7 +1767,8 @@ describe('GrepTool', () => {
       context({ pattern: 'match', output_mode: 'content', head_limit: 0 }),
     );
 
-    expect(result.output).toContain('Output is truncated');
+    expect(result.output).toContain('the result set is incomplete');
+    expect(result.output).toContain('Narrow the pattern, path, or glob filters');
   });
 
   it('matches a pattern spanning a newline when multiline is set', async () => {

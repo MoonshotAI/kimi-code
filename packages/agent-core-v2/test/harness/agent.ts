@@ -226,7 +226,6 @@ import {
   type InteractionRuntime,
 } from '#/features/interaction/interactionAgentRuntime';
 import type { IHostProcess } from '#/os/interface/hostProcess';
-import { IHostClock } from '#/os/interface/hostClock';
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionQuestionService, type QuestionResult } from '#/session/question/question';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
@@ -259,24 +258,11 @@ interface TestModelProviderOptions {
   readonly kimiRequestHeaders?: Record<string, string>;
 }
 
-function disclosedTestEnvironment(clock: IHostClock, cwd: string): EnvironmentDisclosureSnapshot {
-  const timeZone = clock.timeZone();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(clock.now());
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((candidate) => candidate.type === type)?.value ?? '';
-  return {
-    cwd,
-    date: {
-      disclosed: true,
-      value: { localDate: `${part('year')}-${part('month')}-${part('day')}`, timeZone },
-    },
-  };
+function mutedDateChangeEnvironment(): EnvironmentDisclosureSnapshot {
+  return { cwd: DATE_CHANGE_MUTED_CWD };
 }
+
+const DATE_CHANGE_MUTED_CWD = '/__harness_date_change_muted__';
 
 interface KimiConfig {
   readonly providers: Record<string, ProviderConfigForConfig>;
@@ -976,6 +962,7 @@ function reassertServiceOverrides(
 
 class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
+  readonly onDidWrite: IAppendLogStore['onDidWrite'] = Event.None as IAppendLogStore['onDidWrite'];
   private readonly history: WireRecord[] = [];
   private readSeeded = false;
 
@@ -1629,10 +1616,7 @@ export class AgentTestContext {
       modelAlias: provider.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
       thinkingLevel: 'off',
-      environmentDisclosure: disclosedTestEnvironment(
-        this.get(IHostClock),
-        this.get(ISessionContext).cwd,
-      ),
+      environmentDisclosure: mutedDateChangeEnvironment(),
     });
 
     if (tools.length > 0) {
@@ -2865,29 +2849,41 @@ async function generateBackedResponse(
   options?: GenerateOptions,
 ): Promise<StreamedMessage> {
   const parts: StreamedMessagePart[] = [];
-  const result = await generateFn(
-    provider,
-    systemPrompt,
-    tools,
-    history,
-    {
-      onMessagePart: (part) => {
-        parts.push(structuredClone(part));
+  let result: Awaited<ReturnType<GenerateFn>>;
+  try {
+    result = await generateFn(
+      provider,
+      systemPrompt,
+      tools,
+      history,
+      {
+        onMessagePart: (part) => {
+          parts.push(structuredClone(part));
+        },
       },
-    },
-    {
-      signal: options?.signal,
-      auth: options?.auth,
-      cacheKey: options?.cacheKey,
-      sampling: options?.sampling,
-      thinking: options?.thinking,
-      maxCompletionTokens: options?.maxCompletionTokens,
-      usedContextTokens: options?.usedContextTokens,
-      maxContextTokens: options?.maxContextTokens,
-      responseFormat: options?.responseFormat,
-      onTraceId: options?.onTraceId,
-    },
-  );
+      {
+        signal: options?.signal,
+        auth: options?.auth,
+        cacheKey: options?.cacheKey,
+        sampling: options?.sampling,
+        thinking: options?.thinking,
+        maxCompletionTokens: options?.maxCompletionTokens,
+        usedContextTokens: options?.usedContextTokens,
+        maxContextTokens: options?.maxContextTokens,
+        responseFormat: options?.responseFormat,
+        onTraceId: options?.onTraceId,
+      },
+    );
+  } catch (error) {
+    if (parts.length === 0) throw error;
+    return createStreamedMessage(normalizeProviderStreamParts(parts), {
+      id: null,
+      usage: null,
+      finishReason: null,
+      rawFinishReason: null,
+      error: error instanceof Error ? error : new Error('generateBackedResponse failed'),
+    });
+  }
   return createStreamedMessage(
     parts.length > 0
       ? normalizeProviderStreamParts(parts)
@@ -2950,19 +2946,21 @@ function createStreamedMessage(
   parts: readonly StreamedMessagePart[],
   meta: Pick<
     Awaited<ReturnType<GenerateFn>>,
-    'id' | 'usage' | 'finishReason' | 'rawFinishReason' | 'traceId'
-  >,
+    'id' | 'usage' | 'finishReason' | 'rawFinishReason'
+  > &
+    Partial<Pick<Awaited<ReturnType<GenerateFn>>, 'traceId'>> & { error?: Error },
 ): StreamedMessage {
   return {
     id: meta.id,
     usage: meta.usage,
     finishReason: meta.finishReason ?? null,
     rawFinishReason: meta.rawFinishReason ?? null,
-    traceId: meta.traceId ?? null,
+    traceId: meta.traceId,
     async *[Symbol.asyncIterator]() {
       for (const part of parts) {
         yield structuredClone(part);
       }
+      if (meta.error !== undefined) throw meta.error;
     },
   };
 }
