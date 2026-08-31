@@ -1171,15 +1171,23 @@ export class Editor implements Component, Focusable {
 			const start = match.index;
 			const end = start + match[0].length;
 			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
-			const stored = this.pastes.get(Number(match[1]));
-			// The path-spacing rule may have prepended a synthetic space to either
-			// side (first paste after a word character vs. re-paste after "]"), so
-			// the identity check ignores at most one leading space.
-			if (stored === undefined || stored.replace(/^ /, "") !== filteredText.replace(/^ /, ""))
-				return false;
+			if (!this.isSamePasteContent(this.pastes.get(Number(match[1])), filteredText)) return false;
 			return this.expandPasteMarkerAtCursor();
 		}
 		return false;
+	}
+
+	/**
+	 * Identity for the second-paste gesture: exact match, or one side carries a
+	 * single leading space the path-spacing rule could have synthesized — the
+	 * unspaced side must start with a path character, so pastes that genuinely
+	 * differ by a leading space never count as identical.
+	 */
+	private isSamePasteContent(stored: string | undefined, pasted: string): boolean {
+		if (stored === undefined) return false;
+		if (stored === pasted) return true;
+		const [spaced, plain] = stored.startsWith(" ") ? [stored, pasted] : [pasted, stored];
+		return spaced === ` ${plain}` && /^[/~.]/.test(plain);
 	}
 
 	getLines(): string[] {

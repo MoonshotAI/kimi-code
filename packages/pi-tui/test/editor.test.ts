@@ -4146,6 +4146,20 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), `word ${paste}`);
 		});
 
+		it("does not expand when the re-paste differs by a genuine leading space", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const paste = bigPaste("alpha");
+			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
+			assert.match(editor.getText(), /\[paste #1/);
+
+			// A paste that genuinely differs by one leading space is new content,
+			// not the expansion gesture.
+			editor.handleInput(`\x1b[200~ ${paste}\x1b[201~`);
+			const text = editor.getText();
+			assert.ok(text.includes("[paste #1"));
+			assert.ok(text.includes("[paste #2"));
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");
