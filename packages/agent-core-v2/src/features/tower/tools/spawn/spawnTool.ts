@@ -34,6 +34,7 @@ import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
+  isSubagentModelForced,
   resolveSubagentBinding,
   resolveSubagentThinking,
   wrapSubagentModelError,
@@ -162,13 +163,14 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         const binding =
           own.modelAlias === undefined
             ? undefined
-            : args.kind === 'reviewer'
-              ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
-              : resolveSubagentBinding(
-                  this.config,
-                  this.flags,
-                  { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-                );
+            : resolveSubagentBinding(
+                this.config,
+                this.flags,
+                { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+                args.kind === 'reviewer' && !isSubagentModelForced(this.config)
+                  ? 'primary'
+                  : undefined,
+              );
         let handle: SubagentHandle;
         try {
           handle = await this.launch(prompt, description, toolCallId, controller, binding);

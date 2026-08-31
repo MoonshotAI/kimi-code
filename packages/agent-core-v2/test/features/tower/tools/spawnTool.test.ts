@@ -402,7 +402,7 @@ describe('TowerSpawnTool', () => {
     });
   });
 
-  it('binds reviewers to the tower model when the secondary model is forced', async () => {
+  it('binds reviewers to the forced secondary model when it is configured', async () => {
     secondaryModel = { model: 'cheap/fast', force: true };
 
     const result = await execute({
@@ -412,9 +412,9 @@ describe('TowerSpawnTool', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: kimi-code');
+    expect(result.output).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
       labels: { parentAgentId: 'main' },
     });
   });
