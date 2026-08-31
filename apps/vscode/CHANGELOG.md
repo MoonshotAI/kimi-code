@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.3
+
+### Patch Changes
+
+- [#3098](https://github.com/MoonshotAI/kimi-code/pull/3098) [`75550c5`](https://github.com/MoonshotAI/kimi-code/commit/75550c5686cb867c0cb34bc515997d5e6305fc94) Thanks [@LCZcn96](https://github.com/LCZcn96)! - Restore live context-window usage updates after switching to the v2 engine.
+
+- [#3276](https://github.com/MoonshotAI/kimi-code/pull/3276) [`f34b2ec`](https://github.com/MoonshotAI/kimi-code/commit/f34b2ecfb01dc194aaa3f209a00772991caad3f3) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix streamed replies occasionally showing every character twice and tool calls appearing in duplicate.
+
+- Updated dependencies [[`75550c5`](https://github.com/MoonshotAI/kimi-code/commit/75550c5686cb867c0cb34bc515997d5e6305fc94), [`d723cc4`](https://github.com/MoonshotAI/kimi-code/commit/d723cc47ee43e5ca3c3c4ec2473f205d44acede2)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.2
+
+## 0.7.2
+
+### Patch Changes
+
+- [#3079](https://github.com/MoonshotAI/kimi-code/pull/3079) [`35befdc`](https://github.com/MoonshotAI/kimi-code/commit/35befdcef2be344d931ea20063cb64113350dc4b) Thanks [@gaoyuan1223m](https://github.com/gaoyuan1223m)! - Fix multi-select questions jumping to the next question after only one answer is selected.
+
+- Updated dependencies [[`3d77620`](https://github.com/MoonshotAI/kimi-code/commit/3d7762003a4a35cbeb8571d471c6898a006152e6)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.1
+
+## 0.7.1
+
+### Patch Changes
+
+- [#3026](https://github.com/MoonshotAI/kimi-code/pull/3026) [`13857f3`](https://github.com/MoonshotAI/kimi-code/commit/13857f383200881aa77dc972a8963ba421eeb2b6) Thanks [@bj456736](https://github.com/bj456736)! - Show plugin- and file-declared MCP servers as read-only entries in the MCP servers panel.
+
+- Updated dependencies [[`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0), [`61591bc`](https://github.com/MoonshotAI/kimi-code/commit/61591bce09f4467aa1664cb8ecb6aa6904b7accd), [`d833a1a`](https://github.com/MoonshotAI/kimi-code/commit/d833a1a893c4d69d96af542f40557442992085e0), [`13857f3`](https://github.com/MoonshotAI/kimi-code/commit/13857f383200881aa77dc972a8963ba421eeb2b6)]:
+  - @moonshot-ai/kimi-code-sdk@0.19.0
+
+## 0.7.0
+
+### Minor Changes
+
+- [#2916](https://github.com/MoonshotAI/kimi-code/pull/2916) [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797) Thanks [@Grapedge](https://github.com/Grapedge)! - Run the extension on the v2 agent engine by default; the interface, sessions, and workflows are unchanged. To roll back, enable the `kimi.useAgentCoreV1` setting and reload the window.
+
+### Patch Changes
+
+- Updated dependencies [[`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629), [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797), [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797), [`7475c2e`](https://github.com/MoonshotAI/kimi-code/commit/7475c2e2e3dd86ac0b8a8d51d4f1d233ed7df797)]:
+  - @moonshot-ai/kimi-code-sdk@0.18.0
+
+## 0.6.9
+
+### Patch Changes
+
+- Updated dependencies [[`c9bfe8b`](https://github.com/MoonshotAI/kimi-code/commit/c9bfe8b2c8314ba4ef8806fb3b92ac654c1d1860), [`c212ae9`](https://github.com/MoonshotAI/kimi-code/commit/c212ae9715371c0d7939c15e664acbe0d7cf7fc3)]:
+  - @moonshot-ai/kimi-code-sdk@0.17.0
+
 ## 0.6.8
 
 ### Patch Changes

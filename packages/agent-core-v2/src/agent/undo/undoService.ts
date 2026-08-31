@@ -1,12 +1,4 @@
-/**
- * `undo` domain — `IAgentConversationUndoService` implementation.
- *
- * Owns idle conversation undo coordination and restored observable state.
- * Coordinates `contextMemory`, undo participants, `fullCompaction`,
- * `loop`, `prompt`, Agent and Session identity, `sessionMetadata`, `event`,
- * `eventBus`, `telemetry`, and `wire`. Bound at Agent scope.
- */
-
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
@@ -20,31 +12,41 @@ import {
   precheckUndo,
 } from '#/agent/contextMemory/contextOps';
 import {
-  CHECKPOINTED_MODELS,
   isUndoAnchor,
   isValidUndoCount,
-  type Checkpointed,
 } from '#/agent/contextMemory/conversationTime';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { turnKey } from '#/agent/loop/turnOps';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventService } from '#/app/event/event';
-import { IEventBus } from '#/app/event/eventBus';
+import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { IWireService } from '#/wire/wire';
+import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { keepsUndoCheckpoints } from '#/state/state';
 
 import { IAgentConversationUndoService, type UndoAvailability } from './undo';
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'context.undone': { turns: number };
-  }
+export class ContextUndone extends AgentEvent2<{
+  readonly agentId: string;
+  readonly turns: number;
+  readonly fromTurnId?: number;
+}> {
+  static override readonly type = 'context.undone';
+  static override readonly observable = true;
+}
+export interface ContextUndone {
+  readonly agentId: string;
+  readonly turns: number;
+  readonly fromTurnId?: number;
 }
 
 export class AgentConversationUndoService
@@ -66,9 +68,9 @@ export class AgentConversationUndoService
     @ISessionContext private readonly session: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
-    @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentStateService private readonly agentState: IAgentStateService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -110,27 +112,46 @@ export class AgentConversationUndoService
         throw this.busyError('compaction');
       }
       this.assertUndoAvailable(turns);
+      const fromTurnId = this.removedFromTurnId(turns);
       this.context.undo(turns);
       await this.flushAfterCommit('context cut');
       await this.reconcileParticipants();
       await this.flushAfterCommit('state reconciliation');
       await this.reconcileLastPromptSafely();
       this.telemetry.track2('conversation_undo', { count: turns });
-      this.eventBus.publish({ type: 'context.undone', turns });
+      await this.dispatcher.dispatch(
+        new ContextUndone({ agentId: this.agentCtx.agentId, turns, fromTurnId }),
+      );
       return turns;
     } finally {
       quiescence?.dispose();
     }
   }
 
+  private removedFromTurnId(turns: number): number | undefined {
+    if (!this.agentState.has(turnKey)) return undefined;
+    const anchorTurnIds = this.agentState.get(turnKey).anchorTurnIds;
+    if (anchorTurnIds.length < turns) return undefined;
+    const totalAnchors = computeUndoCut(this.context.get(), Number.MAX_SAFE_INTEGER).removedCount;
+    if (totalAnchors !== anchorTurnIds.length) return undefined;
+    return anchorTurnIds[anchorTurnIds.length - turns];
+  }
+
   private checkpointDepth(): { depth: number; model: string } {
     let depth = Number.POSITIVE_INFINITY;
     let model = '';
-    for (const def of CHECKPOINTED_MODELS) {
-      const state = this.wire.getModel(def) as Checkpointed<unknown>;
-      if (state.checkpoints.length < depth) {
-        depth = state.checkpoints.length;
-        model = def.name;
+    for (const key of this.agentState.replayableKeys()) {
+      if (!keepsUndoCheckpoints(key)) continue;
+      const stateDepth = this.dispatcher.checkpointDepth(key);
+      if (stateDepth < depth) {
+        depth = stateDepth;
+        model = key.name;
+      }
+    }
+    for (const entry of this.dispatcher.modelCheckpointDepths()) {
+      if (entry.depth < depth) {
+        depth = entry.depth;
+        model = entry.id;
       }
     }
     return { depth, model };
@@ -205,7 +226,7 @@ export class AgentConversationUndoService
 
   private async flushAfterCommit(stage: string): Promise<void> {
     try {
-      await this.wire.flush();
+      await this.dispatcher.flush();
     } catch (error) {
       this.log.error('undo wire flush failed after in-memory commit', { stage, error });
       throw error;
@@ -228,14 +249,15 @@ export class AgentConversationUndoService
       }
     }
     await this.metadata.update({ lastPrompt });
-    this.eventService.publish({
-      type: 'session.meta.updated',
-      payload: {
-        agentId: MAIN_AGENT_ID,
-        sessionId: this.session.sessionId,
-        patch: { lastPrompt },
-      },
-    });
+    this.eventService.publish(
+      new SessionMetaUpdated({
+        payload: {
+          agentId: MAIN_AGENT_ID,
+          sessionId: this.session.sessionId,
+          patch: { lastPrompt },
+        },
+      }),
+    );
   }
 }
 

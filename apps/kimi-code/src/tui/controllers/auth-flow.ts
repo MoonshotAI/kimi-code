@@ -40,7 +40,6 @@ export interface AuthFlowHost {
   resetSessionRuntime(): void;
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
-  closeSession(reason: string): Promise<void>;
   appendStartupNotice(extra: string): void;
   hydrateLazyConfigDefaults(): Promise<void>;
   readonly sessionEventHandler: SessionEventHandler;
@@ -134,18 +133,6 @@ export class AuthFlowController {
     void host.refreshPluginCommands(host.session);
   }
 
-  async clearActiveSessionAfterLogout(): Promise<void> {
-    await this.host.closeSession('logged out');
-    this.host.resetSessionRuntime();
-    this.host.setAppState({
-      sessionId: '',
-      model: '',
-      sessionTitle: null,
-    });
-    await this.host.refreshSkillCommands();
-    await this.host.refreshPluginCommands();
-  }
-
   async refreshConfigAfterLogin(): Promise<void> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
@@ -183,9 +170,17 @@ export class AuthFlowController {
 
   async refreshConfigAfterLogout(): Promise<void> {
     const config = await this.host.harness.getConfig({ reload: true });
+    const availableModels = config.models ?? {};
+    const availableProviders = config.providers ?? {};
+
+    if (this.host.session !== undefined) {
+      this.host.setAppState({ availableModels, availableProviders });
+      return;
+    }
+
     this.host.setAppState({
-      availableModels: config.models ?? {},
-      availableProviders: config.providers ?? {},
+      availableModels,
+      availableProviders,
       model: '',
       thinkingEffort: 'off',
       maxContextTokens: 0,

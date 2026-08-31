@@ -1,13 +1,3 @@
-/**
- * `task` domain — renders task terminal notification XML for context injection.
- *
- * Produces the model-visible `<notification ...>` block inserted through
- * `contextMemory` for detached task settlement. The opening tag name is
- * load-bearing for notification consumers, and `agent_id` stays separate from
- * `source_id` because subagent resume ids and task ids live in different
- * namespaces.
- */
-
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 
 export function renderNotificationXml(data: Record<string, unknown>): string {

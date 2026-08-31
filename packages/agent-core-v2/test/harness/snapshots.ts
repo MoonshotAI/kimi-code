@@ -56,12 +56,14 @@ export function eventSnapshot(
 interface SnapshotLabels {
   readonly uuidLabels: Map<string, string>;
   readonly msgLabels: Map<string, string>;
+  readonly interactionLabels: Map<string, string>;
 }
 
 export function createEventSnapshotter() {
   const labels: SnapshotLabels = {
     uuidLabels: new Map<string, string>(),
     msgLabels: new Map<string, string>(),
+    interactionLabels: new Map<string, string>(),
   };
 
   return (events: readonly EventSnapshotEntry[]): EventSnapshot => eventSnapshot(events, labels);
@@ -232,6 +234,9 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
+  if (isDateReminder(text)) {
+    return '<date-reminder>';
+  }
   if (text.includes('first-person handoff note')) {
     return '<compaction-instruction>';
   }
@@ -261,6 +266,11 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
     if (isAutoModeEnterReminder(value)) return '<auto-mode-enter-reminder>';
     if (isAutoModeExitReminder(value)) return '<auto-mode-exit-reminder>';
     if (isPlanModeReminder(value)) return '<plan-mode-reminder>';
+    if (isDateReminder(value)) return '<date-reminder>';
+    const interactionKind = interactionIdKind(value);
+    if (interactionKind !== undefined) {
+      return labelFor(value, labels.interactionLabels, interactionKind);
+    }
     if (isUuid(value)) return labelFor(value, labels.uuidLabels, 'uuid');
     if (isMessageId(value)) return labelFor(value, labels.msgLabels, 'msg');
     return value;
@@ -288,11 +298,13 @@ function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabel
   ) {
     return '<time>';
   }
-  if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt') && typeof value === 'string') return '<time>';
+  if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt' || key === 'createdAt') && typeof value === 'string') return '<time>';
   if (key === 'protocol_version' && value === WIRE_PROTOCOL_VERSION) {
     return '<protocol-version>';
   }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
+  if (key === 'localDate' && typeof value === 'string') return '<date>';
+  if (key === 'timeZone' && typeof value === 'string') return '<time-zone>';
   return normalizeValue(value, labels);
 }
 
@@ -314,6 +326,13 @@ function stripUndefined(value: unknown): unknown {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function interactionIdKind(value: string): string | undefined {
+  const match = /^(approval|question|user_tool)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.exec(
+    value,
+  );
+  return match?.[1];
 }
 
 function isMessageId(value: string): boolean {
@@ -354,4 +373,11 @@ function isAutoModeEnterReminder(value: string): boolean {
 
 function isAutoModeExitReminder(value: string): boolean {
   return value.includes('Auto permission mode is no longer active.');
+}
+
+function isDateReminder(value: string): boolean {
+  return (
+    value.includes('The current date is restated in a reminder whenever it changes') ||
+    value.includes('Rely on this reminder over any earlier date statement')
+  );
 }

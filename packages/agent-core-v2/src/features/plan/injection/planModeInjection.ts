@@ -1,18 +1,6 @@
-/**
- * `plan` domain — plan-mode context injection.
- *
- * Owns the `plan_mode` context-injection provider: while plan mode is active it
- * emits the full / sparse / re-entry reminders (deduped against recent history),
- * and on the first inject after deactivation it emits the exit reminder. It reads
- * the live plan state through `IAgentPlanService.status()` and the recent history
- * through `IAgentContextMemoryService`, so no derived-state closures are needed.
- * The plain-data state (`wasActive`) is registered into `agentState`
- * (`IAgentStateService`) and read/written through it.
- */
-
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/_base/state/stateRegistry';
-import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { defineState } from '#/state/state';
+import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -34,13 +22,13 @@ export const planWasActiveKey = defineState<boolean>('plan.wasActive', () => fal
 
 export class PlanModeInjection extends Service {
   constructor(
-    @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    injector: ReminderRuntime,
     @IAgentPlanService private readonly plan: IAgentPlanService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
-    this.states.register(planWasActiveKey);
+    this.states.contributeState(planWasActiveKey);
 
     this._register(
       injector.register(PLAN_MODE_INJECTION_VARIANT, async ({ lastInjectedAt: injectedAt }) => {

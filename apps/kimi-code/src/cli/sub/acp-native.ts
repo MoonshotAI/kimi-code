@@ -25,7 +25,7 @@ import { getVersion } from '#/cli/version';
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { getDataDir } from '#/utils/paths';
 
-import { runLoginFlow } from './login-flow';
+import { parseRegionFlag, runLoginFlow } from './login-flow';
 
 export function registerNativeAcpCommand(parent: Command): void {
   parent
@@ -36,9 +36,12 @@ export function registerNativeAcpCommand(parent: Command): void {
       'Run the device-code login flow then exit (entry point for ACP terminal-auth).',
       false,
     )
-    .action(async (opts: { login?: boolean }) => {
+    .option('--region <region>', 'Login region used together with --login: "mainland-cn" (kimi.com) or "global" (kimi.ai).')
+    .action(async (opts: { login?: boolean; region?: string }) => {
       if (opts.login === true) {
-        await runLoginFlow();
+        await runLoginFlow({
+          region: opts.region === undefined ? undefined : parseRegionFlag(opts.region),
+        });
         return;
       }
       // Forward `KIMI_CODE_HOME` (if set) into `authMethods[0].env` so the

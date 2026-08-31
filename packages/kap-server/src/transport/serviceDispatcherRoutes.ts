@@ -1,25 +1,3 @@
-/**
- * Shared Service-dispatcher route registration.
- *
- * Mounts the reflection dispatcher under `basePath`: the routes mirror the
- * scope tree; all share one handler. `:service` is a decorator id (channel
- * name) resolved against the scoped DI registry, then the Feature
- * contributed-service table (runtime-contributed Services); `:method` is
- * invoked by reflection. Reads use `GET`, writes use `POST`.
- *
- *   GET|POST {basePath}/:service/:method
- *   GET|POST {basePath}/workspace/:workspace_id/:service/:method
- *   GET|POST {basePath}/session/:session_id/:service/:method
- *   GET|POST {basePath}/session/:session_id/agent/:agent_id/:service/:method
- *
- * Body (POST) or `?arg=<json>` (GET) is the method's single argument. Responses
- * are always the project envelope (HTTP 200; business outcome in `code`). Body
- * size, connection timeout, and graceful close are Fastify's.
- *
- * The single consumer today is the dev-only `/api/v1/debug` surface
- * (`registerDebugRoutes.ts`).
- */
-
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
@@ -54,30 +32,20 @@ export interface RouteHost {
 }
 
 export interface ServiceDispatcherRouteOptions {
-  /** Per-call deadline in ms. Default 30s. */
   readonly callTimeoutMs?: number;
-  /** Channel name → identifier resolution. Default: the full scoped DI registry. */
   readonly lookup?: ChannelLookup;
-  /** Descriptor source for `GET {basePath}/channels`. Default: every scoped Service. */
   readonly describe?: () => readonly ChannelDescriptor[];
 }
 
-/**
- * Mount the reflection dispatcher under `basePath` (e.g. `/debug` inside the
- * prefixed `/api/v1` plugin): the three scope routes plus
- * `GET {basePath}/channels` for introspection. `channels` is a single segment,
- * so it cannot collide with `:service/:method`.
- */
 export function registerServiceDispatcherRoutes(
   app: RouteHost,
   core: Scope,
   basePath: string,
   opts: ServiceDispatcherRouteOptions = {},
 ): void {
-  const lookup = opts.lookup ?? resolveAnyScopedServiceId;
+  const lookup = opts.lookup ?? ((name) => resolveAnyScopedServiceId(core, name));
   const scopeRoutes: { path: string; scopeKind: ScopeKind }[] = [
     { path: `${basePath}/:service/:method`, scopeKind: 'core' },
-    { path: `${basePath}/workspace/:workspace_id/:service/:method`, scopeKind: 'workspace' },
     { path: `${basePath}/session/:session_id/:service/:method`, scopeKind: 'session' },
     {
       path: `${basePath}/session/:session_id/agent/:agent_id/:service/:method`,
@@ -90,8 +58,6 @@ export function registerServiceDispatcherRoutes(
     app.post(path, handler);
   }
 
-  // Introspection: the dynamic service browser (kimi-inspect) reads this once
-  // per connection.
   const describe = opts.describe ?? describeAllChannels;
   app.get(`${basePath}/channels`, async (req, reply) =>
     reply.send(okEnvelope(describe(), req.id)),
@@ -107,13 +73,8 @@ function makeHandler(
   return async (req, reply) => {
     const requestId = req.id;
 
-    // Auth is enforced upstream by the global bearer hook (see
-    // `middleware/auth.ts`); the handler runs only after a valid credential
-    // has been verified.
-
     const { service, method } = req.params as { service: string; method: string };
 
-    // Parse argument.
     let arg: unknown;
     try {
       arg = req.method.toUpperCase() === 'GET' ? parseArgFromQuery(req.query) : req.body;
@@ -123,7 +84,6 @@ function makeHandler(
       );
     }
 
-    // Dispatch + timeout + envelope.
     try {
       const result = await withTimeout(
         dispatch(
@@ -140,8 +100,6 @@ function makeHandler(
       return reply.send(okEnvelope(result, requestId));
     } catch (error) {
       const envelope = mapError(error, requestId);
-      // 50001 (including the 30s call timeout) is a server-side failure — log
-      // at error; mapped business codes (4xxxx) are expected client outcomes.
       const log = requestLog(req);
       if (envelope.code === ErrorCode.INTERNAL_ERROR) {
         log?.error({ err: error, service, method }, 'rpc dispatch failed');

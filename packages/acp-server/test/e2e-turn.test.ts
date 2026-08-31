@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';
@@ -44,12 +45,25 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     }
   });
 
+  function installTerminalClient(c: TestClient): void {
+    c.onRequest('terminal/create', () => ({ terminalId: 'term-1' }));
+    c.onRequest('terminal/output', () => ({
+      output: 'hello_from_bash\ndelta_stream\n',
+      truncated: false,
+      exitStatus: { exitCode: 0, signal: null },
+    }));
+    c.onRequest('terminal/wait_for_exit', () => ({ exitCode: 0, signal: null }));
+    c.onRequest('terminal/kill', () => ({}));
+    c.onRequest('terminal/release', () => ({}));
+  }
+
   async function boot(clientCapabilities: Record<string, unknown> = {}): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
     await writeFakeModelConfig(homeDir);
     scripted = createScriptedProvider();
     client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
+    if (clientCapabilities['terminal'] === true) installTerminalClient(client);
     return client;
   }
 
@@ -92,7 +106,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('runs a tool call and bridges the approval request to the client', async () => {
-    const c = await boot();
+    const c = await boot({ terminal: true });
     // First model response: a Bash tool call. Second: a short text wrap-up
     // after the tool result is fed back to the model.
     scripted!.mockNextResponse({
@@ -148,8 +162,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .map((m) => (m.params as { update?: ToolCallUpdate }).update)
       .find((u) => u?.sessionUpdate === 'tool_call_update' && u?.status === 'completed');
     expect(terminal).toBeDefined();
-    const text = terminal?.content?.map((c) => c.content?.text ?? '').join('\n') ?? '';
-    expect(text).toContain('hello_from_bash');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('hello_from_bash');
   }, 30_000);
 
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
@@ -394,7 +407,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('streams tool-call args deltas: lazy pending CREATE → cumulative update → started upgrade → completed', async () => {
-    const c = await boot();
+    const c = await boot({ terminal: true });
     // Args stream in two fragments; the merge yields the full command.
     scripted!.mockNextResponse(
       { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ec' },
@@ -458,7 +471,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const terminal = updates.at(-1);
     expect(terminal?.sessionUpdate).toBe('tool_call_update');
     expect(terminal?.status).toBe('completed');
-    expect(textOf(terminal)).toContain('delta_stream');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
   }, 30_000);
 
   it('refreshes the tool card title on a status progress update and drops other progress kinds', async () => {
@@ -493,21 +506,25 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'stdout', text: 'raw-stdout-bytes' },
-    });
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'status', text: 'Still working…' },
-    });
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'stdout', text: 'raw-stdout-bytes' },
+      }),
+    );
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'status', text: 'Still working…' },
+      }),
+    );
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
@@ -708,10 +725,10 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
       cwd: homeDir,
       mcpServers: [
         {
+          type: 'http',
           name: 'mock',
-          command: process.execPath,
-          args: [STDIO_MCP_FIXTURE],
-          env: [{ name: 'KIMI_TEST_MCP_START_DELAY_MS', value: '0' }],
+          url: 'http://127.0.0.1:1/mcp',
+          headers: [{ name: 'X-Test-Fixture', value: STDIO_MCP_FIXTURE }],
         },
       ],
     })) as { sessionId: string };
@@ -720,7 +737,7 @@ describe('acp-server builtin slash commands (local execution, no LLM turn)', () 
     const { chunk, stopReason } = await runSlash(c, created.sessionId, '/mcp');
     expect(stopReason).toBe('end_turn');
     expect(chunk).toContain('MCP servers (1):');
-    expect(chunk).toContain('- mock (stdio):');
+    expect(chunk).toContain('- mock (http):');
     expect(scripted!.callCount()).toBe(0);
   }, 30_000);
 
@@ -982,7 +999,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     const { stopReason } = await runPrompt(c);
     expect(stopReason).toBe('end_turn');
 
-    // No terminal reverse-RPC at all — behavior identical to today.
+    // No terminal reverse-RPC at all — the command ran locally.
     expect(terminals).toHaveLength(0);
     const terminalRpcs = c.received.filter(
       (m) => typeof m.method === 'string' && m.method.startsWith('terminal/'),

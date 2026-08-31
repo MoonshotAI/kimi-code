@@ -1,14 +1,10 @@
-/**
- * Covers AgentTaskService event emission and notification delivery.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { IProcess } from '#/session/process/processRunner';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -23,7 +19,7 @@ import {
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
-import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
+import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
@@ -47,26 +43,28 @@ import {
 
 type FireAndForgetTrigger = IExternalHooksRunnerService['fireAndForgetTrigger'];
 
-function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 30000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
-function pendingProcess(): IProcess {
+function pendingProcess(): IHostProcess {
   let resolveWait: (code: number) => void = () => {};
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
   let currentExitCode: number | null = null;
   return {
+    _serviceBrand: undefined,
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from([]),
     stderr: Readable.from([]),
@@ -79,8 +77,8 @@ function pendingProcess(): IProcess {
       if (currentExitCode !== null) return;
       currentExitCode = 143;
       resolveWait(143);
-    }) as unknown as IProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    }) as unknown as IHostProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
   };
 }
 
@@ -296,7 +294,7 @@ function outputString(result: { readonly output: string | readonly unknown[] }):
 
 function registerProcess(
   manager: IAgentTaskService,
-  proc: IProcess,
+  proc: IHostProcess,
   command: string,
   description: string,
 ): string {
@@ -312,14 +310,16 @@ describe('AgentTaskService — event emission', () => {
     const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'demo');
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.started',
-      info: expect.objectContaining({
-        taskId,
-        kind: 'process',
-        status: 'running',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.started',
+        info: expect.objectContaining({
+          taskId,
+          kind: 'process',
+          status: 'running',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: { agent_id: 'main', task_id: taskId, kind: 'bash' },
@@ -332,14 +332,16 @@ describe('AgentTaskService — event emission', () => {
       agentTask(new Promise(() => {}), 'agent task'),
     );
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.started',
-      info: expect.objectContaining({
-        taskId,
-        kind: 'agent',
-        status: 'running',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.started',
+        info: expect.objectContaining({
+          taskId,
+          kind: 'agent',
+          status: 'running',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: { agent_id: 'main', task_id: taskId, kind: 'agent' },
@@ -353,13 +355,15 @@ describe('AgentTaskService — event emission', () => {
 
     await manager.wait(taskId);
 
-    expect(agent.emittedEvents).toContainEqual({
-      type: 'task.terminated',
-      info: expect.objectContaining({
-        taskId,
-        status: 'completed',
+    expect(agent.emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'task.terminated',
+        info: expect.objectContaining({
+          taskId,
+          status: 'completed',
+        }),
       }),
-    });
+    );
     expect(records).toContainEqual({
       event: 'background_task_completed',
       properties: expect.objectContaining({
@@ -404,13 +408,13 @@ describe('AgentTaskService — event emission', () => {
     await manager.stop(taskId, 'user');
 
     expect(agent.emittedEvents.filter((e) => e.type === 'task.terminated')).toEqual([
-      {
+      expect.objectContaining({
         type: 'task.terminated',
         info: expect.objectContaining({
           taskId,
           status: 'killed',
         }),
-      },
+      }),
     ]);
   });
 
@@ -435,13 +439,15 @@ describe('AgentTaskService — event emission', () => {
       await manager.loadFromDisk();
       await manager.reconcile();
 
-      expect(agent.emittedEvents).toContainEqual({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId: 'bash-orphan00',
-          status: 'lost',
+      expect(agent.emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'task.terminated',
+          info: expect.objectContaining({
+            taskId: 'bash-orphan00',
+            status: 'lost',
+          }),
         }),
-      });
+      );
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
@@ -824,6 +830,7 @@ describe('AgentTaskService — notification delivery', () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-lost-'));
     let fixture: TaskServiceFixture | undefined;
     try {
+      const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
       const persistence = createAgentTaskPersistence(sessionDir);
       await persistence.writeTask(
         persistedAgent({
@@ -833,7 +840,10 @@ describe('AgentTaskService — notification delivery', () => {
           status: 'running',
         }),
       );
-      fixture = createAgentTaskService({ sessionDir });
+      fixture = createAgentTaskService({
+        sessionDir,
+        hooks: { fireAndForgetTrigger },
+      });
       const { agent, manager } = fixture;
 
       await manager.loadFromDisk();
@@ -844,15 +854,146 @@ describe('AgentTaskService — notification delivery', () => {
         expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
       });
       const message = firstAppendedContextMessage(agent);
-      expect(message.origin).toEqual({
-        kind: 'task',
-        taskId: 'agent-run00000',
-        status: 'lost',
-        notificationId: 'task:agent-run00000:lost',
+      expect(message.origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
       });
-      expect(message.content[0]!.text).toContain(
-        'Background agent lost',
+      expect(message.content[0]!.text).toContain('<system-reminder>');
+      expect(message.content[0]!.text).toContain('agent-run00000');
+      await vi.waitFor(() => {
+        expect(fireAndForgetTrigger).toHaveBeenCalledTimes(1);
+      });
+      expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
+        matcherValue: 'task.lost',
+        inputData: expect.objectContaining({
+          sink: 'context',
+          notificationType: 'task.lost',
+          title: 'Background agent lost',
+          body: expect.stringContaining('interrupted task lost.'),
+          severity: 'warning',
+          sourceKind: 'background_task',
+          sourceId: 'agent-run00000',
+        }),
+      }));
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not repeat a restored lost-task reminder when its marker is missing', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reminded-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-hist0000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
       );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.appendSystemReminder(
+        '- agent-hist0000 "interrupted task" (subagent)',
+        { kind: 'injection', variant: 'task_resume_termination' },
+      );
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      await vi.waitFor(async () => {
+        await expect(persistence.readTask('agent-hist0000')).resolves.toMatchObject({
+          resumeReminded: true,
+        });
+      });
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not replace a delivered legacy lost-task notification with a reminder', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-delivered-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-old00000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
+      );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.get(IAgentContextMemoryService).append({
+        role: 'user',
+        content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
+        toolCalls: [],
+        origin: {
+          kind: 'task',
+          taskId: 'agent-old00000',
+          status: 'lost',
+          notificationId: 'task:agent-old00000:lost',
+        },
+      });
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      expect(
+        ctx.contextData().history.filter(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'task_resume_termination',
+        ),
+      ).toEqual([]);
+      await vi.waitFor(async () => {
+        await expect(persistence.readTask('agent-old00000')).resolves.toMatchObject({
+          resumeReminded: true,
+        });
+      });
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('does not block restore when persisting a reminder marker fails', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-marker-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(
+        persistedAgent({
+          taskId: 'agent-mark0000',
+          description: 'interrupted task',
+          status: 'lost',
+        }),
+      );
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, manager } = fixture;
+      await manager.loadFromDisk();
+      const internalPersistence = (
+        manager as unknown as {
+          readonly persistence: Pick<ReturnType<typeof createAgentTaskPersistence>, 'writeTask'>;
+        }
+      ).persistence;
+      vi.spyOn(internalPersistence, 'writeTask').mockRejectedValueOnce(
+        new Error('marker write failed'),
+      );
+
+      await expect(manager.reconcile()).resolves.toEqual([]);
+
+      expect(manager.getTask('agent-mark0000')).toMatchObject({
+        status: 'lost',
+        resumeReminded: true,
+      });
+      expect(firstAppendedContextMessage(agent).origin).toMatchObject({
+        kind: 'injection',
+        variant: 'task_resume_termination',
+      });
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
@@ -878,7 +1019,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
       matcherValue: 'task.completed',
-      inputData: {
+      inputData: expect.objectContaining({
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background agent completed',
@@ -886,7 +1027,7 @@ describe('AgentTaskService — notification delivery', () => {
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
-      },
+      }),
     }));
   });
 
@@ -932,7 +1073,7 @@ describe('AgentTaskService — notification delivery', () => {
     });
     expect(fireAndForgetTrigger).toHaveBeenCalledWith('Notification', expect.objectContaining({
       matcherValue: 'task.completed',
-      inputData: {
+      inputData: expect.objectContaining({
         sink: 'context',
         notificationType: 'task.completed',
         title: 'Background process completed',
@@ -940,7 +1081,7 @@ describe('AgentTaskService — notification delivery', () => {
         severity: 'info',
         sourceKind: 'background_task',
         sourceId: taskId,
-      },
+      }),
     }));
   });
 });

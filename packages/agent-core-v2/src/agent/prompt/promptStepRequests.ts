@@ -1,27 +1,8 @@
-/**
- * `prompt` domain — the `StepRequest` types for prompt, steer, and retry
- * steps.
- *
- * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
- * `ContextMessage` (image-compression captions pre-split), apply the image
- * format gate as the last funnel before the history, and materialize it
- * at pop time — caption reminders are appended before the host message,
- * preserving the prompt-owned undo boundary.
- * `PromptStepRequest` uses `newTurn`, seeding the
- * `turn.prompt` record from its message. `SteerStepRequest` uses
- * `activeOrNewTurn`, is mergeable, and survives turn boundaries; it records
- * the `turn.steer` wire op on materialization and unregisters itself from the
- * service's pending-steer set once settled. `RetryStepRequest` uses `newTurn`:
- * it contributes no message and simply drives one more step over the
- * existing context. Each is constructed with its collaborators captured —
- * these are plain runtime objects, not DI services.
- */
-
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
-import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
 
 abstract class UserMessageStepRequest extends StepRequest {
   protected readonly message: ContextMessage;
@@ -30,7 +11,7 @@ abstract class UserMessageStepRequest extends StepRequest {
   constructor(
     message: ContextMessage,
     private readonly captions: readonly string[],
-    private readonly reminders: IAgentSystemReminderService,
+    private readonly reminders: ReminderRuntime,
     options?: StepRequestOptions,
   ) {
     super(options);
@@ -48,8 +29,7 @@ abstract class UserMessageStepRequest extends StepRequest {
 
   override onWillMaterialize(): void {
     for (const caption of this.captions) {
-      this.reminders.appendSystemReminder(caption, {
-        kind: 'injection',
+      this.reminders.notify(caption, {
         variant: 'image_compression',
         ownerPromptId: this.ownerPromptId,
       });
@@ -67,13 +47,17 @@ export class PromptStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    reminders: IAgentSystemReminderService,
+    reminders: ReminderRuntime,
   ) {
     super(message, captions, reminders, { admission: 'newTurn' });
   }
 
   override get turnSeed(): TurnSeed {
-    return { input: this.message.content, origin: this.message.origin ?? USER_PROMPT_ORIGIN };
+    return {
+      input: this.message.content,
+      origin: this.message.origin ?? USER_PROMPT_ORIGIN,
+      promptId: this.message.id,
+    };
   }
 }
 
@@ -83,7 +67,7 @@ export class SteerStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    reminders: IAgentSystemReminderService,
+    reminders: ReminderRuntime,
     private readonly recordSteer: (message: ContextMessage) => void,
     private readonly forgetSteer: (request: SteerStepRequest) => void,
     admission: 'activeTurnOnly' | 'activeOrNewTurn' = 'activeTurnOnly',

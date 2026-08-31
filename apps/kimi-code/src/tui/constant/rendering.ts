@@ -18,6 +18,8 @@ export const CHROME_GUTTER = 1;
 
 // Shared preview caps used by thinking, tool results, and shell snippets.
 export const RESULT_PREVIEW_LINES = 3;
+// Collapsed row cap for a finished `!` shell command's output card.
+export const SHELL_OUTPUT_PREVIEW_LINES = 10;
 export const THINKING_PREVIEW_LINES = 2;
 export const COMMAND_PREVIEW_LINES = 10;
 

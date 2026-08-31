@@ -1,28 +1,18 @@
-/**
- * `agentsMdReminder` domain — `IAgentAgentsMdReminderService`
- * implementation.
- *
- * Discovers AGENTS.md files reached through `toolExecutor` and the tool path
- * policy, parsing Bash targets through `bashParser` and probing through the os
- * services. Restores prompt provenance through `wire` and `profile`, resolves
- * roots through `sessionContext` and `bootstrap`, stores discovery state in
- * `agentState`, appends through `systemReminder`, and reports through
- * `telemetry`. Bound at Agent scope.
- */
-
 import { basename, dirname, isAbsolute, join, normalize } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFsChange } from '#/os/interface/hostFsWatch';
+import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
 import {
   AGENTS_MD_PLAIN_NAMES,
@@ -33,12 +23,14 @@ import {
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
-import { ProfileModel } from '#/agent/profile/profileOps';
+import { profileKey } from '#/agent/profile/profileOps';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import { IWireService } from '#/wire/wire';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentAgentsMdReminderService } from './agentsMdReminder';
 import { extractBashTargetDirs } from './bashTargets';
@@ -68,23 +60,30 @@ export class AgentAgentsMdReminderService
 
   constructor(
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IHostEnvironment private readonly env: IHostEnvironment,
+    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+      @IAgentStateService private readonly agentState: IAgentStateService,
+    @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
-    this.states.register(agentsMdReminderKnownKey);
-    this.states.register(agentsMdReminderCwdKey);
-    this.states.register(agentsMdReminderSeededKey);
+    this.states.contributeState(agentsMdReminderKnownKey);
+    this.states.contributeState(agentsMdReminderCwdKey);
+    this.states.contributeState(agentsMdReminderSeededKey);
     this._register(
-      this.wire.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
-        const profile = this.wire.getModel(ProfileModel);
+      this.instructions.onDidChange((changes) => {
+        this.announceChanged(changes);
+      }),
+    );
+    this._register(
+      this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
+        const profile = this.agentState.get(profileKey);
         const paths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
         this.seedInjected(paths, this.sessionContext.cwd);
@@ -106,6 +105,23 @@ export class AgentAgentsMdReminderService
     this.states.set(agentsMdReminderSeededKey, true);
   }
 
+  private announceChanged(changes: readonly HostFsChange[]): void {
+    if (!this.states.get(agentsMdReminderSeededKey)) return;
+    const entries = new Map<string, HostFsChange>();
+    for (const change of changes) {
+      const path = normalize(change.path);
+      entries.set(path, { ...change, path });
+    }
+    if (entries.size === 0) return;
+    const list = [...entries.values()];
+    this.reminder().notify(changeReminderText(list), {
+      variant: 'agents_md_change',
+    });
+    this.publishKnown(
+      list.filter((change) => change.action !== 'deleted').map((change) => change.path),
+    );
+  }
+
   private readonly claimed = new Set<string>();
 
   private get known(): Set<string> {
@@ -118,12 +134,17 @@ export class AgentAgentsMdReminderService
 
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
-    const { paths } = await loadAgentsMdDetailed(
-      { fs: this.fs, homeDir: this.env.homeDir },
-      this.agentCwd,
-      this.bootstrap.homeDir,
-    );
-    this.seedInjected(paths, this.agentCwd);
+    const lease = this.runtime.acquire(['fs']);
+    try {
+      const { paths } = await loadAgentsMdDetailed(
+        { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
+        this.agentCwd,
+        this.bootstrap.homeDir,
+      );
+      this.seedInjected(paths, this.agentCwd);
+    } finally {
+      lease.dispose();
+    }
   }
 
   private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
@@ -151,14 +172,17 @@ export class AgentAgentsMdReminderService
         trace_id: ctx.trace?.traceId,
       };
       this.telemetry.track2('agents_md_reminder_shown', properties);
-      this.reminders.appendSystemReminder(reminderText(discovered), {
-        kind: 'injection',
+      this.reminder().notify(reminderText(discovered), {
         variant: 'agents_md',
       });
       this.publishKnown([...selfKnown, ...discovered]);
     } catch {} finally {
       for (const path of discovered) this.claimed.delete(path);
     }
+  }
+
+  private reminder(): ReminderRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
   }
 
   private publishKnown(paths: readonly string[]): void {
@@ -170,6 +194,9 @@ export class AgentAgentsMdReminderService
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
     const selfKnown: string[] = [];
+    const lease = this.runtime.acquire();
+    const env = lease.runtime.environment;
+    lease.dispose();
     switch (ctx.toolCall.name) {
       case 'Read':
       case 'Edit':
@@ -182,9 +209,9 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = hostPath(this.sessionContext.cwd, this.env.pathClass);
+        const base = hostPath(this.sessionContext.cwd, env.pathClass);
         const normalizedCwdArg =
-          cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, this.env.pathClass);
+          cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, env.pathClass);
         const effectiveCwd =
           normalizedCwdArg === undefined
             ? base
@@ -202,8 +229,8 @@ export class AgentAgentsMdReminderService
         const targets = extractBashTargetDirs(
           parsed.root,
           effectiveCwd,
-          this.env.homeDir,
-        ).map((target) => hostPath(target, this.env.pathClass));
+          env.homeDir,
+        ).map((target) => hostPath(target, env.pathClass));
         if (normalizedCwdArg !== undefined && !targets.includes(effectiveCwd)) {
           targets.unshift(effectiveCwd);
         }
@@ -239,26 +266,32 @@ export class AgentAgentsMdReminderService
   }
 
   private async probeDir(dir: string): Promise<string[]> {
-    const anchor = await this.nearestExistingDir(dir);
-    if (anchor === undefined) return [];
-    const deps = { fs: this.fs };
-    const projectRoot = await findProjectRoot(deps, anchor);
-    const chain = dirsRootToLeaf(anchor, projectRoot);
-    const found: string[] = [];
-    for (const chainDir of chain) {
-      const candidates = agentsMdCandidatePaths(chainDir);
-      if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
-      for (const path of await findAgentsMdInDir(deps, chainDir)) {
-        found.push(normalize(path));
+    const lease = this.runtime.acquire(['fs']);
+    try {
+      const fs = lease.runtime.fs!;
+      const anchor = await this.nearestExistingDir(fs, dir);
+      if (anchor === undefined) return [];
+      const deps = { fs };
+      const projectRoot = await findProjectRoot(deps, anchor);
+      const chain = dirsRootToLeaf(anchor, projectRoot);
+      const found: string[] = [];
+      for (const chainDir of chain) {
+        const candidates = agentsMdCandidatePaths(chainDir);
+        if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
+        for (const path of await findAgentsMdInDir(deps, chainDir)) {
+          found.push(normalize(path));
+        }
       }
+      return found;
+    } finally {
+      lease.dispose();
     }
-    return found;
   }
 
-  private async nearestExistingDir(path: string): Promise<string | undefined> {
+  private async nearestExistingDir(fs: IHostFileSystem, path: string): Promise<string | undefined> {
     let current = path;
     for (;;) {
-      const stat = await this.fs.stat(current).catch(() => undefined);
+      const stat = await fs.stat(current).catch(() => undefined);
       if (stat?.isDirectory === true) return current;
       const parent = dirname(current);
       if (parent === current) return undefined;
@@ -282,6 +315,16 @@ function reminderText(paths: readonly string[]): string {
     'The path(s) touched by a recent tool call are covered by AGENTS.md instruction file(s) that were not part of the injected instructions:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
     '\nRead them before making changes in those directories. Each file is suggested at most once per agent.'
+  );
+}
+
+function changeReminderText(changes: readonly HostFsChange[]): string {
+  return (
+    'The AGENTS.md instruction file(s) below changed on disk after they were injected into the system prompt:\n' +
+    changes
+      .map((change) => `- ${change.path}${change.action === 'deleted' ? ' (deleted)' : ''}`)
+      .join('\n') +
+    '\nRead the current file(s) and follow the latest contents; the copies injected in the system prompt are stale.'
   );
 }
 

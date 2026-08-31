@@ -1,14 +1,3 @@
-/**
- * `gateway` domain — `IRestGateway` / `IWSGateway` implementations.
- *
- * Owns the REST/WS entry points; resolves sessions through the live workspace
- * handler registry and agents through the agent lifecycle, drives turns, and
- * flushes logs. Bound at App scope.
- *
- * WS event fan-out (sequencing, journaling, replay, per-connection dispatch)
- * is a transport concern of the edge server, not of this module.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import {
@@ -19,8 +8,7 @@ import {
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
-import { IWorkspaceLifecycleService } from '#/app/workspaceLifecycle/workspaceLifecycle';
-import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
@@ -30,7 +18,7 @@ export class RestGateway implements IRestGateway {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWorkspaceLifecycleService private readonly workspaceLifecycle: IWorkspaceLifecycleService,
+    @ISessionManager private readonly sessions: ISessionManager,
     @ILogService private readonly log: ILogService,
   ) { }
 
@@ -42,7 +30,7 @@ export class RestGateway implements IRestGateway {
       });
     }
     const agents = session.accessor.get(IAgentLifecycleService);
-    const agent = agents.get(agentId);
+    const agent = agents.handleOf(agentId);
     if (agent === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `unknown agent '${agentId}'`, {
         details: { agentId, sessionId },
@@ -52,11 +40,7 @@ export class RestGateway implements IRestGateway {
   }
 
   private liveSession(sessionId: string) {
-    for (const handler of this.workspaceLifecycle.handlers.list()) {
-      const handle = handler.accessor.get(ISessionLifecycleService).get(sessionId);
-      if (handle !== undefined) return handle;
-    }
-    return undefined;
+    return this.sessions.get(sessionId);
   }
 
   async prompt(

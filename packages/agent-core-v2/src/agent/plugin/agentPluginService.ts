@@ -1,58 +1,29 @@
-/**
- * `agentPlugin` domain — `IAgentPluginService` implementation.
- *
- * Renders session-start skills from `plugin` and `sessionSkillCatalog` through
- * `contextInjector`, reconciling the desired instructions against the latest
- * surviving render reported by the injector (`lastInjection`) and unwrapped
- * through `systemReminder`. The rendered guidance is frozen through a durable
- * `wire` snapshot until an explicit reload. The session-start refresh on
- * plugin-source catalog changes fires only for an explicit plugin reload: a
- * mutation-driven reload (install / enable / disable / remove) skips it — the
- * live session keeps the guidance it started with — and instead appends a `plugin_change`
- * system reminder through `systemReminder` (`plugin` `onDidMutate` — never on
- * an explicit reload, whose resumed session would otherwise inherit a stale
- * notice), naming the mutated plugin and telling the model the live session
- * keeps its original prompt and tool set until `/new` or `/reload`.
- * Main-agent-only (v1 parity): the service
- * self-gates on `agentId === 'main'`; Agent scope creation instantiates it for
- * every agent, so other agents construct it as a no-op. Resolves session
- * prompt context through `sessionContext` and reports missing skills through
- * `log` (once per plugin:skill key — the provider re-renders on every
- * boundary, so an unguarded warn would repeat every step); stores the
- * refresh signal through `agentState`, consumed only after a successful
- * render so a failed render retries at the next boundary. Bound at Agent
- * scope.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
-import {
-  IAgentContextInjectorService,
-  type ContextInjectionContext,
-} from '#/agent/contextInjector/contextInjector';
+import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { ContextInjectionContext } from '#/features/reminder/types';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
-import {
-  IAgentSystemReminderService,
-  systemReminderContent,
-} from '#/agent/systemReminder/systemReminder';
+import { systemReminderContent } from '#/features/reminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, PluginMutation } from '#/app/plugin/types';
-import { PLUGIN_SKILL_SOURCE_ID } from '#/app/skillCatalog/skillSource';
-import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
+import type { SkillCatalog, SkillDefinition } from '#/features/skill/catalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { IWireService } from '#/wire/wire';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentPluginService } from './agentPlugin';
 import {
-  PluginSessionStartSnapshotModel,
-  pluginSessionStartSnapshotSet,
+  PluginSessionStartEvent,
+  pluginSessionStartSnapshotKey,
 } from './agentPluginOps';
 
 const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
@@ -92,42 +63,34 @@ export class AgentPluginService extends Service implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
   private readonly warnedMissingSessionStartSkills = new Set<string>();
 
-  // Count of mutation-driven plugin reloads whose catalog change has not
-  // reached this agent yet. `reloadAndNotify` fires `onDidMutate`
-  // synchronously within every mutation's `onDidReload`, while the catalog
-  // re-scan completes asynchronously, so the count is always positive by the
-  // time a mutation-driven catalog change arrives.
   private pendingMutationCatalogChanges = 0;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentContextInjectorService private readonly injector: IAgentContextInjectorService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IWireService private readonly wire: IWireService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
   ) {
     super();
+    this.states.contributeState(pluginSessionStartSnapshotKey);
     if (scopeContext.agentId !== MAIN_AGENT_ID) return;
-    this.states.register(pluginSessionStartRefreshPendingKey);
+    this.states.contributeState(pluginSessionStartRefreshPendingKey);
     this._register(
-      injector.register(SESSION_START_INJECTION_VARIANT, (injection) =>
-        this.reconcileSessionStartReminder(injection),
+      activateReminderWhenReady(this.agentLifecycle, this.scopeContext, (reminder) =>
+        reminder.register(SESSION_START_INJECTION_VARIANT, (injection) =>
+          this.reconcileSessionStartReminder(injection),
+        ),
       ),
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
         if (sourceId !== PLUGIN_SKILL_SOURCE_ID) return;
         if (this.pendingMutationCatalogChanges > 0) {
-          // Mutation-driven reload: the live session keeps the session-start
-          // guidance it started with — the plugin_change reminder is the only
-          // notice it gets. A failed mutation reload produces no catalog
-          // change, so a later explicit-reload refresh may be skipped once;
-          // that only keeps the frozen guidance longer, which is safe.
           this.pendingMutationCatalogChanges--;
           return;
         }
@@ -137,12 +100,15 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     this._register(
       this.plugins.onDidMutate(({ mutation }) => {
         this.pendingMutationCatalogChanges++;
-        this.reminders.appendSystemReminder(renderPluginChangeReminder(mutation), {
-          kind: 'injection',
+        this.reminder().notify(renderPluginChangeReminder(mutation), {
           variant: PLUGIN_CHANGE_INJECTION_VARIANT,
         });
       }),
     );
+  }
+
+  private reminder(): ReminderRuntime {
+    return this.agentLifecycle.resolve(this.scopeContext.agentContext, AgentReminder);
   }
 
   private get refreshPending(): boolean {
@@ -157,7 +123,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
     this.refreshPending = true;
     await this.skillCatalog.ready;
-    await this.injector.reconcileWhenIdle(SESSION_START_INJECTION_VARIANT);
+    await this.reminder().reconcileWhenIdle(SESSION_START_INJECTION_VARIANT);
   }
 
   private async renderSessionStartReminder(): Promise<string | undefined> {
@@ -207,7 +173,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     injection: ContextInjectionContext,
     forceRefresh: boolean,
   ): Promise<string | undefined> {
-    const snapshot = this.wire.getModel(PluginSessionStartSnapshotModel);
+    const snapshot = this.states.get(pluginSessionStartSnapshotKey);
     if (!forceRefresh && snapshot.initialized) return snapshot.content;
     if (!forceRefresh && injection.lastInjection !== undefined) {
       const rendered = systemReminderContent(injection.lastInjection);
@@ -223,7 +189,12 @@ export class AgentPluginService extends Service implements IAgentPluginService {
   }
 
   private recordSessionStartSnapshot(content: string | undefined): void {
-    this.wire.dispatch(pluginSessionStartSnapshotSet({ content: content ?? null }));
+    void this.dispatcher.dispatch(
+      new PluginSessionStartEvent({
+        agentId: this.scopeContext.agentId,
+        content: content ?? null,
+      }),
+    );
   }
 }
 

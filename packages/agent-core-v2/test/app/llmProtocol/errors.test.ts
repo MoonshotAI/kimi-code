@@ -1,8 +1,3 @@
-/**
- * `llmProtocol` error contract — provider error classification, normalization,
- * and retry metadata shared by generation and swarm recovery.
- */
-
 import {
   APIConnectionError,
   APIContextOverflowError,

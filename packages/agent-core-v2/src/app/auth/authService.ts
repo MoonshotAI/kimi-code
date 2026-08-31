@@ -1,17 +1,3 @@
-/**
- * `auth` domain (cross-cutting) — `IOAuthService` / `IAuthSummaryService`
- * implementation.
- *
- * Owns the device-code OAuth flows and the auth readiness view; reads and
- * writes provider configuration through `provider`, refreshes the managed
- * OAuth provider's server-side model configuration through `config`, publishes
- * model-catalog changes through `event`, reports through `telemetry`,
- * logs through `log`, and delegates
- * the device-code protocol, token storage, and token refresh to `IOAuthToolkit`
- * (provided by `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`,
- * which locates token storage through `bootstrap`). Bound at App scope.
- */
-
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -20,6 +6,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  kimiRegionLoginHosts,
   OAuthError,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -27,10 +14,12 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  resolveKimiRegion,
   type AuthManagedUserInfoResult,
   type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
+  type KimiRegion,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import type {
@@ -52,10 +41,12 @@ import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
 import {
-  deriveProviderId,
   effectiveModelConfig,
   nonEmpty,
   resolveModelAuthMaterial,
+  resolveModelForReady,
+  providerNameFromFlatModel,
+  type ModelReadyFailureReason,
 } from '#/kosong/model/modelAuth';
 import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import {
@@ -64,6 +55,7 @@ import {
   PROVIDERS_SECTION,
   THINKING_SECTION,
 } from '#/app/kosongConfig/configSection';
+import { ModelCatalogChanged } from '#/app/kosongConfig/discovery';
 import {
   IProviderService,
   type OAuthRef,
@@ -81,6 +73,7 @@ import {
   IAuthSummaryService,
   IOAuthService,
   IOAuthToolkit,
+  type OAuthLoginOptions,
 } from './auth';
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
@@ -95,13 +88,13 @@ interface FlowState {
   readonly loginBaseUrl: string | undefined;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
+  tokenGranted: boolean;
   expiresAt: number;
   gcTimer: ReturnType<typeof setTimeout> | undefined;
   errorMessage: string | undefined;
   resolvedAt: string | undefined;
 }
 
-// NOTE: stays Disposable — its own 'config' collides with the Fiber
 export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();
@@ -115,6 +108,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @IEventService private readonly events: IEventService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
     this._register(providerService.onDidChangeProviders((event) => {
@@ -122,9 +116,12 @@ export class OAuthService extends Disposable implements IOAuthService {
     }));
   }
 
-  async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
+  async startLogin(
+    provider = KIMI_CODE_PROVIDER_NAME,
+    options: OAuthLoginOptions = {},
+  ): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const loginAuth = this.resolveLoginAuth(provider);
+    const loginAuth = this.resolveLoginAuth(provider, options.region);
     this.log.info('oauth startLogin: resolved login auth', {
       provider,
       hasOAuthRef: loginAuth.oauthRef !== undefined,
@@ -141,6 +138,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       loginBaseUrl: loginAuth.baseUrl,
       device: undefined,
       status: 'pending',
+      tokenGranted: false,
       expiresAt: Date.now() + DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
       gcTimer: undefined,
       errorMessage: undefined,
@@ -333,7 +331,22 @@ export class OAuthService extends Disposable implements IOAuthService {
         return { changed, unchanged, failed };
       }
 
-      const next = structuredClone(current);
+      await this.config.reload();
+      const fresh = this.readUserConfigShape();
+      const freshProvider = fresh.providers[KIMI_CODE_PROVIDER_NAME];
+      if (!isOAuthCatalogProvider(freshProvider)) {
+        return { changed, unchanged, failed };
+      }
+      if (
+        freshProvider.baseUrl !== provider.baseUrl ||
+        freshProvider.oauth.storage !== provider.oauth.storage ||
+        freshProvider.oauth.key !== provider.oauth.key ||
+        freshProvider.oauth.oauthHost !== provider.oauth.oauthHost
+      ) {
+        return { changed, unchanged, failed };
+      }
+
+      const next = structuredClone(fresh);
       applyManagedKimiCodeConfig(next, {
         models,
         baseUrl: auth.baseUrl,
@@ -342,23 +355,23 @@ export class OAuthService extends Disposable implements IOAuthService {
         preserveDefaultModel: true,
       });
       const refreshedAliasKeys = providerRefreshAliasKeys(
-        current,
+        fresh,
         next,
         KIMI_CODE_PROVIDER_NAME,
         `${KIMI_CODE_PLATFORM_ID}/`,
       );
       restoreProviderAliases(
         next,
-        preserveUserProviderAliases(current, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
+        preserveUserProviderAliases(fresh, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
       );
-      restoreDefaultSelection(next, current.defaultModel, current.thinking?.enabled);
+      restoreDefaultSelection(next, fresh.defaultModel, fresh.thinking?.enabled);
       clampDanglingDefault(next);
 
-      if (providerModelsEqual(current, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
+      if (providerModelsEqual(fresh, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
         unchanged.push(KIMI_CODE_PROVIDER_NAME);
       } else {
         const { added, removed } = computeChanges(
-          collectModelIdsForAliases(current, refreshedAliasKeys),
+          collectModelIdsForAliases(fresh, refreshedAliasKeys),
           collectModelIdsForAliases(next, refreshedAliasKeys),
         );
         await this.config.replace(PROVIDERS_SECTION, next.providers);
@@ -381,7 +394,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
     const result = { changed, unchanged, failed };
     if (result.changed.length > 0) {
-      this.events.publish({ type: 'event.model_catalog.changed', payload: result });
+      this.events.publish(new ModelCatalogChanged({ payload: result }));
     }
     return result;
   }
@@ -404,7 +417,22 @@ export class OAuthService extends Disposable implements IOAuthService {
     };
   }
 
-  private resolveLoginAuth(provider: string): {
+  getRegion(): KimiRegion {
+    const oauth = this.providerService.get(KIMI_CODE_PROVIDER_NAME)?.oauth;
+    return resolveKimiRegion({
+      configuredOAuthHost: oauth?.oauthHost,
+      configuredOAuthKey: oauth?.key,
+      readMarker:
+        (this.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
+          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
+      homeDir: this.bootstrap.homeDir,
+    });
+  }
+
+  private resolveLoginAuth(
+    provider: string,
+    region?: KimiRegion,
+  ): {
     readonly oauthRef: OAuthRef | undefined;
     readonly baseUrl: string | undefined;
     readonly oauthHost: string | undefined;
@@ -413,9 +441,12 @@ export class OAuthService extends Disposable implements IOAuthService {
     if (provider !== KIMI_CODE_PROVIDER_NAME) {
       return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
     }
+    const hosts = region === undefined ? undefined : kimiRegionLoginHosts(region);
     const loginAuth = resolveKimiCodeLoginAuth({
       configuredBaseUrl: config?.baseUrl,
       configuredOAuthRef: config?.oauth,
+      requestedBaseUrl: hosts?.baseUrl,
+      requestedOAuthHost: hosts?.oauthHost,
     });
     const oauthRef =
       loginAuth.oauthRef ??
@@ -457,6 +488,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     for (const state of this.flows.values()) {
       if (!affected.has(state.provider)) continue;
       if (state.status !== 'pending') continue;
+      if (state.tokenGranted) continue;
       state.controller.abort();
       state.errorMessage = 'Provider configuration changed during login.';
       this.setTerminal(state, 'cancelled');
@@ -465,20 +497,22 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private handleSuccess(state: FlowState): void {
     if (state.status !== 'pending') return;
-    void this.finalizeAuthentication(state);
+    state.tokenGranted = true;
+    void this.provisionAfterSuccess(state);
   }
 
   private async completeAlreadyAuthenticatedLogin(state: FlowState): Promise<void> {
-    await this.finalizeAuthentication(state);
+    if (state.status !== 'pending') return;
+    state.tokenGranted = true;
+    await this.provisionAfterSuccess(state);
   }
 
-  private async finalizeAuthentication(state: FlowState): Promise<void> {
+  private async provisionAfterSuccess(state: FlowState): Promise<void> {
     try {
       await this.provisionProvider(state.provider, state.oauthRef, state.loginBaseUrl);
-      if (state.status !== 'pending') return;
+      if (this.flows.get(state.provider) !== state) return;
       if (state.provider === KIMI_CODE_PROVIDER_NAME) {
         await this.refreshOAuthProviderModelsBestEffort(state.provider);
-        if (state.status !== 'pending') return;
       }
     } catch (error) {
       this.log.warn('oauth provider provisioning failed', {
@@ -634,27 +668,18 @@ export class AuthSummaryService implements IAuthSummaryService {
     if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
       throw new AuthProvisioningRequiredError();
     }
-    if (modelId === undefined || modelId === '') {
-      throw new AuthModelNotResolvedError(undefined);
-    }
-    if (configured === undefined) {
-      throw new AuthModelNotResolvedError(modelId);
+    const resolution = resolveModelForReady(modelId, models, providers, this.providerService.getDefaultProvider());
+    if (!resolution.resolved) {
+      throw unresolvedModelError(modelId, resolution.reason, configured);
     }
 
-    const model = effectiveModelConfig(configured);
-    const providerId = model.providerId ?? model.provider;
+    const model = effectiveModelConfig(configured as ModelRecord);
+    const providerId = model.providerId ?? model.provider ?? this.providerService.getDefaultProvider();
     const provider = providerId === undefined ? undefined : this.providerService.get(providerId);
-    if (providerId !== undefined && provider === undefined) {
-      throw new AuthModelNotResolvedError(modelId, providerId);
-    }
-
-    const providerName = providerId ?? providerNameFromFlatModel(model);
-    if (providerName === undefined) {
-      throw new AuthModelNotResolvedError(modelId);
-    }
+    const providerName = (providerId ?? providerNameFromFlatModel(model)) as string;
 
     const auth = resolveModelAuthMaterial({
-      modelId,
+      modelId: modelId as string,
       model,
       provider,
       providerName,
@@ -668,6 +693,21 @@ export class AuthSummaryService implements IAuthSummaryService {
     }
     throw new AuthTokenMissingError(providerName);
   }
+}
+
+function unresolvedModelError(
+  modelId: string | undefined,
+  reason: ModelReadyFailureReason,
+  configured: ModelRecord | undefined,
+): AuthModelNotResolvedError {
+  if (reason === 'no-default') {
+    return new AuthModelNotResolvedError(undefined);
+  }
+  if (reason === 'provider-missing' && configured !== undefined) {
+    const model = effectiveModelConfig(configured);
+    return new AuthModelNotResolvedError(modelId, model.providerId ?? model.provider);
+  }
+  return new AuthModelNotResolvedError(modelId);
 }
 
 function classifyFailure(err: unknown): OAuthFlowStatus {
@@ -686,11 +726,6 @@ function isProviderlessModel(model: ModelRecord | undefined): boolean {
     effective.provider === undefined &&
     providerNameFromFlatModel(effective) !== undefined
   );
-}
-
-function providerNameFromFlatModel(model: ModelRecord): string | undefined {
-  const baseUrl = nonEmpty(model.baseUrl);
-  return baseUrl === undefined ? undefined : deriveProviderId(baseUrl);
 }
 
 interface ManagedModel {
@@ -792,7 +827,7 @@ function providerModelSnapshot(
     });
   }
   snapshots.sort((a, b) => a.alias.localeCompare(b.alias));
-  return JSON.stringify(snapshots);
+  return JSON.stringify({ defaultModel: config.defaultModel ?? null, models: snapshots });
 }
 
 function providerRefreshAliasKeys(

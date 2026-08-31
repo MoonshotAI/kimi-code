@@ -1,14 +1,3 @@
-/**
- * `questionTools` domain — `QuestionBackgroundTask`, the background-execution
- * handle for `AskUserQuestionTool` (`background: true`).
- *
- * Mirrors v1's `QuestionBackgroundTask`: runs the question request on a
- * detached task so the tool call can return immediately with a `task_id`,
- * while the user's answer (parked in `ISessionQuestionService`) settles the
- * task later. The task service fires the terminal notification on settle,
- * which delivers the answer to the agent in a later turn.
- */
-
 import { isAbortError } from '#/_base/utils/abort';
 import {
   type AgentTask,

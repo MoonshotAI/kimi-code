@@ -33,7 +33,7 @@ End-to-end procedures that span the stages. Reach for these before reading the s
 
 ## Stages
 
-- [Stage 1 — Orient](orient.md): the DI black box (identity / dependencies / lifetime), the four `LifecycleScope` tiers and visibility, and the file-header comment convention. Read before touching business code.
+- [Stage 1 — Orient](orient.md): the DI black box (identity / dependencies / lifetime), the four `LifecycleScope` tiers and visibility, and the no-comment convention. Read before touching business code.
 - [Stage 2 — Design a service](design.md): pick a scope, split a domain across scopes, choose a calling style (direct call vs event vs hook), and direct dependencies. Decide *where things live and who knows whom* before coding.
   - Topic: [Domain boundaries vs Scope](domain-boundaries.md) — keep `session` / `agent` / `turn` from becoming god objects; data-ownership test and their split conclusions.
   - Topic: [Persistence layering](persistence.md) — the three-layer `Store → Storage → backend` model, naming Stores by access pattern, and which layer business code should depend on.

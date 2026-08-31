@@ -1,36 +1,3 @@
-/**
- * `kosong/protocol` domain — the declarative trait surface.
- *
- * A `ProtocolTrait` is a stateless declaration of how one vendor deviates
- * from a wire base: seventeen fully optional hooks plus rare metadata markers
- * (non-function fields like `strictThinkingValidation` that qualify how a
- * hook's behavior is governed, without adding a code path). A trait declares
- * a deviation only where one exists; a hook returning `undefined` always
- * means "keep the base default".
- *
- * Composition rules (the L2 compositors implement them; they are restated
- * here because they are part of the trait contract):
- *
- *  - Pipeline hooks (`convertMessage` / `mergeHistory` / `buildParams`)
- *    chain in trait order, each receiving the previous stage's output.
- *    `convertMessage` may additionally return `null` to drop the message.
- *  - Single-value hooks are overwritten in trait order: last declarer wins.
- *  - `convertError` is consulted by the bases with each RAW failure exactly
- *    once — the SDK error on HTTP paths, the raw event on in-stream paths —
- *    after the abort guard (a cancellation never reaches it) and after the
- *    already-converted `ChatProviderError` pass-through. The hook exists
- *    because base conversion drops vendor-parsed detail such as the body
- *    `error.type`/`error.code`; it is where a vendor declares what its own
- *    wire errors mean (e.g. which 429s are a non-retryable quota
- *    exhaustion rather than a transient rate limit).
- *  - `endpoint` / `defaultHeaders` / `provides` are construction-time
- *    declarations, not per-request hooks.
- *
- * `TraitContext` carries only `{ config, providerId? }` — never the vendor
- * definition object. That is the detail that makes the L1↛L2 layering hold:
- * traits see configuration, not registry state.
- */
-
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ChatProviderError } from '#/kosong/contract/errors';
 import type { Message, VideoURLPart } from '#/kosong/contract/message';

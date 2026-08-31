@@ -1,11 +1,3 @@
-/**
- * `_base/execEnv` — Python-compatible text decoding with `errors` handling.
- *
- * Reads text with the same `strict`/`replace`/`ignore` semantics Python's
- * `open(..., errors=)` provides. Kept as a pure helper with no DI
- * dependencies.
- */
-
 export type TextDecodeErrors = 'strict' | 'replace' | 'ignore';
 
 function isUtf8Continuation(byte: number): boolean {
@@ -135,7 +127,6 @@ export function decodeTextWithErrors(
   ignoreBOM: boolean = false,
 ): string {
   let webLabel: string | undefined;
-  // eslint-disable-next-line typescript-eslint/switch-exhaustiveness-check
   switch (encoding) {
     case 'utf-8':
     case 'utf8':

@@ -1,22 +1,18 @@
-/**
- * `interruptionReminder` domain — `IAgentInterruptionReminderService` implementation.
- *
- * Observes completed turns through `eventBus`, appends user-cancellation facts
- * through `systemReminder` at the event point, and reads `contextMemory` to
- * collapse retry-only duplicate notices. Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 
 import { IAgentInterruptionReminderService } from './interruptionReminder';
-import { INTERRUPTION_REMINDER_VARIANT } from './interruptionReminderOps';
+import { INTERRUPTION_REMINDER_VARIANT, interruptionReminderKey } from './interruptionReminderOps';
 
 const INTERRUPTION_REMINDER = [
   'The previous turn was interrupted by the user before completion;',
@@ -33,16 +29,18 @@ export class AgentInterruptionReminderService
   constructor(
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
+    agentState.contributeState(interruptionReminderKey);
     this._register(
-      eventBus.subscribe('turn.ended', (event) => {
+      eventBus.subscribe(TurnEnded, (event) => {
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
         const origin = lastComparableMessage(this.context.get())?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-        this.reminders.appendSystemReminder(INTERRUPTION_REMINDER, {
-          kind: 'injection',
+        agentLifecycle.resolve(scopeContext.agentContext, AgentReminder).notify(INTERRUPTION_REMINDER, {
           variant: INTERRUPTION_REMINDER_VARIANT,
         });
       }),

@@ -1,13 +1,3 @@
-/**
- * `hostProcess` domain — the OS process-spawning contract.
- *
- * Defines `IHostProcessService`, the App-scope primitive used by any domain that
- * needs to spawn a child process on the host, plus the `IHostProcess` handle it
- * returns. The contract is deliberately close to Python `subprocess.Popen` /
- * `os.spawn*`: a single `spawn()` call returns a handle exposing stdin/stdout/
- * stderr, the pid, the exit code, and lifecycle methods. Bound at App scope.
- */
-
 import type { Readable, Writable } from 'node:stream';
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
@@ -34,7 +24,7 @@ export interface IHostProcess {
   readonly stderr: Readable;
   wait(): Promise<number>;
   kill(signal?: NodeJS.Signals): Promise<void>;
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
 export interface IHostProcessService {

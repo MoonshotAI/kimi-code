@@ -1,54 +1,3 @@
-/**
- * `sessionIndex` domain (L2) — `FileSessionIndex` implementation.
- *
- * Serves session listings, point lookups, and counts. Two read paths exist:
- *
- * - **Authoritative (legacy) path** — enumerates the directory tree and reads
- *   every `state.json` (see `sessionIndexSource`). Always correct, linear in
- *   the number of sessions. This is the flag-off behavior and the fallback
- *   whenever the read model cannot serve.
- * - **Read-model path** (flag `persistence_minidb_readmodel`) — queries the
- *   derived `IQueryStore` read model. Recency pages walk the published
- *   generation's ordered recency column with keyset cursors (`O(log N +
- *   limit)`, no directory enumeration, no per-session document reads), point
- *   lookups are single gets, and counts read materialized per-workspace
- *   counters.
- *
- * The read model follows the lifecycle `uninitialized → preparing → ready`,
- * with `degraded` whenever it cannot serve and the authoritative path takes
- * over (the reason and the cumulative count are published via `status()` and
- * logged — never a silent permanent fallback). `prepare()` opens the store,
- * restores the published generation, runs the initial projection when none
- * exists, and starts background reconciliation; read paths kick it
- * single-flight when the composition root never called it. A lost manifest
- * (query-store corruption rebuild) triggers an automatic reprojection — the
- * model is never healed by per-request backfill. Degraded reads retry
- * `prepare()` after a short backoff.
- *
- * The first list request coincides with the initial projection: the read is
- * served by the authoritative fallback AND kicks `prepare()`. To keep that
- * request from paying two full directory scans, the uninitialized/preparing
- * fallback joins the projector's in-flight shared scan — or drives the one
- * the projection will reuse (`SessionIndexProjector.sharedScanForRead`) — so
- * one authoritative pass serves both, and the mirror's pending queue is
- * folded into the result so a session created or mutated after the scan
- * passed its directory still shows up. Flag-off hosts and the `degraded`
- * fallback keep the targeted per-workspace enumeration (with the same
- * pending fold).
- *
- * Keyset pagination is canonical (`updatedAt` desc, `id` desc): a cursor is a
- * session id resolved by point lookup, and the window's boundary tie group is
- * re-fetched and merged so same-millisecond ties never lose or duplicate an
- * item across pages. `get` falls back to the authoritative document on a
- * read-model miss (mirror lag) and re-records it, and every page folds in the
- * mirror's not-yet-flushed summaries (range-filtered by the cursor on cursor
- * pages) — reads always see recent writes of this process.
- *
- * This is the local-deployment backend of `ISessionIndex`; a server
- * deployment would substitute a database-backed implementation. Bound at App
- * scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -150,15 +99,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     });
   }
 
-  /** The reconcile loop runs only while the read model is in play — starting
-   *  it unconditionally would spin an interval for every flag-off host. */
   private ensureReconcileTimer(): void {
     if (!this.reconcileTimer.isSet()) {
       this.reconcileTimer.cancelAndSet(() => void this.tick(), RECONCILE_INTERVAL_MS);
     }
   }
-
-  // ---- lifecycle ------------------------------------------------------------
 
   async prepare(options?: { deadlineMs?: number }): Promise<SessionIndexStatus> {
     if (!this.readModelEnabled()) return this.status();
@@ -224,9 +169,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       this.generation = result.generation;
       this.markReady();
     } catch (error) {
-      // A failed projection never publishes. When a previous generation is
-      // still published, readers keep flowing from it — a crashed re-projection
-      // must not take the read model down.
       const published = await this.queryStore
         .getCheckpoint(SESSION_INDEX_MANIFEST)
         .catch(() => undefined);
@@ -243,7 +185,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     }
   }
 
-  /** Test/ops hook: reconcile the published generation against disk now. */
   async reconcileNow(): Promise<void> {
     if (!this.readModelEnabled()) return;
     const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
@@ -252,14 +193,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     await this.projector.reconcile(manifest.seq);
   }
 
-  /** Test/ops hook: project a fresh generation now (single-flight). */
   async reprojectNow(): Promise<void> {
     if (!this.readModelEnabled()) return;
     await this.ensureProjection();
   }
 
-  /** Test hook: stop the background reconcile loop, so measurement windows
-   *  contain only the operations under test. */
   stopReconcileLoop(): void {
     this.reconcileTimer.cancel();
   }
@@ -281,7 +219,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       this.generation = manifest.seq;
       await this.projector.reconcile(manifest.seq);
     } catch (error) {
-      // A failed reconcile leaves reads intact; it retries on the next tick.
       this.log.warn('session index reconciliation failed', { error: String(error) });
     }
   }
@@ -315,8 +252,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     });
   }
 
-  // ---- reads ------------------------------------------------------------------
-
   async get(id: string): Promise<SessionSummary | undefined> {
     return this.withReadModel(
       (generation) => this.getFromReadModel(generation, id),
@@ -338,16 +273,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     );
   }
 
-  /**
-   * Evict a deleted session's derived state so `get` / `listRecent` stop
-   * answering for the id immediately: the authoritative directory is deleted
-   * by the caller (`sessionLifecycle.delete`), and the next projection would
-   * drop the entry anyway — this closes the stale-read window in between. The
-   * mirror queue is evicted first (waiting out an in-flight flush): reads
-   * fold the queue in for read-your-writes, and a late flush would otherwise
-   * resurrect the entry after the store delete. With the read model off
-   * there is no derived state to evict beyond the queue.
-   */
   async remove(id: string): Promise<void> {
     await this.mirror.evict(id);
     await this.withReadModel(
@@ -358,12 +283,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     );
   }
 
-  /**
-   * Serve `op` from the read model when possible, else from the authoritative
-   * path: flag off, not prepared yet (kicked here single-flight), preparing,
-   * or degraded (with a throttled re-prepare). Any read-model failure demotes
-   * to `degraded` — logged and counted — and falls back immediately.
-   */
   private async withReadModel<T>(
     op: (generation: number) => Promise<T>,
     legacy: () => Promise<T>,
@@ -386,8 +305,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       return legacy();
     }
     if (manifest === undefined) {
-      // The store lost the published generation (corruption rebuild):
-      // reproject automatically instead of healing by per-request backfill.
       this.markDegraded('published generation lost');
       void this.prepare();
       return legacy();
@@ -405,10 +322,10 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     generation: number,
     id: string,
   ): Promise<SessionSummary | undefined> {
+    const queued = this.mirror.pending().find((summary) => summary.id === id);
+    if (queued !== undefined) return queued;
     const cached: unknown = await this.queryStore.get(sessionCollection(generation), id);
     if (isSessionSummaryShape(cached)) return stripRecencyField(generation, cached);
-    // Mirror lag or a not-yet-projected session: probe the authoritative
-    // document and re-record it so the next read is warm.
     const summary = await this.getLegacy(id);
     if (summary !== undefined) this.mirror.record(summary);
     return summary;
@@ -440,9 +357,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       query.childOf !== undefined
         ? await this.windowedPage(
             (bounds, fetchLimit) => {
-              // The equality candidates (few children per parent) drive this
-              // path; only bound the column when the cursor actually constrains
-              // it — an unbounded column range would materialize per shard.
               const base = this.queryStore
                 .query<SessionSummary>(collection)
                 .where(filter)
@@ -484,9 +398,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     for (const entry of counts.values()) {
       total += query.includeArchived === true ? entry.active + entry.archived : entry.active;
     }
-    // Fold in the mirror queue (read-your-writes): queued creations count
-    // immediately, queued archive flips re-bucket, and queued updates to an
-    // already-counted session are a no-op.
     const pending = this.mirror
       .pending()
       .filter((summary) => restricted === undefined || restricted.includes(summary.workspaceId));
@@ -504,14 +415,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return total;
   }
 
-  /**
-   * Canonical keyset window: fetch `limit + 1` rows under `bounds`; when the
-   * window is full, re-fetch the boundary tie group (`updatedAt` equal to the
-   * window's minimum) and merge, so a page cut inside a same-millisecond tie
-   * group never drops or duplicates an item across pages. Rows are re-sorted
-   * into the canonical (`updatedAt` desc, `id` desc) order — the engine's
-   * cross-shard tie order is deterministic but not canonical.
-   */
   private async windowedPage(
     fetch: (bounds: ColumnBounds, limit: number) => Promise<SessionSummary[]>,
     bounds: ColumnBounds,
@@ -532,12 +435,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return { items: kept, nextCursor: hasMore ? kept.at(-1)!.id : undefined };
   }
 
-  /**
-   * Read-your-writes merge: pages fold in the mirror's queued summaries so a
-   * just-mutated session shows up before the flush lands. Cursor pages merge
-   * only the queued summaries that fall inside the page's canonical range
-   * (the queue is a tiny, transient window).
-   */
   private mergePending(
     page: Page<SessionSummary>,
     query: SessionListQuery,
@@ -570,13 +467,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return { items: kept, nextCursor: hasMore ? kept.at(-1)!.id : undefined };
   }
 
-  /**
-   * Resolve a keyset cursor id to its column bounds plus the exact
-   * tie-exclusion filter, in canonical order: strictly older (`before`) is
-   * `(updatedAt, id)` lexicographically below the cursor, strictly newer
-   * (`after`) is above. An unknown cursor id yields `undefined` — the caller
-   * answers an empty, terminal page.
-   */
   private async resolveCursor(
     generation: number,
     query: SessionListQuery,
@@ -586,8 +476,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   > {
     const id = query.before ?? query.after;
     if (id === undefined) return { filter: {}, bounds: {} };
-    // The mirror queue is consulted too: a cursor pointing at a session whose
-    // latest mutation has not been flushed yet must still resolve.
     const storedValue: unknown = await this.queryStore.get(sessionCollection(generation), id);
     const stored = isSessionSummaryShape(storedValue) ? storedValue : undefined;
     const cursor = stored ?? this.mirror.pending().find((summary) => summary.id === id);
@@ -632,8 +520,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     if (query.includeArchived !== true) filter['archived'] = { $ne: true };
     return filter;
   }
-
-  // ---- authoritative (legacy) path --------------------------------------------
 
   private get sessionsScope(): string {
     return this.bootstrap.scope('sessions');
@@ -692,20 +578,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     return count;
   }
 
-  /**
-   * Collect the authoritative summaries behind a legacy read. While the read
-   * model is enabled but not yet ready, the kicked initial projection is
-   * scanning the same authoritative set, so the read joins that in-flight
-   * scan (or drives the one the projection will reuse) instead of running a
-   * second full directory scan. Flag-off hosts and the degraded fallback
-   * keep the targeted per-workspace enumeration.
-   *
-   * Either way the mirror's pending queue is folded in by id (pending
-   * entries win): every queued summary was recorded only after its
-   * `state.json` is durable, and a scan/enumeration that started before the
-   * write may legitimately have passed the directory already — the fold is
-   * what keeps read-your-writes on this path too.
-   */
   private async collectAuthoritative(
     workspaceIds: readonly string[] | undefined,
   ): Promise<SessionSummary[]> {

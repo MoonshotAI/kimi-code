@@ -1,27 +1,10 @@
-/**
- * `contextMemory` domain — `IAgentContextMemoryService` implementation.
- *
- * Owns per-agent conversation history through `wire`, maintains measurements
- * with `tokenCounting`, and broadcasts live mutations through `event`. Every
- * splice-shaped mutation (`clear` / `applyCompaction` / `undo`, plus verified
- * cross-model trailing removal) publishes `context.spliced` from the live path
- * only — replay rebuilds silently — and truncates the measured-anchor ledger
- * when a cut crosses an anchor, letting `tokenCounting` restore the surviving
- * prefix's REAL size from the remaining anchors. Bound at Agent scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IEventBus } from '#/app/event/eventBus';
-import { IAgentTokenCountingService } from '#/agent/tokenCounting/tokenCounting';
-import {
-  TokenCountingModel,
-  tokenCountingRebased,
-  tokenCountingTruncated,
-} from '#/agent/tokenCounting/tokenCountingOps';
-import { IWireService } from '#/wire/wire';
-import type { Op } from '#/wire/op';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
   IAgentContextMemoryService,
@@ -30,40 +13,34 @@ import {
 } from './contextMemory';
 import { buildContextCompactionShape, type TokenEstimate } from './compactionHandoff';
 import {
+  ContextApplyCompaction,
+  ContextAppendLoopEvent,
+  ContextAppendMessage,
+  ContextClear,
+  ContextSpliced,
+  ContextUndo,
+  type ContextSplicedPayload,
+} from './contextEvents';
+import {
   computeUndoCut,
-  ContextModel,
-  contextAppendLoopEvent,
-  contextAppendMessage,
-  contextApplyCompaction,
-  contextClear,
-  contextUndo,
+  contextMemoryKey,
   isFullyUndoable,
   type UndoCut,
 } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'context.spliced': {
-      start: number;
-      deleteCount: number;
-      messages: readonly ContextMessage[];
-      tokens?: number;
-    };
-  }
-}
-
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
-    @IEventBus private readonly eventBus: IEventBus,
-    @IAgentTokenCountingService private readonly tokenCounting: IAgentTokenCountingService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
+    @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
     super();
+    this.agentState.contributeState(contextMemoryKey);
   }
 
   private get tokenEstimateFns(): TokenEstimate {
@@ -75,18 +52,24 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   }
 
   get(): readonly ContextMessage[] {
-    return this.wire.getModel(ContextModel) as readonly ContextMessage[];
+    return this.agentState.get(contextMemoryKey) as readonly ContextMessage[];
   }
 
   append(...messages: readonly ContextMessage[]): void {
     if (messages.length === 0) return;
     const start = this.get().length;
-    this.wire.dispatch(...messages.map((message) => contextAppendMessage({ message })));
+    for (const message of messages) {
+      void this.dispatcher.dispatch(
+        new ContextAppendMessage({ agentId: this.scopeContext.agentId, message }),
+      );
+    }
     this.publishSplice({ start, deleteCount: 0, messages: [...messages] });
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
-    this.wire.dispatch(contextAppendLoopEvent({ event }));
+    void this.dispatcher.dispatch(
+      new ContextAppendLoopEvent({ agentId: this.scopeContext.agentId, event }),
+    );
   }
 
   publishTrailingRemoval(previous: readonly ContextMessage[]): boolean {
@@ -99,7 +82,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     ) {
       return false;
     }
-    this.wire.dispatch(...this.sizeOpsForCut(cutIndex));
+    this.dispatchCutEvents(cutIndex);
     this.publishSplice({ start: cutIndex, deleteCount: 1, messages: [] });
     return true;
   }
@@ -107,10 +90,12 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;
-    this.wire.dispatch(
-      contextClear({}),
-      tokenCountingRebased({ length: 0, tokens: 0, measured: true }),
-    );
+    void this.dispatcher.dispatch(new ContextClear({ agentId: this.scopeContext.agentId }));
+    this.tokenCounting.rebase(this.scopeContext.agentContext, {
+      length: 0,
+      tokens: 0,
+      measured: true,
+    });
     this.publishSplice({ start: 0, deleteCount, messages: [] });
   }
 
@@ -118,7 +103,10 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     const history = this.get();
     const cut = computeUndoCut(history, count);
     if (isFullyUndoable(cut, count)) {
-      this.wire.dispatch(contextUndo({ count }), ...this.sizeOpsForCut(cut.cutIndex));
+      void this.dispatcher.dispatch(
+        new ContextUndo({ agentId: this.scopeContext.agentId, count }),
+      );
+      this.dispatchCutEvents(cut.cutIndex);
       this.publishSplice({
         start: cut.cutIndex,
         deleteCount: history.length - cut.cutIndex,
@@ -131,8 +119,9 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     const history = this.get();
     const result = buildContextCompactionShape(history, input, this.tokenEstimateFns);
-    this.wire.dispatch(
-      contextApplyCompaction({
+    void this.dispatcher.dispatch(
+      new ContextApplyCompaction({
+        agentId: this.scopeContext.agentId,
         summary: result.summary,
         contextSummary: result.contextSummary,
         compactedCount: result.compactedCount,
@@ -143,12 +132,12 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
         keptHeadUserMessageCount: result.keptHeadUserMessageCount,
         droppedCount: result.droppedCount,
       }),
-      tokenCountingRebased({
-        length: result.messages.length,
-        tokens: result.tokensAfter,
-        measured: false,
-      }),
     );
+    this.tokenCounting.rebase(this.scopeContext.agentContext, {
+      length: result.messages.length,
+      tokens: result.tokensAfter,
+      measured: false,
+    });
     this.publishSplice({
       start: 0,
       deleteCount: history.length,
@@ -160,27 +149,14 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     return publicResult;
   }
 
-  private publishSplice(input: {
-    start: number;
-    deleteCount: number;
-    messages: readonly ContextMessage[];
-    tokens?: number;
-  }): void {
-    this.eventBus.publish({ type: 'context.spliced', ...input });
+  private publishSplice(input: Omit<ContextSplicedPayload, 'agentId'>): void {
+    void this.dispatcher.dispatch(
+      new ContextSpliced({ agentId: this.scopeContext.agentId, ...input }),
+    );
   }
 
-  private sizeOpsForCut(cutIndex: number): Op[] {
-    const model = this.wire.getModel(TokenCountingModel);
-    if (!model.anchors.some((anchor) => anchor.length > cutIndex)) return [];
-    // The display tokens are the post-cut size computed from the CURRENT
-    // ledger — anchors at or below the cut are identical before and after
-    // the truncation, so the pre-dispatch read is exact.
-    return [
-      tokenCountingTruncated({
-        length: cutIndex,
-        tokens: this.tokenCounting.get(0, cutIndex).size,
-      }),
-    ];
+  private dispatchCutEvents(cutIndex: number): void {
+    this.tokenCounting.recordTruncation(this.scopeContext.agentContext, cutIndex);
   }
 }
 

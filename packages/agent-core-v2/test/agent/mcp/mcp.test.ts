@@ -9,7 +9,8 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { abortError } from '#/_base/utils/abort';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import type { Event2 } from '#/app/event/event2';
+import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/mcpCore/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
@@ -18,9 +19,10 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
-import { McpDiscoveryModel } from '#/agent/mcp/mcpDiscoveryOps';
+import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -35,13 +37,13 @@ import { createTestAgent, mcpServices, type TestAgentContext } from '../../harne
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
-import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
+import {
+  recordingWireLog,
+  registerTestAgentWire,
+  registerTestEventDispatcher,
+} from '../../wire/stubs';
 
 import { discoverTools, executeTool, fakeMcpClient } from '../../mcpCore/stubs';
-
-const MCP_OUTPUT_TRUNCATED_TEXT =
-  '\n\n[Output truncated: exceeded 100000 character limit. ' +
-  'Use pagination or more specific queries to get remaining content.]';
 
 interface ResolvedServer {
   readonly client: MCPClient;
@@ -197,9 +199,10 @@ class FakeMcpManager {
 describe('AgentMcpService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let events: DomainEvent[];
+  let events: Event2[];
   let telemetryEvents: TelemetryRecord[];
   let wire: IWireService;
+  let dispatcher: IEventDispatcher;
   let wireRecordListeners: Set<(record: WireRecord) => void>;
 
   beforeEach(() => {
@@ -226,6 +229,7 @@ describe('AgentMcpService', () => {
         for (const listener of wireRecordListeners) listener(record);
       }),
     });
+    dispatcher = registerTestEventDispatcher(ix);
   });
   afterEach(() => {
     disposables.dispose();
@@ -1010,7 +1014,7 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(0);
   });
 
-  it('truncates oversized MCP text output through the wrapped tool path', async () => {
+  it('passes oversized MCP text through for the pipeline to shape', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
       async listTools() {
@@ -1043,7 +1047,7 @@ describe('AgentMcpService', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toBe('x'.repeat(100_000) + MCP_OUTPUT_TRUNCATED_TEXT);
+    expect(result.output).toBe('x'.repeat(100_001));
   });
 
   it('wraps MCP image output in mcp_tool_result companions through the wrapped tool path', async () => {
@@ -1199,6 +1203,34 @@ describe('AgentMcpService', () => {
     ]);
   });
 
+  it('registers the synthetic authenticate tool for a server that settled needs-auth before attach', () => {
+    const oauthService = {
+      beginAuthorization: async () => ({
+        authorizationUrl: new URL('https://example.com/authorize'),
+        complete: async () => {},
+        cancel: async () => {},
+      }),
+    } as unknown as McpOAuthService;
+    const manager = new FakeMcpManager({ oauthService });
+    manager.needsAuth();
+
+    createService(manager);
+
+    const tools = ix.get(IAgentToolRegistryService).list();
+    expect(tools).toEqual([
+      expect.objectContaining({
+        name: 'mcp__needs-auth__authenticate',
+        source: 'mcp',
+      }),
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 'needs-auth', status: 'needs-auth' }),
+      }),
+    );
+  });
+
   it('keeps tools registered when a connected server fails so later calls can heal', async () => {
     const manager = new FakeMcpManager();
     const client = fakeMcpClient();
@@ -1276,8 +1308,8 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -1316,8 +1348,8 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
       expect(records).toHaveLength(1);
     } finally {
       off.dispose();
@@ -1343,8 +1375,8 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       enabledNames.clear();
       enabledNames.add('mutated_after_observation');
-      await wire.restore();
-      await wire.flush();
+      await dispatcher.restore();
+      await dispatcher.flush();
 
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
@@ -1371,8 +1403,8 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
     manager.connect('graf.ana');
-    await wire.restore();
-    await wire.flush();
+    await dispatcher.restore();
+    await dispatcher.flush();
 
     const { records, off } = collectDiscoveries();
     try {

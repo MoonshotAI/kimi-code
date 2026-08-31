@@ -1,12 +1,3 @@
-/**
- * `edit` domain — {@link EditService}, the business rules of an edit.
- *
- * Owns the `old_string` uniqueness rule, the `replace_all` path, and the
- * user-facing error messages. Operates on a {@link TextModel} (pure text) and
- * returns a discriminated result: either the re-materialized raw content plus
- * the replacement count, or a ready-to-surface error message. No IO.
- */
-
 import type { TextModel } from './textModel';
 
 export interface EditApplyInput {

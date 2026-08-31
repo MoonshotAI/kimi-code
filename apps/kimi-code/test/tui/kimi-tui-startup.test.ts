@@ -13,7 +13,7 @@ import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/co
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
-import { REPLAY_TURN_LIMIT } from '#/tui/utils/message-replay';
+import { REPLAY_FETCH_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { quoteShellArg } from '#/utils/shell-quote';
 import {
@@ -560,7 +560,7 @@ describe('KimiTUI startup', () => {
 
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-latest',
-      replayTurnLimit: REPLAY_TURN_LIMIT,
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
     });
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe('ready');
@@ -1904,21 +1904,33 @@ describe('KimiTUI startup', () => {
     }
   });
 
-  it('tracks logout after managed credentials and session state are cleared', async () => {
+  it('tracks logout while preserving the active session model', async () => {
+    let loggedOut = false;
     const session = makeSession();
+    const logout = vi.fn(async () => {
+      loggedOut = true;
+    });
     const harness = makeHarness(session, {
-      getConfig: vi.fn(async () => ({
-        models: {
-          k2: { provider: 'managed:kimi-code', model: 'moonshot-v1', maxContextSize: 100 },
-        },
-        providers: { 'managed:kimi-code': { type: 'kimi' } },
-      })),
+      getConfig: vi.fn(async () =>
+        loggedOut
+          ? { models: {}, providers: {} }
+          : {
+              models: {
+                k2: {
+                  provider: 'managed:kimi-code',
+                  model: 'moonshot-v1',
+                  maxContextSize: 100,
+                },
+              },
+              providers: { 'managed:kimi-code': { type: 'kimi' } },
+            },
+      ),
       auth: {
         status: vi.fn(async () => ({
           providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
         })),
         login: vi.fn(async () => {}),
-        logout: vi.fn(),
+        logout,
         getManagedUsage: vi.fn(),
       },
     });
@@ -1931,13 +1943,66 @@ describe('KimiTUI startup', () => {
     await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith('managed:kimi-code');
-    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.close).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      sessionId: 'ses-1',
+      model: 'k2',
+      sessionTitle: 'Session title',
+      contextTokens: 10,
+      maxContextTokens: 100,
+      availableModels: {},
+      availableProviders: {},
+    });
+    expect(harness.track).toHaveBeenCalledWith('logout', { provider: 'managed:kimi-code' });
+  });
+
+  it('clears the config-derived model when logging out without an active session', async () => {
+    let loggedOut = false;
+    const logout = vi.fn(async () => {
+      loggedOut = true;
+    });
+    const harness = makeHarness(makeSession(), {
+      getConfig: vi.fn(async () =>
+        loggedOut
+          ? { models: {}, providers: {} }
+          : {
+              models: {
+                k2: {
+                  provider: 'managed:kimi-code',
+                  model: 'moonshot-v1',
+                  maxContextSize: 100,
+                },
+              },
+              providers: { 'managed:kimi-code': { type: 'kimi' } },
+              defaultModel: 'k2',
+            },
+      ),
+      auth: {
+        status: vi.fn(async () => ({
+          providers: [{ providerName: 'managed:kimi-code', hasToken: true }],
+        })),
+        login: vi.fn(async () => {}),
+        logout,
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, { ...makeStartupInput(), engineV2: true });
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(driver.state.appState.model).toBe('k2');
+
+    vi.mocked(promptLogoutProviderSelection).mockResolvedValue('managed:kimi-code');
+    await handleLogoutCommand(driver as any);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.appState).toMatchObject({
       sessionId: '',
       model: '',
-      sessionTitle: null,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      availableProviders: {},
     });
-    expect(harness.track).toHaveBeenCalledWith('logout', { provider: 'managed:kimi-code' });
   });
 
   it('keeps the active session when logging out a different provider', async () => {
@@ -2024,7 +2089,7 @@ describe('KimiTUI startup', () => {
 
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-latest',
-      replayTurnLimit: REPLAY_TURN_LIMIT,
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
     });
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe('ready');
@@ -2044,7 +2109,7 @@ describe('KimiTUI startup', () => {
 
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-target',
-      replayTurnLimit: REPLAY_TURN_LIMIT,
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
     });
     expect(driver.state.startupState).toBe('ready');
     expect(driver.state.appState.sessionId).toBe('');
@@ -2375,7 +2440,7 @@ describe('KimiTUI startup', () => {
     });
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-target',
-      replayTurnLimit: REPLAY_TURN_LIMIT,
+      replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
     });
     expect(driver.state.appState.sessionId).toBe('ses-target');
   });

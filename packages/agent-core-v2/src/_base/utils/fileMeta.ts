@@ -1,18 +1,10 @@
-/**
- * File content metadata helpers — binary detection, line counting, etag, and
- * extension-based mime / language guessing.
- *
- * Pure functions over bytes, text, and stat-like shapes; no io happens here.
- * Binary detection samples the leading `FS_BINARY_SAMPLE_BYTES` of a file and
- * flags it as binary when the non-printable fraction exceeds
- * `FS_BINARY_NONPRINTABLE_FRACTION`; etags are built from any stat-like shape
- * carrying `size` / `mtimeMs` / `ino` (`FileMetaStat`).
- */
-
 import { extname } from 'node:path';
 
+import { classifyTextSample } from '#/_base/text/encoding';
+
+export { FS_BINARY_NONPRINTABLE_FRACTION } from '#/_base/text/encoding';
+
 export const FS_BINARY_SAMPLE_BYTES = 4096;
-export const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
 
 export interface FileMetaStat {
   readonly size: number;
@@ -21,16 +13,7 @@ export interface FileMetaStat {
 }
 
 export function detectBinary(buf: Uint8Array): boolean {
-  if (buf.length === 0) return false;
-  let nonPrintable = 0;
-  for (let i = 0; i < buf.length; i++) {
-    const b = buf[i]!;
-    if (b === 0) return true;
-    if (b === 9 || b === 10 || b === 13) continue;
-    if (b >= 32 && b <= 126) continue;
-    nonPrintable++;
-  }
-  return nonPrintable / buf.length > FS_BINARY_NONPRINTABLE_FRACTION;
+  return classifyTextSample(buf).isBinary;
 }
 
 export function countLines(text: string): number {

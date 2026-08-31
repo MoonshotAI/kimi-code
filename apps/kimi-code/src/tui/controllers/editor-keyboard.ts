@@ -1,7 +1,13 @@
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
-import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
+import { readFile } from 'node:fs/promises';
 
-import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
+import type { FileMeta, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
+
+import {
+  ClipboardMediaError,
+  readClipboardMedia,
+  type ClipboardVideo,
+} from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
@@ -13,9 +19,15 @@ import {
   LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
+import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import { extractMediaAttachments } from '../utils/image-placeholder';
+import type {
+  ImageAttachment,
+  ImageAttachmentStore,
+  VideoAttachment,
+} from '../utils/image-attachment-store';
+import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
+import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
@@ -23,6 +35,12 @@ import type { BtwPanelController } from './btw-panel';
 export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
+  /**
+   * True when the TUI runs on the agent-core-v2 engine (startup-selected).
+   * Gates the paste-time upload to the daemon file store; the v1 engine has
+   * no file store, so images keep the submit-time inline base64 form and
+   * videos cannot be submitted at all.
+   */
   readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   /**
@@ -34,16 +52,21 @@ export interface EditorKeyboardHost {
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
+  readonly skillCommandMap: Map<string, string>;
   steerMessage(session: Session, input: readonly SteerInputItem[]): void;
+  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
   }): boolean;
+  releaseStagingMedia(mediaAttachmentIds: readonly number[]): void;
   recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
+  /** `undefined` means the input cannot be a `/goal` command (clear without measuring). */
+  updateGoalLengthWarning(text: string | undefined): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
   toggleTodoPanelExpansion(): void;
@@ -80,6 +103,24 @@ export class EditorKeyboardController {
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
       host.updateEditorBorderHighlight(text);
+      // Expanding paste markers costs a full-text pass, and only `/goal`
+      // input can trip the objective length limit — so skip the expansion
+      // for ordinary prompts. Submitted text is trimmed before dispatch, so
+      // gate on the trimmed text too. A paste marker may itself expand into
+      // part of the command (`[paste #…]` → `/goal …`, or completing a
+      // partial prefix like `/go[paste #1 …]` → `/goal …`), so any input
+      // containing a marker that can still become a `/goal` command must
+      // pass the gate as well.
+      const trimmed = text.trimStart();
+      const mightBeGoal =
+        trimmed.startsWith('/goal') ||
+        trimmed.startsWith('[paste #') ||
+        (trimmed.startsWith('/') && trimmed.includes('[paste #'));
+      if (editor.inputMode !== 'bash' && mightBeGoal) {
+        host.updateGoalLengthWarning(editor.getExpandedText());
+      } else {
+        host.updateGoalLengthWarning(undefined);
+      }
     };
 
     // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode
@@ -270,41 +311,86 @@ export class EditorKeyboardController {
       const text = editor.getText().trim();
       const editorIsBash = editor.inputMode === 'bash';
 
-      // Bash commands (`! …`) are not steerable: keep them queued so they run
-      // after the current task instead of being injected into the turn as text.
+      // Bash commands (`! …`) are not steerable: they stay queued so they run
+      // after the current task. Grouped inline-skill submissions are not
+      // steerable either — steer carries no skill activations, so they stay
+      // queued and submit intact when the session drains; the same applies to
+      // an editor draft carrying inline skill tokens. Steering stops at the
+      // first such bundle: items behind it stay queued too, or a later
+      // message would jump ahead of its bundle and reverse the conversational
+      // order. Everything else steers in queue order — plain text as a
+      // steered message, slash-skill items as activations fired into the
+      // running turn (never as literal text).
       const queued = host.state.queuedMessages;
-      const steerable = queued.filter((m) => m.mode !== 'bash');
+      const firstBundle = queued.findIndex((m) => m.inlineSkillActivations !== undefined);
+      const windowBeforeFirstBundle = firstBundle === -1 ? queued : queued.slice(0, firstBundle);
+      const steerable = windowBeforeFirstBundle.filter((m) => m.mode !== 'bash');
+      const editorHasInlineSkills =
+        !editorIsBash &&
+        text.length > 0 &&
+        host.engineV2 &&
+        extractInlineSkillActivations(text, host.skillCommandMap).length > 0;
 
-      const items: SteerInputItem[] = [];
+      type SteerRun =
+        | { readonly kind: 'text'; readonly items: SteerInputItem[] }
+        | { readonly kind: 'skill'; readonly skillName: string; readonly skillArgs: string };
+      const runs: SteerRun[] = [];
+      let textRun: SteerInputItem[] = [];
+      const flushTextRun = (): void => {
+        if (textRun.length > 0) {
+          runs.push({ kind: 'text', items: textRun });
+          textRun = [];
+        }
+      };
       for (const m of steerable) {
+        if (m.mode === 'skill' && m.skillName !== undefined) {
+          flushTextRun();
+          runs.push({ kind: 'skill', skillName: m.skillName, skillArgs: m.skillArgs ?? '' });
+          continue;
+        }
         const trimmed = m.text.trim();
         if (trimmed.length > 0) {
           // Queued items carry the parts extracted when they were submitted
           // (and were already capability-validated then).
-          items.push({ text: trimmed, parts: m.parts, imageAttachmentIds: m.imageAttachmentIds });
+          textRun.push({
+            text: trimmed,
+            parts: m.parts,
+            imageAttachmentIds: m.imageAttachmentIds,
+            videoAttachmentIds: m.videoAttachmentIds,
+          });
         }
       }
       let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
-      if (!editorIsBash && text.length > 0) {
+      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills && firstBundle === -1) {
         try {
+          // Synchronous path: an image still ingesting in the background
+          // extracts to its inline fallback here (no bounded wait like
+          // `sendNormalUserInput` — this handler cannot await without
+          // interleaving queue/draft edits); a video still uploading refuses
+          // the submission instead (no inline form exists).
           editorExtraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
-          // Cache copy failed (e.g. the pasted video's source vanished) —
-          // leave the queue and the editor draft untouched.
+          // Media expansion failed (e.g. the pasted video's upload is still
+          // in flight) — leave the queue and the editor draft untouched.
           host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
           return;
         }
-        items.push({
+        textRun.push({
           text,
           parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
           imageAttachmentIds:
             editorExtraction.imageAttachmentIds.length > 0
               ? editorExtraction.imageAttachmentIds
               : undefined,
+          videoAttachmentIds:
+            editorExtraction.videoAttachmentIds.length > 0
+              ? editorExtraction.videoAttachmentIds
+              : undefined,
         });
       }
+      flushTextRun();
 
-      if (items.length > 0) {
+      if (runs.length > 0) {
         // The editor draft is fresh input: gate it on the model's media
         // capabilities before splicing the queue, so a rejection leaves the
         // queue and the draft untouched.
@@ -312,15 +398,31 @@ export class EditorKeyboardController {
           editorExtraction !== undefined &&
           !host.validateMediaCapabilities(editorExtraction)
         ) {
+          host.releaseStagingMedia([
+            ...editorExtraction.imageAttachmentIds,
+            ...editorExtraction.videoAttachmentIds,
+          ]);
           return;
         }
-        host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
-        if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
+          host.releaseStagingMedia([
+            ...(editorExtraction?.imageAttachmentIds ?? []),
+            ...(editorExtraction?.videoAttachmentIds ?? []),
+          ]);
           host.showError(LLM_NOT_SET_MESSAGE);
-        } else {
-          host.steerMessage(session, items);
+          return;
+        }
+        host.state.queuedMessages = queued.filter(
+          (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
+        );
+        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
+        for (const run of runs) {
+          if (run.kind === 'text') {
+            host.steerMessage(session, run.items);
+          } else {
+            host.steerSkillActivation(session, run.skillName, run.skillArgs);
+          }
         }
       }
       host.updateQueueDisplay();
@@ -354,7 +456,9 @@ export class EditorKeyboardController {
         editor.setText(recalled.text);
         // Restore the queued item's mode so a recalled `!` command runs as a
         // shell command again instead of being submitted as a normal prompt.
-        const mode = recalled.mode ?? 'prompt';
+        // Skill activations recall as prompt mode: their text is the original
+        // `/name args` slash command, which re-parses on submit.
+        const mode = recalled.mode === 'bash' ? 'bash' : 'prompt';
         if (editor.inputMode !== mode) {
           editor.inputMode = mode;
           editor.onInputModeChange?.(mode);
@@ -451,27 +555,79 @@ export class EditorKeyboardController {
     if (media === null) return false;
 
     if (media.kind === 'video') {
+      // Same shape as the image flow below: register the attachment and put
+      // its placeholder in the editor first, then upload the source file to
+      // the daemon file store in the background — typing never waits on it,
+      // and submit gives a pending upload the bounded `pendingMediaIngestions`
+      // wait. Unlike an image there is no inline fallback form, so a video
+      // whose upload has not landed (or failed) refuses the submission at
+      // extraction time.
       const attachment = this.imageStore.addVideo(media.mimeType, media.sourcePath, media.filename);
       this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
       this.host.state.ui.requestRender();
       this.host.track('shortcut_paste', { kind: 'video' });
+      attachment.pending = this.finishClipboardVideoPaste(attachment, media).catch(
+        (error: unknown) => {
+          this.host.showError(`Failed to process pasted video: ${formatErrorMessage(error)}`);
+        },
+      );
       return true;
     }
 
     const meta = parseImageMeta(media.bytes);
     if (meta === null) return false;
+
+    // Register the attachment and put its placeholder in the editor before
+    // any of the asynchronous ingestion work below. CustomEditor only holds
+    // keystrokes until this handler settles, so the callback returns right
+    // after the placeholder lands and ingestion continues in the background —
+    // typing never waits on compression or the daemon upload. Submit gives a
+    // pending ingestion a bounded wait (`pendingImageIngestions`) and falls
+    // back to the inline form when it has not finished.
+    const attachment = this.imageStore.addImage(
+      media.bytes,
+      meta.mime,
+      meta.width,
+      meta.height,
+    );
+    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    this.host.state.ui.requestRender();
+    this.host.track('shortcut_paste', { kind: 'image' });
+
+    attachment.pending = this.finishClipboardImagePaste(
+      attachment,
+      media.bytes,
+      meta.mime,
+      meta.width,
+      meta.height,
+    ).catch((error: unknown) => {
+      // The raw attachment and its already-visible placeholder are still a
+      // valid inline fallback when optional ingestion work fails.
+      this.host.showError(`Failed to process pasted image: ${formatErrorMessage(error)}`);
+    });
+    return true;
+  }
+
+  private async finishClipboardImagePaste(
+    attachment: ImageAttachment,
+    originalBytes: Uint8Array,
+    originalMime: string,
+    originalWidth: number,
+    originalHeight: number,
+  ): Promise<void> {
     // Compress at ingestion — a pure data step while building the attachment, so
     // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
     // and the submitted image all agree, and the agent core only ever sees an
     // already-compressed image. Best effort: originals pass through on failure.
-    // When compression changed the bytes, the original is persisted (into the
-    // session's media-originals dir when known, else the temp-dir fallback)
-    // and recorded on the attachment, so submit-time expansion can announce
-    // the compression and point the model at the full-fidelity copy.
+    // When compression changed the bytes, the pre-compression original is kept
+    // on the attachment in memory: the session whose media-originals dir it
+    // belongs in may not exist yet at paste time, so dispatch-time caption
+    // resolution (`resolveOriginalCaptions`) persists it and announces the
+    // compression, pointing the model at the full-fidelity copy.
     // The edge cap comes from the host harness's [image] config (resolved per
     // paste so a config reload applies immediately); hosts without a harness
     // use the env/built-in default.
-    const compressed = await compressImageForModel(media.bytes, meta.mime, {
+    const compressed = await compressImageForModel(originalBytes, originalMime, {
       maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
       telemetry: {
         client: {
@@ -481,39 +637,112 @@ export class EditorKeyboardController {
         source: 'tui_paste',
       },
     });
-    const sessionDir = this.host.session?.summary?.sessionDir;
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space
     // the sent image, the caption, and ReadMediaFile region readback share —
     // while parseImageMeta reads the raw pre-rotation header.
-    const attachment = compressed.changed
-      ? this.imageStore.addImage(
-          compressed.data,
-          compressed.mimeType,
-          compressed.width,
-          compressed.height,
-          {
-            path: await persistOriginalImage(
-              media.bytes,
-              meta.mime,
-              sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
-            ),
-            width: compressed.originalWidth,
-            height: compressed.originalHeight,
-            byteLength: media.bytes.length,
-            mime: meta.mime,
-          },
-        )
-      : this.imageStore.addImage(
-          media.bytes,
-          meta.mime,
-          compressed.width || meta.width,
-          compressed.height || meta.height,
-        );
-    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    const original = compressed.changed
+      ? {
+          bytes: originalBytes,
+          width: compressed.originalWidth,
+          height: compressed.originalHeight,
+          byteLength: originalBytes.length,
+          mime: originalMime,
+        }
+      : undefined;
+    // v2 only: upload the final bytes to the daemon file store so submit-time
+    // expansion emits a `kimi-file://` reference instead of inline base64.
+    const uploaded = await this.uploadImageToDaemonFileStore(
+      compressed.changed ? compressed.data : originalBytes,
+      compressed.changed ? compressed.mimeType : originalMime,
+    );
+    const completed = this.imageStore.completeImage(attachment, {
+      bytes: compressed.changed ? compressed.data : originalBytes,
+      mime: compressed.changed ? compressed.mimeType : originalMime,
+      width: compressed.width || originalWidth,
+      height: compressed.height || originalHeight,
+      original,
+      fileId: uploaded?.id,
+      fileExpiresAt: parseExpiry(uploaded),
+    });
+    if (completed === undefined && uploaded !== undefined) {
+      await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
+    }
     this.host.state.ui.requestRender();
-    this.host.track('shortcut_paste', { kind: 'image' });
-    return true;
+  }
+
+  /**
+   * Paste-time upload of the final image bytes to the engine's daemon file
+   * store (agent-core-v2 only), run as part of the background ingestion —
+   * typing never waits on it, and submit only gives it the bounded
+   * `pendingImageIngestions` wait. Best effort: any failure returns undefined,
+   * so the attachment keeps no `fileId` and submit-time expansion falls back
+   * to the inline base64 form.
+   */
+  private async uploadImageToDaemonFileStore(
+    bytes: Uint8Array,
+    mime: string,
+  ): Promise<FileMeta | undefined> {
+    if (!this.host.engineV2) return undefined;
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    try {
+      const meta = await harness.uploadFile(bytes, {
+        name: `pasted-image.${imageExtensionForMime(mime)}`,
+        mimeType: mime,
+        expiresInSec: MEDIA_STAGING_TTL_SECONDS,
+      });
+      return meta;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Paste-time upload of the video's source file to the engine's daemon file
+   * store (agent-core-v2 only), run as background ingestion exactly like the
+   * image upload above. Best effort: any failure returns undefined, leaving
+   * the attachment without a `fileId` — submit-time expansion then refuses
+   * the submission, since a video has no inline fallback form.
+   */
+  private async uploadVideoToDaemonFileStore(
+    media: ClipboardVideo,
+  ): Promise<FileMeta | undefined> {
+    if (!this.host.engineV2) return undefined;
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFile(media.sourcePath);
+    } catch {
+      // The source (e.g. a clipboard temp file) vanished before the upload
+      // could read it — same outcome as a failed upload.
+      return undefined;
+    }
+    try {
+      return await harness.uploadFile(bytes, {
+        name: media.filename,
+        mimeType: media.mimeType,
+        expiresInSec: MEDIA_STAGING_TTL_SECONDS,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async finishClipboardVideoPaste(
+    attachment: VideoAttachment,
+    media: ClipboardVideo,
+  ): Promise<void> {
+    const uploaded = await this.uploadVideoToDaemonFileStore(media);
+    const completed = this.imageStore.completeVideo(attachment, {
+      fileId: uploaded?.id,
+      fileExpiresAt: parseExpiry(uploaded),
+    });
+    if (completed === undefined && uploaded !== undefined) {
+      await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
+    }
+    this.host.state.ui.requestRender();
   }
 
   private async openExternalEditor(): Promise<void> {
@@ -556,4 +785,10 @@ export class EditorKeyboardController {
       this.host.setExternalEditorRunning(false);
     }
   }
+}
+
+function parseExpiry(meta: FileMeta | undefined): number | undefined {
+  if (meta?.expires_at === undefined) return undefined;
+  const value = Date.parse(meta.expires_at);
+  return Number.isFinite(value) ? value : undefined;
 }

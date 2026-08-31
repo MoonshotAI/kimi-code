@@ -10,6 +10,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ClusterDb } from '../../src/cluster/index.js';
 import { ShardLockPool } from '../../src/cluster/lock-pool.js';
+import { ShardHandle } from '../../src/cluster/shard.js';
 import { shardDirName } from '../../src/cluster/utils.js';
 import { tmpDir, rmrf } from '../e2e/helpers/tmp.js';
 import { keyOnShard, sleep } from './helpers.js';
@@ -239,6 +240,69 @@ test('closeAll() drains in-flight callbacks before closing handles — no MiniDb
       applyDefs: async () => {},
     });
     assert.deepEqual(await pool2.withWriter(2, shardDir, (db) => db.get('late')), { v: 1 }, 'the callback’s write is durable');
+    await pool2.closeAll();
+  } finally {
+    await rmrf(dir);
+  }
+});
+
+test('closeAll() waits for the lockHold timer’s in-flight writer close', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    const pool = new ShardLockPool({
+      writerOpts: { valueCodec: 'json' },
+      readerOpts: { valueCodec: 'json' },
+      lockRenewMs: 0,
+      lockAcquireTimeoutMs: 1_000,
+      lockHoldMs: 80,
+      maxWriters: 4,
+      maxReaders: 4,
+      readOnly: false,
+      applyDefs: async () => {},
+    });
+    const shardDir = path.join(dir, shardDirName(1, 4));
+    await pool.withWriter(1, shardDir, (db) => db.set('k', { v: 1 }));
+    assert.equal(pool.writersCached, 1);
+
+    const closeStarted = deferred<void>();
+    const closeGate = deferred<void>();
+    let closeFinished = false;
+    const origClose = ShardHandle.prototype.close;
+    ShardHandle.prototype.close = async function (this: ShardHandle) {
+      closeStarted.resolve();
+      await closeGate.promise;
+      await origClose.call(this);
+      closeFinished = true;
+    };
+    try {
+      await closeStarted.promise;
+      assert.equal(pool.writersCached, 0, 'the hold timer already dropped the writer entry');
+
+      const closing = pool.closeAll();
+      let closeReturned = false;
+      void closing.then(() => (closeReturned = true));
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      assert.equal(closeReturned, false, 'closeAll waits for the timer-fired close to drain');
+
+      closeGate.resolve();
+      await closing;
+      assert.equal(closeFinished, true, 'the timer-fired close completed before closeAll returned');
+    } finally {
+      ShardHandle.prototype.close = origClose;
+    }
+
+    const pool2 = new ShardLockPool({
+      writerOpts: { valueCodec: 'json' },
+      readerOpts: { valueCodec: 'json' },
+      lockRenewMs: 0,
+      lockAcquireTimeoutMs: 300,
+      lockHoldMs: 0,
+      maxWriters: 4,
+      maxReaders: 4,
+      readOnly: false,
+      applyDefs: async () => {},
+    });
+    assert.deepEqual(await pool2.withWriter(1, shardDir, (db) => db.get('k')), { v: 1 }, 'the shard lock was released');
     await pool2.closeAll();
   } finally {
     await rmrf(dir);

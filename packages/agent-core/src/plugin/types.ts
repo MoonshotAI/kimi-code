@@ -71,6 +71,20 @@ export interface PluginMcpServerInfo {
   readonly headerKeys?: readonly string[];
 }
 
+/**
+ * One plugin-declared MCP server with its final effective config, as consumed
+ * by the MCP server registry. `name` is the runtime name
+ * (`plugin-<pluginId>:<serverName>`); `config` already carries the rename-time
+ * transforms (env injection, cwd constraint, folded enabled flag).
+ */
+export interface PluginMcpServerEntry {
+  readonly name: string;
+  readonly config: McpServerConfig;
+  readonly pluginId: string;
+  /** Manifest-local server name (without the runtime prefix). */
+  readonly serverName: string;
+}
+
 export interface PluginCommandDef {
   readonly pluginId: string;
   readonly name: string;

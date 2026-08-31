@@ -1,12 +1,3 @@
-/**
- * `btw` domain — side-question ("by the way") child agent contract.
- *
- * A `btw` agent is a lightweight fork of the main agent used for a side-channel
- * conversation: it inherits the parent's profile and context, but all tool calls
- * are disabled and a side-channel system reminder is appended so it answers with
- * text only. Follow-up turns reuse the same child agent.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export const TOOL_CALL_DISABLED_MESSAGE =

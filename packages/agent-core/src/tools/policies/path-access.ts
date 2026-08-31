@@ -14,7 +14,12 @@
 
 import * as pathe from 'pathe';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import {
+  getShellPathBridge,
+  translateShellDrivePath,
+  type Kaos,
+  type ShellPathBridge,
+} from '@moonshot-ai/kaos';
 
 import type { WorkspaceConfig } from '../support/workspace';
 import { isSensitiveFile } from './sensitive';
@@ -60,31 +65,7 @@ function isWin32DriveRelative(path: string): boolean {
 }
 
 export function normalizeUserPath(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): string {
-  if (pathClass !== 'win32') return path;
-
-  // A bare root slash stays forward so downstream pathe operations
-  // treat it consistently. Matches the py helper's behavior.
-  if (path === '/') return '/';
-
-  if (path.startsWith('//')) {
-    return path;
-  }
-
-  const cygdriveMatch = /^\/cygdrive\/([A-Za-z])(?:\/|$)/.exec(path);
-  if (cygdriveMatch !== null) {
-    const drive = cygdriveMatch[1]!.toUpperCase();
-    const rest = path.slice(`/cygdrive/${cygdriveMatch[1]!}`.length);
-    return `${drive}:${rest === '' ? '/' : rest}`;
-  }
-
-  const driveMatch = /^\/([A-Za-z])(?:\/|$)/.exec(path);
-  if (driveMatch !== null) {
-    const drive = driveMatch[1]!.toUpperCase();
-    const rest = path.slice(2);
-    return `${drive}:${rest === '' ? '/' : rest}`;
-  }
-
-  return path;
+  return pathClass === 'win32' ? translateShellDrivePath(path) : path;
 }
 
 function expandUserPath(path: string, homeDir: string | undefined, pathClass: PathClass): string {
@@ -175,10 +156,15 @@ export interface ResolvePathAccessOptions {
   readonly policy?: WorkspaceAccessPolicy | undefined;
   readonly pathClass?: PathClass | undefined;
   readonly homeDir?: string;
+  /**
+   * Shell path bridge used to normalize model-supplied paths on win32 bash;
+   * without it paths go through the lexical-only {@link normalizeUserPath}.
+   */
+  readonly shellPathBridge?: ShellPathBridge;
 }
 
 export interface ResolvePathAccessPathOptions {
-  readonly kaos: Pick<Kaos, 'pathClass' | 'gethome'>;
+  readonly kaos: Pick<Kaos, 'pathClass' | 'gethome' | 'osEnv'>;
   readonly workspace: WorkspaceConfig;
   readonly operation: PathAccessOperation;
   readonly policy?: WorkspaceAccessPolicy;
@@ -205,7 +191,8 @@ export function resolvePathAccess(
   options: ResolvePathAccessOptions,
 ): PathAccess {
   const pathClass = options.pathClass ?? DEFAULT_PATH_CLASS;
-  const normalizedPath = normalizeUserPath(path, pathClass);
+  const normalizedPath =
+    options.shellPathBridge?.fromShellPath(path) ?? normalizeUserPath(path, pathClass);
   const expandedPath = expandUserPath(normalizedPath, options.homeDir, pathClass);
   const rawIsAbsolute = pathe.isAbsolute(expandedPath);
   const canonical = canonicalizePath(expandedPath, cwd, pathClass);
@@ -247,11 +234,15 @@ export function resolvePathAccessPath(
   options: ResolvePathAccessPathOptions,
 ): string {
   const { kaos, workspace, operation, policy, expandHome = true } = options;
+  const pathClass = kaos.pathClass();
   return resolvePathAccess(path, workspace.workspaceDir, workspace, {
     operation,
     policy,
-    pathClass: kaos.pathClass(),
+    pathClass,
     homeDir: expandHome ? kaos.gethome() : undefined,
+    // Only win32 needs the bridge (identity on posix), and `osEnv` is
+    // unavailable in probing-free environments (SSH throws).
+    shellPathBridge: pathClass === 'win32' ? getShellPathBridge(kaos.osEnv) : undefined,
   }).path;
 }
 

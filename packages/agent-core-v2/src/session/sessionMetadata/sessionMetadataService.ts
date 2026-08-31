@@ -1,47 +1,9 @@
-/**
- * `sessionMetadata` domain — `ISessionMetadata` implementation.
- *
- * Persists the session metadata document (`state.json`) through the `storage`
- * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
- * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. The
- * plain-data state (`data`) is registered into `sessionState`
- * (`ISessionStateService`) and read/written through it. The
- * document always carries the `agents` / `custom` maps — seeded at creation,
- * backfilled and persisted on load for documents written before the seeding
- * existed (without touching `updatedAt`, so a format heal never reorders
- * session listings). `updatedAt` tracks content activity only: management
- * writes (rename via `setTitle`, archive/restore via `setArchived`) keep the
- * persisted value through `touchUpdatedAt: false`, an explicit
- * `patch.updatedAt` always wins (fork restores the source's recency), and
- * agent registration is a structural write that never touches it — neither
- * when resume materializes a cold session's agents, nor when a runtime
- * subagent registers mid-turn (the turn's own submit/end moments carry
- * recency). Bound at Session scope.
- *
- * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
- * update is persisted, the fresh summary is recorded into the App-scoped
- * `ISessionIndexMirror` — a bounded, coalescing queue that flushes to the
- * `IQueryStore` read model off the user completion path. The mutation
- * completes with the authoritative `state.json` write; it never waits on the
- * derived store (no mirror flush, no query-store lock), and a mirror failure
- * is logged and swallowed — the read model heals by reconciliation, the
- * session lifecycle never sees it. First-time creation in
- * `load()` records too — a new session must appear in listings immediately
- * (the mirror's pending queue feeds the index's read-your-writes merge);
- * loading an *existing* document (session resume) stays silent. Queued writes
- * are tracked in a module-level pending set, drained through
- * `drainSessionMetadataWrites()` by hosts before the sessions root may be
- * torn down (the query-store/mirror drain pattern); a patch still queued
- * when the scope is disposed is dropped rather than written into a teardown.
- */
-
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -55,6 +17,7 @@ import {
   type SessionMeta,
   type SessionMetadataChangedEvent,
   type SessionMetaPatch,
+  type SessionTitleKind,
 } from './sessionMetadata';
 
 const META_KEY = 'state.json';
@@ -96,7 +59,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         this.disposed = true;
       },
     });
-    this.states.register(sessionMetadataDataKey);
+    this.states.contributeState(sessionMetadataDataKey);
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
@@ -119,28 +82,42 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     patch: SessionMetaPatch,
     opts?: { readonly touchUpdatedAt?: boolean },
   ): Promise<void> {
-    return this.enqueueUpdate(() => this.applyUpdate(patch, opts));
+    return this.enqueueUpdate(async () => {
+      await this.applyUpdate(patch, opts);
+    });
   }
 
   private async applyUpdate(
     patch: SessionMetaPatch,
     opts?: { readonly touchUpdatedAt?: boolean },
-  ): Promise<void> {
+  ): Promise<boolean> {
     await this.ready;
-    if (this.disposed) return;
+    if (this.disposed) return false;
     const updatedAt =
       patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
     this.data = { ...this.data, ...patch, updatedAt };
-    await this.store.set(this.scope, META_KEY, this.data);
-    if (this.disposed) return;
+    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    if (this.disposed) return false;
     this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
       changed: Object.keys(patch) as (keyof SessionMeta)[],
     });
+    return true;
   }
 
   async setTitle(title: string): Promise<void> {
-    await this.update({ title, isCustomTitle: true }, { touchUpdatedAt: false });
+    await this.update({ title, titleKind: 'custom' }, { touchUpdatedAt: false });
+  }
+
+  async setGeneratedTitleIfUncustomized(
+    title: string,
+    opts?: { force?: boolean },
+  ): Promise<boolean> {
+    return this.enqueueUpdate(async () => {
+      await this.ready;
+      if (opts?.force !== true && this.data.titleKind === 'custom') return false;
+      return this.applyUpdate({ title, titleKind: 'generated' }, { touchUpdatedAt: false });
+    });
   }
 
   async setArchived(archived: boolean): Promise<void> {
@@ -160,9 +137,12 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     });
   }
 
-  private enqueueUpdate(work: () => Promise<void>): Promise<void> {
+  private enqueueUpdate<T>(work: () => Promise<T>): Promise<T> {
     const run = this.updateQueue.then(work, work);
-    const tracked = run.catch(() => {});
+    const tracked: Promise<void> = run.then(
+      () => undefined,
+      () => undefined,
+    );
     this.updateQueue = tracked;
     pendingWrites.add(tracked);
     void tracked.finally(() => pendingWrites.delete(tracked));
@@ -187,9 +167,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         }),
       );
     } catch (error) {
-      // The authoritative document is already durable at this point; a mirror
-      // failure only degrades the read model (reconciliation heals it) and
-      // must never fail the session mutation itself.
       this.log.warn('session index mirror record failed; the read model heals by reconciliation', {
         sessionId: this.ctx.sessionId,
         error: error instanceof Error ? error.message : String(error),
@@ -201,13 +178,17 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
-      if (this.data.agents === undefined || this.data.custom === undefined) {
+      if (
+        this.data.agents === undefined ||
+        this.data.custom === undefined ||
+        sessionMetaTitleNeedsMigration(existing, this.data)
+      ) {
         this.data = {
           ...this.data,
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        await this.store.set(this.scope, META_KEY, this.data);
+        await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
       }
       return;
     }
@@ -222,7 +203,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    await this.store.set(this.scope, META_KEY, this.data);
+    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
     this.mirrorToReadModel();
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }
@@ -248,26 +229,82 @@ function recordEquals(a: AgentMeta['labels'], b: AgentMeta['labels']): boolean {
 }
 
 export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): SessionMeta {
-  const legacy = raw as unknown as {
-    createdAt?: unknown;
-    updatedAt?: unknown;
-    workDir?: unknown;
-  };
+  const legacy = raw as unknown as LegacySessionMeta;
+  const normalizedTitle = normalizeSessionTitle(legacy);
+  const {
+    createdAt: legacyCreatedAt,
+    updatedAt: legacyUpdatedAt,
+    workDir: legacyWorkDir,
+    titleSource: _legacyTitleSource,
+    isCustomTitle: _legacyIsCustomTitle,
+    customTitle: _legacyCustomTitle,
+    ...clean
+  } = legacy;
   const cwd =
-    raw.cwd ?? (typeof legacy.workDir === 'string' && legacy.workDir.length > 0
-      ? legacy.workDir
+    clean.cwd ?? (typeof legacyWorkDir === 'string' && legacyWorkDir.length > 0
+      ? legacyWorkDir
       : undefined);
-  if (raw.version === SESSION_META_VERSION) {
-    return cwd === raw.cwd ? raw : { ...raw, cwd };
-  }
+  const { title, titleKind } = normalizedTitle;
   return {
-    ...raw,
-    id: sessionId,
+    ...clean,
+    id: clean.version === SESSION_META_VERSION ? clean.id : sessionId,
     version: SESSION_META_VERSION,
     cwd,
-    createdAt: toEpochMs(legacy.createdAt),
-    updatedAt: toEpochMs(legacy.updatedAt),
+    title,
+    titleKind,
+    createdAt: toEpochMs(legacyCreatedAt),
+    updatedAt: toEpochMs(legacyUpdatedAt),
+    archived: clean.archived === true,
   };
+}
+
+type LegacySessionMeta = Omit<SessionMeta, 'createdAt' | 'updatedAt'> & {
+  readonly createdAt?: unknown;
+  readonly updatedAt?: unknown;
+  readonly workDir?: unknown;
+  readonly titleSource?: unknown;
+  readonly isCustomTitle?: unknown;
+  readonly customTitle?: unknown;
+};
+
+function normalizeSessionTitle(
+  raw: LegacySessionMeta,
+): Pick<SessionMeta, 'title' | 'titleKind'> {
+  const title = typeof raw.title === 'string' ? raw.title : undefined;
+  if (title !== undefined && raw.isCustomTitle === true) {
+    return { title, titleKind: 'custom' };
+  }
+  if (title !== undefined && isSessionTitleKind(raw.titleKind)) {
+    return { title, titleKind: raw.titleKind };
+  }
+  if (title !== undefined && raw.isCustomTitle === false) {
+    return { title, titleKind: 'replaceable' };
+  }
+  if (typeof raw.customTitle === 'string') {
+    return { title: raw.customTitle, titleKind: 'custom' };
+  }
+  return title === undefined ? {} : { title, titleKind: 'replaceable' };
+}
+
+function isSessionTitleKind(value: unknown): value is SessionTitleKind {
+  return value === 'replaceable' || value === 'generated' || value === 'custom';
+}
+
+type PersistedSessionMeta = SessionMeta & { readonly isCustomTitle: boolean };
+
+export function encodeSessionMeta(meta: SessionMeta): PersistedSessionMeta {
+  return { ...meta, isCustomTitle: meta.titleKind === 'custom' };
+}
+
+function sessionMetaTitleNeedsMigration(raw: SessionMeta, normalized: SessionMeta): boolean {
+  const record = raw as unknown as Record<string, unknown>;
+  return (
+    raw.title !== normalized.title ||
+    raw.titleKind !== normalized.titleKind ||
+    record['isCustomTitle'] !== (normalized.titleKind === 'custom') ||
+    Object.hasOwn(record, 'titleSource') ||
+    Object.hasOwn(record, 'customTitle')
+  );
 }
 
 export function toEpochMs(value: unknown): number {

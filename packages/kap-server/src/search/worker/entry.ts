@@ -1,30 +1,3 @@
-/**
- * `search/worker` — worker-thread entry: hosts the search-index core inside
- * a dedicated worker thread.
- *
- * Loaded by the main-process host (`host.ts`) in one of three shapes:
- *   - dev / tests: this `.ts` file itself, under Node's native type
- *     stripping plus the repo-local `.js` → `.ts` resolve hook
- *     (`register-dev-hooks.mjs`);
- *   - bundled CLI (`dist/main.mjs`): the bundled `search-worker.mjs`
- *     sibling emitted by tsdown;
- *   - SEA single-file binary: the extracted runtime asset configured via
- *     `configureSearchWorkerRuntime` (`runtime.ts`).
- *
- * The whole import closure of this file must stay loadable under
- * `--experimental-transform-types`: relative imports carry explicit `.ts`
- * specifiers, no decorators, erasable TypeScript only. In particular it must
- * NOT import the service (`searchService.ts`, decorators) or the
- * agent-core-v2 barrel (`.md?raw` imports need a bundler).
- *
- * Concurrency: requests are handled as their messages arrive (async
- * interleaving, same semantics the in-process service had). A `close`
- * request first lets every in-flight request settle, then closes the core —
- * which drains tracked background ops (sync/refresh) before closing the db —
- * responds, and lets the thread exit. The host's terminate() remains the
- * hard backstop.
- */
-
 import { parentPort, workerData } from 'node:worker_threads';
 
 import { configureTextBuildWorkerRuntime } from '@moonshot-ai/minidb/worker-runtime';
@@ -47,16 +20,10 @@ import {
 
 const data = workerData as SearchWorkerData;
 
-// The worker owns the search-index MiniDb, so its heavy text-generation
-// builds are triggered from THIS thread — give minidb the packaged
-// text-build worker entry when the main process extracted one (SEA). In dev
-// minidb resolves its own sibling source entry; a missing entry degrades to
-// the bounded inline core inside this worker, never the main thread.
 if (typeof data.textBuildWorkerPath === 'string') {
   try {
     configureTextBuildWorkerRuntime(data.textBuildWorkerPath);
   } catch {
-    // Best-effort: minidb falls back to the bounded inline build in this worker.
   }
 }
 
@@ -80,9 +47,6 @@ const core = new SearchIndexCore({
       post({ type: 'log', level: 'warn', message, meta });
     },
   },
-  // The lock token must reach the host BEFORE the heavy open work completes
-  // — a worker that dies mid-open would otherwise leave an unreapable lock
-  // (the lock line carries this process's still-alive pid).
   onLockToken: (token) => {
     post({ type: 'lockToken', token });
   },
@@ -150,10 +114,6 @@ async function handle(request: SearchWorkerCall): Promise<void> {
     return;
   }
   if (request.type === 'close') {
-    // Gate the core FIRST (an in-flight sync abandons its remaining work at
-    // the next checkpoint), then let every in-flight request settle and
-    // close — the close itself drains tracked background ops. The host's
-    // terminate() is the backstop when a request wedges.
     closing = true;
     core.beginClose();
     await Promise.all(inFlight);
@@ -165,7 +125,6 @@ async function handle(request: SearchWorkerCall): Promise<void> {
     }
     if (error !== null) post({ id: request.id, type: 'error', error });
     else post({ id: request.id, type: 'result', result: null });
-    // Releasing the port lets the thread's event loop drain and exit.
     port!.close();
     return;
   }
@@ -189,9 +148,6 @@ port.on('message', (value: unknown) => {
   const request = value as SearchWorkerRequest;
   if (request === null || typeof request !== 'object') return;
   if (request.type === 'beginClose') {
-    // Control message (no id, no response): flip the core into closing
-    // state NOW so an in-flight sync abandons its remaining work at the
-    // next checkpoint instead of wedging the host's dispose behind it.
     closing = true;
     core.beginClose();
     return;
