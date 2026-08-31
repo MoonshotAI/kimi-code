@@ -13,6 +13,7 @@ import {
   sessionDirOf,
   workspacePersistenceScope,
 } from '#/workspace/sessionLifecycle/internal/addressing';
+import { SESSION_LEASE_FILE } from '#/workspace/sessionLifecycle/sessionLease';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -202,8 +203,9 @@ export async function exportSessionDirectory(input: {
 
     const sessionScan = await scanSessionWire(sessionDir, input.signal);
     const stableSessionLog = sessionLogSource;
+    const leasePath = join(sessionDir, SESSION_LEASE_FILE);
     const selectedSessionFiles: SessionZipEntry[] = sessionFiles.filter(
-      (file) => file !== sessionLogPath,
+      (file) => file !== sessionLogPath && file !== leasePath,
     );
     if (stableSessionLog !== undefined) {
       selectedSessionFiles.push({ path: sessionLogPath, source: stableSessionLog });
