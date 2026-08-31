@@ -53,7 +53,7 @@ import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } fr
 import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
-import { handleProviderCommand } from './provider';
+import { handleProviderCommand, handleRefreshCatalogCommand } from './provider';
 import {
   findBuiltInSlashCommand,
   resolveSlashCommandAvailability,
@@ -571,6 +571,11 @@ async function handleBuiltInSlashCommand(
     case 'provider':
       await handleProviderCommand(host);
       return;
+    case 'refresh-catalog': {
+      const providerId = args.trim().length > 0 ? args.trim() : undefined;
+      await handleRefreshCatalogCommand(host, providerId);
+      return;
+    }
     case 'permission':
       showPermissionPicker(host);
       return;

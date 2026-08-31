@@ -276,6 +276,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'refresh-catalog',
+    aliases: [],
+    description:
+      'Refresh OpenAI-compatible provider model catalogs (preserves curated context windows, enriches names from models.dev)',
+    priority: 95,
+    availability: 'always',
+  },
+  {
     name: 'btw',
     aliases: [],
     description: 'Ask a forked side agent a question',

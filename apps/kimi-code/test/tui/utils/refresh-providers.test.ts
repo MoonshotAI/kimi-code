@@ -5,7 +5,7 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { refreshAllProviderModels } from '../../../src/tui/utils/refresh-providers';
+import { refreshAllProviderModels, refreshCatalogProviderModels } from '../../../src/tui/utils/refresh-providers';
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 type FetchMock = (
@@ -1249,5 +1249,95 @@ describe('refreshAllProviderModels', () => {
     expect(result.unchanged).toEqual(['custom']);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(host.setConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe('refreshCatalogProviderModels', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('refreshes an openai-compatible provider and preserves a curated context window', async () => {
+    const baseUrl = 'https://api.z.ai/api/v1';
+    const host = makeRefreshHost({
+      providers: {
+        'zai-coding-plan': {
+          type: 'openai',
+          baseUrl,
+          apiKey: 'sk-zai',
+        },
+      },
+      models: {
+        'zai-coding-plan/glm-5.3': {
+          provider: 'zai-coding-plan',
+          model: 'glm-5.3',
+          maxContextSize: 1000000,
+          capabilities: ['tool_use'],
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-zai');
+      return new Response(
+        JSON.stringify({ data: [{ id: 'glm-5.3' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshCatalogProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { providerId: 'zai-coding-plan', providerName: 'zai-coding-plan', added: 0, removed: 0 },
+    ]);
+    // The curated 1M window survives the catalog refresh.
+    expect(host.current().models?.['zai-coding-plan/glm-5.3']?.maxContextSize).toBe(1000000);
+  });
+
+  it('scopes the refresh to a single openai-compatible provider', async () => {
+    const ocBase = 'https://opencode.ai/zen/v1';
+    const kiloBase = 'https://api.kilo.ai/api/gateway';
+    const host = makeRefreshHost({
+      providers: {
+        opencode: { type: 'openai', baseUrl: ocBase, apiKey: 'sk-oc' },
+        kilo: { type: 'openai', baseUrl: kiloBase, apiKey: 'sk-kilo' },
+      },
+      models: {},
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    let calls = 0;
+    const fetchMock = vi.fn<FetchMock>(async (input) => {
+      calls += 1;
+      expect(fetchInputUrl(input)).toContain('opencode.ai');
+      return new Response(
+        JSON.stringify({ data: [{ id: 'm' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshCatalogProviderModels(
+      {
+        getConfig: async () => host.current(),
+        removeProvider: host.removeProvider,
+        setConfig: host.setConfig,
+        resolveOAuthToken: vi.fn(),
+      },
+      { providerId: 'opencode' },
+    );
+
+    expect(calls).toBe(1);
+    expect(result.changed.map((c) => c.providerId)).toEqual(['opencode']);
   });
 });

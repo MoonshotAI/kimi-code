@@ -611,3 +611,49 @@ async function handleProviderProxyUrl(host: SlashCommandHost, providerId: string
   host.showStatus(`Proxy for ${providerId} set to ${display}`);
   reopenProviderManager(host);
 }
+
+// ---------------------------------------------------------------------------
+// /refresh-catalog command
+// ---------------------------------------------------------------------------
+
+/**
+ * On-demand OpenAI-compatible catalog refresh. Fetches each matching provider's
+ * `/models` endpoint, preserves curated `maxContextSize`, and enriches names from
+ * models.dev. Pass `providerId` to scope the refresh to a single provider.
+ */
+export async function handleRefreshCatalogCommand(
+  host: SlashCommandHost,
+  providerId: string | undefined,
+): Promise<void> {
+  if (providerId !== undefined && host.state.appState.availableProviders[providerId] === undefined) {
+    host.showError(`Provider ${providerId} not found`);
+    return;
+  }
+
+  const spinner = host.showProgressSpinner('Refreshing OpenAI-compatible catalogs…');
+  let result: Awaited<ReturnType<typeof host.authFlow.refreshCatalogModels>>;
+  try {
+    result = await host.authFlow.refreshCatalogModels(providerId);
+  } catch (error) {
+    spinner.stop({ ok: false, label: 'Catalog refresh failed.' });
+    host.showError(`Catalog refresh failed: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  if (result.failed.length > 0) {
+    const reasons = result.failed
+      .map((f) => `${f.provider}: ${f.reason}`)
+      .join('; ');
+    spinner.stop({ ok: false, label: 'Some catalogs failed to refresh.' });
+    host.showError(`Catalog refresh partial: ${reasons}`);
+    return;
+  }
+
+  const changed = result.changed.length;
+  const label =
+    changed === 0
+      ? 'Catalogs up to date.'
+      : `Refreshed ${String(changed)} provider catalog${changed === 1 ? '' : 's'}.`;
+  spinner.stop({ ok: true, label });
+  host.showStatus(label, 'success');
+}

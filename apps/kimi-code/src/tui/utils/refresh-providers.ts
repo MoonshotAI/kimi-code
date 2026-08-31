@@ -1,6 +1,8 @@
 import {
+  refreshProviderCatalog,
   refreshProviderModels,
   type ProviderChange,
+  type RefreshCatalogResult,
   type RefreshProviderOptions,
   type RefreshProviderScope,
   type RefreshResult,
@@ -21,7 +23,7 @@ export interface RefreshProviderHost {
   readonly userAgent?: string;
 }
 
-export type { ProviderChange, RefreshProviderOptions, RefreshProviderScope, RefreshResult };
+export type { ProviderChange, RefreshCatalogResult, RefreshProviderOptions, RefreshProviderScope, RefreshResult };
 
 /**
  * Refresh remote model metadata for the configured providers. Thin adapter over
@@ -33,6 +35,29 @@ export async function refreshAllProviderModels(
   options: RefreshProviderOptions = {},
 ): Promise<RefreshResult> {
   return refreshProviderModels(
+    {
+      getConfig: () => host.getConfig(),
+      removeProvider: (providerId) => host.removeProvider(providerId),
+      setConfig: (patch) => host.setConfig(patch as unknown as KimiConfigPatch),
+      resolveOAuthToken: (providerName, oauthRef) =>
+        host.resolveOAuthToken(providerName, oauthRef as unknown as OAuthRef),
+      userAgent: host.userAgent,
+    },
+    options,
+  );
+}
+
+/**
+ * On-demand catalog refresh for OpenAI-compatible providers (the `/refresh-catalog`
+ * command). Fetches each provider's `/models` endpoint, preserves curated
+ * `maxContextSize` values, and enriches names/capabilities from models.dev.
+ * Never refreshes during the automatic startup refresh.
+ */
+export async function refreshCatalogProviderModels(
+  host: RefreshProviderHost,
+  options: { providerId?: string } = {},
+): Promise<RefreshCatalogResult> {
+  return refreshProviderCatalog(
     {
       getConfig: () => host.getConfig(),
       removeProvider: (providerId) => host.removeProvider(providerId),
