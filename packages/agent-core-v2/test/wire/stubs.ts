@@ -15,7 +15,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
+import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
 import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
@@ -132,20 +132,9 @@ export function registerTestEventDispatcher(ix: TestInstantiationService): IEven
   return ix.get(IEventDispatcher);
 }
 
-export function attachTodoRuntime(
-  ix: TestInstantiationService,
-  dispatcher: IEventDispatcher,
-): AgentRuntimeSet {
-  const agent = ix.get(IAgentScopeContext).agentContext;
-  const runtimes = new AgentRuntimeSet(agent, { get: (id) => ix.get(id) });
-  runtimes.apply({
-    definition: AgentTodo,
-    provider: todoAgentRuntimeProvider,
-    generation: 1,
-    active: true,
-  });
-  runtimes.attachDurable(dispatcher);
-  return runtimes;
+export function attachTodoService(ix: TestInstantiationService): AgentTodoService {
+  ix.set(IAgentTodoService, new SyncDescriptor(AgentTodoService));
+  return ix.get(IAgentTodoService) as AgentTodoService;
 }
 
 export function attachCronRuntime(

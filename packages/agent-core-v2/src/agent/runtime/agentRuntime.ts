@@ -10,7 +10,6 @@ import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { registerEvent2Class, type Event2, type Event2Class } from '#/app/event/event2';
 import type { StateFold } from '#/state/state';
-
 export type AgentRuntimeStatus = 'registered' | 'materialized' | 'done' | 'failed' | 'retired';
 
 export interface AgentRuntimeIdentity {
@@ -144,13 +143,4 @@ export interface AgentRuntimeContributionSnapshot {
 export interface AgentRuntimeSnapshot {
   readonly identity: AgentRuntimeIdentity;
   readonly contributions: readonly AgentRuntimeContributionSnapshot[];
-}
-
-export interface DurableAgentRuntimeParticipant<State = any> {
-  readonly id: string;
-  readonly events: readonly Event2Class<any, any>[];
-  readonly undoable: boolean;
-  readonly transition: StateFold<State>;
-  getState(): State;
-  commit(state: State): void;
 }

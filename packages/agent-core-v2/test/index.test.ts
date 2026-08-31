@@ -33,7 +33,7 @@ import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
 import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
-import { attachTodoRuntime, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
+import { attachTodoService, registerTestAgentWire, registerTestEventDispatcher, restoreTestEventDispatcher } from './wire/stubs';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from './state/builtinReplayableKeys';
 
 const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
@@ -192,12 +192,12 @@ describe('v1 wire vocabulary', () => {
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
     const fresh = registerTestEventDispatcher(ix2);
-    const runtimes = attachTodoRuntime(ix2, fresh);
-    store.add({ dispose: () => { void runtimes.close(); } });
+    const todo = attachTodoService(ix2);
+    store.add({ dispose: () => { todo.dispose(); } });
 
     await restoreTestEventDispatcher(fresh, log2, SCOPE, records);
 
-    expect(runtimes.inspect()[0]?.state).toEqual([
+    expect(todo.get()).toEqual([
       { title: 'restore me', status: 'in_progress' },
     ]);
   });

@@ -4,7 +4,7 @@ import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IEventDispatcher, type DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
+import { IEventDispatcher, type DurableAgentRuntimeParticipant, type DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
 
 import {
   type AgentRuntimeContext,
@@ -14,7 +14,6 @@ import {
   type AgentRuntimeDescriptor,
   type AgentRuntimeRestoreEvent,
   type AgentRuntimeStatus,
-  type DurableAgentRuntimeParticipant,
   getAgentRuntimeDefinitionId,
   getAgentRuntimeDescriptor,
   type RuntimeOf,

@@ -11,10 +11,9 @@ import {
   type AgentRuntimeDefinitionRecord,
   type AgentRuntimeDescriptor,
   type AgentRuntimeRestoreEvent,
-  type DurableAgentRuntimeParticipant,
 } from '#/agent/runtime/agentRuntime';
 import { AgentRuntimeSet } from '#/agent/runtime/agentRuntimeSet';
-import type { DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
+import type { DurableAgentRuntimeParticipant, DurableRuntimeParticipantHost } from '#/state/eventDispatcher';
 
 const agent = { agentId: 'main', generation: 1, space: {} } as AgentContext;
 const accessor = { get: vi.fn() } as unknown as ServicesAccessor;

@@ -48,6 +48,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
 import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
@@ -100,7 +101,6 @@ import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { ManagedAgent } from '#/session/agentLifecycle/managedAgent';
-import { AgentTodo, todoAgentRuntimeProvider } from '#/features/todo/todoAgentRuntime';
 import { AgentInteraction, interactionAgentRuntimeProvider } from '#/features/interaction/interactionAgentRuntime';
 import { AgentCron, cronAgentRuntimeProvider } from '#/features/cron/cronAgentRuntime';
 import { AgentGoal, goalAgentRuntimeProvider } from '#/features/goal/goalAgentRuntime';
@@ -422,7 +422,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     get: vi.fn((agentId: string) => contextsByAgentId.get(agentId)),
     handleOf: vi.fn((agentId: string) => handles.get(agentId)),
     list: vi.fn(() => [...handles.keys()].map((agentId) => contextFor(agentId))),
-    resolve: vi.fn(((agent, definition) => {
+    resolve: vi.fn(((agent: AgentContext, definition: AgentRuntimeDefinition<any, any>) => {
       if (adoptedManaged !== undefined && adoptedManaged.context.agentId === agent.agentId) {
         return adoptedManaged.runtimeSet.resolve(definition);
       }
@@ -444,12 +444,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         {
           definition: AgentReminder,
           provider: reminderAgentRuntimeProvider,
-          generation: 1,
-          active: true,
-        },
-        {
-          definition: AgentTodo,
-          provider: todoAgentRuntimeProvider,
           generation: 1,
           active: true,
         },
