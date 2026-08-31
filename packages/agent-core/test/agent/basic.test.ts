@@ -15,9 +15,8 @@ it('creates an independent agent with a scoped experimental flag resolver', () =
     experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
   });
 
-  // The secondary-model flag is graduated and enabled by default; other
-  // registered experimental flags remain disabled.
-  expect(ctx.agent.experimentalFlags.enabledIds()).toEqual(['secondary-model']);
+  // Legacy agent-core keeps the secondary-model experiment disabled by default.
+  expect(ctx.agent.experimentalFlags.enabledIds()).toEqual([]);
 });
 
 it('runs a text-only agent turn from prompt to completion', async () => {

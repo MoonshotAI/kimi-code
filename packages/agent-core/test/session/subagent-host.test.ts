@@ -1291,6 +1291,14 @@ describe('SessionSubagentHost', () => {
       expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
     });
 
+    it('keeps the secondary model opt-in by default', async () => {
+      const { parent, child } = await spawnChild({
+        experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
+        config: { providers: {}, secondaryModel: { model: 'cheap-model' } },
+      });
+      expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
+    });
+
     it('inherits the parent model for an explicit model: primary choice', async () => {
       const { parent, child } = await spawnChild({
         experimentalFlags: secondaryFlags(),
