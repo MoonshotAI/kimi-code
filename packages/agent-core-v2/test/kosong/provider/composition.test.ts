@@ -19,6 +19,7 @@ import type {
   ResponseFormat,
   StreamedMessage,
 } from '#/kosong/contract/provider';
+import type { Tool } from '#/kosong/contract/tool';
 import '#/kosong/provider/bases/anthropic/index';
 import {
   AnthropicChatProvider,
@@ -209,6 +210,12 @@ describe('resolveAdapterIdentity', () => {
   it('resolves the (kimi, anthropic) pair registration: only its own traits', () => {
     const identity = registry.resolveAdapterIdentity('anthropic', 'kimi');
     expect(identity.baseId).toBe('anthropic');
+    expect(identity.traits).toHaveLength(2);
+  });
+
+  it('resolves the (kimi, openai_responses) pair registration: its traits plus the trailing synthetic trait', () => {
+    const identity = registry.resolveAdapterIdentity('openai_responses', 'kimi');
+    expect(identity.baseId).toBe('openai_responses');
     expect(identity.traits).toHaveLength(2);
   });
 
@@ -412,11 +419,14 @@ describe('kimi provider definitions', () => {
   it('registers one definition per transport, with shared vendor-level facts', () => {
     const native = getProviderDefinition('kimi', 'openai');
     const anthropic = getProviderDefinition('kimi', 'anthropic');
+    const responses = getProviderDefinition('kimi', 'openai_responses');
     expect(native?.baseProtocol).toBe('openai');
     expect(native?.traits).toHaveLength(1);
     expect(anthropic?.baseProtocol).toBe('anthropic');
     expect(anthropic?.traits).toHaveLength(1);
-    for (const definition of [native, anthropic]) {
+    expect(responses?.baseProtocol).toBe('openai_responses');
+    expect(responses?.traits).toHaveLength(1);
+    for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',
         baseUrlEnv: 'KIMI_BASE_URL',
@@ -429,7 +439,7 @@ describe('kimi provider definitions', () => {
 
   it('answers id-level queries and reports unregistered pairs', () => {
     expect(getProviderDefinition('kimi')?.baseProtocol).toBe('openai');
-    expect(getProviderDefinitions('kimi')).toHaveLength(2);
+    expect(getProviderDefinitions('kimi')).toHaveLength(3);
     expect(hasProviderDefinition('kimi')).toBe(true);
     expect(hasProviderDefinition('no-such-vendor')).toBe(false);
     expect(getProviderDefinition('kimi', 'google-genai')).toBeUndefined();
@@ -1391,4 +1401,284 @@ describe('429 wire behavior over real HTTP (no hidden SDK retry)', () => {
       });
     },
   );
+});
+
+
+const ADD_TOOL: Tool = {
+  name: 'add',
+  description: 'Add two numbers',
+  parameters: {
+    type: 'object',
+    properties: { a: { type: 'number' }, b: { type: 'number' } },
+    required: ['a', 'b'],
+  },
+};
+
+const RESPONSES_HISTORY: Message[] = [
+  { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
+  {
+    role: 'assistant',
+    content: [
+      { type: 'think', think: 'I should add them.' },
+      { type: 'text', text: 'On it.' },
+    ],
+    toolCalls: [{ type: 'function', id: 'call_add1', name: 'add', arguments: '{"a":2,"b":3}' }],
+  },
+  { role: 'tool', content: [{ type: 'text', text: '5' }], toolCallId: 'call_add1', toolCalls: [] },
+  { role: 'user', content: [{ type: 'text', text: 'And double it?' }], toolCalls: [] },
+];
+
+describe('kimi over the Responses wire (real HTTP)', () => {
+  interface CapturedRequest {
+    readonly url: string;
+    readonly body: Record<string, unknown>;
+  }
+
+  type ResponsesServerOutcome =
+    | { readonly events: readonly unknown[] }
+    | { readonly status: number; readonly body: Record<string, unknown> };
+
+  async function withKimiResponsesServer(
+    respond: (body: Record<string, unknown>) => ResponsesServerOutcome,
+    run: (port: number, requests: () => readonly CapturedRequest[]) => Promise<void>,
+  ): Promise<void> {
+    const requests: CapturedRequest[] = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+        requests.push({ url: req.url ?? '', body });
+        const outcome = respond(body);
+        if ('events' in outcome) {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          for (const event of outcome.events) {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          }
+          res.end();
+        } else {
+          res.writeHead(outcome.status, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(outcome.body));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('server has no address');
+      }
+      await run(address.port, () => requests);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  }
+
+  function kimiResponsesProvider(port: number): ChatProvider {
+    return registry.createChatProvider({
+      protocol: 'openai_responses',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+      baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+    });
+  }
+
+  it('runs a multi-turn generate with thinking and tool-call history over /v1/responses', async () => {
+    await withKimiResponsesServer(
+      () => ({
+        events: [
+          { type: 'response.created', response: { id: 'resp_kimi_1' } },
+          { type: 'response.output_text.delta', delta: 'The sum is 5.' },
+          {
+            type: 'response.completed',
+            response: {
+              id: 'resp_kimi_1',
+              status: 'completed',
+              usage: {
+                input_tokens: 10,
+                output_tokens: 3,
+                total_tokens: 13,
+                input_tokens_details: { cached_tokens: 4 },
+              },
+            },
+          },
+        ],
+      }),
+      async (port, requests) => {
+        const provider = kimiResponsesProvider(port);
+        const stream = await provider.generate('sys', [], RESPONSES_HISTORY);
+        const parts: unknown[] = [];
+        for await (const part of stream) {
+          parts.push(part);
+        }
+        expect(parts).toEqual([{ type: 'text', text: 'The sum is 5.' }]);
+        expect(stream.usage).toEqual({
+          inputOther: 6,
+          output: 3,
+          inputCacheRead: 4,
+          inputCacheCreation: 0,
+        });
+        expect(stream.finishReason).toBe('completed');
+
+        const [request] = requests();
+        if (request === undefined) throw new Error('expected one request');
+        expect(request.url).toBe('/v1/responses');
+        expect(request.body['model']).toBe('kimi-k2');
+        expect(request.body['instructions']).toBe('sys');
+        expect(request.body['store']).toBe(false);
+        expect(request.body['stream']).toBe(true);
+        expect(request.body['input']).toEqual([
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Add 2 and 3' }],
+          },
+          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'I should add them.' }] },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'On it.', annotations: [] }],
+          },
+          { type: 'function_call', call_id: 'call_add1', name: 'add', arguments: '{"a":2,"b":3}' },
+          {
+            type: 'function_call_output',
+            call_id: 'call_add1',
+            output: [{ type: 'input_text', text: '5' }],
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'And double it?' }],
+          },
+        ]);
+      },
+    );
+  });
+
+  it('encodes thinking as standard reasoning on the Responses wire', async () => {
+    await withKimiResponsesServer(
+      () => ({
+        events: [
+          { type: 'response.created', response: { id: 'resp_kimi_2' } },
+          { type: 'response.reasoning_summary_text.delta', delta: 'Hmm' },
+          {
+            type: 'response.completed',
+            response: {
+              id: 'resp_kimi_2',
+              status: 'completed',
+              usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+            },
+          },
+        ],
+      }),
+      async (port, requests) => {
+        const provider = kimiResponsesProvider(port);
+        const stream = await provider.generate('', [], PROBE_HISTORY, {
+          thinking: { effort: 'high' },
+        });
+        const parts: unknown[] = [];
+        for await (const part of stream) {
+          parts.push(part);
+        }
+        expect(parts).toEqual([{ type: 'think', think: 'Hmm' }]);
+
+        const [request] = requests();
+        if (request === undefined) throw new Error('expected one request');
+        expect(request.body['reasoning']).toEqual({ effort: 'high', summary: 'auto' });
+        expect(request.body['include']).toEqual(['reasoning.encrypted_content']);
+        expect(request.body).not.toHaveProperty('thinking');
+        expect(request.body).not.toHaveProperty('extra_body');
+      },
+    );
+  });
+
+  it('emits a standard function tool call from the Responses stream', async () => {
+    await withKimiResponsesServer(
+      () => ({
+        events: [
+          { type: 'response.created', response: { id: 'resp_kimi_3' } },
+          {
+            type: 'response.output_item.added',
+            output_index: 0,
+            item: {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'call_1',
+              name: 'add',
+              arguments: '{"a":2,"b":3}',
+            },
+          },
+          {
+            type: 'response.completed',
+            response: {
+              id: 'resp_kimi_3',
+              status: 'completed',
+              usage: { input_tokens: 5, output_tokens: 4, total_tokens: 9 },
+            },
+          },
+        ],
+      }),
+      async (port, requests) => {
+        const provider = kimiResponsesProvider(port);
+        const stream = await provider.generate('', [ADD_TOOL], PROBE_HISTORY);
+        const parts: unknown[] = [];
+        for await (const part of stream) {
+          parts.push(part);
+        }
+        expect(parts).toEqual([
+          {
+            type: 'function',
+            id: 'call_1',
+            name: 'add',
+            arguments: '{"a":2,"b":3}',
+            _streamIndex: 'fc_1',
+          },
+        ]);
+
+        const [request] = requests();
+        if (request === undefined) throw new Error('expected one request');
+        expect(request.body['tools']).toEqual([
+          {
+            type: 'function',
+            name: 'add',
+            description: 'Add two numbers',
+            parameters: ADD_TOOL.parameters,
+            strict: false,
+          },
+        ]);
+      },
+    );
+  });
+
+  it('classifies a Moonshot quota 429 as quota-exhausted over the Responses wire', async () => {
+    await withKimiResponsesServer(
+      () => ({
+        status: 429,
+        body: {
+          error: {
+            type: 'exceeded_current_quota_error',
+            message:
+              'Your account is suspended due to insufficient balance, please recharge your account',
+          },
+        },
+      }),
+      async (port, requests) => {
+        const provider = kimiResponsesProvider(port);
+        const caught = await provider.generate('sys', [], PROBE_HISTORY).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
+        expect(isRetryableGenerateError(caught)).toBe(false);
+        expect(requests()).toHaveLength(1);
+      },
+    );
+  });
 });

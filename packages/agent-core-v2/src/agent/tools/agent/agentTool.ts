@@ -57,6 +57,7 @@ import {
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
+  type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
@@ -276,6 +277,7 @@ export class SubagentTool implements ISubagentTool {
     let agentId: string;
     let profileName: string;
     let displayModel: string | undefined;
+    let displayModelSource: SubagentModelSource | undefined;
     let promptText = args.prompt;
     if (isResume) {
       const target = this.agentLifecycle.handleOf(resumeAgentId);
@@ -305,6 +307,7 @@ export class SubagentTool implements ISubagentTool {
       agentId = spawned.agentId;
       profileName = spawned.profileName;
       displayModel = spawned.model;
+      displayModelSource = spawned.modelSource;
       promptText = spawned.promptText;
     }
 
@@ -329,6 +332,7 @@ export class SubagentTool implements ISubagentTool {
       profileName,
       parentToolCallId: toolCallId,
       model: displayModel,
+      modelSource: displayModelSource,
       thinkingEffort: this.agentLifecycle.handleOf(agentId)
         ?.accessor.get(IAgentProfileService)
         .getEffectiveThinkingLevel(),
@@ -458,6 +462,7 @@ export class SubagentTool implements ISubagentTool {
           runInBackground,
           fork: args.fork === true,
           model: handle.model,
+          modelSource: handle.modelSource,
           taskId,
         });
         void requester.accessor
