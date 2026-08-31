@@ -651,6 +651,20 @@ describe('CustomEditor paste marker expansion', () => {
     }
   });
 
+  it('pastes an in-window payload whose content differs from the expansion', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    expect(editor.getText()).toBe(longText);
+
+    // A different clipboard arriving inside the suppression window is not the
+    // terminal's echo — it must be pasted, not swallowed.
+    simulateLargePaste(editor, 'anything');
+    expect(editor.getText()).toContain('anything');
+  });
+
   it('falls back to the text paste path when the image paste handler rejects', async () => {
     const editor = makeEditor();
     const onTextPaste = vi.fn();

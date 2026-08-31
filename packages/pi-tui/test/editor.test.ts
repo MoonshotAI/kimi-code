@@ -4102,14 +4102,14 @@ describe("Editor component", () => {
 			editor.handleInput(`\x1b[200~${paste}\x1b[201~`);
 			assert.match(editor.getText(), /\[paste #1/);
 
-			assert.strictEqual(editor.expandPasteMarkerAtCursor(), true);
+			assert.strictEqual(editor.expandPasteMarkerAtCursor(), paste);
 			assert.strictEqual(editor.getText(), paste);
 		});
 
-		it("expandPasteMarkerAtCursor returns false when the cursor is not on a marker", () => {
+		it("expandPasteMarkerAtCursor returns undefined when the cursor is not on a marker", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.setText("plain");
-			assert.strictEqual(editor.expandPasteMarkerAtCursor(), false);
+			assert.strictEqual(editor.expandPasteMarkerAtCursor(), undefined);
 			assert.strictEqual(editor.getText(), "plain");
 		});
 

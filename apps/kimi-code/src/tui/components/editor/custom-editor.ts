@@ -164,6 +164,8 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
   private suppressPastePayloadUntil = 0;
+  /** Content restored by the latest paste-key expansion, while its trailing payload is pending. */
+  private pendingExpandedContent: string | undefined;
   /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
   private pasteInFlight = false;
   private readonly pasteInputQueue: string[] = [];
@@ -230,6 +232,23 @@ export class CustomEditor extends Editor {
     if (this.inputMode === mode) return;
     this.inputMode = mode;
     this.onInputModeChange?.(mode);
+  }
+
+  /**
+   * A bracketed-paste payload that arrived right after a paste-key expansion:
+   * swallow it when it really is the content just expanded (a terminal echo of
+   * the same gesture); replay it into pi-tui's normal paste path when it is
+   * genuinely different clipboard content.
+   */
+  private handleTrailingPayload(payload: string): void {
+    const expected = this.pendingExpandedContent;
+    this.pendingExpandedContent = undefined;
+    if (expected === undefined) return;
+    const start = payload.indexOf(BRACKET_PASTE_START) + BRACKET_PASTE_START.length;
+    const end = payload.lastIndexOf(BRACKET_PASTE_END);
+    const content = end > start ? payload.slice(start, end) : '';
+    if (content === expected) return;
+    super.handleInput.call(this, payload);
   }
 
   private hasAutocompleteActivity(): boolean {
@@ -360,23 +379,32 @@ export class CustomEditor extends Editor {
 
     // Some terminals deliver the Ctrl-V keystroke and the clipboard's
     // bracketed-paste payload together. After a paste-key expansion the
-    // payload must be swallowed once (it would otherwise re-paste what the
-    // expansion just restored), while standalone pastes keep flowing to
-    // pi-tui's identical-content check.
+    // payload must be swallowed once — but only when its content really is
+    // what the expansion just restored, so an unrelated in-window paste
+    // survives; standalone pastes keep flowing to pi-tui's identical-content
+    // check.
     if (this.consumingPaste) {
       this.consumeBuffer += normalized;
       if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
+        const payload = this.consumeBuffer;
         this.consumingPaste = false;
         this.consumeBuffer = '';
+        this.handleTrailingPayload(payload);
       }
       return;
     }
-    if (normalized.includes(BRACKET_PASTE_START) && Date.now() < this.suppressPastePayloadUntil) {
+    if (
+      normalized.includes(BRACKET_PASTE_START) &&
+      this.pendingExpandedContent !== undefined &&
+      Date.now() < this.suppressPastePayloadUntil
+    ) {
       this.suppressPastePayloadUntil = 0;
       if (!normalized.includes(BRACKET_PASTE_END)) {
         this.consumingPaste = true;
         this.consumeBuffer = normalized;
+        return;
       }
+      this.handleTrailingPayload(normalized);
       return;
     }
 
@@ -388,9 +416,12 @@ export class CustomEditor extends Editor {
     //   normal paste path so text from the clipboard still works.
     const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
     if (matchesKey(normalized, pasteKey)) {
-      if (this.expandPasteMarkerAtCursor()) {
+      const expanded = this.expandPasteMarkerAtCursor();
+      if (expanded !== undefined) {
         // Terminals that also forward the clipboard as bracketed paste will
-        // deliver that payload next — swallow exactly one.
+        // deliver that payload next — swallow it only if it really is the
+        // content just expanded.
+        this.pendingExpandedContent = expanded;
         this.suppressPastePayloadUntil = Date.now() + PASTE_PAYLOAD_SUPPRESS_MS;
         return;
       }

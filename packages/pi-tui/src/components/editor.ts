@@ -1137,10 +1137,11 @@ export class Editor implements Component, Focusable {
 
 	/**
 	 * Expand the paste marker under the cursor, replacing it with its stored
-	 * content. The paste registry is preserved so undo restores both the marker
-	 * text and its entry. Returns false when the cursor is not on a live marker.
+	 * content and returning that content. The paste registry is preserved so
+	 * undo restores both the marker text and its entry. Returns undefined when
+	 * the cursor is not on a live marker.
 	 */
-	expandPasteMarkerAtCursor(): boolean {
+	expandPasteMarkerAtCursor(): string | undefined {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		PASTE_MARKER_REGEX.lastIndex = 0;
 		for (const match of currentLine.matchAll(PASTE_MARKER_REGEX)) {
@@ -1150,7 +1151,7 @@ export class Editor implements Component, Focusable {
 
 			const pasteId = Number(match[1]);
 			const content = this.pastes.get(pasteId);
-			if (content === undefined) return false;
+			if (content === undefined) return undefined;
 
 			const text = this.getText();
 			const offset =
@@ -1158,9 +1159,9 @@ export class Editor implements Component, Focusable {
 				start;
 			const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
 			this.setText(newText, { preservePasteRegistry: true });
-			return true;
+			return content;
 		}
-		return false;
+		return undefined;
 	}
 
 	/**
@@ -1175,7 +1176,7 @@ export class Editor implements Component, Focusable {
 			const end = start + match[0].length;
 			if (this.state.cursorCol < start || this.state.cursorCol > end) continue;
 			if (!this.isSamePasteContent(Number(match[1]), filteredText, hadSyntheticSpace)) return false;
-			return this.expandPasteMarkerAtCursor();
+			return this.expandPasteMarkerAtCursor() !== undefined;
 		}
 		return false;
 	}
