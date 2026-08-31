@@ -10,9 +10,9 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
-  AgentDateChange,
-  DateChangeRuntime,
-} from '#/features/dateChange/dateChangeAgentRuntime';
+  AgentDateChangeService,
+  IAgentDateChangeService,
+} from '#/features/dateChange/dateChangeService';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
@@ -71,7 +71,7 @@ function messageText(message: ContextMessage): string {
     .join('');
 }
 
-describe('dateChangeAgentRuntime', () => {
+describe('AgentDateChangeService', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
   let clock: TestHostClock;
@@ -424,7 +424,7 @@ describe('dateChangeAgentRuntime', () => {
       ctx.get(ISessionContext).cwd,
     );
 
-    expect(ctx.resolve(AgentDateChange)).toBeInstanceOf(DateChangeRuntime);
+    expect(ctx.get(IAgentDateChangeService)).toBeInstanceOf(AgentDateChangeService);
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 

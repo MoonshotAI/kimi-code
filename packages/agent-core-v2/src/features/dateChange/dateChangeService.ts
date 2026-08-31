@@ -1,12 +1,13 @@
 import { assign, fromCallback, setup } from 'xstate';
 
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
 import {
-  defineAgentRuntimeContract,
-  defineAgentRuntimeProvider,
-  type AgentRuntimeContext,
-  type AgentRuntimeRestoreEvent,
-} from '#/agent/runtime/agentRuntime';
+  AgentActorService,
+  type AgentActorContext,
+  type AgentActorRestoreEvent,
+} from '#/agent/actorService/agentActorService';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
   ContextInjectionContext,
@@ -14,6 +15,7 @@ import type {
 } from '#/features/reminder/types';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import type { DateInjectionDisclosure } from './dateChange';
 import { pickDisclosureBaseline } from './disclosureBaseline';
@@ -28,7 +30,7 @@ interface DateDisclosure {
 
 interface DateChangeActorContext {
   readonly seed: DateDisclosure | undefined;
-  readonly runtime: AgentRuntimeContext<null>;
+  readonly runtime: AgentActorContext<null>;
 }
 
 interface DateChangeDiscloseEvent {
@@ -57,7 +59,7 @@ const dateChangeInjection = fromCallback(({
   input,
 }: {
   input: {
-    readonly runtime: AgentRuntimeContext<null>;
+    readonly runtime: AgentActorContext<null>;
   };
 }) => {
   const runtime = input.runtime;
@@ -119,8 +121,8 @@ const dateChangeInjection = fromCallback(({
 const dateChangeActorLogic = setup({
   types: {} as {
     context: DateChangeActorContext;
-    input: AgentRuntimeContext<null>;
-    events: DateChangeDiscloseEvent | AgentRuntimeRestoreEvent;
+    input: AgentActorContext<null>;
+    events: DateChangeDiscloseEvent | AgentActorRestoreEvent;
   },
   actors: { dateChangeInjection },
 }).createMachine({
@@ -144,16 +146,21 @@ const dateChangeActorLogic = setup({
   },
 });
 
-export class DateChangeRuntime {}
+export interface IAgentDateChangeService {
+  readonly _serviceBrand: undefined;
+}
 
-export const AgentDateChange = defineAgentRuntimeContract<DateChangeRuntime>('dateChange');
+export const IAgentDateChangeService = createDecorator<IAgentDateChangeService>('agentDateChangeService');
 
-export const dateChangeAgentRuntimeProvider = defineAgentRuntimeProvider<null, DateChangeRuntime>(
-  AgentDateChange,
-  {
-    id: 'dateChange',
-    logic: dateChangeActorLogic,
-    eager: true,
-    createApi: () => new DateChangeRuntime(),
-  },
-);
+export class AgentDateChangeService extends AgentActorService<null> implements IAgentDateChangeService {
+  declare readonly _serviceBrand: undefined;
+
+  constructor(
+    @IEventDispatcher dispatcher: IEventDispatcher,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IInstantiationService instantiation: IInstantiationService,
+  ) {
+    super(dispatcher, scopeContext, instantiation);
+    this.attachActor(dateChangeActorLogic, { id: 'dateChange' });
+  }
+}
